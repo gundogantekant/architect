@@ -14,29 +14,35 @@ Create a pull request with an automated review summary.
 
 ## Steps
 
-1. Check git status to identify all changes (staged, unstaged, untracked)
+1. **Load portfolio context**:
+   - Resolve the target project path from cwd
+   - Look up the path in `portfolio/registry.json` → get `{org, project, component}`
+   - If found: read `portfolio/<org>/organization.json` for org conventions (branch prefix, PR title pattern)
+   - Use org conventions for branch naming and PR title formatting
 
-2. Determine the base branch:
+2. Check git status to identify all changes (staged, unstaged, untracked)
+
+3. Determine the base branch:
    - Use `$ARGUMENTS.base-branch` if provided
    - Default to `main`
 
-3. Check if current branch is main:
+4. Check if current branch is main:
    - If on main, ask the user for a branch name and create it
-   - For Neuronic projects (detected by path containing "NeuronicRepos"), use GEN-XXX naming convention
+   - For projects with an org convention (e.g., Neuronic GEN-XXX), apply the org's branch prefix
 
-4. Use the **reviewer** agent (model: opus) to review the changes:
+5. Use the **reviewer** agent (model: opus) to review the changes:
    - Run a review on the branch diff
    - Generate a summary of changes
 
-5. Create the PR using `gh pr create`:
+6. Create the PR using `gh pr create`:
    - Title: concise description of changes (under 70 characters)
-   - For Neuronic projects, prefix title with GEN-XXX
+   - For projects with org conventions, prefix title according to the org's pattern
    - Body includes:
      - Summary section with key changes
      - Review findings (if any critical issues, flag them)
      - Test plan checklist
 
-6. Present the PR URL to the user
+7. Present the PR URL to the user
 
 ## Constraints
 

@@ -88,10 +88,38 @@ Skip PM for:
 
 The **scout** agent produces a detection report that all other agents use for context. Always run scout first on unfamiliar projects. Pass scout's output to implementation agents so they generate code matching the project's stack.
 
+## Project Portfolio
+
+All onboarded project context lives in `portfolio/` with a three-level hierarchy: `portfolio/<org>/<project>/<component>.json`.
+
+### Context Loading (required step 1 for all skills)
+
+1. Resolve the target project path (from cwd or skill arguments)
+2. Look up the path in `portfolio/registry.json` → get `{org, project, component}`
+3. If found: read `portfolio/<org>/<project>/<component>.json` (scout report, agents, guidance)
+4. Also read `portfolio/<org>/organization.json` (shared conventions, branch rules)
+5. If not found: suggest `/onboard` first, or fall back to inline scout
+6. Pass combined context to all agents in subsequent steps
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `portfolio/registry.json` | Path → portfolio location lookup |
+| `portfolio/<org>/organization.json` | Org-level shared conventions |
+| `portfolio/<org>/<project>/<component>.json` | Component profile (scout + agents + guidance) |
+
+### Rules
+
+- Never write CLAUDE.md or agent config to target project repos
+- All project context stays in the architect portfolio
+- Run `/onboard <path>` before dispatching implementation agents on a new project
+- Use `/onboard <path> rescan` to refresh an existing profile
+
 ## Rules
 
-- Run scout before dispatching implementation agents on any new project
-- Pass the detection report context to every subsequent agent invocation
+- Run scout (or load portfolio) before dispatching implementation agents on any new project
+- Pass the portfolio context or detection report to every subsequent agent invocation
 - Use parallel fan-out when tasks are independent (frontend/backend/infra)
 - Use sequential pipeline when output feeds into the next step
 - Read-only agents (reviewer, security-auditor, performance, strategist, pm) do not modify code (strategist can write decision docs to docs/)
@@ -103,7 +131,8 @@ The **scout** agent produces a detection report that all other agents use for co
 
 | Command | Purpose |
 |---------|---------|
-| /onboard [path] | Apply architect to existing project |
+| /onboard [path] [--organization org] [rescan] | Scan and register project in portfolio |
+| /portfolio [list\|show\|remove] | View and manage project portfolio |
 | /scaffold [type] [name] | Create new project from template |
 | /review [scope] | Comprehensive code review |
 | /test [scope] | Run and generate tests |

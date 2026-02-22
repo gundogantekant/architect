@@ -14,7 +14,11 @@ Deploy the project locally using containers.
 
 ## Steps
 
-1. Use the **scout** agent to detect existing container configuration
+1. **Load portfolio context**:
+   - Resolve the target project path (from cwd or arguments)
+   - Look up the path in `portfolio/registry.json` → get `{org, project, component}`
+   - If found: read `portfolio/<org>/<project>/<component>.json` and `portfolio/<org>/organization.json`
+   - If not found: fall back to running the **scout** agent to detect container configuration inline
 
 2. If no container config exists, use the **coder-infra** agent to:
    - Generate appropriate Dockerfile for the project
