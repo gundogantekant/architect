@@ -1,0 +1,10 @@
+{
+  "expo": {
+    "name": "{{PROJECT_NAME}}",
+    "slug": "{{PROJECT_NAME}}",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "{{PROJECT_NAME}}",
+    "platforms": ["ios", "android"]
+  }
+}

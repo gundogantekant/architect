@@ -1,0 +1,103 @@
+# Skill Reference
+
+## Available Commands
+
+| Command | Purpose | Primary Agent |
+|---------|---------|---------------|
+| `/onboard [path]` | Apply architect to existing project | scout |
+| `/scaffold [type] [name]` | Create new project from template | coder-infra |
+| `/review [scope]` | Comprehensive code review | reviewer |
+| `/test [scope]` | Run/generate tests, report coverage | tester |
+| `/deploy [target]` | Local deployment via containers | coder-infra |
+| `/pr [base-branch]` | Create PR with review summary | reviewer |
+| `/diagnose [issue]` | Debug and investigate an issue | debugger |
+| `/secure` | Run security audit | security-auditor |
+| `/status` | Project health dashboard | scout + dependency-manager |
+| `/migrate [from] [to]` | Technology migration assistance | planner |
+
+## Details
+
+### /onboard
+Scans an existing project, detects its tech stack, and generates architect configuration. Always run this first on a new project.
+
+```
+/onboard /path/to/project
+```
+
+### /scaffold
+Creates a new project from a template.
+
+```
+/scaffold backend-ts my-api
+/scaffold frontend-react my-app
+/scaffold mobile-expo my-mobile-app
+/scaffold fullstack my-platform
+```
+
+### /review
+Reviews code changes. Defaults to staged changes if no scope given.
+
+```
+/review              # staged changes
+/review staged       # staged changes
+/review branch       # branch diff vs main
+/review src/api/     # specific directory
+```
+
+### /test
+Runs or generates tests.
+
+```
+/test                # run all tests
+/test run            # run all tests
+/test generate       # generate missing tests
+/test coverage       # run with coverage
+/test src/utils/     # test specific files
+```
+
+### /deploy
+Deploys locally using containers.
+
+```
+/deploy              # default local deployment
+/deploy docker       # force Docker
+/deploy podman       # force Podman
+```
+
+### /pr
+Creates a pull request. For Neuronic projects, uses GEN-XXX naming.
+
+```
+/pr                  # PR against main
+/pr develop          # PR against develop
+```
+
+### /diagnose
+Investigates a bug.
+
+```
+/diagnose "Login fails with 500 error after password reset"
+```
+
+### /secure
+Runs a full security audit.
+
+```
+/secure
+```
+
+### /status
+Shows project health dashboard.
+
+```
+/status
+```
+
+### /migrate
+Plans technology migration.
+
+```
+/migrate flutter react-native
+/migrate github-actions forgejo
+/migrate javascript typescript
+```
