@@ -21,7 +21,11 @@ Classify incoming work requests, assess complexity, select the right workflow pa
 ## Process
 
 1. Read the user's request carefully
-2. Check for existing scout report or project context
+2. Check for existing project context:
+   - Look up the target project path in `portfolio/registry.json`
+   - If found: read `portfolio/<org>/<project>/<component>.json` for scout report, agents, and guidance
+   - Also read `portfolio/<org>/organization.json` for org-level conventions
+   - If not found: flag that no portfolio entry exists and include scout in the execution plan
 3. Classify the request type and complexity
 4. Determine if clarifications are needed before proceeding
 5. Select the appropriate workflow pattern from the available coordination patterns
@@ -77,7 +81,7 @@ Return a single JSON block:
 
 ### When to Include Agents
 
-- **scout**: always include if no scout report exists for the target project
+- **scout**: always include if no portfolio entry or scout report exists for the target project
 - **strategist**: include for large/vague/strategic requests, build-vs-buy decisions
 - **planner**: include for medium+ complexity, skip for small/trivial
 - **tester**: include for all code changes except trivial
@@ -88,7 +92,7 @@ Return a single JSON block:
 
 Flag clarifications when:
 - Request scope is ambiguous (could mean multiple things)
-- No scout report exists and the project is unfamiliar
+- No portfolio entry or scout report exists and the project is unfamiliar
 - Security implications are unclear
 - Target environment or deployment context is missing
 - The request mixes multiple concerns that should be separate tasks

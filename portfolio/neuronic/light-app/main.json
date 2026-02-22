@@ -1,0 +1,78 @@
+{
+  "name": "Light App Mobile",
+  "path": "/Users/tekantgundogan/Documents/NeuronicRepos/light-app/main",
+  "role": "mobile-frontend",
+  "onboarded_at": "2026-02-22",
+  "last_scanned": "2026-02-22",
+  "scout_report": {
+    "language": "dart",
+    "language_version": "3.x",
+    "framework": "flutter",
+    "framework_version": "3.38.5",
+    "state_management": ["getx", "bloc"],
+    "auth": "aws-cognito-amplify",
+    "cloud_services": ["firebase-analytics", "firebase-crashlytics", "firebase-messaging"],
+    "local_db": "sqlite-sqflite",
+    "di": "get_it",
+    "build_flavors": ["dev", "stage", "production"],
+    "testing": ["flutter-test", "maestro"],
+    "ci_cd": "github-actions",
+    "platform": "mobile"
+  },
+  "agents": {
+    "recommended": [
+      "coder",
+      "coder-frontend",
+      "coder-mobile",
+      "tester",
+      "reviewer",
+      "security-auditor",
+      "debugger",
+      "ci-cd",
+      "documenter",
+      "dependency-manager"
+    ],
+    "dispatch_notes": {
+      "coder-mobile": "Android/iOS native layer, BLE, platform channels",
+      "coder-frontend": "Flutter UI, widgets, theming, design system",
+      "coder": "General Dart/Flutter business logic, services, models",
+      "security-auditor": "Focus on Cognito/Firebase auth flows, local storage security",
+      "tester": "flutter test for unit/widget, Maestro for E2E",
+      "ci-cd": "GitHub Actions workflows, build flavors"
+    }
+  },
+  "guidance": {
+    "stack_summary": "Dart 3.x / Flutter 3.38.5 / GetX + BLoC / AWS Cognito / Firebase / SQLite / GetIt DI",
+    "structure": [
+      "lib/core/ — DI, design system, utilities, services",
+      "lib/features/ — Feature-based screens",
+      "lib/screens/ — UI screens (auth, home, profile, settings)",
+      "lib/widgets/ — Reusable components",
+      "lib/models/ — Data models and DTOs",
+      "lib/network/ — API repositories (cloud + SQLite)",
+      "lib/services/ — Business logic",
+      "lib/theme/ — Theming and design tokens",
+      "test/ — Unit and widget tests",
+      "regression/ — Maestro E2E scripts"
+    ],
+    "conventions": [
+      "Single quotes preferred",
+      "Const constructors where possible",
+      "Repository pattern for data access",
+      "Feature-based folder organization",
+      "dart format enforced in CI",
+      "Semantic versioning with build number"
+    ],
+    "ci_cd": [
+      "PR validation: format check → analyze → unit tests → coverage → E2E (Maestro)",
+      "Dev release: auto on merge to main (Firebase App Distribution + TestFlight)",
+      "Stage/Prod: triggered by release/v* branches"
+    ],
+    "testing": [
+      "Unit: flutter test --coverage",
+      "E2E: Maestro scripts in regression/",
+      "Coverage filtered via scripts/filter_coverage.dart"
+    ]
+  },
+  "custom_rules": []
+}

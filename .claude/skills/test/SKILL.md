@@ -14,7 +14,11 @@ Run and generate tests for the project.
 
 ## Steps
 
-1. Use the **scout** agent (model: haiku) to detect the testing framework if not already known
+1. **Load portfolio context**:
+   - Resolve the target project path (from cwd or arguments)
+   - Look up the path in `portfolio/registry.json` → get `{org, project, component}`
+   - If found: read `portfolio/<org>/<project>/<component>.json` and `portfolio/<org>/organization.json`
+   - If not found: fall back to running the **scout** agent (model: haiku) to detect the testing framework inline
 
 2. Based on scope:
    - **run** (default): Execute the project's test suite using detected test runner

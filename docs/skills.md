@@ -4,7 +4,8 @@
 
 | Command | Purpose | Primary Agent |
 |---------|---------|---------------|
-| `/onboard [path]` | Apply architect to existing project | scout |
+| `/onboard [path] [rescan]` | Scan and register project in portfolio | scout |
+| `/portfolio [action]` | View and manage project portfolio | — |
 | `/scaffold [type] [name]` | Create new project from template | coder-infra |
 | `/review [scope]` | Comprehensive code review | reviewer |
 | `/test [scope]` | Run/generate tests, report coverage | tester |
@@ -18,10 +19,22 @@
 ## Details
 
 ### /onboard
-Scans an existing project, detects its tech stack, and generates architect configuration. Always run this first on a new project.
+Scans an existing project, detects its tech stack, and registers it in the architect portfolio. Always run this first on a new project. No files are written to the target repo.
 
 ```
 /onboard /path/to/project
+/onboard /path/to/project rescan
+/onboard /path/to/project --organization myorg
+```
+
+### /portfolio
+View and manage the project portfolio registry.
+
+```
+/portfolio                                    # list all registered projects
+/portfolio list                               # same as above
+/portfolio show neuronic/light-app/main       # show full profile
+/portfolio remove neuronic/light-app/main     # unregister a component
 ```
 
 ### /scaffold
