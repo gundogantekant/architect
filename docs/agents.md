@@ -2,7 +2,7 @@
 
 ## Overview
 
-18 specialized agents organized in 5 categories. The main Claude conversation orchestrates them — subagents cannot spawn other subagents.
+19 specialized agents organized in 5 categories. The main Claude conversation orchestrates them — subagents cannot spawn other subagents.
 
 ## Model Tiers
 
@@ -56,6 +56,7 @@
 | documenter | sonnet | 20 | Technical documentation |
 | api-designer | opus | 25 | API design, OpenAPI specs |
 | dependency-manager | haiku | 15 | Dependency updates, vulnerability scanning |
+| tracker | haiku | 10 | Work item tracking across sessions |
 | coder-infra | sonnet | 30 | Docker, compose, nginx, infrastructure |
 
 ## Usage
