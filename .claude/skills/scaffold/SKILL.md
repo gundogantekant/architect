@@ -31,11 +31,11 @@ Create a new project from a template.
    - Initialize git repository
    - Set up the project structure
 3. Run the **scout** agent on the new project to verify detection
-4. Generate CLAUDE.md for the new project with appropriate agent recommendations
+4. Run `/onboard` on the new project to register it in the portfolio with appropriate agent recommendations
 
 ## Output
 
 - New project directory at `./$ARGUMENTS.name`
 - Initialized git repository
-- Project-specific CLAUDE.md
+- Portfolio profile registered via `/onboard`
 - Detection report confirming setup
