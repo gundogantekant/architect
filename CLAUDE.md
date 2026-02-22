@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project provides 18 specialized Claude Code subagents and 10 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack.
+This project provides 19 specialized Claude Code subagents and 12 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack.
 
 ## Agent Dispatch Guide
 
@@ -28,6 +28,7 @@ This project provides 18 specialized Claude Code subagents and 10 slash commands
 | Documentation | documenter | sonnet |
 | API design/schemas | api-designer | opus |
 | Dependency management | dependency-manager | haiku |
+| Work item tracking | tracker | haiku |
 
 ### Coordination Patterns
 
@@ -116,6 +117,14 @@ All onboarded project context lives in `portfolio/` with a three-level hierarchy
 - Run `/onboard <path>` before dispatching implementation agents on a new project
 - Use `/onboard <path> rescan` to refresh an existing profile
 
+## Work Tracking
+
+Persistent backlog in `work/backlog.json` for cross-session task tracking. Use `/work` to view open items at session start. Items link to portfolio projects via `org/project/component` references.
+
+- PM suggests work items for medium+ complexity requests — create only after user confirmation
+- Use `/work log <ID> <message>` to record progress before ending a session
+- Statuses: `open`, `in-progress`, `blocked`, `done`, `cancelled`
+
 ## Rules
 
 - Run scout (or load portfolio) before dispatching implementation agents on any new project
@@ -141,4 +150,5 @@ All onboarded project context lives in `portfolio/` with a three-level hierarchy
 | /diagnose [issue] | Debug an issue |
 | /secure | Security audit |
 | /status | Project health check |
+| /work [subcommand] [args] | Track work items across sessions |
 | /migrate [from] [to] | Technology migration |

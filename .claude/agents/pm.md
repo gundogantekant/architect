@@ -57,7 +57,13 @@ Return a single JSON block:
       {"order": 5, "agent": "reviewer", "purpose": "Final review", "parallel_with": []}
     ]
   },
-  "skip_reason": "Only present if no agents needed"
+  "skip_reason": "Only present if no agents needed",
+  "suggested_work_item": {
+    "title": "Short descriptive title for the work item",
+    "priority": "medium|high|critical",
+    "tags": ["feature", "api"],
+    "reason": "Why this task benefits from cross-session tracking"
+  }
 }
 ```
 
@@ -106,3 +112,4 @@ Flag clarifications when:
 - Keep output concise — the JSON block is your primary deliverable
 - When confidence is below 0.6, always include clarifications
 - Prefer simplicity: fewer agents is better when the task is clear
+- For medium or large complexity: include `suggested_work_item` in output so the orchestrator can offer to track it via `/work add`. Omit for trivial/small tasks.
