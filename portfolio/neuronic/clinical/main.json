@@ -1,0 +1,89 @@
+{
+  "name": "Neuronic Clinical Dashboard",
+  "path": "/Users/tekantgundogan/Documents/NeuronicRepos/clinical/clinical-main",
+  "role": "web-dashboard",
+  "onboarded_at": "2026-02-22",
+  "last_scanned": "2026-02-22",
+  "scout_report": {
+    "language": "dart",
+    "language_version": ">=3.0.1 <4.0.0",
+    "framework": "flutter",
+    "framework_version": "3.32.4",
+    "state_management": ["getx"],
+    "auth": "aws-cognito-amplify-oauth",
+    "cloud_services": ["aws-s3", "aws-cloudfront", "aws-cognito", "aws-pinpoint"],
+    "charts": "fl_chart",
+    "shared_dependency": "neuronic_core (git: NeuronicPBM/flutter-core.git)",
+    "responsive": "sizer",
+    "i18n": "intl + flutter_localizations",
+    "testing": ["flutter-test"],
+    "ci_cd": "github-actions",
+    "platform": "web"
+  },
+  "agents": {
+    "recommended": [
+      "coder",
+      "coder-frontend",
+      "tester",
+      "reviewer",
+      "security-auditor",
+      "debugger",
+      "ci-cd",
+      "documenter",
+      "dependency-manager"
+    ],
+    "dispatch_notes": {
+      "coder-frontend": "Flutter web UI, GetX controllers, fl_chart dashboards, Sizer responsive layout",
+      "coder": "General Dart logic, repositories, models, API integration",
+      "security-auditor": "Cognito OAuth flows, API token handling, patient data access",
+      "ci-cd": "GitHub Actions: S3 deploy + CloudFront invalidation, multi-env",
+      "dependency-manager": "neuronic_core git dependency, Amplify packages"
+    }
+  },
+  "guidance": {
+    "stack_summary": "Dart 3.x / Flutter 3.32.4 / GetX / AWS Cognito OAuth / neuronic_core / fl_chart / Sizer / S3+CloudFront",
+    "structure": [
+      "lib/ui/auth/ — Auth screens, welcome, registration",
+      "lib/ui/main/ — Shell/navigation, MainBinding (DI)",
+      "lib/ui/analytics/ — Dashboard with charts",
+      "lib/ui/admin/ — Patient search + audit trail",
+      "lib/ui/widgets/ — Reusable UI components",
+      "lib/models/ — Data models with computed getters",
+      "lib/network/cloud/ — Repositories (Analytics, PatientSearch)",
+      "lib/l10n/ — Localization strings (ARB files)",
+      "lib/generated/ — Auto-generated l10n code",
+      "env/ — Environment configs (CI-generated from secrets)"
+    ],
+    "conventions": [
+      "MVC with GetX: Controllers → UI Screens → Repositories → Models",
+      "MainBinding registers services at startup (AuthService, Repositories)",
+      "Rx<T> observables for all reactive state",
+      "30-second timeout on all API calls (TimeoutHandler)",
+      "Landscape-only orientation, tablet-optimized (webTabletAdaptiveModeOn)",
+      "S.current.translationKey for i18n strings",
+      "Flutter lints ^2.0.0 enforced"
+    ],
+    "ci_cd": [
+      "PR check: flutter analyze + build validation",
+      "Dev deploy: push to main → S3 sync + CloudFront invalidation",
+      "Stage/Prod deploy: push to release/v* → multi-env S3 + CloudFront",
+      "Auto semantic versioning from commit message (major/minor/patch detection)"
+    ],
+    "testing": [
+      "flutter test for unit/widget tests",
+      "flutter analyze for static analysis",
+      "Minimal test coverage currently"
+    ],
+    "api_endpoints": [
+      "/dashboard/get-dashboard-data — Analytics",
+      "/dashboard/get-demographics-data — Demographics",
+      "/dashboard/patient-search — Patient search (admin-only)"
+    ]
+  },
+  "custom_rules": [
+    "Depends on neuronic_core (shared-core-lib) via git dependency",
+    "Env files generated from GitHub secrets at CI time, not committed",
+    "Social auth providers: Google, Apple via Cognito OAuth",
+    "S3 buckets: neuronic-dashboard-dev, stage-neuronic-dashboard, neuronic-dashboard"
+  ]
+}

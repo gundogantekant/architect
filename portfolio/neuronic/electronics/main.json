@@ -1,0 +1,55 @@
+{
+  "name": "Neuronic Electronics",
+  "path": "/Users/tekantgundogan/Documents/NeuronicRepos/electronics",
+  "role": "hardware-design",
+  "onboarded_at": "2026-02-22",
+  "last_scanned": "2026-02-22",
+  "scout_report": {
+    "eda_tools": ["altium-designer", "kicad-9"],
+    "simulation": "ltspice-xvii",
+    "file_types": [".PrjPcb", ".SchDoc", ".PcbDoc", ".kicad_pcb", ".kicad_sch", ".kicad_pro", ".asc", ".gbr", ".drl"],
+    "hardware_variants": ["TK-02-M (main)", "TK-02-L (low-power)", "TK-02-KEY"],
+    "manufacturing_outputs": "gerber-files",
+    "ci_cd": "none",
+    "platform": "hardware",
+    "versioning": "TK-02-<VARIANT>_<MAJOR>.<MINOR>",
+    "latest_versions": {
+      "M": "3.64",
+      "L": "3.31",
+      "KEY": "3.41"
+    },
+    "migration_note": "Transitioning from Altium to KiCAD (TK-02-M_3.64 is KiCAD)"
+  },
+  "agents": {
+    "recommended": [
+      "reviewer",
+      "documenter"
+    ],
+    "dispatch_notes": {
+      "reviewer": "Limited to documentation review, version tracking, BOM verification",
+      "documenter": "HW versioning docs, EMC compliance docs, cable design specs"
+    }
+  },
+  "guidance": {
+    "stack_summary": "Altium Designer + KiCAD 9 / LTspice XVII / Gerber manufacturing outputs",
+    "structure": [
+      "TK-02-M_3.64/ — Latest M-variant (KiCAD), Gerbers",
+      "TK-02-L_3.31/ — Latest L-variant (Altium)",
+      "TK-02-KEY_3.4/ — Latest KEY-variant",
+      "simulations/ — LTspice simulation workspace (7 active projects)",
+      "calculations/ — Engineering calculations (PowerPoint)",
+      "archived_projects/ — 20+ previous versions"
+    ],
+    "conventions": [
+      "Project naming: TK-02-<VARIANT>_<MAJOR>.<MINOR>",
+      "Gerber files committed to repo for manufacturing traceability",
+      "HW_Versioning.xlsx tracks all hardware revisions",
+      "No CI/CD — manual workflows"
+    ]
+  },
+  "custom_rules": [
+    "Hardware-only repo — limited agent applicability",
+    "Binary files (PCB layouts, schematics) not suitable for code review agents",
+    "LTspice simulations in simulations/ for circuit analysis"
+  ]
+}

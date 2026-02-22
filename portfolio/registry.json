@@ -5,6 +5,36 @@
       "org": "neuronic",
       "project": "light-app",
       "component": "main"
+    },
+    "/Users/tekantgundogan/Documents/NeuronicRepos/cloud/cloud-main": {
+      "org": "neuronic",
+      "project": "cloud",
+      "component": "main"
+    },
+    "/Users/tekantgundogan/Documents/NeuronicRepos/firmware/LIGHT-firmware": {
+      "org": "neuronic",
+      "project": "firmware",
+      "component": "main"
+    },
+    "/Users/tekantgundogan/Documents/NeuronicRepos/flasher": {
+      "org": "neuronic",
+      "project": "flasher",
+      "component": "main"
+    },
+    "/Users/tekantgundogan/Documents/NeuronicRepos/clinical/clinical-main": {
+      "org": "neuronic",
+      "project": "clinical",
+      "component": "main"
+    },
+    "/Users/tekantgundogan/Documents/NeuronicRepos/electronics": {
+      "org": "neuronic",
+      "project": "electronics",
+      "component": "main"
+    },
+    "/Users/tekantgundogan/Documents/NeuronicRepos/shared-core-lib": {
+      "org": "neuronic",
+      "project": "shared-core-lib",
+      "component": "main"
     }
   }
 }
