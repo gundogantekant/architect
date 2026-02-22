@@ -10,7 +10,11 @@ Run a comprehensive security audit.
 
 ## Steps
 
-1. Use the **scout** agent to detect the project stack (if not already known)
+1. **Load portfolio context**:
+   - Resolve the target project path (from cwd or arguments)
+   - Look up the path in `portfolio/registry.json` → get `{org, project, component}`
+   - If found: read `portfolio/<org>/<project>/<component>.json` and `portfolio/<org>/organization.json`
+   - If not found: fall back to running the **scout** agent to detect the project stack inline
 
 2. Use the **security-auditor** agent (model: opus) to perform a full audit:
    - OWASP Top 10 analysis

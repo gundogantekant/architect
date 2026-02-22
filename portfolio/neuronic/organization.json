@@ -1,0 +1,14 @@
+{
+  "name": "Neuronic",
+  "path_root": "/Users/tekantgundogan/Documents/NeuronicRepos",
+  "path_alias": "/Users/tekantgundogan/neuron",
+  "conventions": {
+    "branch_prefix": "GEN-",
+    "pr_title_pattern": "GEN-#### description"
+  },
+  "rules": [
+    "PR titles and branches must use GEN-#### naming",
+    "Never push to main directly"
+  ],
+  "projects": ["light-app", "cloud", "firmware", "flasher"]
+}

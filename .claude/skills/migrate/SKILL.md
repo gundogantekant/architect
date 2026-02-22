@@ -17,7 +17,11 @@ Plan and assist with technology migration.
 
 ## Steps
 
-1. Use the **scout** agent to understand the current project state
+1. **Load portfolio context**:
+   - Resolve the target project path (from cwd or arguments)
+   - Look up the path in `portfolio/registry.json` → get `{org, project, component}`
+   - If found: read `portfolio/<org>/<project>/<component>.json` and `portfolio/<org>/organization.json`
+   - If not found: fall back to running the **scout** agent to understand the current project state
 
 2. Use the **planner** agent (model: opus) to create a migration plan:
    - Analyze the scope of migration from `$ARGUMENTS.from` to `$ARGUMENTS.to`

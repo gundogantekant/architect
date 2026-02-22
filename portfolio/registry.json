@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "entries": {
+    "/Users/tekantgundogan/Documents/NeuronicRepos/light-app/main": {
+      "org": "neuronic",
+      "project": "light-app",
+      "component": "main"
+    }
+  }
+}
