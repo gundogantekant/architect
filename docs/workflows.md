@@ -64,6 +64,25 @@ strategist -> planner -> coders -> tester -> reviewer
 
 Strategist evaluates the request and produces a recommendation before any architecture work begins. Use when the request is vague, potentially over-scoped, or when there may be a simpler alternative to building.
 
+## 7. PM-Guided Dispatch
+
+**Use for**: Non-trivial work requests where the right workflow or agent selection is not obvious
+
+```
+user request -> pm (triage + classify)
+                    |
+          +-- clarifications needed? --> ask user first
+          +-- ready -----------------> follow execution plan:
+                    |
+                    +-- scout (if no context)
+                    +-- strategist (if strategic/vague)
+                    +-- planner (if medium/large)
+                    +-- coder-* (implementation, parallel when independent)
+                    +-- tester -> reviewer (quality)
+```
+
+PM classifies the request (type, complexity), selects the workflow pattern, orders agents, and flags missing context. The main conversation follows PM's execution plan. Skip PM for slash commands, direct questions, trivial tasks, and explicit agent invocations.
+
 ## Orchestration Rules
 
 - The main Claude conversation acts as orchestrator
@@ -71,4 +90,6 @@ Strategist evaluates the request and produces a recommendation before any archit
 - Pass scout's detection report to all subsequent agents
 - Use parallel dispatch for independent work
 - Use sequential dispatch when output feeds the next step
-- Read-only agents (reviewer, security-auditor, performance) never modify code
+- For non-trivial work requests, invoke PM first to get a dispatch plan
+- Skip PM for slash commands, direct questions, trivial tasks, and explicit agent invocations
+- Read-only agents (reviewer, security-auditor, performance, pm) never modify code

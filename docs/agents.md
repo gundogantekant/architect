@@ -2,7 +2,7 @@
 
 ## Overview
 
-17 specialized agents organized in 5 categories. The main Claude conversation orchestrates them — subagents cannot spawn other subagents.
+18 specialized agents organized in 5 categories. The main Claude conversation orchestrates them — subagents cannot spawn other subagents.
 
 ## Model Tiers
 
@@ -19,6 +19,7 @@
 
 | Agent | Model | Max Turns | Purpose |
 |-------|-------|-----------|---------|
+| pm | sonnet | 10 | Request classification, dispatch planning |
 | scout | haiku | 15 | Project scanning, tech stack detection |
 | strategist | opus | 25 | Strategic evaluation, feasibility, build-vs-buy |
 | planner | opus | 30 | Architecture decisions, task decomposition |
@@ -66,4 +67,4 @@ Task(subagent_type="scout", model="haiku", prompt="Scan /path/to/project...")
 Task(subagent_type="coder", prompt="Implement feature X based on this plan...")
 ```
 
-Read-only agents (reviewer, security-auditor, performance, strategist) do not modify files — except strategist can write decision documents to `docs/`. Implementation agents (coder-*) have file write access.
+Read-only agents (reviewer, security-auditor, performance, strategist, pm) do not modify files — except strategist can write decision documents to `docs/`. Implementation agents (coder-*) have file write access.
