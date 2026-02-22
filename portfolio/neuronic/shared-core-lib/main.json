@@ -1,0 +1,71 @@
+{
+  "name": "Neuronic Core Library",
+  "path": "/Users/tekantgundogan/Documents/NeuronicRepos/shared-core-lib",
+  "role": "shared-library",
+  "onboarded_at": "2026-02-22",
+  "last_scanned": "2026-02-22",
+  "scout_report": {
+    "language": "dart",
+    "language_version": ">=3.0.1 <4.0.0",
+    "framework": "flutter",
+    "package_name": "neuronic_core",
+    "package_version": "0.1.13",
+    "auth": "aws-cognito-amplify",
+    "cloud_services": ["aws-cognito", "aws-pinpoint"],
+    "key_libraries": ["getx", "amplify_flutter", "amplify_auth_cognito", "amplify_analytics_pinpoint", "dart_jsonwebtoken", "http", "flutter_svg", "sizer", "get_storage"],
+    "testing": ["flutter-test"],
+    "ci_cd": "github-actions",
+    "platform": "cross-platform-library"
+  },
+  "agents": {
+    "recommended": [
+      "coder",
+      "coder-frontend",
+      "tester",
+      "reviewer",
+      "security-auditor",
+      "dependency-manager"
+    ],
+    "dispatch_notes": {
+      "coder": "Core services (auth, API, token management), data models, utilities",
+      "coder-frontend": "Reusable widgets, theme system, design tokens",
+      "security-auditor": "Cognito auth flows, JWT token management, API service security",
+      "dependency-manager": "Pub.dev dependencies, version alignment with consuming apps",
+      "reviewer": "API surface review, breaking change detection"
+    }
+  },
+  "guidance": {
+    "stack_summary": "Dart 3.x / Flutter / neuronic_core package / AWS Cognito + Pinpoint / GetX / JWT / GetStorage",
+    "structure": [
+      "lib/core.dart — Main library export file",
+      "lib/data/ — Data models (user, QEEG, protocol)",
+      "lib/services/ — Core services (auth, API, token management)",
+      "lib/network/ — Network layer (API constants, response models)",
+      "lib/theme/ — UI theme (colors, text styles, app theme, assets)",
+      "lib/widgets/ — Reusable UI components (buttons, inputs, protocols)",
+      "lib/utils/ — Extensions, validation, constants",
+      "lib/l10n/ — Localization (ARB files, CoreLocalizations)",
+      "fonts/ — Assistant font family (5 weights)"
+    ],
+    "conventions": [
+      "Package exports via core.dart",
+      "Feature-based folder structure",
+      "Dart 3.0+ with null safety",
+      "Flutter lints ^2.0.0 enforced",
+      "Semantic versioning (currently 0.1.13)"
+    ],
+    "ci_cd": [
+      "PR review: ai-code-review.yml (GitHub Actions)",
+      "No automated publish — manual version bumps"
+    ],
+    "testing": [
+      "flutter test (minimal coverage currently)",
+      "flutter analyze for static analysis"
+    ]
+  },
+  "custom_rules": [
+    "Consumed as git dependency by clinical-main and potentially light-app",
+    "Changes here can break downstream apps — coordinate version bumps",
+    "No CLAUDE.md in this repo — follows Neuronic global conventions"
+  ]
+}

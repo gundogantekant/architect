@@ -1,0 +1,93 @@
+{
+  "name": "Neuronic Cloud Backend",
+  "path": "/Users/tekantgundogan/Documents/NeuronicRepos/cloud/cloud-main",
+  "role": "cloud-backend",
+  "onboarded_at": "2026-02-22",
+  "last_scanned": "2026-02-22",
+  "scout_report": {
+    "language": "typescript",
+    "language_version": "^5.3.3",
+    "runtime": "node >=20.0.0 <21.0.0",
+    "framework": "aws-cdk",
+    "framework_version": "2.230.0",
+    "orm": "prisma ^5.19.1",
+    "architecture": "serverless-microservices",
+    "services": ["Program", "Surveys", "Firmware", "User", "Admin"],
+    "auth": "aws-cognito-user-pools",
+    "cloud_services": ["lambda", "api-gateway", "rds-postgresql", "dynamodb", "s3", "sqs", "sns", "iot-core", "cognito", "secrets-manager"],
+    "database": "postgresql-16-rds",
+    "validation": "zod",
+    "logging": "winston",
+    "bundler": "webpack",
+    "testing": ["jest"],
+    "ci_cd": "github-actions",
+    "platform": "serverless"
+  },
+  "agents": {
+    "recommended": [
+      "coder",
+      "coder-backend",
+      "coder-infra",
+      "tester",
+      "reviewer",
+      "security-auditor",
+      "debugger",
+      "ci-cd",
+      "documenter",
+      "api-designer",
+      "dependency-manager"
+    ],
+    "dispatch_notes": {
+      "coder-backend": "Lambda handlers, Prisma schemas, service business logic",
+      "coder-infra": "CDK stacks, API Gateway config, IAM roles, environment setup",
+      "coder": "General TypeScript logic, Zod schemas, shared utilities",
+      "api-designer": "REST API endpoints, request/response schemas, Cognito auth flows",
+      "security-auditor": "Cognito auth, IAM policies, Secrets Manager usage, IoT certificates",
+      "tester": "Jest tests, requires local PostgreSQL via docker-compose",
+      "ci-cd": "GitHub Actions workflows, multi-service build ordering"
+    }
+  },
+  "guidance": {
+    "stack_summary": "TypeScript 5 / AWS CDK 2.230 / Prisma 5 / PostgreSQL 16 / Lambda / API Gateway + Cognito / Zod / Jest",
+    "structure": [
+      "Services/Program/ — Protocol and program management",
+      "Services/Surveys/ — Survey data collection",
+      "Services/Firmware/ — Device firmware management",
+      "Services/User/ — User account, device, and certificate management",
+      "Services/Admin/ — Dashboard, patient search (depends on Program, Surveys, User)",
+      "scripts/ — Build orchestration (build-all.js, ci-build-service.js)",
+      "docs/ — Development guides and infrastructure diagrams",
+      "test/ — Jest configuration and test files"
+    ],
+    "conventions": [
+      "4-space indentation, double quotes, semicolons (ESLint enforced)",
+      "Strict TypeScript with strict null checks",
+      "Only TODO and DECISION tags allowed, no regular comments",
+      "Definitive variable names, no abbreviations",
+      "Repository pattern via Prisma clients per service",
+      "Zod schemas for runtime validation",
+      "Winston logging with try-catch error handling",
+      "Husky + lint-staged pre-commit hooks"
+    ],
+    "ci_cd": [
+      "PR check: lint → format → parallel builds (Program, Surveys, Firmware, User) → Admin (sequential) → parallel tests → drift detection",
+      "Dev deploy: auto on merge to main",
+      "Stage/Prod deploy: triggered by release/v* branches",
+      "Custom semantic versioning from PR titles (major/minor/patch)"
+    ],
+    "testing": [
+      "Jest with ts-jest for TypeScript",
+      "Requires local PostgreSQL via docker-compose (port 5433)",
+      "Per-service Prisma client generation before tests"
+    ],
+    "build_order": [
+      "Program, Surveys, Firmware, User can build in parallel",
+      "Admin must build after Program, Surveys, User (depends on their Prisma clients)"
+    ]
+  },
+  "custom_rules": [
+    "Service dependency order: Admin depends on Program + Surveys + User Prisma clients",
+    "Lambda handlers require copy:binaries step for Prisma .node files",
+    "Environment selection via CDK context: --context env=dev|staging|prod"
+  ]
+}

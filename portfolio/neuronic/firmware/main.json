@@ -1,0 +1,86 @@
+{
+  "name": "LIGHT Firmware",
+  "path": "/Users/tekantgundogan/Documents/NeuronicRepos/firmware/LIGHT-firmware",
+  "role": "embedded-firmware",
+  "onboarded_at": "2026-02-22",
+  "last_scanned": "2026-02-22",
+  "scout_report": {
+    "language": "c",
+    "language_version": "c99/c11",
+    "framework": "esp-idf",
+    "framework_version": "5.4",
+    "mcu": "esp32-s3",
+    "connectivity": ["ble-nimble", "wifi", "mqtt-aws-iot"],
+    "cloud_services": ["aws-iot-core", "s3-firmware-storage"],
+    "components": ["aws_mqtt_agent", "ble_stack", "command_handler", "firmware_update", "neuronic-drivers", "nvs_helpers", "program", "transport", "filesystem", "ds1307", "rv3028"],
+    "build_system": "cmake-idf.py",
+    "testing": ["python-bleak-ble-test"],
+    "ci_cd": "github-actions",
+    "platform": "embedded",
+    "security": ["secure-boot-v2", "flash-encryption-aes128", "nvs-encryption", "fleet-provisioning-pkcs11"]
+  },
+  "agents": {
+    "recommended": [
+      "coder",
+      "reviewer",
+      "security-auditor",
+      "debugger",
+      "ci-cd",
+      "documenter"
+    ],
+    "dispatch_notes": {
+      "coder": "C code for ESP-IDF components, FreeRTOS tasks, BLE/MQTT handlers",
+      "reviewer": "Focus on memory safety, resource cleanup, esp_err_t handling",
+      "security-auditor": "Secure boot, flash encryption, certificate management, PKCS#11",
+      "debugger": "Serial monitor (idf.py monitor), BLE test scripts, partition analysis",
+      "ci-cd": "GitHub Actions release workflows, multi-env firmware builds"
+    }
+  },
+  "guidance": {
+    "stack_summary": "C / ESP-IDF 5.4 / ESP32-S3 / FreeRTOS / BLE NimBLE / AWS IoT MQTT / CMake",
+    "structure": [
+      "main/ — Entry point (app_main.c), Kconfig hardware selection",
+      "components/aws_mqtt_agent/ — AWS IoT connectivity, fleet provisioning",
+      "components/ble_stack/ — BLE GAP/GATT services",
+      "components/command_handler/ — JSON command parser and dispatcher",
+      "components/neuronic/ — Hardware drivers (buttons, buzzer, LEDs, PWM, power, state machine)",
+      "components/firmware_update/ — OTA firmware update over HTTPS",
+      "components/program/ — Treatment program execution with timers",
+      "components/transport/ — BLE/MQTT abstraction + SPIFFS message queue",
+      "components/nvs_helpers/ — NVS partition operations",
+      "docs/ — Serial ID management, certificate docs, flashing guides",
+      "tools/ — Manufacturing tools (UUID generation, factory config)",
+      "test/ — Python BLE test scripts"
+    ],
+    "conventions": [
+      "ESP-IDF coding style: snake_case functions, UPPERCASE macros",
+      "esp_err_t return codes for error handling",
+      "ESP_LOG* macros for logging with TAG per component",
+      "Static keyword for internal functions",
+      "cJSON for all JSON serialization",
+      "FreeRTOS queues, timers, event groups for concurrency",
+      "idf_component_register() for component dependencies"
+    ],
+    "ci_cd": [
+      "Production release: tag v*.rel → builds for all 3 environments → S3 upload + GitHub release",
+      "Dev release: tag v*.dev → builds dev only → dev S3 upload",
+      "Version from sdkconfig.defaults (MODEL.MAJOR.MINOR)"
+    ],
+    "testing": [
+      "BLE functional test: python test/bletest.py --name Neuronic_Light_XXXXXX",
+      "Serial monitor: idf.py monitor",
+      "No unit test framework currently"
+    ],
+    "hardware_configs": [
+      "CONFIG_USE_DEVKIT — ESP32-S3 DevKit",
+      "CONFIG_USE_PCB_3_0 — Custom PCB v3.0",
+      "CONFIG_USE_PCB_3_1 — Custom PCB v3.1 (default)"
+    ]
+  },
+  "custom_rules": [
+    "Commands arrive via BLE (primary) or MQTT (when WiFi connected), JSON-based protocol",
+    "Partition table: factory NVS (12K unencrypted) + OTA A/B (2MB each) + SPIFFS message queue (3.8MB)",
+    "Fleet provisioning uses claim certificates embedded at compile time",
+    "Production builds require: cat sdkconfig.secure >> sdkconfig.defaults before build"
+  ]
+}

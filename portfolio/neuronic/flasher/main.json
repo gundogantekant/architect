@@ -1,0 +1,80 @@
+{
+  "name": "Neuronic Flasher",
+  "path": "/Users/tekantgundogan/Documents/NeuronicRepos/flasher",
+  "role": "mobile-tool",
+  "onboarded_at": "2026-02-22",
+  "last_scanned": "2026-02-22",
+  "scout_report": {
+    "language": "dart",
+    "language_version": "^3.10.0",
+    "framework": "flutter",
+    "framework_version": "3.38.5",
+    "state_management": ["getx"],
+    "auth": "aws-cognito-amplify",
+    "cloud_services": ["firebase-app-distribution", "testflight"],
+    "connectivity": ["ble-flutter-reactive-ble"],
+    "local_storage": "get_storage",
+    "testing": ["flutter-test"],
+    "ci_cd": "github-actions",
+    "platform": "mobile"
+  },
+  "agents": {
+    "recommended": [
+      "coder",
+      "coder-mobile",
+      "coder-frontend",
+      "tester",
+      "reviewer",
+      "debugger",
+      "ci-cd",
+      "dependency-manager"
+    ],
+    "dispatch_notes": {
+      "coder-mobile": "BLE communication, platform permissions, firmware transfer protocol",
+      "coder-frontend": "Flutter UI screens, GetX controllers, navigation flow",
+      "coder": "General Dart logic, services, models, environment config",
+      "debugger": "BLE connectivity issues, firmware transfer failures",
+      "ci-cd": "GitHub Actions: Android APK → Firebase, iOS → TestFlight"
+    }
+  },
+  "guidance": {
+    "stack_summary": "Dart 3.x / Flutter 3.38.5 / GetX / AWS Cognito Amplify / flutter_reactive_ble / GetStorage",
+    "structure": [
+      "lib/config/ — Amplify config, BLE UUIDs, environment loading",
+      "lib/models/ — Firmware version and scanned device models",
+      "lib/services/ — Auth, BLE, firmware, storage services",
+      "lib/controllers/ — Auth, scan, firmware selection, flash progress controllers",
+      "lib/screens/ — Login, scan, firmware selection, flash progress screens",
+      "env/ — Environment config (env_dev.json, CI-generated)",
+      "test/ — Widget tests"
+    ],
+    "conventions": [
+      "Service-Controller-Screen architecture with GetX",
+      "Rx observables for reactive state",
+      "Service initialization order: StorageService → AuthService → BleService → FirmwareService",
+      "JSON commands over BLE (MTU 512, 509 effective payload)",
+      "Flutter lints enforced"
+    ],
+    "ci_cd": [
+      "PR merge to main → auto version bump → Android APK (Firebase App Distribution) + iOS IPA (TestFlight)",
+      "Env file generated from GitHub secrets at build time",
+      "Flutter 3.38.5 pinned, JDK 17 for Android, Xcode 16.4 for iOS"
+    ],
+    "testing": [
+      "flutter test for unit/widget tests",
+      "flutter analyze for static analysis"
+    ],
+    "ble_protocol": {
+      "service_uuid": "4f5eab65-6ad4-4e1d-b057-93001bbc193f",
+      "command_characteristic": "555b7c23-e11a-42e6-ba85-7129080b7123",
+      "firmware_characteristic": "555b7c23-e11a-42e6-ba85-7129080b7125",
+      "flash_states": ["idle", "connecting", "enteringUpdateMode", "transferring", "completing", "restarting", "done"]
+    }
+  },
+  "custom_rules": [
+    "BLE firmware flashing tool — primary purpose is writing firmware to Neuronic devices",
+    "API endpoints: POST /list-firmware-versions, POST /firmware-download-version (Bearer token auth)",
+    "Android permissions: BLUETOOTH_SCAN, BLUETOOTH_CONNECT, ACCESS_FINE_LOCATION",
+    "iOS: Privacy - Bluetooth Peripheral Usage Description required"
+  ]
+}
