@@ -14,6 +14,7 @@
 | `/diagnose [issue]` | Debug and investigate an issue | debugger |
 | `/secure` | Run security audit | security-auditor |
 | `/status` | Project health dashboard | scout + dependency-manager |
+| `/work [subcommand]` | Track work items across sessions | tracker |
 | `/migrate [from] [to]` | Technology migration assistance | planner |
 
 ## Details
@@ -104,6 +105,19 @@ Shows project health dashboard.
 
 ```
 /status
+```
+
+### /work
+Tracks work items across sessions with persistent storage.
+
+```
+/work                              Show open + in-progress items
+/work add "Title" --project X --priority high --tags a,b
+/work show W-001                   Full detail + session log
+/work update W-001 in-progress     Change status
+/work log W-001 "Progress note"    Append session log entry
+/work list --status blocked        Filtered listing
+/work remove W-001                 Delete (with confirmation)
 ```
 
 ### /migrate
