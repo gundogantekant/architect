@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project provides 16 specialized Claude Code subagents and 10 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack.
+This project provides 17 specialized Claude Code subagents and 10 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack.
 
 ## Agent Dispatch Guide
 
@@ -11,6 +11,7 @@ This project provides 16 specialized Claude Code subagents and 10 slash commands
 | Task | Agent | Model |
 |------|-------|-------|
 | Scan a project's tech stack | scout | haiku |
+| Strategic evaluation of a request | strategist | opus |
 | Architecture/design decisions | planner | opus |
 | General code implementation | coder | inherit |
 | Frontend/UI work | coder-frontend | inherit |
@@ -33,7 +34,12 @@ The main Claude conversation acts as orchestrator. Subagents cannot spawn subage
 
 **Sequential Pipeline** (new features):
 ```
-scout → planner → coder → tester → reviewer
+scout → [strategist] → planner → coder → tester → reviewer
+```
+
+**Strategic Evaluation** (before committing to build):
+```
+strategist → planner → coders
 ```
 
 **Parallel Fan-Out** (full-stack features):
@@ -67,7 +73,7 @@ The **scout** agent produces a detection report that all other agents use for co
 - Pass the detection report context to every subsequent agent invocation
 - Use parallel fan-out when tasks are independent (frontend/backend/infra)
 - Use sequential pipeline when output feeds into the next step
-- Read-only agents (reviewer, security-auditor, performance) do not modify code
+- Read-only agents (reviewer, security-auditor, performance, strategist) do not modify code (strategist can write decision docs to docs/)
 - Implementation agents (coder-*) use acceptEdits permission mode
 - Follow the user's CLAUDE.md rules: no push to main, no --no-verify, feature branches only
 - For Neuronic projects, enforce GEN-XXX branch/PR naming

@@ -54,6 +54,16 @@ coder -> reviewer -> coder (address) -> reviewer (re-check)
 
 Iterate between implementation and review until all issues are resolved.
 
+## 6. Strategic Evaluation
+
+**Use for**: Ambiguous requests, large initiatives, build-vs-buy decisions
+
+```
+strategist -> planner -> coders -> tester -> reviewer
+```
+
+Strategist evaluates the request and produces a recommendation before any architecture work begins. Use when the request is vague, potentially over-scoped, or when there may be a simpler alternative to building.
+
 ## Orchestration Rules
 
 - The main Claude conversation acts as orchestrator
