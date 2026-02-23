@@ -8,9 +8,13 @@ user_invocable: true
 
 Generate a project health dashboard.
 
+## Agents Dispatched
+- **dependency-manager** (haiku) — dependency health
+- **scout** (haiku) — fallback detection
+
 ## Steps
 
-1. Follow `usecases/load-portfolio-context.md` (fallback: run scout to scan the project)
+1. Follow `usecases/load-portfolio-context.md` with depth **full** (fallback: run scout to scan the project)
 
 2. Follow `usecases/check-status.md`
 

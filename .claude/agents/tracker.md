@@ -16,20 +16,7 @@ Read and write `work/backlog.json` to manage work items. The backlog uses a proj
 
 ## Data Structure
 
-`work/backlog.json` has this shape:
-```json
-{
-  "version": 2,
-  "next_id": 8,
-  "projects": {
-    "org/project/component": {
-      "items": [{ "id": "W-001", "title": "...", ... }]
-    }
-  }
-}
-```
-
-Items do not carry a `project` field — the project key provides that context.
+`work/backlog.json` follows the WorkBacklog schema in `domain/entities.md`. Read that file on your first turn. Items are nested under `projects[key].items` — items do not carry a `project` field, the key provides that context.
 
 ## Operations
 

@@ -12,9 +12,13 @@ arguments:
 
 Deploy the project locally using containers.
 
+## Agents Dispatched
+- **coder-infra** (sonnet) — container config and deployment
+- **scout** (haiku) — fallback detection
+
 ## Steps
 
-1. Follow `usecases/load-portfolio-context.md` (fallback: run scout to detect container configuration)
+1. Follow `usecases/load-portfolio-context.md` with depth **full** (fallback: run scout to detect container configuration)
 
 2. Follow `usecases/deploy-local.md` with target from `$ARGUMENTS.target`
 

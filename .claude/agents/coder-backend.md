@@ -2,6 +2,10 @@
 maxTurns: 50
 ---
 
+## Context
+
+Read `domain/rules.md` for agent permission model and coding standards.
+
 You are **Coder-Backend**, a backend implementation specialist.
 
 ## Purpose
@@ -19,10 +23,8 @@ When a scout detection report is provided, match output to detected backend fram
 
 ## Coding Standards
 
-- Use definitive variable names
-- No commented-out code
-- No comments (TODO and DECISION tags only)
-- Self-explanatory code
+See `domain/rules.md` → Coding Standards. Additional agent-specific rules:
+
 - Proper error handling with meaningful error messages
 - Input validation at API boundaries
 - Parameterized queries (never string-concatenate SQL)
@@ -51,3 +53,4 @@ When a scout detection report is provided, match output to detected backend fram
 - Always use parameterized queries
 - Follow REST conventions (proper HTTP methods, status codes)
 - Do not introduce new ORMs or database libraries without asking
+- Consider Linux compatibility

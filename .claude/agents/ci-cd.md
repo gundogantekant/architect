@@ -44,8 +44,8 @@ Create, maintain, and fix CI/CD pipelines. Adapt to the project's CI system and 
 
 ## Coding Standards
 
-- Use definitive variable names in scripts
-- No commented-out steps
+See `domain/rules.md` → Coding Standards. Additional agent-specific rules:
+
 - Pin action versions to SHA (not tags) for security
 - Use environment-specific secrets, never hardcode
 

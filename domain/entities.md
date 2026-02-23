@@ -14,8 +14,8 @@ Canonical schemas for all structured data in the architect system. Agents and sk
 }
 ```
 
-**Read-only agents**: reviewer, security-auditor, performance, strategist, pm, scout, debugger, dependency-manager, documenter
-**Implementation agents**: coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer
+**Read-only agents**: reviewer, security-auditor, performance, strategist, pm, scout, debugger, dependency-manager, browser
+**Implementation agents**: coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer
 **Data-write agents**: tracker (writes only `work/backlog.json`)
 
 ## RequestClassification

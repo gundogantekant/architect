@@ -37,8 +37,8 @@ Business rules, heuristics, and decision logic for the architect system. Agents 
 
 | Category | Agents | Can modify code | Can write data |
 |----------|--------|-----------------|----------------|
-| Read-only | reviewer, security-auditor, performance, strategist, pm, scout, debugger, dependency-manager, documenter | No | No |
-| Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer | Yes | No |
+| Read-only | reviewer, security-auditor, performance, strategist, pm, scout, debugger, dependency-manager, browser | No | No |
+| Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer | Yes | No |
 | Data-write | tracker | No | Yes (`work/backlog.json` only) |
 
 **Exception**: strategist can write decision docs to `docs/`.
@@ -76,3 +76,37 @@ When PM's classification confidence is below **0.6**, always include clarificati
 - Direct questions about code or architecture — answer directly
 - Trivial tasks (typo fix, single-line change) — dispatch directly
 - Explicit agent invocations where the user names the agent
+
+## Coding Standards
+
+Shared standards enforced by all implementation agents.
+
+- Use definitive variable names
+- Do not write commented-out code
+- Do not write comments in code files (keep TODO and DECISION tags only)
+- Write self-explanatory code
+- Prefer editing existing files over creating new ones
+- Do not over-engineer or add unnecessary abstractions
+- Avoid introducing security vulnerabilities (OWASP Top 10)
+- Consider Linux compatibility
+
+## Error Recovery
+
+| Scenario | Action |
+|----------|--------|
+| Agent exceeds maxTurns | Report partial progress to user, suggest splitting the task |
+| Agent cannot proceed | Surface blockers to user, do not retry silently |
+| Tests fail after implementation | Dispatch debugger to investigate, then coder for fix |
+| Review finds critical issues | Coder addresses findings, re-review (max 2 iterations) |
+| Scout finds no recognizable stack | Report findings, ask user to clarify project structure |
+
+## Expanded Agent Inclusion Rules
+
+Additional inclusion conditions beyond the base Agent Inclusion Rules table.
+
+| Agent | Also include when |
+|-------|-------------------|
+| documenter | Public API changes, new modules or subsystems introduced |
+| dependency-manager | Package manifest changes (package.json, pubspec.yaml, requirements.txt, etc.) |
+| performance | Changes to hot paths, database queries, or render-heavy components |
+| ci-cd | Workflow file changes (.github/workflows/, .forgejo/workflows/) |

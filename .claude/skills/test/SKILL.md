@@ -12,9 +12,13 @@ arguments:
 
 Run and generate tests for the project.
 
+## Agents Dispatched
+- **tester** (sonnet) — test generation and execution
+- **scout** (haiku) — fallback stack detection
+
 ## Steps
 
-1. Follow `usecases/load-portfolio-context.md` (fallback: run scout to detect the testing framework)
+1. Follow `usecases/load-portfolio-context.md` with depth **full** (fallback: run scout to detect the testing framework)
 
 2. Follow `usecases/run-tests.md` with scope from `$ARGUMENTS.scope`
 

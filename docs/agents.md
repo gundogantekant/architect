@@ -2,7 +2,7 @@
 
 ## Overview
 
-19 specialized agents organized in 5 categories. The main Claude conversation orchestrates them — subagents cannot spawn other subagents.
+21 specialized agents organized in 6 categories. The main Claude conversation orchestrates them — subagents cannot spawn other subagents.
 
 ## Model Tiers
 
@@ -32,6 +32,7 @@
 | coder-frontend | inherit | 50 | UI, components, styling, client-side logic |
 | coder-backend | inherit | 50 | APIs, database, auth, middleware |
 | coder-mobile | inherit | 50 | Mobile-specific: platform code, device APIs |
+| refactorer | sonnet | 40 | Systematic code transformations |
 
 ### Quality
 
@@ -58,6 +59,12 @@
 | dependency-manager | haiku | 15 | Dependency updates, vulnerability scanning |
 | tracker | haiku | 10 | Work item tracking across sessions |
 | coder-infra | sonnet | 30 | Docker, compose, nginx, infrastructure |
+
+### Browser
+
+| Agent | Model | Max Turns | Purpose |
+|-------|-------|-----------|---------|
+| browser | sonnet | 30 | Browser automation via Playwright MCP |
 
 ## Usage
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project provides 19 specialized Claude Code subagents and 12 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack.
+This project provides 21 specialized Claude Code subagents and 15 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack.
 
 ## Architecture
 
@@ -11,7 +11,7 @@ Clean Architecture with four layers. Dependencies point inward only.
 | Layer | Location | Contents |
 |-------|----------|----------|
 | Domain | `domain/` | Entity schemas (`entities.md`), business rules (`rules.md`) |
-| Use Cases | `usecases/` | Workflow definitions (13 files, one per skill workflow) |
+| Use Cases | `usecases/` | Workflow definitions (16 files, one per skill workflow) |
 | Adapters | `.claude/agents/`, `.claude/skills/` | Agent prompts, skill entry points |
 | Infrastructure | `portfolio/`, `work/`, `templates/` | Data storage, project templates |
 
@@ -33,15 +33,17 @@ See `docs/architecture.md` for layer boundaries and dependency rules.
 | Mobile development | coder-mobile | inherit |
 | Infrastructure/DevOps | coder-infra | sonnet |
 | Write/run tests | tester | sonnet |
-| Code review | reviewer | opus |
+| Code review | reviewer | sonnet |
 | Security audit | security-auditor | opus |
 | Bug investigation | debugger | sonnet |
 | Performance optimization | performance | sonnet |
 | CI/CD pipelines | ci-cd | sonnet |
 | Documentation | documenter | sonnet |
-| API design/schemas | api-designer | opus |
+| API design/schemas | api-designer | sonnet |
 | Dependency management | dependency-manager | haiku |
 | Work item tracking | tracker | haiku |
+| Systematic refactoring | refactorer | sonnet |
+| Browser automation (E2E, visual) | browser | sonnet |
 
 ### Coordination Patterns
 
@@ -131,3 +133,6 @@ See `domain/entities.md` → WorkItem, WorkBacklog for schema, `domain/rules.md`
 | /status | Project health check |
 | /work [subcommand] [args] | Track work items across sessions |
 | /migrate [from] [to] | Technology migration |
+| /explain [path] [--focus area] | Codebase walkthrough |
+| /release [version] [--publish github] | Version bump, changelog, git tag |
+| /refactor [scope] | Systematic refactoring |

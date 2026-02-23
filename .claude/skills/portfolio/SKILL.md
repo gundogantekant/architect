@@ -12,6 +12,9 @@ arguments:
 
 View and manage the architect project portfolio.
 
+## Agents Dispatched
+- None (direct data operations on portfolio files)
+
 ## Steps
 
 1. **Parse the action** from `$ARGUMENTS.action` (default: `list`):

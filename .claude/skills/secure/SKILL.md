@@ -8,9 +8,13 @@ user_invocable: true
 
 Run a comprehensive security audit.
 
+## Agents Dispatched
+- **security-auditor** (opus) — OWASP analysis, secrets detection
+- **dependency-manager** (haiku) — CVE checks
+
 ## Steps
 
-1. Follow `usecases/load-portfolio-context.md` (fallback: run scout to detect the project stack)
+1. Follow `usecases/load-portfolio-context.md` with depth **full** (fallback: run scout to detect the project stack)
 
 2. Follow `usecases/security-audit.md`
 

@@ -22,6 +22,10 @@ Create a new project from a template.
 - **mobile-expo**: React Native + Expo + TypeScript
 - **fullstack**: Turborepo monorepo (backend + frontend)
 
+## Agents Dispatched
+- **coder-infra** (sonnet) — template setup
+- **scout** (haiku) — verification scan
+
 ## Steps
 
 Follow `usecases/scaffold-project.md` with:

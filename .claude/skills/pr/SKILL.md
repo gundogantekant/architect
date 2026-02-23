@@ -12,9 +12,12 @@ arguments:
 
 Create a pull request with an automated review summary.
 
+## Agents Dispatched
+- **reviewer** (sonnet) — change review and summary
+
 ## Steps
 
-1. Follow `usecases/load-portfolio-context.md` (only org conventions needed; fallback: proceed without prefix enforcement)
+1. Follow `usecases/load-portfolio-context.md` with depth **minimal** (only org conventions needed; fallback: proceed without prefix enforcement)
 
 2. Follow `usecases/create-pr.md` with base-branch from `$ARGUMENTS.base-branch`
 

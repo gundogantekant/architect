@@ -83,6 +83,16 @@ user request -> pm (triage + classify)
 
 PM classifies the request (type, complexity), selects the workflow pattern, orders agents, and flags missing context. The main conversation follows PM's execution plan. Skip PM for slash commands, direct questions, trivial tasks, and explicit agent invocations.
 
+## 8. Refactoring Pipeline
+
+**Use for**: Systematic code transformations
+
+```
+planner -> refactorer -> tester -> reviewer
+```
+
+Planner decomposes the refactoring into atomic steps. Refactorer executes transformations across files. Tester verifies behavior preservation. Reviewer confirms quality.
+
 ## Orchestration Rules
 
 - The main Claude conversation acts as orchestrator

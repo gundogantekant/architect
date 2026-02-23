@@ -7,7 +7,7 @@
 | `/onboard [path] [rescan]` | Scan and register project in portfolio | scout |
 | `/portfolio [action]` | View and manage project portfolio | — |
 | `/scaffold [type] [name]` | Create new project from template | coder-infra |
-| `/review [scope]` | Comprehensive code review | reviewer |
+| `/review [scope]` | Comprehensive code review | reviewer (sonnet) |
 | `/test [scope]` | Run/generate tests, report coverage | tester |
 | `/deploy [target]` | Local deployment via containers | coder-infra |
 | `/pr [base-branch]` | Create PR with review summary | reviewer |
@@ -16,6 +16,9 @@
 | `/status` | Project health dashboard | scout + dependency-manager |
 | `/work [subcommand]` | Track work items across sessions | tracker |
 | `/migrate [from] [to]` | Technology migration assistance | planner |
+| `/explain [path] [--focus area]` | Codebase walkthrough for onboarding | scout + documenter |
+| `/release [version]` | Version bump, changelog, git tag | documenter + coder + ci-cd |
+| `/refactor [scope]` | Systematic refactoring | planner + refactorer + tester + reviewer |
 
 ## Details
 
@@ -127,4 +130,33 @@ Plans technology migration.
 /migrate flutter react-native
 /migrate github-actions forgejo
 /migrate javascript typescript
+```
+
+### /explain
+Generates a structured architecture walkthrough for onboarding.
+
+```
+/explain                          # explain current project
+/explain /path/to/project         # explain specific project
+/explain --focus auth             # deep-dive into auth module
+```
+
+### /release
+Creates a release with version bump, changelog, and git tag.
+
+```
+/release patch                    # bump patch version
+/release minor                    # bump minor version
+/release major                    # bump major version
+/release 2.1.0                    # explicit version
+/release minor --publish github   # also create GitHub release
+```
+
+### /refactor
+Plans and executes systematic refactoring.
+
+```
+/refactor "Extract auth middleware into separate module"
+/refactor "Rename userService to accountService across codebase"
+/refactor "Migrate callbacks to async/await in api layer"
 ```

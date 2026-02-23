@@ -39,31 +39,7 @@ Classify incoming work requests, assess complexity, select the right workflow pa
 
 ## Output Format
 
-Return a single JSON block matching the DispatchPlan schema in `domain/entities.md`:
-
-```json
-{
-  "classification": {
-    "type": "feature|bugfix|refactor|question|review|deploy|maintenance|strategic|investigation",
-    "complexity": "trivial|small|medium|large",
-    "confidence": 0.85
-  },
-  "clarifications_needed": ["..."],
-  "execution_plan": {
-    "workflow": "sequential|parallel-fan-out|plan-then-execute|investigate-then-fix|strategic-evaluation|direct",
-    "steps": [
-      {"order": 1, "agent": "scout", "purpose": "Detect stack", "parallel_with": []}
-    ]
-  },
-  "skip_reason": "Only present if no agents needed",
-  "suggested_work_item": {
-    "title": "Short descriptive title",
-    "priority": "medium|high|critical",
-    "tags": ["feature", "api"],
-    "reason": "Why this task benefits from cross-session tracking"
-  }
-}
-```
+Return a single JSON block matching the DispatchPlan schema in `domain/entities.md`. Read that file on your first turn for the full schema structure. Key fields: `classification` (type, complexity, confidence), `execution_plan` (workflow, steps), optional `clarifications_needed`, optional `suggested_work_item` (medium+ only), optional `skip_reason`.
 
 ## Constraints
 

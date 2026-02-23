@@ -12,9 +12,12 @@ arguments:
 
 Run a comprehensive code review.
 
+## Agents Dispatched
+- **reviewer** (sonnet) — code review
+
 ## Steps
 
-1. Follow `usecases/load-portfolio-context.md` (fallback: proceed without portfolio context)
+1. Follow `usecases/load-portfolio-context.md` with depth **full** (fallback: proceed without portfolio context)
 
 2. Follow `usecases/review-code.md` with scope from `$ARGUMENTS.scope`
 

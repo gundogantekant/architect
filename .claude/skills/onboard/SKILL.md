@@ -18,6 +18,9 @@ arguments:
 
 Scan a project's tech stack and register it in the architect portfolio.
 
+## Agents Dispatched
+- **scout** (haiku) — technology detection
+
 ## Steps
 
 Follow `usecases/onboard-project.md` with:

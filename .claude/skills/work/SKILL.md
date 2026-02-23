@@ -15,6 +15,9 @@ arguments:
 
 Persistent work item tracking across sessions. Items are grouped by project key in `work/backlog.json`.
 
+## Agents Dispatched
+- **tracker** (haiku) — work item management
+
 ## Steps
 
 1. Determine project scope:

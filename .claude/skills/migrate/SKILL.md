@@ -15,9 +15,15 @@ arguments:
 
 Plan and assist with technology migration.
 
+## Agents Dispatched
+- **planner** (opus) — migration plan
+- **coder** variants (inherit) — implementation
+- **tester** (sonnet) — phase verification
+- **reviewer** (sonnet) — migration quality
+
 ## Steps
 
-1. Follow `usecases/load-portfolio-context.md` (fallback: run scout to understand the current project state)
+1. Follow `usecases/load-portfolio-context.md` with depth **full** (fallback: run scout to understand the current project state)
 
 2. Follow `usecases/migrate-stack.md` with from=`$ARGUMENTS.from` and to=`$ARGUMENTS.to`
 
