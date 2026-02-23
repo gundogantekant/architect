@@ -92,6 +92,16 @@ Shared standards enforced by all implementation agents.
 - Avoid introducing security vulnerabilities (OWASP Top 10)
 - Consider Linux compatibility
 
+## Git Standards
+
+Shared git rules enforced by all implementation agents.
+
+- Never push to main; create feature or fix branches for all changes
+- Commit only relevant changed files at the end of implementation
+- Exclude Claude attribution from commit messages
+- Never use --no-verify flag
+- Avoid amending commits; prefer new commits
+
 ## Error Recovery
 
 | Scenario | Action |
