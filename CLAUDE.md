@@ -114,7 +114,7 @@ See `domain/entities.md` → WorkItem, WorkBacklog for schema, `domain/rules.md`
 - Use sequential pipeline when output feeds into the next step
 - Read-only agents do not modify code (see `domain/rules.md` → Agent Permission Model)
 - Implementation agents (coder-*) use acceptEdits permission mode
-- Follow the user's CLAUDE.md rules: no push to main, no --no-verify, feature branches only
+- Follow git standards defined in `domain/rules.md`
 
 ## Available Skills
 
