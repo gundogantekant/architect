@@ -30,7 +30,7 @@ You will receive a command string. Parse and execute it:
 - Apply additional filters if provided (status, tag)
 - Output grouped by project with a header per project:
   ```
-  ### neuronic/pro-simple-app/main
+  ### acme/webapp/main
   | ID | Status | Priority | Title | Tags |
   ```
 - If no items match, say "No matching work items."
@@ -77,6 +77,13 @@ You will receive a command string. Parse and execute it:
 - Remove it from the project's `items` array
 - Write back
 - Output confirmation with the removed item's title and project
+
+## Missing File Handling
+
+If `work/backlog.json` does not exist, create it with:
+```json
+{"version": 2, "next_id": 1, "projects": {}}
+```
 
 ## Rules
 

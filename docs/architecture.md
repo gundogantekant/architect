@@ -49,9 +49,10 @@ Dependencies point inward only. Inner layers never reference outer layers.
 - Output formatting stays in agent prompts (adapter concern)
 
 ### Infrastructure (`portfolio/`, `work/`, `templates/`)
-- JSON data files (portfolio entries, backlog, registry)
-- Project templates for scaffolding
+- `portfolio/` and `work/` are gitignored instance data — created locally by `/onboard` and `/work` skills
+- `templates/` contains project scaffolding templates (tracked in git)
 - No business logic
+- See `docs/instance-data.md` for bootstrapping details
 
 ## Boundary Checks
 

@@ -13,7 +13,7 @@ Clean Architecture with four layers. Dependencies point inward only.
 | Domain | `domain/` | Entity schemas (`entities.md`), business rules (`rules.md`) |
 | Use Cases | `usecases/` | Workflow definitions (17 files, one per skill workflow) |
 | Adapters | `.claude/agents/`, `.claude/skills/` | Agent prompts, skill entry points |
-| Infrastructure | `portfolio/`, `work/`, `templates/` | Data storage, project templates |
+| Infrastructure | `portfolio/`, `work/`, `templates/` | Instance data (gitignored), project templates |
 
 See `docs/architecture.md` for layer boundaries and dependency rules.
 
@@ -79,7 +79,7 @@ See `domain/rules.md` for PM dispatch rules, workflow selection matrix, and agen
 
 ## Project Portfolio
 
-All onboarded project context lives in `portfolio/` with a three-level hierarchy: `portfolio/<org>/<project>/<component>.json`.
+All onboarded project context lives in `portfolio/` (gitignored, local instance data created by `/onboard`) with a three-level hierarchy: `portfolio/<org>/<project>/<component>.json`.
 
 ### Key Files
 
@@ -102,7 +102,7 @@ All skills follow `usecases/load-portfolio-context.md` as their first step. See 
 
 ## Work Tracking
 
-Persistent backlog in `work/backlog.json` using a project-keyed structure: items are nested under `projects["org/project/component"].items` instead of a flat array. IDs are globally unique (`W-XXX`). Use `/work` to view open items at session start.
+Persistent backlog in `work/backlog.json` (gitignored, local instance data created by `/work add`) using a project-keyed structure: items are nested under `projects["org/project/component"].items` instead of a flat array. IDs are globally unique (`W-XXX`). Use `/work` to view open items at session start.
 
 See `domain/entities.md` → WorkItem, WorkBacklog for schema, `domain/rules.md` → Work Item Rules for tracking rules.
 
@@ -115,7 +115,6 @@ See `domain/entities.md` → WorkItem, WorkBacklog for schema, `domain/rules.md`
 - Read-only agents do not modify code (see `domain/rules.md` → Agent Permission Model)
 - Implementation agents (coder-*) use acceptEdits permission mode
 - Follow the user's CLAUDE.md rules: no push to main, no --no-verify, feature branches only
-- For Neuronic projects, enforce GEN-XXX branch/PR naming
 
 ## Available Skills
 
