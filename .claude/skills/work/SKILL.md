@@ -13,13 +13,18 @@ arguments:
 
 # /work
 
-Persistent work item tracking across sessions.
+Persistent work item tracking across sessions. Items are grouped by project key in `work/backlog.json`.
 
 ## Steps
 
-Follow `usecases/track-work.md` with:
-- subcommand from `$ARGUMENTS.subcommand` (default: list)
-- args from `$ARGUMENTS.args`
+1. Determine project scope:
+   - If cwd is inside a known project (resolve via `portfolio/registry.json`), scope display to that project by default
+   - If no project context detected, show all projects
+   - Explicit `--project` flag overrides auto-detection
+2. Follow `usecases/track-work.md` with:
+   - subcommand from `$ARGUMENTS.subcommand` (default: list)
+   - args from `$ARGUMENTS.args`
+   - resolved project scope from step 1
 
 See `domain/entities.md` → WorkItem, WorkBacklog for data schemas.
 See `domain/rules.md` → Work Item Rules for ID format and status rules.
@@ -27,14 +32,14 @@ See `domain/rules.md` → Work Item Rules for ID format and status rules.
 ## Usage
 
 ```
-/work                                          Show open + in-progress items
-/work add "Migrate state management"           Create with defaults
+/work                                          Show open + in-progress items grouped by project
+/work add "Migrate state management"           Create under auto-detected project
 /work add "Add rate limiting" --project neuronic/cloud/main --priority high --tags api,feature
-/work show W-001                               Full detail + session log
+/work show W-001                               Full detail + session log (searches across projects)
 /work update W-001 in-progress                 Change status
 /work log W-001 "Completed investigation phase"  Append log entry
-/work list --status blocked                    Filter by status
-/work list --project neuronic/light-app/main   Filter by project
-/work list --tag refactor                      Filter by tag
+/work list --status blocked                    Filter by status across all projects
+/work list --project neuronic/light-app/main   Scope to one project
+/work list --tag refactor                      Filter by tag across all projects
 /work remove W-001                             Delete (with confirmation)
 ```

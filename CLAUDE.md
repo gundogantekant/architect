@@ -100,9 +100,9 @@ All skills follow `usecases/load-portfolio-context.md` as their first step. See 
 
 ## Work Tracking
 
-Persistent backlog in `work/backlog.json` for cross-session task tracking. Use `/work` to view open items at session start.
+Persistent backlog in `work/backlog.json` using a project-keyed structure: items are nested under `projects["org/project/component"].items` instead of a flat array. IDs are globally unique (`W-XXX`). Use `/work` to view open items at session start.
 
-See `domain/entities.md` → WorkItem for schema, `domain/rules.md` → Work Item Rules for tracking rules.
+See `domain/entities.md` → WorkItem, WorkBacklog for schema, `domain/rules.md` → Work Item Rules for tracking rules.
 
 ## Rules
 

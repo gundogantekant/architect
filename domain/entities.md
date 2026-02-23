@@ -135,7 +135,7 @@ Stored at `portfolio/<org>/organization.json`.
 
 ## WorkItem
 
-Stored in `work/backlog.json` items array.
+Stored in `work/backlog.json` under `projects[key].items`. The project key (`org/project/component`) provides the project context, so items do not carry a redundant `project` field.
 
 ```json
 {
@@ -143,7 +143,6 @@ Stored in `work/backlog.json` items array.
   "title": "string",
   "status": "open|in-progress|blocked|done|cancelled",
   "priority": "low|medium|high|critical",
-  "project": "string (org/project/component)",
   "description": "string",
   "created": "YYYY-MM-DD",
   "updated": "YYYY-MM-DD",
@@ -157,13 +156,17 @@ Stored in `work/backlog.json` items array.
 
 ## WorkBacklog
 
-Top-level structure of `work/backlog.json`.
+Top-level structure of `work/backlog.json`. Items are grouped under project keys.
 
 ```json
 {
-  "version": 1,
-  "items": [{ "$ref": "WorkItem" }],
-  "next_id": "number"
+  "version": 2,
+  "next_id": "number",
+  "projects": {
+    "org/project/component": {
+      "items": [{ "$ref": "WorkItem" }]
+    }
+  }
 }
 ```
 
