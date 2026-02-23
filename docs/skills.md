@@ -37,8 +37,8 @@ View and manage the project portfolio registry.
 ```
 /portfolio                                    # list all registered projects
 /portfolio list                               # same as above
-/portfolio show neuronic/light-app/main       # show full profile
-/portfolio remove neuronic/light-app/main     # unregister a component
+/portfolio show acme/webapp/main               # show full profile
+/portfolio remove acme/webapp/main             # unregister a component
 ```
 
 ### /scaffold
@@ -82,7 +82,7 @@ Deploys locally using containers.
 ```
 
 ### /pr
-Creates a pull request. For Neuronic projects, uses GEN-XXX naming.
+Creates a pull request. Uses org-specific naming conventions from portfolio when available.
 
 ```
 /pr                  # PR against main
