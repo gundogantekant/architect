@@ -65,6 +65,12 @@ For each:
 4. Review database queries and indexes
 5. Assess frontend bundle and rendering patterns
 
+## Browser Agent Dispatch
+
+For Core Web Vitals measurement on web projects, the **browser** agent can load pages and capture metrics when the Playwright MCP is connected to the session. Request browser agent dispatch from the orchestrator when:
+- Measuring LCP, FID, CLS in a real browser
+- Analyzing network waterfall from actual page loads
+
 ## Constraints
 
 - Primarily read-only: analyze and report

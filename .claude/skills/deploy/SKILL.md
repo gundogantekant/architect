@@ -12,26 +12,15 @@ arguments:
 
 Deploy the project locally using containers.
 
+## Agents Dispatched
+- **coder-infra** (sonnet) — container config and deployment
+- **scout** (haiku) — fallback detection
+
 ## Steps
 
-1. **Load portfolio context**:
-   - Resolve the target project path (from cwd or arguments)
-   - Look up the path in `portfolio/registry.json` → get `{org, project, component}`
-   - If found: read `portfolio/<org>/<project>/<component>.json` and `portfolio/<org>/organization.json`
-   - If not found: fall back to running the **scout** agent to detect container configuration inline
+1. Follow `usecases/load-portfolio-context.md` with depth **full** (fallback: run scout to detect container configuration)
 
-2. If no container config exists, use the **coder-infra** agent to:
-   - Generate appropriate Dockerfile for the project
-   - Create docker-compose.yml or podman equivalent
-   - Set up necessary services (database, cache, etc.)
-   - Present configuration for user approval before creating files
-
-3. If container config exists, use the **coder-infra** agent to:
-   - Validate the configuration
-   - Build and start services using the detected container runtime
-   - Report service status and exposed ports
-
-4. Verify deployment health
+2. Follow `usecases/deploy-local.md` with target from `$ARGUMENTS.target`
 
 ## Output
 

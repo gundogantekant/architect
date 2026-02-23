@@ -13,46 +13,36 @@ arguments:
 
 # /work
 
-Persistent work item tracking across sessions.
+Persistent work item tracking across sessions. Items are grouped by project key in `work/backlog.json`.
+
+## Agents Dispatched
+- **tracker** (haiku) — work item management
 
 ## Steps
 
-1. **Parse command**:
-   - No arguments or `list`: list open + in-progress items
-   - `add <title> [--project X] [--priority Y] [--tags a,b]`: create item
-   - `show <W-XXX>`: show full detail
-   - `update <W-XXX> <status>`: change status (open, in-progress, blocked, done, cancelled)
-   - `log <W-XXX> <message>`: append session log entry
-   - `list [--status X] [--project Y] [--tag Z]`: filtered list
-   - `remove <W-XXX>`: delete item (confirm with user first)
+1. Determine project scope:
+   - If cwd is inside a known project (resolve via `portfolio/registry.json`), scope display to that project by default
+   - If no project context detected, show all projects
+   - Explicit `--project` flag overrides auto-detection
+2. Follow `usecases/track-work.md` with:
+   - subcommand from `$ARGUMENTS.subcommand` (default: list)
+   - args from `$ARGUMENTS.args`
+   - resolved project scope from step 1
 
-2. **Auto-resolve project** (for `add` without `--project`):
-   - Check if the current working directory maps to a portfolio entry via `portfolio/registry.json`
-   - If found, use as default project reference
-
-3. **Handle remove confirmation**:
-   - For `remove`: show the item title and ask "Remove W-XXX: <title>?" before dispatching
-
-4. **Dispatch tracker agent**:
-   - Use the **tracker** agent (model: haiku, max turns: 10)
-   - Pass the parsed command string
-   - Pass today's date for log entries
-   - If a project was auto-resolved, include it in the command
-
-5. **Display result**:
-   - Show the tracker's output directly to the user
+See `domain/entities.md` → WorkItem, WorkBacklog for data schemas.
+See `domain/rules.md` → Work Item Rules for ID format and status rules.
 
 ## Usage
 
 ```
-/work                                          Show open + in-progress items
-/work add "Migrate state management"           Create with defaults
+/work                                          Show open + in-progress items grouped by project
+/work add "Migrate state management"           Create under auto-detected project
 /work add "Add rate limiting" --project neuronic/cloud/main --priority high --tags api,feature
-/work show W-001                               Full detail + session log
+/work show W-001                               Full detail + session log (searches across projects)
 /work update W-001 in-progress                 Change status
 /work log W-001 "Completed investigation phase"  Append log entry
-/work list --status blocked                    Filter by status
-/work list --project neuronic/light-app/main   Filter by project
-/work list --tag refactor                      Filter by tag
+/work list --status blocked                    Filter by status across all projects
+/work list --project neuronic/light-app/main   Scope to one project
+/work list --tag refactor                      Filter by tag across all projects
 /work remove W-001                             Delete (with confirmation)
 ```

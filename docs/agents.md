@@ -2,7 +2,7 @@
 
 ## Overview
 
-19 specialized agents organized in 5 categories. The main Claude conversation orchestrates them — subagents cannot spawn other subagents.
+21 specialized agents organized in 6 categories. The main Claude conversation orchestrates them — subagents cannot spawn other subagents.
 
 ## Model Tiers
 
@@ -32,6 +32,7 @@
 | coder-frontend | inherit | 50 | UI, components, styling, client-side logic |
 | coder-backend | inherit | 50 | APIs, database, auth, middleware |
 | coder-mobile | inherit | 50 | Mobile-specific: platform code, device APIs |
+| refactorer | sonnet | 40 | Systematic code transformations |
 
 ### Quality
 
@@ -59,6 +60,12 @@
 | tracker | haiku | 10 | Work item tracking across sessions |
 | coder-infra | sonnet | 30 | Docker, compose, nginx, infrastructure |
 
+### Browser
+
+| Agent | Model | Max Turns | Purpose |
+|-------|-------|-----------|---------|
+| browser | sonnet | 30 | Browser automation via Playwright MCP (E2E, visual, web tasks) |
+
 ## Usage
 
 Agents are invoked via the Task tool from the main conversation:
@@ -68,4 +75,4 @@ Task(subagent_type="scout", model="haiku", prompt="Scan /path/to/project...")
 Task(subagent_type="coder", prompt="Implement feature X based on this plan...")
 ```
 
-Read-only agents (reviewer, security-auditor, performance, strategist, pm) do not modify files — except strategist can write decision documents to `docs/`. Implementation agents (coder-*) have file write access.
+Read-only agents (reviewer, security-auditor, performance, strategist, pm) do not modify files — except strategist can write decision documents to `docs/`. The browser agent is interactive (web actions via Playwright) but does not modify code or data files. Implementation agents (coder-*) have file write access.

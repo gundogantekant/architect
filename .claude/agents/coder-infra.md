@@ -19,10 +19,8 @@ Write infrastructure code: Dockerfiles, docker-compose configurations, Podman co
 
 ## Coding Standards
 
-- Use definitive variable names
-- No commented-out configuration
-- No comments (TODO and DECISION tags only)
-- Self-explanatory configuration
+See `domain/rules.md` → Coding Standards. Additional agent-specific rules:
+
 - Use environment variables for all configurable values
 - Pin base image versions (no :latest tags)
 

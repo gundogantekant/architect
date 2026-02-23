@@ -22,16 +22,15 @@ Create a new project from a template.
 - **mobile-expo**: React Native + Expo + TypeScript
 - **fullstack**: Turborepo monorepo (backend + frontend)
 
+## Agents Dispatched
+- **coder-infra** (sonnet) — template setup
+- **scout** (haiku) — verification scan
+
 ## Steps
 
-1. Validate the template type is one of the available options
-2. Use the **coder-infra** agent to:
-   - Copy the template from `templates/$ARGUMENTS.type/` to the target location
-   - Replace placeholder names with `$ARGUMENTS.name`
-   - Initialize git repository
-   - Set up the project structure
-3. Run the **scout** agent on the new project to verify detection
-4. Run `/onboard` on the new project to register it in the portfolio with appropriate agent recommendations
+Follow `usecases/scaffold-project.md` with:
+- type from `$ARGUMENTS.type`
+- name from `$ARGUMENTS.name`
 
 ## Output
 

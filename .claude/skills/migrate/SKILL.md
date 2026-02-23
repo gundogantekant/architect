@@ -15,31 +15,17 @@ arguments:
 
 Plan and assist with technology migration.
 
+## Agents Dispatched
+- **planner** (opus) — migration plan
+- **coder** variants (inherit) — implementation
+- **tester** (sonnet) — phase verification
+- **reviewer** (sonnet) — migration quality
+
 ## Steps
 
-1. **Load portfolio context**:
-   - Resolve the target project path (from cwd or arguments)
-   - Look up the path in `portfolio/registry.json` → get `{org, project, component}`
-   - If found: read `portfolio/<org>/<project>/<component>.json` and `portfolio/<org>/organization.json`
-   - If not found: fall back to running the **scout** agent to understand the current project state
+1. Follow `usecases/load-portfolio-context.md` with depth **full** (fallback: run scout to understand the current project state)
 
-2. Use the **planner** agent (model: opus) to create a migration plan:
-   - Analyze the scope of migration from `$ARGUMENTS.from` to `$ARGUMENTS.to`
-   - Identify all affected files and components
-   - Design a phased migration strategy
-   - Identify risks and breaking changes
-   - Estimate the migration scope
-
-3. Present the migration plan to the user for approval:
-   - Phase breakdown with dependencies
-   - Risk assessment
-   - Recommended approach (incremental vs big-bang)
-   - Files affected per phase
-
-4. If approved, execute the migration phase by phase:
-   - Use appropriate coder agents for implementation
-   - Use tester agent to verify each phase
-   - Use reviewer agent to check migration quality
+2. Follow `usecases/migrate-stack.md` with from=`$ARGUMENTS.from` and to=`$ARGUMENTS.to`
 
 ## Common Migrations
 

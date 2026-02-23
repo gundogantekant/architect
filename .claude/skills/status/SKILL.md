@@ -8,25 +8,15 @@ user_invocable: true
 
 Generate a project health dashboard.
 
+## Agents Dispatched
+- **dependency-manager** (haiku) — dependency health
+- **scout** (haiku) — fallback detection
+
 ## Steps
 
-1. **Load portfolio context**:
-   - Resolve the target project path (from cwd or arguments)
-   - Look up the path in `portfolio/registry.json` → get `{org, project, component}`
-   - If found: read `portfolio/<org>/<project>/<component>.json` and `portfolio/<org>/organization.json`
-   - If not found: fall back to running the **scout** agent (model: haiku) to scan the project
+1. Follow `usecases/load-portfolio-context.md` with depth **full** (fallback: run scout to scan the project)
 
-2. Use the **dependency-manager** agent (model: haiku) to:
-   - Check for outdated dependencies
-   - Report security vulnerabilities in dependencies
-
-3. Gather additional health metrics:
-   - Count TODO/FIXME/HACK tags in codebase using Grep
-   - Check git status (uncommitted changes, branch state)
-   - Check CI status if GitHub Actions configured (using gh CLI)
-   - Check test coverage if available
-
-4. Compile into a health dashboard
+2. Follow `usecases/check-status.md`
 
 ## Output
 

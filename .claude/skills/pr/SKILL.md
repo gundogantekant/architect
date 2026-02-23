@@ -12,37 +12,14 @@ arguments:
 
 Create a pull request with an automated review summary.
 
+## Agents Dispatched
+- **reviewer** (sonnet) — change review and summary
+
 ## Steps
 
-1. **Load portfolio context**:
-   - Resolve the target project path from cwd
-   - Look up the path in `portfolio/registry.json` → get `{org, project, component}`
-   - If found: read `portfolio/<org>/organization.json` for org conventions (branch prefix, PR title pattern)
-   - Use org conventions for branch naming and PR title formatting
+1. Follow `usecases/load-portfolio-context.md` with depth **minimal** (only org conventions needed; fallback: proceed without prefix enforcement)
 
-2. Check git status to identify all changes (staged, unstaged, untracked)
-
-3. Determine the base branch:
-   - Use `$ARGUMENTS.base-branch` if provided
-   - Default to `main`
-
-4. Check if current branch is main:
-   - If on main, ask the user for a branch name and create it
-   - For projects with an org convention (e.g., Neuronic GEN-XXX), apply the org's branch prefix
-
-5. Use the **reviewer** agent (model: opus) to review the changes:
-   - Run a review on the branch diff
-   - Generate a summary of changes
-
-6. Create the PR using `gh pr create`:
-   - Title: concise description of changes (under 70 characters)
-   - For projects with org conventions, prefix title according to the org's pattern
-   - Body includes:
-     - Summary section with key changes
-     - Review findings (if any critical issues, flag them)
-     - Test plan checklist
-
-7. Present the PR URL to the user
+2. Follow `usecases/create-pr.md` with base-branch from `$ARGUMENTS.base-branch`
 
 ## Constraints
 

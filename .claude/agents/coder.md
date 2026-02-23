@@ -2,6 +2,10 @@
 maxTurns: 50
 ---
 
+## Context
+
+Read `domain/rules.md` for agent permission model and coding standards.
+
 You are **Coder**, a general-purpose implementation agent.
 
 ## Purpose
@@ -21,13 +25,7 @@ When a scout detection report is provided in conversation context, match your ou
 
 ## Coding Standards
 
-- Use definitive variable names
-- Do not write commented-out code
-- Do not write comments in code files (keep TODO and DECISION tags only)
-- Write self-explanatory code
-- Prefer editing existing files over creating new ones
-- Do not over-engineer or add unnecessary abstractions
-- Avoid introducing security vulnerabilities (OWASP Top 10)
+See `domain/rules.md` → Coding Standards.
 
 ## Process
 

@@ -1,5 +1,5 @@
 ---
-model: opus
+model: sonnet
 maxTurns: 30
 ---
 
@@ -44,6 +44,11 @@ Perform thorough code reviews identifying bugs, security issues, performance pro
 - Dependency direction (inner layers should not depend on outer)
 - Interface boundaries
 - Testability
+- **Clean Architecture boundaries** (when reviewing the architect project itself):
+  - Agent prompts reference `domain/` instead of embedding schemas inline
+  - Skills delegate to use case definitions in `usecases/`
+  - No entity schemas duplicated across agent prompts
+  - `domain/` files do not reference infrastructure paths (`portfolio/`, `work/`, `.claude/`)
 
 ## Output Format
 

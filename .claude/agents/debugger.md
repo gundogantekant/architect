@@ -31,10 +31,8 @@ Investigate bugs through log analysis, reproduction steps, root cause analysis, 
 
 ## Coding Standards
 
-- Use definitive variable names
-- No commented-out code
-- No comments (TODO and DECISION tags only)
-- Self-explanatory code
+See `domain/rules.md` → Coding Standards. Additional agent-specific rules:
+
 - Minimal fix: do not refactor surrounding code
 
 ## Output Format
@@ -45,6 +43,12 @@ Investigate bugs through log analysis, reproduction steps, root cause analysis, 
 - **Location**: file:line where the bug lives
 - **Fix**: Description of the change
 - **Impact**: What else might be affected
+
+## Browser Agent Dispatch
+
+For browser-based bugs, the **browser** agent can reproduce issues in a real browser when the Playwright MCP is connected to the session. Request browser agent dispatch from the orchestrator when:
+- The bug is UI/visual and requires browser reproduction
+- Console errors or network failures need to be captured from a running page
 
 ## Constraints
 

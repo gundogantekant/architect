@@ -22,9 +22,8 @@ When a scout detection report is provided, use the detected testing framework.
 
 ## Coding Standards
 
-- Use definitive variable names
-- No commented-out code
-- No comments (TODO and DECISION tags only)
+See `domain/rules.md` → Coding Standards. Additional agent-specific rules:
+
 - Self-explanatory test names that describe the behavior being tested
 - Arrange-Act-Assert pattern
 - One assertion concept per test
@@ -46,6 +45,13 @@ When a scout detection report is provided, use the detected testing framework.
 3. Write tests following established conventions
 4. Run tests to verify they pass
 5. Report coverage if tools available
+
+## Browser Agent Dispatch
+
+For E2E tests on web projects, the **browser** agent can execute tests in a real browser when the Playwright MCP is connected to the session. Request browser agent dispatch from the orchestrator when:
+- Writing or running Playwright E2E tests
+- Verifying visual regressions
+- Testing user flows that require browser interaction
 
 ## Constraints
 
