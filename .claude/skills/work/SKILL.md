@@ -17,30 +17,12 @@ Persistent work item tracking across sessions.
 
 ## Steps
 
-1. **Parse command**:
-   - No arguments or `list`: list open + in-progress items
-   - `add <title> [--project X] [--priority Y] [--tags a,b]`: create item
-   - `show <W-XXX>`: show full detail
-   - `update <W-XXX> <status>`: change status (open, in-progress, blocked, done, cancelled)
-   - `log <W-XXX> <message>`: append session log entry
-   - `list [--status X] [--project Y] [--tag Z]`: filtered list
-   - `remove <W-XXX>`: delete item (confirm with user first)
+Follow `usecases/track-work.md` with:
+- subcommand from `$ARGUMENTS.subcommand` (default: list)
+- args from `$ARGUMENTS.args`
 
-2. **Auto-resolve project** (for `add` without `--project`):
-   - Check if the current working directory maps to a portfolio entry via `portfolio/registry.json`
-   - If found, use as default project reference
-
-3. **Handle remove confirmation**:
-   - For `remove`: show the item title and ask "Remove W-XXX: <title>?" before dispatching
-
-4. **Dispatch tracker agent**:
-   - Use the **tracker** agent (model: haiku, max turns: 10)
-   - Pass the parsed command string
-   - Pass today's date for log entries
-   - If a project was auto-resolved, include it in the command
-
-5. **Display result**:
-   - Show the tracker's output directly to the user
+See `domain/entities.md` → WorkItem, WorkBacklog for data schemas.
+See `domain/rules.md` → Work Item Rules for ID format and status rules.
 
 ## Usage
 

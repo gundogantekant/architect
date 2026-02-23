@@ -4,6 +4,19 @@
 
 This project provides 19 specialized Claude Code subagents and 12 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack.
 
+## Architecture
+
+Clean Architecture with four layers. Dependencies point inward only.
+
+| Layer | Location | Contents |
+|-------|----------|----------|
+| Domain | `domain/` | Entity schemas (`entities.md`), business rules (`rules.md`) |
+| Use Cases | `usecases/` | Workflow definitions (13 files, one per skill workflow) |
+| Adapters | `.claude/agents/`, `.claude/skills/` | Agent prompts, skill entry points |
+| Infrastructure | `portfolio/`, `work/`, `templates/` | Data storage, project templates |
+
+See `docs/architecture.md` for layer boundaries and dependency rules.
+
 ## Agent Dispatch Guide
 
 ### When to use which agent
@@ -39,16 +52,9 @@ The main Claude conversation acts as orchestrator. Subagents cannot spawn subage
 pm (triage) → follow execution plan: scout → [strategist] → planner → coders → tester → reviewer
 ```
 
-PM classifies the request, selects the workflow, orders agents, and flags clarifications. The main conversation then follows PM's execution plan.
-
 **Sequential Pipeline** (new features):
 ```
 scout → [strategist] → planner → coder → tester → reviewer
-```
-
-**Strategic Evaluation** (before committing to build):
-```
-strategist → planner → coders
 ```
 
 **Parallel Fan-Out** (full-stack features):
@@ -67,40 +73,11 @@ planner (produces task list) → dispatch coders per task
 debugger/scout → coder (fix) → tester (verify)
 ```
 
-**Review Feedback Loop** (quality enforcement):
-```
-coder → reviewer → coder (address) → reviewer (re-check)
-```
-
-### PM Dispatch Rules
-
-Invoke PM for:
-- Work requests that involve multiple agents or unclear scope
-- Requests where the right workflow pattern is not obvious
-- Situations with no existing scout report on an unfamiliar project
-
-Skip PM for:
-- Slash commands (`/review`, `/test`, `/deploy`, etc.) — execute the skill directly
-- Direct questions about code or architecture — answer directly
-- Trivial tasks (typo fix, single-line change) — dispatch directly
-- Explicit agent invocations where the user names the agent
-
-### Adaptability
-
-The **scout** agent produces a detection report that all other agents use for context. Always run scout first on unfamiliar projects. Pass scout's output to implementation agents so they generate code matching the project's stack.
+See `domain/rules.md` for PM dispatch rules, workflow selection matrix, and agent inclusion rules.
 
 ## Project Portfolio
 
 All onboarded project context lives in `portfolio/` with a three-level hierarchy: `portfolio/<org>/<project>/<component>.json`.
-
-### Context Loading (required step 1 for all skills)
-
-1. Resolve the target project path (from cwd or skill arguments)
-2. Look up the path in `portfolio/registry.json` → get `{org, project, component}`
-3. If found: read `portfolio/<org>/<project>/<component>.json` (scout report, agents, guidance)
-4. Also read `portfolio/<org>/organization.json` (shared conventions, branch rules)
-5. If not found: suggest `/onboard` first, or fall back to inline scout
-6. Pass combined context to all agents in subsequent steps
 
 ### Key Files
 
@@ -109,6 +86,10 @@ All onboarded project context lives in `portfolio/` with a three-level hierarchy
 | `portfolio/registry.json` | Path → portfolio location lookup |
 | `portfolio/<org>/organization.json` | Org-level shared conventions |
 | `portfolio/<org>/<project>/<component>.json` | Component profile (scout + agents + guidance) |
+
+### Context Loading
+
+All skills follow `usecases/load-portfolio-context.md` as their first step. See that file for the full protocol and per-skill fallback strategies.
 
 ### Rules
 
@@ -119,11 +100,9 @@ All onboarded project context lives in `portfolio/` with a three-level hierarchy
 
 ## Work Tracking
 
-Persistent backlog in `work/backlog.json` for cross-session task tracking. Use `/work` to view open items at session start. Items link to portfolio projects via `org/project/component` references.
+Persistent backlog in `work/backlog.json` for cross-session task tracking. Use `/work` to view open items at session start.
 
-- PM suggests work items for medium+ complexity requests — create only after user confirmation
-- Use `/work log <ID> <message>` to record progress before ending a session
-- Statuses: `open`, `in-progress`, `blocked`, `done`, `cancelled`
+See `domain/entities.md` → WorkItem for schema, `domain/rules.md` → Work Item Rules for tracking rules.
 
 ## Rules
 
@@ -131,7 +110,7 @@ Persistent backlog in `work/backlog.json` for cross-session task tracking. Use `
 - Pass the portfolio context or detection report to every subsequent agent invocation
 - Use parallel fan-out when tasks are independent (frontend/backend/infra)
 - Use sequential pipeline when output feeds into the next step
-- Read-only agents (reviewer, security-auditor, performance, strategist, pm) do not modify code (strategist can write decision docs to docs/)
+- Read-only agents do not modify code (see `domain/rules.md` → Agent Permission Model)
 - Implementation agents (coder-*) use acceptEdits permission mode
 - Follow the user's CLAUDE.md rules: no push to main, no --no-verify, feature branches only
 - For Neuronic projects, enforce GEN-XXX branch/PR naming
