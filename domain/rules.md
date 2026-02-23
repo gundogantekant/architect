@@ -32,14 +32,16 @@ Business rules, heuristics, and decision logic for the architect system. Agents 
 | tester | All code changes except trivial |
 | reviewer | All code changes except trivial |
 | security-auditor | Auth, secrets, input validation, or external data is involved |
+| browser | E2E tests, visual regression, bug reproduction in browser, or web automation tasks requested by the user |
 
 ## Agent Permission Model
 
-| Category | Agents | Can modify code | Can write data |
-|----------|--------|-----------------|----------------|
-| Read-only | reviewer, security-auditor, performance, strategist, pm, scout, debugger, dependency-manager, browser | No | No |
-| Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer | Yes | No |
-| Data-write | tracker | No | Yes (`work/backlog.json` only) |
+| Category | Agents | Can modify code | Can write data | Can interact with web |
+|----------|--------|-----------------|----------------|-----------------------|
+| Read-only | reviewer, security-auditor, performance, strategist, pm, scout, debugger, dependency-manager | No | No | No |
+| Interactive | browser | No | No | Yes |
+| Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer | Yes | No | No |
+| Data-write | tracker | No | Yes (`work/backlog.json` only) | No |
 
 **Exception**: strategist can write decision docs to `docs/`.
 

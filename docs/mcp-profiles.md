@@ -20,7 +20,7 @@ claude
 
 ### Playwright (browser automation)
 
-Connects Playwright MCP for E2E testing, visual regression, and browser-based debugging.
+Connects Playwright MCP for E2E testing, visual regression, browser-based debugging, and web automation tasks.
 
 ```
 claude --mcp-config .claude/mcp/playwright.json
@@ -30,6 +30,7 @@ Enables the **browser** agent. Useful when:
 - Running `/test` with E2E scope on web projects
 - Using `/diagnose` to reproduce browser-based bugs
 - Performance analysis requiring Core Web Vitals measurement
+- Using `/browse` to perform web automation tasks
 
 ## Config Files
 

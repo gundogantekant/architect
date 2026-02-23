@@ -64,7 +64,7 @@
 
 | Agent | Model | Max Turns | Purpose |
 |-------|-------|-----------|---------|
-| browser | sonnet | 30 | Browser automation via Playwright MCP |
+| browser | sonnet | 30 | Browser automation via Playwright MCP (E2E, visual, web tasks) |
 
 ## Usage
 
@@ -75,4 +75,4 @@ Task(subagent_type="scout", model="haiku", prompt="Scan /path/to/project...")
 Task(subagent_type="coder", prompt="Implement feature X based on this plan...")
 ```
 
-Read-only agents (reviewer, security-auditor, performance, strategist, pm) do not modify files — except strategist can write decision documents to `docs/`. Implementation agents (coder-*) have file write access.
+Read-only agents (reviewer, security-auditor, performance, strategist, pm) do not modify files — except strategist can write decision documents to `docs/`. The browser agent is interactive (web actions via Playwright) but does not modify code or data files. Implementation agents (coder-*) have file write access.

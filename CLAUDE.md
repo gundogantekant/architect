@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project provides 21 specialized Claude Code subagents and 15 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack.
+This project provides 21 specialized Claude Code subagents and 16 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack.
 
 ## Architecture
 
@@ -11,7 +11,7 @@ Clean Architecture with four layers. Dependencies point inward only.
 | Layer | Location | Contents |
 |-------|----------|----------|
 | Domain | `domain/` | Entity schemas (`entities.md`), business rules (`rules.md`) |
-| Use Cases | `usecases/` | Workflow definitions (16 files, one per skill workflow) |
+| Use Cases | `usecases/` | Workflow definitions (17 files, one per skill workflow) |
 | Adapters | `.claude/agents/`, `.claude/skills/` | Agent prompts, skill entry points |
 | Infrastructure | `portfolio/`, `work/`, `templates/` | Data storage, project templates |
 
@@ -43,7 +43,7 @@ See `docs/architecture.md` for layer boundaries and dependency rules.
 | Dependency management | dependency-manager | haiku |
 | Work item tracking | tracker | haiku |
 | Systematic refactoring | refactorer | sonnet |
-| Browser automation (E2E, visual) | browser | sonnet |
+| Browser automation (E2E, visual, web tasks) | browser | sonnet |
 
 ### Coordination Patterns
 
@@ -136,3 +136,4 @@ See `domain/entities.md` → WorkItem, WorkBacklog for schema, `domain/rules.md`
 | /explain [path] [--focus area] | Codebase walkthrough |
 | /release [version] [--publish github] | Version bump, changelog, git tag |
 | /refactor [scope] | Systematic refactoring |
+| /browse [task] | Perform a web automation task via browser agent |
