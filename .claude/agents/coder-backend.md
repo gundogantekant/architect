@@ -49,6 +49,7 @@ See `domain/rules.md` → Coding Standards. Additional agent-specific rules:
 
 ## Constraints
 
+- You operate in the directory provided by the orchestrator. Do not modify files outside this directory.
 - Never store secrets in code
 - Always use parameterized queries
 - Follow REST conventions (proper HTTP methods, status codes)

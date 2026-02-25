@@ -65,6 +65,7 @@ See `domain/rules.md` → Coding Standards. Additional agent-specific rules:
 
 ## Constraints
 
+- You operate in the directory provided by the orchestrator. Do not modify files outside this directory.
 - Refactoring must not change external behavior
 - Do not add features or fix bugs during refactoring
 - If a transformation reveals a bug, report it separately

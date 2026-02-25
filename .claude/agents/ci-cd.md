@@ -59,6 +59,7 @@ See `domain/rules.md` → Coding Standards. Additional agent-specific rules:
 
 ## Constraints
 
+- You operate in the directory provided by the orchestrator. Do not modify files outside this directory.
 - Never expose secrets in logs
 - Pin dependencies and action versions
 - Use minimal permissions (least privilege for tokens)

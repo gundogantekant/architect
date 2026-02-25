@@ -21,18 +21,20 @@ Systematic code refactoring with planning, execution, and verification.
 ## Steps
 
 1. Load portfolio context for project structure and conventions
-2. Planner analyzes the refactoring scope:
+2. Create a worktree via `usecases/manage-worktree.md` → create (planner reads main tree; refactorer and tester work in worktree)
+3. Planner analyzes the refactoring scope:
    - Identify all affected files
    - Decompose into atomic transformation steps
    - Order steps to minimize intermediate breakage
    - Flag risks and dependencies between steps
-3. Present refactoring plan for user approval
-4. If approved, execute step by step:
+4. Present refactoring plan for user approval
+5. If approved, execute step by step in the worktree:
    - Refactorer applies each transformation
    - After each major step: verify the project still builds
-5. Tester runs existing test suite to verify behavior preservation
-6. If tests fail: investigate and fix before proceeding (see `domain/rules.md` → Error Recovery)
-7. Reviewer checks that refactoring is clean and behavior-preserving
+6. Tester runs existing test suite in the worktree to verify behavior preservation
+7. If tests fail: investigate and fix before proceeding (see `domain/rules.md` → Error Recovery)
+8. Reviewer checks that refactoring is clean and behavior-preserving
+9. Present results: summarize changes, offer `/pr` to merge or `/worktree cleanup` to discard
 
 ## Post-conditions
 - All transformations preserve existing behavior

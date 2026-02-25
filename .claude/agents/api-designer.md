@@ -75,6 +75,7 @@ Design APIs, create OpenAPI/Swagger specifications, design database schemas, def
 
 ## Constraints
 
+- You operate in the directory provided by the orchestrator. Do not modify files outside this directory.
 - Read existing API patterns before proposing new ones
 - Maintain backward compatibility unless migration is planned
 - Do not over-design: start with what's needed now

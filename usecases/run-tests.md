@@ -20,10 +20,10 @@ Execute, generate, or report coverage for project tests.
 
 1. Load portfolio context to identify testing framework and conventions
 2. Based on scope:
-   - **run**: Execute test suite using detected test runner
-   - **generate**: Tester agent analyzes code, checks existing test patterns, generates tests, verifies they pass
-   - **coverage**: Run tests with coverage reporting enabled
-   - **file paths**: Run/generate tests for specific files
+   - **run**: Execute test suite using detected test runner (no worktree needed)
+   - **generate**: Create a worktree via `usecases/manage-worktree.md` → create, then tester agent analyzes code, checks existing test patterns, generates tests in the worktree, verifies they pass. Present results: offer `/pr` to merge or `/worktree cleanup` to discard
+   - **coverage**: Run tests with coverage reporting enabled (no worktree needed)
+   - **file paths**: Run/generate tests for specific files (worktree if generating, no worktree if running)
 3. Report results
 
 ## Post-conditions

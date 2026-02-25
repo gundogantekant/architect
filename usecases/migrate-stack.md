@@ -28,10 +28,12 @@ Plan and execute technology migration.
    - Phase breakdown with dependencies
    - Risk assessment
    - Incremental vs big-bang recommendation
-4. If approved, execute phase by phase:
+4. If approved, create a worktree via `usecases/manage-worktree.md` → create
+5. Execute phase by phase in the worktree:
    - Coder agents implement each phase
    - Tester verifies each phase
    - Reviewer checks migration quality
+6. Present results: offer `/pr` to merge or `/worktree cleanup` to discard
 
 ## Post-conditions
 - Plan presented before any execution
