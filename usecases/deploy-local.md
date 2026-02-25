@@ -20,7 +20,8 @@ Deploy the project locally using containers.
 
 1. Load portfolio context for container and stack info
 2. If no container config exists:
-   - coder-infra generates Dockerfile, docker-compose.yml or podman equivalent
+   - Create a worktree via `usecases/manage-worktree.md` → create
+   - coder-infra generates Dockerfile, docker-compose.yml or podman equivalent in the worktree
    - Present configuration for user approval before creating files
 3. If container config exists:
    - coder-infra validates, builds, and starts services

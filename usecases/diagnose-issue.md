@@ -24,7 +24,8 @@ Investigate and diagnose a bug or issue.
 3. Debugger produces structured bug report
 4. If root cause identified and fix is straightforward:
    - Present proposed fix to user
-   - If approved: implement with coder agent, verify with tester agent
+   - If approved: create a worktree via `usecases/manage-worktree.md` → create, implement with coder agent in worktree, verify with tester agent in worktree
+   - Present results: offer `/pr` to merge or `/worktree cleanup` to discard
 5. If root cause unclear:
    - Report what was investigated
    - Suggest additional diagnostic steps

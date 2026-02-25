@@ -36,12 +36,12 @@ Business rules, heuristics, and decision logic for the architect system. Agents 
 
 ## Agent Permission Model
 
-| Category | Agents | Can modify code | Can write data | Can interact with web |
-|----------|--------|-----------------|----------------|-----------------------|
-| Read-only | reviewer, security-auditor, performance, strategist, pm, scout, debugger, dependency-manager | No | No | No |
-| Interactive | browser | No | No | Yes |
-| Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer | Yes | No | No |
-| Data-write | tracker | No | Yes (`work/backlog.json` only) | No |
+| Category | Agents | Can modify code | Can write data | Can interact with web | Uses worktree |
+|----------|--------|-----------------|----------------|-----------------------|---------------|
+| Read-only | reviewer, security-auditor, performance, strategist, pm, scout, debugger, dependency-manager | No | No | No | No (main tree) |
+| Interactive | browser | No | No | Yes | No |
+| Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer | Yes | No | No | Yes (worktree) |
+| Data-write | tracker | No | Yes (`work/backlog.json` only) | No | No |
 
 **Exception**: strategist can write decision docs to `docs/`.
 
@@ -101,6 +101,16 @@ Shared git rules enforced by all implementation agents.
 - Exclude Claude attribution from commit messages
 - Never use --no-verify flag
 - Avoid amending commits; prefer new commits
+
+## Worktree Rules
+
+- Implementation agents operate in a git worktree, not the main working tree
+- Worktrees are stored at `<project>/.worktrees/<branch-name>/`
+- Read-only agents operate on the main working tree (no worktree needed)
+- The orchestrator creates worktrees before dispatching implementation agents (see `usecases/manage-worktree.md`)
+- `.worktrees/` must be in the target project's `.gitignore`
+- After implementation, the user decides: merge via `/pr` or discard via `/worktree cleanup`
+- Portfolio registry always stores the original project path, never worktree paths
 
 ## Error Recovery
 

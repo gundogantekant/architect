@@ -47,6 +47,7 @@ Full PM output. References RequestClassification and WorkflowPattern.
   "clarifications_needed": ["string"],
   "execution_plan": {
     "workflow": "$ref WorkflowPattern",
+    "worktree_required": "boolean (true when any step uses an Implementation agent)",
     "steps": [
       {
         "order": "number",
@@ -168,6 +169,18 @@ Top-level structure of `work/backlog.json`. Items are grouped under project keys
       "items": [{ "$ref": "WorkItem" }]
     }
   }
+}
+```
+
+## WorktreeContext
+
+Tracks an active worktree created for implementation isolation.
+
+```json
+{
+  "worktree_path": "string (absolute path to worktree)",
+  "source_path": "string (absolute path to original project)",
+  "branch_name": "string"
 }
 ```
 

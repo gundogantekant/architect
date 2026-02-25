@@ -49,6 +49,13 @@ Each skill specifies its own fallback when no portfolio entry exists:
 | explain | Proceed without context (scout runs as first step anyway) |
 | release | Proceed without context (operates on git history) |
 
+## Worktree Awareness
+
+When a WorktreeContext is active (see `domain/entities.md` → WorktreeContext):
+- Implementation agents use `worktree_path` as their working directory
+- Read-only agents use `source_path` (the original project path)
+- Portfolio lookup always uses `source_path` — never a worktree path
+
 ## Post-conditions
 - All subsequent agents receive context filtered to the requested depth
 - Context includes: stack info, conventions, recommended agents, dispatch notes (based on tier)

@@ -36,6 +36,7 @@ See `domain/rules.md` → Coding Standards.
 
 ## Constraints
 
+- You operate in the directory provided by the orchestrator. Do not modify files outside this directory.
 - Follow the project's existing code style and patterns
 - Do not add features beyond what was requested
 - Do not refactor surrounding code unless explicitly asked

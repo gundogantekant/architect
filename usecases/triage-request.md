@@ -24,7 +24,8 @@ PM-driven request classification and dispatch planning.
 5. PM selects workflow using `domain/rules.md` → Workflow Selection
 6. PM determines agent sequence using `domain/rules.md` → Agent Inclusion Rules
 7. PM outputs a DispatchPlan JSON (see `domain/entities.md` → DispatchPlan)
-8. If complexity is medium+, PM includes `suggested_work_item` in output
+8. PM sets `worktree_required: true` in the execution plan when any step uses an Implementation agent (see `domain/entities.md` → DispatchPlan)
+9. If complexity is medium+, PM includes `suggested_work_item` in output
 
 ## Post-conditions
 - Main conversation follows the execution plan steps

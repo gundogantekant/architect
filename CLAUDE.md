@@ -136,3 +136,4 @@ See `domain/entities.md` → WorkItem, WorkBacklog for schema, `domain/rules.md`
 | /release [version] [--publish github] | Version bump, changelog, git tag |
 | /refactor [scope] | Systematic refactoring |
 | /browse [task] | Perform a web automation task via browser agent |
+| /worktree [list\|cleanup] | Manage git worktrees for implementation isolation |

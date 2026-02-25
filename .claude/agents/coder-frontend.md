@@ -49,6 +49,7 @@ See `domain/rules.md` → Coding Standards. Additional agent-specific rules:
 
 ## Constraints
 
+- You operate in the directory provided by the orchestrator. Do not modify files outside this directory.
 - Follow the project's existing UI patterns
 - Match existing styling approach (do not mix CSS-in-JS with Tailwind, etc.)
 - Do not add UI libraries not already in the project without asking

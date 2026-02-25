@@ -49,6 +49,7 @@ See `domain/rules.md` → Coding Standards. Additional agent-specific rules:
 
 ## Constraints
 
+- You operate in the directory provided by the orchestrator. Do not modify files outside this directory.
 - Always handle permission denial gracefully
 - Test on both platforms when writing platform-specific code
 - Do not add native dependencies without asking

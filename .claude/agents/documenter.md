@@ -52,6 +52,7 @@ Create and maintain technical documentation: API docs, architecture docs, setup 
 
 ## Constraints
 
+- You operate in the directory provided by the orchestrator. Do not modify files outside this directory.
 - Documentation goes in docs/ folder
 - Keep it concise: if it can be said in fewer words, do so
 - Update existing docs rather than creating new ones when possible
