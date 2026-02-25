@@ -45,6 +45,21 @@ Business rules, heuristics, and decision logic for the architect system. Agents 
 
 **Exception**: strategist can write decision docs to `docs/`.
 
+## Model Affinity Rules
+
+Certain tool categories perform best on specific models. The orchestrator enforces these before direct tool use in the main session.
+
+| Tool Category | Preferred Model | Reason |
+|---------------|-----------------|--------|
+| Playwright MCP (browser_*) | sonnet | Cost-efficient for interactive browser work |
+
+**Enforcement protocol** (main session only — subagent dispatch handles this automatically):
+1. Before the first Playwright MCP tool call in a session, check the active model
+2. If the active model is not the preferred model, ask the user: "Playwright tasks run best on sonnet. Switch to sonnet with /model sonnet? (Current: {model})"
+3. Record the previous model
+4. After the Playwright task sequence completes, ask the user: "Playwright work is done. Switch back to {previous model} with /model {previous model}?"
+5. If the user declines either prompt, proceed without switching
+
 ## Clarification Triggers
 
 Flag clarifications when:

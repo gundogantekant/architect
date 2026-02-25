@@ -115,6 +115,7 @@ See `domain/entities.md` → WorkItem, WorkBacklog for schema, `domain/rules.md`
 - Read-only agents do not modify code (see `domain/rules.md` → Agent Permission Model)
 - Implementation agents (coder-*) use acceptEdits permission mode
 - Follow git standards defined in `domain/rules.md`
+- Before using Playwright MCP tools directly in the main session, follow Model Affinity Rules in `domain/rules.md` to prompt model switching
 
 ## Available Skills
 

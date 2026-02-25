@@ -21,6 +21,7 @@ Perform a task on a web service on the user's behalf.
 
 ## Steps
 
+0. **Model affinity check** (main session only): If the orchestrator is about to use Playwright tools directly (not via subagent dispatch), follow the Model Affinity Rules in `domain/rules.md` to prompt the user for a model switch before proceeding.
 1. Orchestrator collects all known inputs from user before dispatch
 2. Browser agent navigates to target URL
 3. Agent follows the task steps, filling forms and clicking through workflows
