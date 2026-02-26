@@ -31,6 +31,9 @@ Classify incoming work requests, assess complexity, select the right workflow pa
    - If found: read `portfolio/<org>/<project>/<component>.json` for scout report, agents, and guidance
    - Also read `portfolio/<org>/organization.json` for org-level conventions
    - If not found: flag that no portfolio entry exists and include scout in the execution plan
+   - Run `git rev-parse --abbrev-ref HEAD` at the target project path
+   - Detect worktree status via `git rev-parse --git-common-dir`
+   - Include branch and worktree flag in `target_project` field of DispatchPlan
 3. Classify the request type and complexity (see `domain/rules.md` → Complexity Heuristics)
 4. Determine if clarifications are needed (see `domain/rules.md` → Clarification Triggers)
 5. Select the appropriate workflow pattern (see `domain/rules.md` → Workflow Selection)

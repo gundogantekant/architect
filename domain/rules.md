@@ -64,7 +64,22 @@ Certain tool categories perform best on specific models. The orchestrator enforc
 
 ## Plan Target Identification
 
-Every plan — whether from the orchestrator's plan mode, the planner agent, or PM's dispatch plan — must identify the target project as its first line. Use `org/project/component` from the portfolio registry, or the absolute path if the project is not onboarded. This prevents ambiguity when the architect manages multiple projects. When planning changes to the architect system itself, use `architect` as the target project.
+Every plan — whether from the orchestrator's plan mode, the planner agent, or PM's
+dispatch plan — must identify the target project as its first line.
+
+Format: `<project-id> (branch: <branch-name>[, worktree])`
+
+- `<project-id>`: `org/project/component` from portfolio, absolute path if not onboarded,
+  or `architect` for self-changes
+- `<branch-name>`: result of `git rev-parse --abbrev-ref HEAD` at the target project path
+- Append `, worktree` if the target path is a git worktree (detected when
+  `git rev-parse --git-common-dir` does not resolve to `<target-path>/.git`)
+
+Examples:
+- `gundogantekant/my-app/backend (branch: main)`
+- `gundogantekant/my-app/frontend (branch: feat/auth-flow, worktree)`
+- `/Users/user/projects/scratch (branch: develop)`
+- `architect (branch: feat/worktree-awareness)`
 
 ## Clarification Triggers
 
