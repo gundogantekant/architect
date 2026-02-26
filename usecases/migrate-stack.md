@@ -22,7 +22,7 @@ Plan and execute technology migration.
 ## Steps
 
 1. Load portfolio context for current stack info
-2. Planner creates migration plan:
+2. Dispatch planner with `target_project: org/project/component` (or absolute path) in the prompt. Planner creates migration plan:
    - Scope analysis, affected files, phased strategy, risks, breaking changes
 3. Present plan for user approval:
    - Phase breakdown with dependencies

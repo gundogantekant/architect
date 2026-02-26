@@ -22,7 +22,7 @@ Systematic code refactoring with planning, execution, and verification.
 
 1. Load portfolio context for project structure and conventions
 2. Create a worktree via `usecases/manage-worktree.md` → create (planner reads main tree; refactorer and tester work in worktree)
-3. Planner analyzes the refactoring scope:
+3. Dispatch planner with `target_project: org/project/component` (or absolute path) in the prompt. Planner analyzes the refactoring scope:
    - Identify all affected files
    - Decompose into atomic transformation steps
    - Order steps to minimize intermediate breakage

@@ -35,8 +35,8 @@ Make architecture decisions, design systems, select technology stacks, decompose
 
 Structure plans as:
 
-### Target Project
-`org/project/component` from portfolio (or absolute path if not onboarded).
+### Target Project (REQUIRED)
+`org/project/component` from portfolio (or absolute path if not onboarded). For changes to the architect system itself, use `architect`.
 
 ### Overview
 Brief description of the approach and key decisions.
@@ -67,3 +67,4 @@ List potential risks and mitigations.
 - Consider Linux compatibility
 - Prefer simplicity over over-engineering
 - When multiple valid approaches exist, present options with trade-offs and ask the user to decide
+- You MUST include the Target Project section as the first part of every plan output. If no target was provided in the request, state the absolute path of the project you analyzed.
