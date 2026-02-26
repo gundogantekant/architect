@@ -109,7 +109,7 @@ See `domain/entities.md` → WorkItem, WorkBacklog for schema, `domain/rules.md`
 
 ## Rules
 
-- Every plan must identify its target project (`org/project/component` from portfolio, or absolute path if not onboarded) as the first line or header
+- Every plan must identify its target project (`org/project/component` from portfolio, or absolute path if not onboarded) as the first line or header. For changes to the architect project itself, use `architect` as the target.
 - Run scout (or load portfolio) before dispatching implementation agents on any new project
 - Pass the portfolio context or detection report to every subsequent agent invocation
 - Use parallel fan-out when tasks are independent (frontend/backend/infra)

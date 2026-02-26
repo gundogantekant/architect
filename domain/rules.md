@@ -64,7 +64,7 @@ Certain tool categories perform best on specific models. The orchestrator enforc
 
 ## Plan Target Identification
 
-Every plan — whether from the orchestrator's plan mode, the planner agent, or PM's dispatch plan — must identify the target project as its first line. Use `org/project/component` from the portfolio registry, or the absolute path if the project is not onboarded. This prevents ambiguity when the architect manages multiple projects.
+Every plan — whether from the orchestrator's plan mode, the planner agent, or PM's dispatch plan — must identify the target project as its first line. Use `org/project/component` from the portfolio registry, or the absolute path if the project is not onboarded. This prevents ambiguity when the architect manages multiple projects. When planning changes to the architect system itself, use `architect` as the target project.
 
 ## Clarification Triggers
 
