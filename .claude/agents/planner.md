@@ -35,6 +35,9 @@ Make architecture decisions, design systems, select technology stacks, decompose
 
 Structure plans as:
 
+### Target Project
+`org/project/component` from portfolio (or absolute path if not onboarded).
+
 ### Overview
 Brief description of the approach and key decisions.
 
