@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project provides 21 specialized Claude Code subagents and 16 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack.
+This project provides 22 specialized Claude Code subagents and 16 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack.
 
 ## Architecture
 
@@ -25,6 +25,7 @@ See `docs/architecture.md` for layer boundaries and dependency rules.
 |------|-------|-------|
 | Triage and dispatch planning | pm | sonnet |
 | Scan a project's tech stack | scout | haiku |
+| Project analysis and CLAUDE.md generation | profiler | sonnet |
 | Strategic evaluation of a request | strategist | opus |
 | Architecture/design decisions | planner | opus |
 | General code implementation | coder | inherit |
@@ -95,8 +96,8 @@ All skills follow `usecases/load-portfolio-context.md` as their first step. See 
 
 ### Rules
 
-- Never write CLAUDE.md or agent config to target project repos
-- All project context stays in the architect portfolio
+- Onboarding generates a CLAUDE.md in target projects. No other agent config is written to target repos.
+- All project context stays in the architect portfolio (CLAUDE.md in target is a convenience copy)
 - Run `/onboard <path>` before dispatching implementation agents on a new project
 - Use `/onboard <path> rescan` to refresh an existing profile
 

@@ -71,6 +71,19 @@ Full onboarded repo context used by all skills and agents.
   "onboarded_at": "YYYY-MM-DD",
   "last_scanned": "YYYY-MM-DD",
   "scout_report": { },
+  "brief": {
+    "purpose": "One sentence: what the system does",
+    "domain": "business-domain",
+    "users": "Who uses the system and how",
+    "key_entities": ["Entity1", "Entity2"],
+    "data_flow": "Client → API → Database",
+    "architecture_rationale": "Why the stack was chosen",
+    "constraints": ["Constraint1"],
+    "environments": ["production: AWS us-east-1"],
+    "external_dependencies": ["Stripe", "AWS S3"],
+    "profiled_at": "YYYY-MM-DD"
+  },
+  "doc_paths": ["README.md", "docs/architecture.md", "CONTRIBUTING.md"],
   "agents": {
     "recommended": ["agent-list"],
     "dispatch_notes": { "agent": "usage note" }
@@ -85,6 +98,8 @@ Full onboarded repo context used by all skills and agents.
   "custom_rules": []
 }
 ```
+
+`brief` and `doc_paths` are optional — absent on entries onboarded before the profiler was added.
 
 ## Context Loading
 

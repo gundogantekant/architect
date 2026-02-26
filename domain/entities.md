@@ -17,6 +17,7 @@ Canonical schemas for all structured data in the architect system. Agents and sk
 **Read-only agents**: reviewer, security-auditor, performance, strategist, pm, scout, debugger, dependency-manager
 **Interactive agents**: browser (interacts with web via Playwright, no code/data writes)
 **Implementation agents**: coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer
+**Onboarding agents**: profiler (writes only CLAUDE.md to the target project)
 **Data-write agents**: tracker (writes only `work/backlog.json`)
 
 ## RequestClassification
@@ -91,6 +92,35 @@ Output by scout when scanning a project.
 }
 ```
 
+## ProjectBrief
+
+Output by profiler when analyzing a project's purpose, architecture, and constraints.
+
+```json
+{
+  "purpose": "string — one sentence: what the system does",
+  "domain": "string — business/product domain (e.g., medical-device-control, e-commerce)",
+  "users": "string — who uses the system and how",
+  "key_entities": ["string — core domain objects (3-8 items)"],
+  "data_flow": "string — high-level data movement description",
+  "architecture_rationale": "string — why the stack and design were chosen",
+  "constraints": ["string — hard non-negotiables"],
+  "environments": ["string — deployment targets with provider/region"],
+  "external_dependencies": ["string — third-party services"],
+  "profiled_at": "YYYY-MM-DD"
+}
+```
+
+## DocumentationMap
+
+Relative paths to documentation files found in the target project. Stored as part of the PortfolioEntry so agents know where to find detailed docs on demand.
+
+```json
+{
+  "doc_paths": ["string — relative paths to documentation files in the target project"]
+}
+```
+
 ## PortfolioEntry (Component Profile)
 
 Stored at `portfolio/<org>/<project>/<component>.json`.
@@ -103,6 +133,8 @@ Stored at `portfolio/<org>/<project>/<component>.json`.
   "onboarded_at": "YYYY-MM-DD",
   "last_scanned": "YYYY-MM-DD",
   "scout_report": { "$ref": "ScoutReport" },
+  "brief": { "$ref": "ProjectBrief" },
+  "doc_paths": ["string — relative paths like README.md, docs/architecture.md, CONTRIBUTING.md"],
   "agents": {
     "recommended": ["string (agent names)"],
     "dispatch_notes": { "agent-name": "string (usage note)" }
@@ -117,6 +149,8 @@ Stored at `portfolio/<org>/<project>/<component>.json`.
   "custom_rules": ["string"]
 }
 ```
+
+**Optional fields**: `brief` and `doc_paths` are absent on entries onboarded before the profiler was added.
 
 ## Organization
 

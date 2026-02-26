@@ -15,8 +15,8 @@ Shared precondition for all skills that need project context. Eliminates duplica
 | Tier | Fields from PortfolioEntry | Used by |
 |------|---------------------------|---------|
 | minimal | `guidance.stack_summary` + `scout_report.language` + `scout_report.framework` | dependency-manager, tracker, work, portfolio |
-| standard | minimal + `guidance.structure` + `guidance.conventions` + `agents.dispatch_notes` | coders, planner, debugger, documenter, onboard |
-| full | standard + `guidance.ci_cd` + `guidance.testing` + `custom_rules` | tester, ci-cd, reviewer, security-auditor, deploy, migrate, status, secure |
+| standard | minimal + `guidance.structure` + `guidance.conventions` + `agents.dispatch_notes` + `brief.purpose` + `brief.domain` + `brief.users` + `doc_paths` | coders, planner, debugger, documenter, onboard |
+| full | standard + `guidance.ci_cd` + `guidance.testing` + `custom_rules` + complete `brief` object + `doc_paths` | tester, ci-cd, reviewer, security-auditor, deploy, migrate, status, secure |
 
 Organization conventions (`organization.json`) are always loaded regardless of tier.
 
