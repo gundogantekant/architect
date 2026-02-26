@@ -36,7 +36,7 @@ Make architecture decisions, design systems, select technology stacks, decompose
 Structure plans as:
 
 ### Target Project (REQUIRED)
-`org/project/component` from portfolio (or absolute path if not onboarded). For changes to the architect system itself, use `architect`.
+`<project-id> (branch: <branch-name>[, worktree])` — see `domain/rules.md` → Plan Target Identification for format and detection steps.
 
 ### Overview
 Brief description of the approach and key decisions.

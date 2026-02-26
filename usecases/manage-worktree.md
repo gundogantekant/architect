@@ -40,11 +40,14 @@ Core worktree lifecycle for isolating implementation agent work from the user's 
 ### Steps
 
 1. Run `git worktree list` in the target project
-2. Filter entries to those under `<project>/.worktrees/`
-3. Return list of active worktrees with branch names and paths
+2. Show all worktrees (do not filter by location)
+3. Return list of active worktrees with branch names, paths, and origin
 
 ### Output
-- Table of worktree path, branch name, and HEAD commit
+- Table of worktree path, branch name, HEAD commit, and origin (`main` / `architect` / `external`)
+  - `main`: the primary working tree
+  - `architect`: worktree under `<project>/.worktrees/` (created by architect)
+  - `external`: worktree outside `<project>/.worktrees/` (created manually or by other tools)
 
 ## Cleanup
 

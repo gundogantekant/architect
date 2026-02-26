@@ -23,6 +23,12 @@ Organization conventions (`organization.json`) are always loaded regardless of t
 ## Steps
 
 1. Resolve the target project path (from cwd or skill arguments)
+   - Run `git rev-parse --abbrev-ref HEAD` at the target path to capture the current branch
+   - Run `git rev-parse --git-common-dir` at the target path to detect worktree status:
+     if it does not resolve to `<target-path>/.git`, the path is inside a worktree
+   - If inside a worktree: resolve the main repository root as the parent of git-common-dir
+     (strip `/.git`) and use that for the registry lookup in Step 2
+   - Carry the branch name and worktree flag forward for target label formatting
 2. Read `portfolio/registry.json` and look up the path → get `{org, project, component}`
 3. If found:
    - Read `portfolio/<org>/<project>/<component>.json` (see `domain/entities.md` → PortfolioEntry)
@@ -55,6 +61,10 @@ When a WorktreeContext is active (see `domain/entities.md` → WorktreeContext):
 - Implementation agents use `worktree_path` as their working directory
 - Read-only agents use `source_path` (the original project path)
 - Portfolio lookup always uses `source_path` — never a worktree path
+- When the target path is inside an external worktree, resolve `source_path` via
+  `git rev-parse --git-common-dir` for registry lookups — the registry stores main
+  repo paths only
+- Branch name is always included in the target label passed to agents
 
 ## Post-conditions
 - All subsequent agents receive context filtered to the requested depth
