@@ -39,7 +39,7 @@ Classify incoming work requests, assess complexity, select the right workflow pa
 
 ## Output Format
 
-Return a single JSON block matching the DispatchPlan schema in `domain/entities.md`. Read that file on your first turn for the full schema structure. Key fields: `classification` (type, complexity, confidence), `execution_plan` (workflow, steps), optional `clarifications_needed`, optional `suggested_work_item` (medium+ only), optional `skip_reason`.
+Return a single JSON block matching the DispatchPlan schema in `domain/entities.md`. Read that file on your first turn for the full schema structure. Key fields: `target_project` (org/project/component or path), `classification` (type, complexity, confidence), `execution_plan` (workflow, steps), optional `clarifications_needed`, optional `suggested_work_item` (medium+ only), optional `skip_reason`.
 
 ## Constraints
 

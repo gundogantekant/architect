@@ -62,6 +62,10 @@ Certain tool categories perform best on specific models. The orchestrator enforc
 4. After the Playwright task sequence completes, ask the user: "Playwright work is done. Switch back to {previous model} with /model {previous model}?"
 5. If the user declines either prompt, proceed without switching
 
+## Plan Target Identification
+
+Every plan — whether from the orchestrator's plan mode, the planner agent, or PM's dispatch plan — must identify the target project as its first line. Use `org/project/component` from the portfolio registry, or the absolute path if the project is not onboarded. This prevents ambiguity when the architect manages multiple projects.
+
 ## Clarification Triggers
 
 Flag clarifications when:
