@@ -41,9 +41,11 @@ Business rules, heuristics, and decision logic for the architect system. Agents 
 | Read-only | reviewer, security-auditor, performance, strategist, pm, scout, debugger, dependency-manager | No | No | No | No (main tree) |
 | Interactive | browser | No | No | Yes | No |
 | Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer | Yes | No | No | Yes (worktree) |
+| Onboarding | profiler | No (writes only CLAUDE.md to target project) | No | No | No |
 | Data-write | tracker | No | Yes (`work/backlog.json` only) | No | No |
 
 **Exception**: strategist can write decision docs to `docs/`.
+**Exception**: profiler writes only `CLAUDE.md` to the target project during onboarding.
 
 ## Model Affinity Rules
 

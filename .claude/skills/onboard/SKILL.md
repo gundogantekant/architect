@@ -16,10 +16,11 @@ arguments:
 
 # /onboard
 
-Scan a project's tech stack and register it in the architect portfolio.
+Scan a project's tech stack, analyze its purpose and architecture, and register it in the architect portfolio.
 
 ## Agents Dispatched
 - **scout** (haiku) — technology detection
+- **profiler** (sonnet) — project analysis, brief generation, CLAUDE.md generation
 
 ## Steps
 
@@ -28,11 +29,13 @@ Follow `usecases/onboard-project.md` with:
 - organization from `$ARGUMENTS.organization` (optional)
 - rescan from `$ARGUMENTS.rescan` (optional)
 
-See `domain/entities.md` → ScoutReport, PortfolioEntry, Organization for output schemas.
+See `domain/entities.md` → ScoutReport, ProjectBrief, PortfolioEntry, Organization for output schemas.
 
 ## Output
 
 - Detection report (JSON)
+- Project brief (JSON) with purpose, domain, constraints, and architecture analysis
+- CLAUDE.md written to the target project root
+- doc_paths array of documentation files found in the target project
 - Component profile written to portfolio
 - Registry updated
-- No files written to the target project
