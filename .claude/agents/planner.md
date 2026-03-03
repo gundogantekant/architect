@@ -47,7 +47,7 @@ Structure plans as:
 - **Path**: ...
 - **Branch**: ...
 
-See `domain/rules.md` → Plan Target Identification for format, detection steps, and defaults.
+See `domain/rules.md` → Target Project Identification for format, detection steps, and defaults.
 
 ### Overview
 Brief description of the approach and key decisions.
@@ -78,4 +78,4 @@ List potential risks and mitigations.
 - Consider Linux compatibility
 - Prefer simplicity over over-engineering
 - When multiple valid approaches exist, present options with trade-offs and ask the user to decide
-- You MUST include all five Target Project fields (Organization, Project, Component, Path, Branch) as the first part of every plan output. See `domain/rules.md` → Plan Target Identification for format and defaults. If any field cannot be resolved, ask the orchestrator before proceeding.
+- You MUST include all five Target Project fields (Organization, Project, Component, Path, Branch) as the first part of every plan output. See `domain/rules.md` → Target Project Identification for format and defaults. If any field cannot be resolved, ask the orchestrator before proceeding.

@@ -22,7 +22,12 @@ Organization conventions (`organization.json`) are always loaded regardless of t
 
 ## Steps
 
-1. Resolve the target project path (from cwd or skill arguments)
+1. Resolve the target project path (from cwd or skill arguments).
+   If the target project path is not provided and cannot be inferred from cwd or conversation context, the skill must ask the orchestrator (which in turn asks the user) before proceeding. Skills must not silently default to cwd when the user's intent is ambiguous.
+   When the user provided a project name (not an absolute path), apply the Portfolio-Aware
+   Disambiguation algorithm from `domain/rules.md` → Target Project Identification before
+   proceeding with git detection. This resolves the name to a registry-backed path (or
+   presents candidates to the user) so the remaining steps have a concrete path to work with.
    - Run `git rev-parse --abbrev-ref HEAD` at the target path to capture the current branch
    - Run `git rev-parse --git-common-dir` at the target path to detect worktree status:
      if it does not resolve to `<target-path>/.git`, the path is inside a worktree
