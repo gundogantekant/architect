@@ -26,14 +26,15 @@ Classify incoming work requests, assess complexity, select the right workflow pa
 ## Process
 
 1. Read the user's request carefully
-2. Check for existing project context:
-   - Look up the target project path in `portfolio/registry.json`
-   - If found: read `portfolio/<org>/<project>/<component>.json` for scout report, agents, and guidance
-   - Also read `portfolio/<org>/organization.json` for org-level conventions
-   - If not found: flag that no portfolio entry exists and include scout in the execution plan
-   - Run `git rev-parse --abbrev-ref HEAD` at the target project path
+2. **Resolve all five Target Project fields** (see `domain/rules.md` → Plan Target Identification):
+   - Determine the absolute filesystem path to the target project
+   - Look up the path in `portfolio/registry.json` → get Organization, Project, Component
+   - If not found: Organization=`–`, Project=directory basename, Component=`–`
+   - Run `git rev-parse --abbrev-ref HEAD` at the target project path for Branch
    - Detect worktree status via `git rev-parse --git-common-dir`
-   - Include branch and worktree flag in `target_project` field of DispatchPlan
+   - If found in portfolio: read `portfolio/<org>/<project>/<component>.json` for scout report, agents, and guidance; also read `portfolio/<org>/organization.json` for org-level conventions
+   - If not found: flag that no portfolio entry exists and include scout in the execution plan
+   - If the request does not provide enough information to resolve all five fields (at minimum an absolute path), return `clarifications_needed` listing the missing fields instead of producing a dispatch plan
 3. Classify the request type and complexity (see `domain/rules.md` → Complexity Heuristics)
 4. Determine if clarifications are needed (see `domain/rules.md` → Clarification Triggers)
 5. Select the appropriate workflow pattern (see `domain/rules.md` → Workflow Selection)
@@ -42,7 +43,7 @@ Classify incoming work requests, assess complexity, select the right workflow pa
 
 ## Output Format
 
-Return a single JSON block matching the DispatchPlan schema in `domain/entities.md`. Read that file on your first turn for the full schema structure. Key fields: `target_project` (org/project/component or path), `classification` (type, complexity, confidence), `execution_plan` (workflow, steps), optional `clarifications_needed`, optional `suggested_work_item` (medium+ only), optional `skip_reason`.
+Return a single JSON block matching the DispatchPlan schema in `domain/entities.md`. Read that file on your first turn for the full schema structure. Key fields: `target_project` (structured object with all five fields: organization, project, component, path, branch — see `domain/rules.md` → Plan Target Identification), `classification` (type, complexity, confidence), `execution_plan` (workflow, steps), optional `clarifications_needed`, optional `suggested_work_item` (medium+ only), optional `skip_reason`.
 
 ## Constraints
 
