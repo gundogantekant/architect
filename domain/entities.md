@@ -44,7 +44,13 @@ Full PM output. References RequestClassification and WorkflowPattern.
 
 ```json
 {
-  "target_project": "string — format: '<project-id> (branch: <name>[, worktree])'. See domain/rules.md → Plan Target Identification",
+  "target_project": {
+    "organization": "string — org from portfolio, or '–' if not onboarded",
+    "project": "string — project from portfolio, or directory basename",
+    "component": "string — component from portfolio, or '–' if single-component",
+    "path": "string — absolute filesystem path",
+    "branch": "string — branch name, append ', worktree' if applicable"
+  },
   "classification": { "$ref": "RequestClassification" },
   "clarifications_needed": ["string"],
   "execution_plan": {

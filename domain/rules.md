@@ -65,21 +65,53 @@ Certain tool categories perform best on specific models. The orchestrator enforc
 ## Plan Target Identification
 
 Every plan — whether from the orchestrator's plan mode, the planner agent, or PM's
-dispatch plan — must identify the target project as its first line.
+dispatch plan — must identify the target project using all five fields below.
 
-Format: `<project-id> (branch: <branch-name>[, worktree])`
+Format:
+- **Organization**: org name from portfolio (or `–` if not onboarded)
+- **Project**: project name from portfolio (or directory basename if not onboarded)
+- **Component**: component name from portfolio (or `–` if single-component)
+- **Path**: absolute filesystem path to the project root
+- **Branch**: result of `git rev-parse --abbrev-ref HEAD` at the target path; append `, worktree` if the target is a git worktree (detected when `git rev-parse --git-common-dir` does not resolve to `<target-path>/.git`)
 
-- `<project-id>`: `org/project/component` from portfolio, absolute path if not onboarded,
-  or `architect` for self-changes
-- `<branch-name>`: result of `git rev-parse --abbrev-ref HEAD` at the target project path
-- Append `, worktree` if the target path is a git worktree (detected when
-  `git rev-parse --git-common-dir` does not resolve to `<target-path>/.git`)
+Detection steps:
+1. Run `git rev-parse --abbrev-ref HEAD` at the target path for Branch
+2. Run `git rev-parse --git-common-dir` to detect worktree status
+3. Look up the absolute path in `portfolio/registry.json` to resolve Organization, Project, and Component
+4. If not found in registry: Organization=`–`, Project=directory basename, Component=`–`
 
 Examples:
-- `gundogantekant/my-app/backend (branch: main)`
-- `gundogantekant/my-app/frontend (branch: feat/auth-flow, worktree)`
-- `/Users/user/projects/scratch (branch: develop)`
-- `architect (branch: feat/worktree-awareness)`
+- Organization: gundogantekant
+  Project: my-app
+  Component: backend
+  Path: /Users/user/projects/my-app/backend
+  Branch: main
+
+- Organization: gundogantekant
+  Project: my-app
+  Component: frontend
+  Path: /Users/user/.claude/worktrees/my-app-frontend-abc123
+  Branch: feat/auth-flow, worktree
+
+- Organization: –
+  Project: scratch
+  Component: –
+  Path: /Users/user/projects/scratch
+  Branch: develop
+
+- Organization: –
+  Project: architect
+  Component: –
+  Path: /Users/user/Documents/architect
+  Branch: feat/plan-metadata
+
+### Missing Target Fields
+
+If the orchestrator or user request does not provide enough information to populate all
+five fields, the agent (planner or PM) MUST request the missing information before
+producing a plan or dispatch. Agents must not guess or leave fields blank — the only
+exception is the documented defaults for non-onboarded projects (Organization=`–`,
+Component=`–`, Project=directory basename), which require at minimum the absolute path.
 
 ## Clarification Triggers
 

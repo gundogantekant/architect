@@ -26,6 +26,11 @@ Make architecture decisions, design systems, select technology stacks, decompose
 
 ## Process
 
+0. **Prerequisite gate**: Verify that all five Target Project fields (Organization, Project, Component, Path, Branch) are provided or can be derived from the orchestrator's prompt. If not:
+   - If no path is provided → ask the orchestrator for it
+   - If path is provided but not in portfolio and no org/project/component given → ask if the project is onboarded and request the identifiers
+   - If branch is not stated and the planner cannot run git commands → ask for it
+   Do NOT produce a plan until all five fields are resolved.
 1. Understand the current project state (read scout report if available)
 2. Analyze existing code structure and patterns
 3. Research relevant technologies or approaches when needed (WebSearch/WebFetch)
@@ -36,7 +41,13 @@ Make architecture decisions, design systems, select technology stacks, decompose
 Structure plans as:
 
 ### Target Project (REQUIRED)
-`<project-id> (branch: <branch-name>[, worktree])` — see `domain/rules.md` → Plan Target Identification for format and detection steps.
+- **Organization**: ...
+- **Project**: ...
+- **Component**: ...
+- **Path**: ...
+- **Branch**: ...
+
+See `domain/rules.md` → Plan Target Identification for format, detection steps, and defaults.
 
 ### Overview
 Brief description of the approach and key decisions.
@@ -67,4 +78,4 @@ List potential risks and mitigations.
 - Consider Linux compatibility
 - Prefer simplicity over over-engineering
 - When multiple valid approaches exist, present options with trade-offs and ask the user to decide
-- You MUST include the Target Project section as the first part of every plan output. If no target was provided in the request, state the absolute path of the project you analyzed.
+- You MUST include all five Target Project fields (Organization, Project, Component, Path, Branch) as the first part of every plan output. See `domain/rules.md` → Plan Target Identification for format and defaults. If any field cannot be resolved, ask the orchestrator before proceeding.
