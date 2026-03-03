@@ -62,10 +62,11 @@ Certain tool categories perform best on specific models. The orchestrator enforc
 4. After the Playwright task sequence completes, ask the user: "Playwright work is done. Switch back to {previous model} with /model {previous model}?"
 5. If the user declines either prompt, proceed without switching
 
-## Plan Target Identification
+## Target Project Identification
 
-Every plan — whether from the orchestrator's plan mode, the planner agent, or PM's
-dispatch plan — must identify the target project using all five fields below.
+Every action on a target project — whether a plan, an agent dispatch, or a skill
+invocation — must be preceded by resolving the target project using all five fields
+below. The orchestrator is responsible for this resolution before any work begins.
 
 Format:
 - **Organization**: org name from portfolio (or `–` if not onboarded)
@@ -108,10 +109,42 @@ Examples:
 ### Missing Target Fields
 
 If the orchestrator or user request does not provide enough information to populate all
-five fields, the agent (planner or PM) MUST request the missing information before
-producing a plan or dispatch. Agents must not guess or leave fields blank — the only
+five fields, the orchestrator, planner, or PM MUST request the missing information before
+proceeding. They must not guess or leave fields blank — the only
 exception is the documented defaults for non-onboarded projects (Organization=`–`,
 Component=`–`, Project=directory basename), which require at minimum the absolute path.
+
+### Orchestrator Resolution Rule
+
+The orchestrator (main Claude session) must resolve the target project's five fields
+before dispatching any agent or executing any skill. Resolution sources, in priority order:
+
+1. Explicit user statement (e.g., "work on /Users/user/projects/my-app")
+2. Active conversation context (project was already identified earlier in the session)
+3. Current working directory (cwd) — only if the user's request clearly targets the cwd project
+
+If none of these provide a clear target, the orchestrator must ask the user which project
+they intend to work on before proceeding. This applies to all modes: plan mode, PM dispatch,
+direct agent invocation, slash commands, and trivial tasks.
+
+### Portfolio-Aware Disambiguation
+
+When the user references a project by name (not an absolute path), the orchestrator must
+attempt to match against the portfolio before asking the user.
+
+**Algorithm**:
+1. Read `portfolio/registry.json` and collect all entries
+2. Normalize user input: lowercase, collapse hyphens/underscores/spaces to a single space
+3. For each registry entry, build matchable strings using the same normalization:
+   `project` field, `component` field, path basename, `org` field
+4. Substring match in both directions (user input ⊂ candidate OR candidate ⊂ user input),
+   case-insensitive
+
+**Resolution**:
+- **1 match** → auto-resolve: populate all five target fields from the registry entry + git detection
+- **Multiple matches** → present only matched candidates as `org/project/component (path)`, ask user to pick
+- **No matches, registry non-empty** → list all registered projects as `org/project/component (path)` + offer "Other (provide path)"
+- **Registry empty or missing** → ask user for the absolute path (current behavior)
 
 ## Clarification Triggers
 

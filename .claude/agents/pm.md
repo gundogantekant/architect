@@ -26,7 +26,7 @@ Classify incoming work requests, assess complexity, select the right workflow pa
 ## Process
 
 1. Read the user's request carefully
-2. **Resolve all five Target Project fields** (see `domain/rules.md` → Plan Target Identification):
+2. **Resolve all five Target Project fields** (see `domain/rules.md` → Target Project Identification):
    - Determine the absolute filesystem path to the target project
    - Look up the path in `portfolio/registry.json` → get Organization, Project, Component
    - If not found: Organization=`–`, Project=directory basename, Component=`–`
@@ -34,7 +34,12 @@ Classify incoming work requests, assess complexity, select the right workflow pa
    - Detect worktree status via `git rev-parse --git-common-dir`
    - If found in portfolio: read `portfolio/<org>/<project>/<component>.json` for scout report, agents, and guidance; also read `portfolio/<org>/organization.json` for org-level conventions
    - If not found: flag that no portfolio entry exists and include scout in the execution plan
-   - If the request does not provide enough information to resolve all five fields (at minimum an absolute path), return `clarifications_needed` listing the missing fields instead of producing a dispatch plan
+   - If user gave a name but not an absolute path, apply Portfolio-Aware Disambiguation (see `domain/rules.md` → Target Project Identification):
+     - 1 match → auto-resolve all five fields, proceed to step 3
+     - Multiple matches → return `clarifications_needed` with only the matched candidates as options
+     - No matches, registry non-empty → return `clarifications_needed` listing all registered projects as options
+     - Registry empty or missing → return `clarifications_needed` asking for an absolute path
+   - If user gave neither a name nor a path → return `clarifications_needed` for the missing target fields
 3. Classify the request type and complexity (see `domain/rules.md` → Complexity Heuristics)
 4. Determine if clarifications are needed (see `domain/rules.md` → Clarification Triggers)
 5. Select the appropriate workflow pattern (see `domain/rules.md` → Workflow Selection)
@@ -43,7 +48,7 @@ Classify incoming work requests, assess complexity, select the right workflow pa
 
 ## Output Format
 
-Return a single JSON block matching the DispatchPlan schema in `domain/entities.md`. Read that file on your first turn for the full schema structure. Key fields: `target_project` (structured object with all five fields: organization, project, component, path, branch — see `domain/rules.md` → Plan Target Identification), `classification` (type, complexity, confidence), `execution_plan` (workflow, steps), optional `clarifications_needed`, optional `suggested_work_item` (medium+ only), optional `skip_reason`.
+Return a single JSON block matching the DispatchPlan schema in `domain/entities.md`. Read that file on your first turn for the full schema structure. Key fields: `target_project` (structured object with all five fields: organization, project, component, path, branch — see `domain/rules.md` → Target Project Identification), `classification` (type, complexity, confidence), `execution_plan` (workflow, steps), optional `clarifications_needed`, optional `suggested_work_item` (medium+ only), optional `skip_reason`.
 
 ## Constraints
 

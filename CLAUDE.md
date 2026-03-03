@@ -109,7 +109,7 @@ See `domain/entities.md` → WorkItem, WorkBacklog for schema, `domain/rules.md`
 
 ## Rules
 
-- Every plan must identify its target project with all five fields: Organization, Project, Component, Path, and Branch. See `domain/rules.md` → Plan Target Identification for format and detection steps. For changes to the architect project itself, use Organization=–, Project=architect, Component=–.
+- Before any work (plans, agent dispatch, skill invocation), the orchestrator must resolve the target project with all five fields: Organization, Project, Component, Path, and Branch. If the target is ambiguous, ask the user. See `domain/rules.md` → Target Project Identification. For architect self-changes, use Organization=–, Project=architect, Component=–.
 - Run scout (or load portfolio) before dispatching implementation agents on any new project
 - Pass the portfolio context or detection report to every subsequent agent invocation
 - Use parallel fan-out when tasks are independent (frontend/backend/infra)
