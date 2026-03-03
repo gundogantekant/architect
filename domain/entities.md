@@ -172,9 +172,19 @@ Stored at `portfolio/<org>/organization.json`.
     "pr_title_pattern": "string"
   },
   "rules": ["string"],
-  "projects": ["string"]
+  "projects": ["string"],
+  "design_systems": {
+    "<system-key>": {
+      "type": "figma|sketch|abstract",
+      "url": "string",
+      "description": "string",
+      "depends_on": ["string (project names)"]
+    }
+  }
 }
 ```
+
+**Optional fields**: `design_systems`, `cloud_environments`.
 
 ## WorkItem
 
