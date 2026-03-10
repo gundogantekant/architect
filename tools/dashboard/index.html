@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Architect Portfolio Dashboard</title>
+<style>
+  :root {
+    --sidebar-w: 260px;
+    --bg: #f5f5f5; --bg-card: #fff; --bg-sidebar: #1e1e2e;
+    --text: #333; --text-light: #888; --text-sidebar: #cdd6f4;
+    --accent: #7c3aed; --border: #e2e2e2;
+    --blue: #3b82f6; --green: #22c55e; --red: #ef4444;
+    --orange: #f59e0b; --teal: #14b8a6;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); display: flex; height: 100vh; }
+
+  /* Sidebar */
+  #sidebar { width: var(--sidebar-w); min-width: var(--sidebar-w); background: var(--bg-sidebar); color: var(--text-sidebar); padding: 20px 0; overflow-y: auto; display: flex; flex-direction: column; }
+  #sidebar h1 { font-size: 15px; padding: 0 16px 16px; border-bottom: 1px solid #313244; letter-spacing: 0.5px; text-transform: uppercase; color: #cba6f7; }
+  .org-group { margin-top: 12px; }
+  .org-name { padding: 6px 16px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; color: #f5c2e7; }
+  .org-name:hover { background: #313244; }
+  .org-name .arrow { font-size: 10px; transition: transform .15s; }
+  .org-name .arrow.open { transform: rotate(90deg); }
+  .project-list { padding-left: 16px; }
+  .project-item { padding: 4px 16px; font-size: 12.5px; cursor: pointer; border-radius: 4px; margin: 1px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .project-item:hover { background: #313244; }
+  .project-item.active { background: var(--accent); color: #fff; }
+
+  /* Main */
+  #main { flex: 1; overflow-y: auto; padding: 28px 36px; }
+  .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 24px; margin-bottom: 20px; }
+  h2 { font-size: 22px; margin-bottom: 16px; }
+  h3 { font-size: 16px; margin: 16px 0 8px; color: #555; }
+
+  /* Badges */
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; margin: 2px 3px; }
+  .badge-role { background: #ede9fe; color: var(--accent); }
+  .badge-open { background: #dbeafe; color: var(--blue); }
+  .badge-done { background: #dcfce7; color: #16a34a; }
+  .badge-blocked { background: #fee2e2; color: var(--red); }
+  .badge-high { background: #fee2e2; color: var(--red); }
+  .badge-medium { background: #fef3c7; color: #b45309; }
+  .badge-low { background: #e0f2fe; color: #0284c7; }
+  .badge-agent { background: #f0fdf4; color: var(--teal); border: 1px solid #bbf7d0; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 10.5px; background: #f1f5f9; color: #64748b; margin: 1px 2px; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 20px; }
+  .tab { padding: 8px 18px; cursor: pointer; font-size: 13px; font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -2px; color: var(--text-light); }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 8px 10px; border-bottom: 2px solid var(--border); font-size: 11px; text-transform: uppercase; color: var(--text-light); }
+  td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:hover { background: #fafafa; }
+  .expand-btn { cursor: pointer; color: var(--blue); font-size: 12px; border: none; background: none; }
+
+  /* Key-value */
+  .kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; font-size: 13px; margin-bottom: 12px; }
+  .kv dt { color: var(--text-light); font-weight: 500; }
+  .kv dd { margin: 0; }
+
+  /* List */
+  .item-list { list-style: none; padding: 0; }
+  .item-list li { padding: 4px 0; font-size: 13px; border-bottom: 1px solid #f0f0f0; }
+  .item-list li:last-child { border: none; }
+
+  /* Markdown */
+  .md-container { max-height: 600px; overflow-y: auto; padding: 16px; background: #fafafa; border-radius: 6px; font-size: 14px; line-height: 1.6; }
+  .md-container pre { background: #1e1e2e; color: #cdd6f4; padding: 12px; border-radius: 6px; overflow-x: auto; }
+  .md-container code { font-size: 13px; }
+  .md-container h1, .md-container h2, .md-container h3 { margin-top: 16px; margin-bottom: 8px; }
+  .md-container ul, .md-container ol { padding-left: 20px; }
+
+  /* Env table */
+  .env-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  .env-card { border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-size: 12.5px; }
+  .env-card strong { display: block; margin-bottom: 4px; text-transform: capitalize; }
+  .env-card .mono { font-family: monospace; color: var(--text-light); font-size: 11.5px; }
+
+  /* File list for docs */
+  .file-link { display: inline-block; padding: 6px 12px; margin: 4px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .file-link:hover { background: #f0f0ff; border-color: var(--accent); }
+  .file-link.active { background: #ede9fe; border-color: var(--accent); }
+
+  .session-log { margin-top: 8px; padding: 8px 12px; background: #f8f8f8; border-radius: 4px; font-size: 12px; }
+  .session-log .entry { padding: 3px 0; border-bottom: 1px solid #eee; }
+  .session-log .entry:last-child { border: none; }
+  .session-log .date { color: var(--text-light); font-family: monospace; margin-right: 8px; }
+
+  .empty { color: var(--text-light); font-style: italic; font-size: 13px; padding: 12px 0; }
+</style>
+</head>
+<body>
+
+<nav id="sidebar">
+  <h1>Architect</h1>
+  <div id="tree"></div>
+</nav>
+
+<main id="main">
+  <div class="card">
+    <h2>Portfolio Dashboard</h2>
+    <p style="color:var(--text-light);font-size:14px">Select an organization or project from the sidebar.</p>
+  </div>
+</main>
+
+<script type="module">
+const $ = s => document.querySelector(s);
+const api = path => fetch('/api/' + path).then(r => r.ok ? r.json() : Promise.reject(r.statusText));
+const apiText = path => fetch('/api/' + path).then(r => r.ok ? r.text() : Promise.reject(r.statusText));
+
+let markedLoaded = false;
+async function loadMarked() {
+  if (markedLoaded) return;
+  try {
+    await new Promise((ok, fail) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/marked@15/marked.min.js';
+      s.onload = ok; s.onerror = fail;
+      document.head.appendChild(s);
+    });
+    markedLoaded = true;
+  } catch { markedLoaded = false; }
+}
+loadMarked();
+
+function renderMd(text) {
+  if (markedLoaded && window.marked) return window.marked.parse(text);
+  return '<pre>' + esc(text) + '</pre>';
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// --- Data cache ---
+let backlog = null;
+let orgCache = {};
+
+async function getBacklog() {
+  if (!backlog) backlog = await api('backlog');
+  return backlog;
+}
+
+// --- Sidebar ---
+async function buildTree() {
+  const orgs = await api('orgs');
+  const tree = $('#tree');
+  tree.innerHTML = '';
+  for (const org of orgs) {
+    const projects = await api(`org/${org}/projects`);
+    const orgData = await api(`org/${org}`);
+    orgCache[org] = orgData;
+
+    const group = document.createElement('div');
+    group.className = 'org-group';
+
+    const header = document.createElement('div');
+    header.className = 'org-name';
+    header.innerHTML = `<span class="arrow open">&#9654;</span> ${esc(orgData.name || org)} <span style="font-size:11px;color:#888">(${projects.length})</span>`;
+    header.onclick = () => {
+      location.hash = `#org/${org}`;
+      const arrow = header.querySelector('.arrow');
+      const list = group.querySelector('.project-list');
+      const open = arrow.classList.toggle('open');
+      list.style.display = open ? '' : 'none';
+    };
+
+    const list = document.createElement('div');
+    list.className = 'project-list';
+
+    for (const proj of projects) {
+      const files = await api(`project/${org}/${proj}`);
+      const components = files.filter(f => f.endsWith('.json'));
+      for (const file of components) {
+        const comp = file.replace(/\.json$/, '');
+        const item = document.createElement('div');
+        item.className = 'project-item';
+        item.dataset.key = `${org}/${proj}/${comp}`;
+        item.textContent = `${proj} / ${comp}`;
+        item.onclick = (e) => {
+          e.stopPropagation();
+          location.hash = `#component/${org}/${proj}/${comp}`;
+        };
+        list.appendChild(item);
+      }
+    }
+
+    group.appendChild(header);
+    group.appendChild(list);
+    tree.appendChild(group);
+  }
+}
+
+// --- Views ---
+function renderOrgView(org, data) {
+  let html = `<div class="card"><h2>${esc(data.name || org)}</h2>`;
+  html += `<dl class="kv"><dt>Path Root</dt><dd><code>${esc(data.path_root || '—')}</code></dd></dl>`;
+
+  if (data.conventions) {
+    html += `<h3>Conventions</h3><dl class="kv">`;
+    for (const [k, v] of Object.entries(data.conventions)) {
+      html += `<dt>${esc(k)}</dt><dd><code>${esc(v)}</code></dd>`;
+    }
+    html += `</dl>`;
+  }
+
+  if (data.rules?.length) {
+    html += `<h3>Rules</h3><ul class="item-list">`;
+    for (const r of data.rules) html += `<li>${esc(r)}</li>`;
+    html += `</ul>`;
+  }
+
+  if (data.cloud_environments) {
+    html += `<h3>Cloud Environments</h3><div class="env-grid">`;
+    for (const [name, env] of Object.entries(data.cloud_environments)) {
+      html += `<div class="env-card"><strong>${esc(name)}</strong>`;
+      if (env.account_id) html += `<div class="mono">Account: ${esc(env.account_id)}</div>`;
+      if (env.profile) html += `<div class="mono">Profile: ${esc(env.profile)}</div>`;
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+
+  if (data.design_systems) {
+    html += `<h3>Design Systems</h3><div class="env-grid">`;
+    for (const [name, ds] of Object.entries(data.design_systems)) {
+      html += `<div class="env-card"><strong>${esc(name)}</strong>`;
+      if (ds.type) html += `<div><span class="badge badge-role">${esc(ds.type)}</span></div>`;
+      if (ds.description) html += `<div style="margin-top:4px;font-size:12px">${esc(ds.description)}</div>`;
+      if (ds.depends_on?.length) html += `<div style="margin-top:4px">Used by: ${ds.depends_on.map(d => `<span class="tag">${esc(d)}</span>`).join('')}</div>`;
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+
+  if (data.projects?.length) {
+    html += `<h3>Projects (${data.projects.length})</h3><div>`;
+    for (const p of data.projects) html += `<span class="tag" style="font-size:12px;padding:3px 10px">${esc(p)}</span>`;
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+function renderComponentView(org, proj, comp, data, workItems, files) {
+  const tabs = ['Profile', 'Guidance', 'Agents', 'Work Items', 'Docs'];
+  let html = `<div class="card"><h2>${esc(data.name || `${proj}/${comp}`)}</h2>`;
+  html += `<span class="badge badge-role">${esc(data.role || 'unknown')}</span>`;
+  html += `<div class="tabs" id="comp-tabs">`;
+  tabs.forEach((t, i) => {
+    html += `<div class="tab${i === 0 ? ' active' : ''}" data-tab="${i}">${t}</div>`;
+  });
+  html += `</div>`;
+
+  // Tab 0: Profile
+  html += `<div class="tab-content active" data-panel="0">`;
+  html += `<dl class="kv">`;
+  html += `<dt>Path</dt><dd><code>${esc(data.path || '—')}</code></dd>`;
+  html += `<dt>Onboarded</dt><dd>${esc(data.onboarded_at || '—')}</dd>`;
+  html += `<dt>Last Scanned</dt><dd>${esc(data.last_scanned || '—')}</dd>`;
+  html += `</dl>`;
+  if (data.scout_report) {
+    html += `<h3>Scout Report</h3><dl class="kv">`;
+    for (const [k, v] of Object.entries(data.scout_report)) {
+      const val = Array.isArray(v) ? v.map(x => `<span class="tag">${esc(x)}</span>`).join(' ') : esc(String(v));
+      html += `<dt>${esc(k)}</dt><dd>${val}</dd>`;
+    }
+    html += `</dl>`;
+  }
+  if (data.brief) {
+    html += `<h3>Brief</h3><dl class="kv">`;
+    for (const [k, v] of Object.entries(data.brief)) {
+      const val = Array.isArray(v) ? v.map(x => typeof x === 'object' ? esc(JSON.stringify(x)) : `<span class="tag">${esc(x)}</span>`).join(' ') : esc(String(v));
+      html += `<dt>${esc(k)}</dt><dd>${val}</dd>`;
+    }
+    html += `</dl>`;
+  }
+  html += `</div>`;
+
+  // Tab 1: Guidance
+  html += `<div class="tab-content" data-panel="1">`;
+  if (data.guidance) {
+    const g = data.guidance;
+    if (g.stack_summary) html += `<p style="margin-bottom:12px">${esc(g.stack_summary)}</p>`;
+    for (const section of ['structure', 'conventions', 'ci_cd', 'testing', 'hardware_configs', 'external_dependencies']) {
+      if (g[section]?.length) {
+        html += `<h3>${esc(section.replace(/_/g, ' '))}</h3><ul class="item-list">`;
+        for (const item of g[section]) {
+          html += `<li>${typeof item === 'object' ? esc(JSON.stringify(item)) : esc(item)}</li>`;
+        }
+        html += `</ul>`;
+      }
+    }
+  } else {
+    html += `<p class="empty">No guidance available.</p>`;
+  }
+  if (data.custom_rules?.length) {
+    html += `<h3>Custom Rules</h3><ul class="item-list">`;
+    for (const r of data.custom_rules) html += `<li>${esc(r)}</li>`;
+    html += `</ul>`;
+  }
+  html += `</div>`;
+
+  // Tab 2: Agents
+  html += `<div class="tab-content" data-panel="2">`;
+  if (data.agents) {
+    if (data.agents.recommended?.length) {
+      html += `<h3>Recommended</h3><div>`;
+      for (const a of data.agents.recommended) html += `<span class="badge badge-agent">${esc(a)}</span>`;
+      html += `</div>`;
+    }
+    if (data.agents.dispatch_notes && Object.keys(data.agents.dispatch_notes).length) {
+      html += `<h3>Dispatch Notes</h3><dl class="kv">`;
+      for (const [a, note] of Object.entries(data.agents.dispatch_notes)) {
+        html += `<dt><span class="badge badge-agent">${esc(a)}</span></dt><dd>${esc(note)}</dd>`;
+      }
+      html += `</dl>`;
+    }
+  } else {
+    html += `<p class="empty">No agent recommendations.</p>`;
+  }
+  html += `</div>`;
+
+  // Tab 3: Work Items
+  html += `<div class="tab-content" data-panel="3">`;
+  if (workItems.length) {
+    html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Tags</th><th></th></tr></thead><tbody>`;
+    workItems.forEach((w, idx) => {
+      const sc = w.status === 'done' ? 'done' : (w.blocked_by ? 'blocked' : 'open');
+      html += `<tr><td><code>${esc(w.id)}</code></td><td>${esc(w.title)}</td>`;
+      html += `<td><span class="badge badge-${sc}">${esc(w.status)}${w.blocked_by ? ` (${esc(w.blocked_by)})` : ''}</span></td>`;
+      html += `<td><span class="badge badge-${w.priority || 'medium'}">${esc(w.priority || '—')}</span></td>`;
+      html += `<td>${(w.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
+      html += `<td><button class="expand-btn" data-wi="${idx}">details</button></td>`;
+      html += `</tr>`;
+      html += `<tr class="wi-detail" data-wi-detail="${idx}" style="display:none"><td colspan="6">`;
+      if (w.description) html += `<div style="margin-bottom:8px">${esc(w.description)}</div>`;
+      if (w.session_log?.length) {
+        html += `<div class="session-log">`;
+        for (const e of w.session_log) html += `<div class="entry"><span class="date">${esc(e.date)}</span>${esc(e.summary)}</div>`;
+        html += `</div>`;
+      }
+      html += `</td></tr>`;
+    });
+    html += `</tbody></table>`;
+  } else {
+    html += `<p class="empty">No work items for this project.</p>`;
+  }
+  html += `</div>`;
+
+  // Tab 4: Docs
+  const mdFiles = files.filter(f => f.endsWith('.md'));
+  html += `<div class="tab-content" data-panel="4">`;
+  if (mdFiles.length) {
+    html += `<div id="doc-files">`;
+    for (const f of mdFiles) html += `<span class="file-link" data-doc="${esc(f)}">${esc(f)}</span>`;
+    html += `</div><div id="doc-render" class="md-container" style="margin-top:12px"></div>`;
+  } else {
+    html += `<p class="empty">No documentation files.</p>`;
+  }
+  html += `</div>`;
+
+  html += `</div>`;
+  return html;
+}
+
+function bindTabs() {
+  const tabs = document.querySelectorAll('#comp-tabs .tab');
+  tabs.forEach(tab => {
+    tab.onclick = () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelectorAll('.tab-content').forEach(p => p.classList.remove('active'));
+      document.querySelector(`.tab-content[data-panel="${tab.dataset.tab}"]`).classList.add('active');
+    };
+  });
+
+  // Work item expand
+  document.querySelectorAll('.expand-btn').forEach(btn => {
+    btn.onclick = () => {
+      const row = document.querySelector(`[data-wi-detail="${btn.dataset.wi}"]`);
+      const showing = row.style.display !== 'none';
+      row.style.display = showing ? 'none' : '';
+      btn.textContent = showing ? 'details' : 'hide';
+    };
+  });
+
+  // Doc links
+  document.querySelectorAll('.file-link').forEach(link => {
+    link.onclick = async () => {
+      document.querySelectorAll('.file-link').forEach(l => l.classList.remove('active'));
+      link.classList.add('active');
+      const hash = location.hash.slice(1).split('/');
+      // #component/org/proj/comp
+      const [, org, proj] = hash;
+      const render = $('#doc-render');
+      try {
+        render.innerHTML = '<p style="color:var(--text-light)">Loading...</p>';
+        const text = await apiText(`doc/${org}/${proj}/${link.dataset.doc}`);
+        render.innerHTML = renderMd(text);
+      } catch (e) {
+        render.innerHTML = `<p style="color:var(--red)">Failed to load: ${esc(String(e))}</p>`;
+      }
+    };
+  });
+}
+
+function setActive(key) {
+  document.querySelectorAll('.project-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.key === key);
+  });
+}
+
+// --- Router ---
+async function route() {
+  const hash = location.hash.slice(1);
+  const main = $('#main');
+
+  if (!hash) {
+    main.innerHTML = `<div class="card"><h2>Portfolio Dashboard</h2><p style="color:var(--text-light);font-size:14px">Select an organization or project from the sidebar.</p></div>`;
+    setActive('');
+    return;
+  }
+
+  const parts = hash.split('/');
+
+  if (parts[0] === 'org' && parts[1]) {
+    const org = parts[1];
+    try {
+      const data = orgCache[org] || await api(`org/${org}`);
+      orgCache[org] = data;
+      main.innerHTML = renderOrgView(org, data);
+    } catch (e) {
+      main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
+    }
+    setActive('');
+    return;
+  }
+
+  if (parts[0] === 'component' && parts.length >= 4) {
+    const [, org, proj, comp] = parts;
+    try {
+      const [data, bl, files] = await Promise.all([
+        api(`component/${org}/${proj}/${comp}`),
+        getBacklog(),
+        api(`project/${org}/${proj}`)
+      ]);
+
+      // Match work items (case-insensitive)
+      const projKey = `${org}/${proj}/${comp}`.toLowerCase();
+      const workItems = [];
+      if (bl.projects) {
+        for (const [key, val] of Object.entries(bl.projects)) {
+          if (key.toLowerCase() === projKey && val.items) {
+            workItems.push(...val.items);
+          }
+        }
+      }
+
+      main.innerHTML = renderComponentView(org, proj, comp, data, workItems, files);
+      bindTabs();
+      setActive(`${org}/${proj}/${comp}`);
+    } catch (e) {
+      main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
+    }
+    return;
+  }
+
+  main.innerHTML = `<div class="card"><p class="empty">Unknown route: ${esc(hash)}</p></div>`;
+}
+
+window.addEventListener('hashchange', route);
+buildTree().then(route);
+</script>
+</body>
+</html>
