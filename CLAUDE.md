@@ -119,6 +119,21 @@ See `domain/entities.md` → WorkItem, WorkBacklog for schema, `domain/rules.md`
 - Follow git standards defined in `domain/rules.md`
 - Before using Playwright MCP tools directly in the main session, follow Model Affinity Rules in `domain/rules.md` to prompt model switching
 
+## Dashboard (`tools/dashboard/`)
+
+Local web dashboard at `http://127.0.0.1:3777` for viewing portfolio data and work items. Start with `node tools/dashboard/server.mjs`.
+
+### Agent Dispatch
+
+The dashboard supports dispatching Claude Code agents directly from work items:
+- Click "dispatch" on any open/in-progress work item to open the dispatch modal
+- Add optional instructions, then dispatch — spawns `claude -p --output-format stream-json` as a child process
+- Live output streams to the browser via SSE; multiple dispatches run concurrently
+- Each dispatch panel shows a terminal guidance command for taking over from CLI
+- Dispatch state is ephemeral (in-memory, lost on server restart). See `domain/entities.md` → DispatchRequest for schema.
+
+Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/stream` (SSE), `GET /api/dispatch/active`.
+
 ## Available Skills
 
 | Command | Purpose |

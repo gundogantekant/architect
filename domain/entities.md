@@ -235,6 +235,22 @@ Tracks an active worktree created for implementation isolation.
 }
 ```
 
+## DispatchRequest
+
+Ephemeral in-memory record created when the dashboard dispatches a Claude agent for a work item. Not persisted to disk — lives only for the server session.
+
+```json
+{
+  "id": "string (D-<timestamp>)",
+  "work_item_id": "string (W-XXX)",
+  "project_key": "string (org/project/component)",
+  "additional_instructions": "string (optional)",
+  "status": "running|completed|failed",
+  "started_at": "string (ISO 8601)",
+  "completed_at": "string (ISO 8601, optional)"
+}
+```
+
 ## RegistryEntry
 
 Stored in `portfolio/registry.json`.
