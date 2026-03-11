@@ -18,7 +18,9 @@
 
   /* Sidebar */
   #sidebar { width: var(--sidebar-w); min-width: var(--sidebar-w); background: var(--bg-sidebar); color: var(--text-sidebar); padding: 20px 0; overflow-y: auto; display: flex; flex-direction: column; }
-  #sidebar h1 { font-size: 15px; padding: 0 16px 16px; border-bottom: 1px solid #313244; letter-spacing: 0.5px; text-transform: uppercase; color: #cba6f7; }
+  #sidebar h1 { font-size: 15px; padding: 0 16px 16px; border-bottom: 1px solid #313244; letter-spacing: 0.5px; text-transform: uppercase; color: #cba6f7; display: flex; align-items: center; gap: 8px; }
+  .dispatch-count { background: var(--accent); color: #fff; font-size: 10px; padding: 1px 7px; border-radius: 10px; font-weight: 700; }
+  .dispatch-count.empty { display: none; }
   .org-group { margin-top: 12px; }
   .org-name { padding: 6px 16px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; color: #f5c2e7; }
   .org-name:hover { background: #313244; }
@@ -61,6 +63,8 @@
   td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
   tr:hover { background: #fafafa; }
   .expand-btn { cursor: pointer; color: var(--blue); font-size: 12px; border: none; background: none; }
+  .dispatch-btn { cursor: pointer; color: #fff; font-size: 12px; border: none; background: var(--accent); padding: 3px 10px; border-radius: 4px; margin-left: 4px; }
+  .dispatch-btn:hover { opacity: 0.85; }
 
   /* Key-value */
   .kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; font-size: 13px; margin-bottom: 12px; }
@@ -96,12 +100,41 @@
   .session-log .date { color: var(--text-light); font-family: monospace; margin-right: 8px; }
 
   .empty { color: var(--text-light); font-style: italic; font-size: 13px; padding: 12px 0; }
+
+  /* Modal */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 100; }
+  .modal { background: #fff; border-radius: 10px; padding: 28px; max-width: 560px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.18); }
+  .modal h3 { margin-top: 0; margin-bottom: 12px; font-size: 18px; color: var(--text); }
+  .modal .field { margin-bottom: 14px; }
+  .modal label { display: block; font-size: 12px; font-weight: 600; color: var(--text-light); margin-bottom: 4px; text-transform: uppercase; }
+  .modal textarea { width: 100%; min-height: 80px; border: 1px solid var(--border); border-radius: 6px; padding: 10px; font-size: 13px; font-family: inherit; resize: vertical; }
+  .modal textarea:focus { outline: none; border-color: var(--accent); }
+  .modal .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+  .modal .btn { padding: 8px 20px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px; font-weight: 600; }
+  .modal .btn-cancel { background: #f1f5f9; color: var(--text); }
+  .modal .btn-dispatch { background: var(--accent); color: #fff; }
+  .modal .btn-dispatch:hover { opacity: 0.9; }
+
+  /* Dispatch panels */
+  .dispatch-panel { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+  .dispatch-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: #fafafa; }
+  .dispatch-header .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .dispatch-header .status-dot.running { background: var(--green); animation: pulse 1.5s infinite; }
+  .dispatch-header .status-dot.completed { background: var(--green); }
+  .dispatch-header .status-dot.failed { background: var(--red); }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .dispatch-header .dispatch-title { font-size: 13px; font-weight: 600; flex: 1; }
+  .dispatch-header .dispatch-meta { font-size: 11px; color: var(--text-light); }
+  .dispatch-log { max-height: 350px; overflow-y: auto; padding: 12px 16px; background: #1e1e2e; color: #cdd6f4; font-family: monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+  .dispatch-guidance { padding: 12px 16px; background: #fffbeb; border-top: 1px solid #fde68a; font-size: 12.5px; }
+  .dispatch-guidance code { background: #fef3c7; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+  .dispatch-guidance .label { font-weight: 600; font-size: 11px; text-transform: uppercase; color: #92400e; margin-bottom: 4px; }
 </style>
 </head>
 <body>
 
 <nav id="sidebar">
-  <h1>Architect</h1>
+  <h1>Architect <span id="dispatch-badge" class="dispatch-count empty"></span></h1>
   <div id="tree"></div>
 </nav>
 
@@ -146,6 +179,244 @@ let orgCache = {};
 async function getBacklog() {
   if (!backlog) backlog = await api('backlog');
   return backlog;
+}
+
+// --- Dispatch state ---
+const activeDispatches = [];
+
+function updateDispatchBadge() {
+  const badge = $('#dispatch-badge');
+  const running = activeDispatches.filter(d => d.status === 'running').length;
+  if (running > 0) {
+    badge.textContent = running;
+    badge.classList.remove('empty');
+  } else {
+    badge.classList.add('empty');
+  }
+}
+
+function extractStreamText(line) {
+  try {
+    const evt = JSON.parse(line);
+    if (evt.type === 'assistant' && evt.message?.content) {
+      return evt.message.content
+        .filter(b => b.type === 'text')
+        .map(b => b.text)
+        .join('');
+    }
+    if (evt.type === 'content_block_delta' && evt.delta?.text) {
+      return evt.delta.text;
+    }
+    if (evt.type === 'content_block_start' && evt.content_block?.text) {
+      return evt.content_block.text;
+    }
+    if (evt.type === 'result') {
+      const cost = evt.cost_usd ? ` (cost: $${evt.cost_usd.toFixed(4)})` : '';
+      return `\n--- Agent finished${cost} ---\n`;
+    }
+    if (evt.type === 'stderr') {
+      return `[stderr] ${evt.content}`;
+    }
+  } catch {
+    return line;
+  }
+  return null;
+}
+
+function createDispatchPanel(dispatch) {
+  const panel = document.createElement('div');
+  panel.className = 'dispatch-panel';
+  panel.id = `dispatch-${dispatch.id}`;
+  panel.innerHTML = `
+    <div class="dispatch-header">
+      <span class="status-dot running"></span>
+      <span class="dispatch-title">${esc(dispatch.id)} — ${esc(dispatch.work_item_id)} — ${esc(dispatch.title || '')}</span>
+      <span class="dispatch-meta">${new Date(dispatch.started_at).toLocaleTimeString()}</span>
+    </div>
+    <div class="dispatch-log" id="log-${dispatch.id}"></div>
+    <div class="dispatch-guidance">
+      <div class="label">Continue from terminal</div>
+      <code>cd ${esc(dispatch.project_path)} && claude "Continue ${esc(dispatch.work_item_id)}: ${esc(dispatch.title || '')}"</code>
+    </div>
+  `;
+  return panel;
+}
+
+function connectDispatchStream(dispatch) {
+  const logEl = document.getElementById(`log-${dispatch.id}`);
+  const dotEl = document.querySelector(`#dispatch-${dispatch.id} .status-dot`);
+  if (!logEl) return;
+
+  const es = new EventSource(`/api/dispatch/${dispatch.id}/stream`);
+
+  es.onmessage = (e) => {
+    const text = extractStreamText(e.data);
+    if (text) {
+      logEl.textContent += text;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+  };
+
+  es.addEventListener('done', (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      dispatch.status = data.status;
+    } catch {
+      dispatch.status = 'completed';
+    }
+    if (dotEl) {
+      dotEl.classList.remove('running');
+      dotEl.classList.add(dispatch.status);
+    }
+    updateDispatchBadge();
+    es.close();
+  });
+
+  es.onerror = () => {
+    dispatch.status = 'failed';
+    if (dotEl) {
+      dotEl.classList.remove('running');
+      dotEl.classList.add('failed');
+    }
+    updateDispatchBadge();
+    es.close();
+  };
+}
+
+function getDispatchContainer() {
+  let container = document.getElementById('dispatch-panels');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'dispatch-panels';
+    const main = $('#main');
+    main.insertBefore(container, main.firstChild);
+  }
+  return container;
+}
+
+async function dispatchWorkItem(workItem, projectKey) {
+  // Show modal
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal">
+        <h3>Dispatch ${esc(workItem.id)}</h3>
+        <div style="margin-bottom:14px">
+          <span class="badge badge-${workItem.status === 'done' ? 'done' : (workItem.blocked_by ? 'blocked' : 'open')}">${esc(workItem.status)}</span>
+          <span class="badge badge-${workItem.priority || 'medium'}">${esc(workItem.priority || 'medium')}</span>
+        </div>
+        <div class="field">
+          <label>Title</label>
+          <div style="font-size:14px;font-weight:500">${esc(workItem.title)}</div>
+        </div>
+        ${workItem.description ? `<div class="field"><label>Description</label><div style="font-size:13px;color:var(--text-light)">${esc(workItem.description)}</div></div>` : ''}
+        <div class="field">
+          <label>Project</label>
+          <div style="font-size:13px"><code>${esc(projectKey)}</code></div>
+        </div>
+        <div class="field">
+          <label>Additional Instructions</label>
+          <textarea id="dispatch-instructions" placeholder="Optional: add context, constraints, or specific instructions for the agent..."></textarea>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-cancel" id="modal-cancel">Cancel</button>
+          <button class="btn btn-dispatch" id="modal-dispatch">Dispatch</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    overlay.querySelector('#modal-cancel').onclick = () => {
+      overlay.remove();
+      resolve(null);
+    };
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) { overlay.remove(); resolve(null); }
+    });
+
+    overlay.querySelector('#modal-dispatch').onclick = async () => {
+      const instructions = overlay.querySelector('#dispatch-instructions').value.trim();
+      const btn = overlay.querySelector('#modal-dispatch');
+      btn.disabled = true;
+      btn.textContent = 'Dispatching...';
+
+      try {
+        const resp = await fetch('/api/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            work_item_id: workItem.id,
+            project_key: projectKey,
+            title: workItem.title,
+            description: workItem.description || '',
+            additional_instructions: instructions,
+          }),
+        });
+        const result = await resp.json();
+        if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
+
+        // Resolve registry path for terminal guidance
+        let projectPath = '';
+        try {
+          const registry = await api('registry');
+          for (const [path, entry] of Object.entries(registry.entries)) {
+            if (`${entry.org}/${entry.project}/${entry.component}` === projectKey) {
+              projectPath = path;
+              break;
+            }
+          }
+        } catch {}
+
+        const dispatch = {
+          id: result.dispatch_id,
+          work_item_id: workItem.id,
+          project_key: projectKey,
+          project_path: projectPath,
+          title: workItem.title,
+          status: 'running',
+          started_at: new Date().toISOString(),
+        };
+        activeDispatches.push(dispatch);
+        updateDispatchBadge();
+
+        const container = getDispatchContainer();
+        const panel = createDispatchPanel(dispatch);
+        container.prepend(panel);
+        connectDispatchStream(dispatch);
+
+        overlay.remove();
+        resolve(dispatch);
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = 'Dispatch';
+        alert('Dispatch failed: ' + e.message);
+      }
+    };
+  });
+}
+
+// Restore active dispatches on page load
+async function restoreDispatches() {
+  try {
+    const list = await api('dispatch/active');
+    for (const d of list) {
+      if (activeDispatches.some(a => a.id === d.id)) continue;
+      const dispatch = { ...d, title: d.work_item_id };
+      activeDispatches.push(dispatch);
+      const container = getDispatchContainer();
+      const panel = createDispatchPanel(dispatch);
+      container.appendChild(panel);
+      if (d.status === 'running') {
+        connectDispatchStream(dispatch);
+      } else {
+        const dot = panel.querySelector('.status-dot');
+        dot.classList.remove('running');
+        dot.classList.add(d.status);
+      }
+    }
+    updateDispatchBadge();
+  } catch {}
 }
 
 // --- Sidebar ---
@@ -250,7 +521,14 @@ function renderOrgView(org, data) {
   return html;
 }
 
+// Store current work items context for dispatch
+let currentWorkItems = [];
+let currentProjectKey = '';
+
 function renderComponentView(org, proj, comp, data, workItems, files) {
+  currentWorkItems = workItems;
+  currentProjectKey = `${org}/${proj}/${comp}`;
+
   const tabs = ['Profile', 'Guidance', 'Agents', 'Work Items', 'Docs'];
   let html = `<div class="card"><h2>${esc(data.name || `${proj}/${comp}`)}</h2>`;
   html += `<span class="badge badge-role">${esc(data.role || 'unknown')}</span>`;
@@ -335,11 +613,14 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
     html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Tags</th><th></th></tr></thead><tbody>`;
     workItems.forEach((w, idx) => {
       const sc = w.status === 'done' ? 'done' : (w.blocked_by ? 'blocked' : 'open');
+      const canDispatch = w.status === 'open' || w.status === 'in-progress';
       html += `<tr><td><code>${esc(w.id)}</code></td><td>${esc(w.title)}</td>`;
       html += `<td><span class="badge badge-${sc}">${esc(w.status)}${w.blocked_by ? ` (${esc(w.blocked_by)})` : ''}</span></td>`;
       html += `<td><span class="badge badge-${w.priority || 'medium'}">${esc(w.priority || '—')}</span></td>`;
       html += `<td>${(w.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
-      html += `<td><button class="expand-btn" data-wi="${idx}">details</button></td>`;
+      html += `<td><button class="expand-btn" data-wi="${idx}">details</button>`;
+      if (canDispatch) html += `<button class="dispatch-btn" data-wi-idx="${idx}">dispatch</button>`;
+      html += `</td>`;
       html += `</tr>`;
       html += `<tr class="wi-detail" data-wi-detail="${idx}" style="display:none"><td colspan="6">`;
       if (w.description) html += `<div style="margin-bottom:8px">${esc(w.description)}</div>`;
@@ -393,6 +674,15 @@ function bindTabs() {
     };
   });
 
+  // Dispatch buttons
+  document.querySelectorAll('.dispatch-btn').forEach(btn => {
+    btn.onclick = () => {
+      const idx = parseInt(btn.dataset.wiIdx);
+      const wi = currentWorkItems[idx];
+      if (wi) dispatchWorkItem(wi, currentProjectKey);
+    };
+  });
+
   // Doc links
   document.querySelectorAll('.file-link').forEach(link => {
     link.onclick = async () => {
@@ -424,9 +714,14 @@ async function route() {
   const hash = location.hash.slice(1);
   const main = $('#main');
 
+  // Preserve dispatch panels
+  const dispatchContainer = document.getElementById('dispatch-panels');
+  const savedPanels = dispatchContainer ? dispatchContainer.outerHTML : '';
+
   if (!hash) {
     main.innerHTML = `<div class="card"><h2>Portfolio Dashboard</h2><p style="color:var(--text-light);font-size:14px">Select an organization or project from the sidebar.</p></div>`;
     setActive('');
+    if (savedPanels) main.insertAdjacentHTML('afterbegin', savedPanels);
     return;
   }
 
@@ -442,6 +737,7 @@ async function route() {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
     }
     setActive('');
+    if (savedPanels) main.insertAdjacentHTML('afterbegin', savedPanels);
     return;
   }
 
@@ -471,14 +767,16 @@ async function route() {
     } catch (e) {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
     }
+    if (savedPanels) main.insertAdjacentHTML('afterbegin', savedPanels);
     return;
   }
 
   main.innerHTML = `<div class="card"><p class="empty">Unknown route: ${esc(hash)}</p></div>`;
+  if (savedPanels) main.insertAdjacentHTML('afterbegin', savedPanels);
 }
 
 window.addEventListener('hashchange', route);
-buildTree().then(route);
+buildTree().then(() => { route(); restoreDispatches(); });
 </script>
 </body>
 </html>
