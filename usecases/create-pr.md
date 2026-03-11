@@ -21,7 +21,7 @@ Create a pull request with automated review summary.
 1. Load portfolio context for org conventions
 2. Check git status (staged, unstaged, untracked changes)
 3. Determine base branch from arguments (default: main)
-4. If already on a worktree branch (under `.worktrees/`): skip branch creation, use the existing worktree branch
+4. If already on a worktree branch (detected via `git rev-parse --git-common-dir` not resolving to `<target-path>/.git`): skip branch creation, use the existing worktree branch
 5. If on main: ask user for branch name, apply org branch prefix if applicable, create branch
 6. Reviewer agent reviews branch diff and generates summary
 7. Create PR via `gh pr create`:

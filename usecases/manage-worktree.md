@@ -12,23 +12,29 @@ Core worktree lifecycle for isolating implementation agent work from the user's 
 
 ### Input
 - Target project path (from portfolio context `source_path`)
-- Task description (used to derive branch name)
+- Ticket ID (obtained by orchestrator from Notion MCP or user input)
+- Task description (used to derive branch slug)
 - Branch prefix (from org conventions, optional)
+- Portfolio entry (for `worktree_setup` hooks, optional)
 
 ### Steps
 
-1. Receive target project path and task description
-2. Derive branch name: apply org's `branch_prefix` convention if available, slugify the task description (e.g., `feat/add-auth-middleware`)
-3. Run `git worktree add <project>/.worktrees/<branch> -b <branch>` from the target project
-4. Add `.worktrees/` to target project's `.gitignore` if not already present
-5. Return WorktreeContext (see `domain/entities.md` → WorktreeContext)
+1. Receive target project path, ticket ID, and task description
+2. Derive `project-dir-name` from the basename of the target project path (e.g., `/Users/user/NeuronicRepos/light-app/main` → `light-app`)
+3. Derive branch name: `<project-dir-name>-<branch-prefix><ticket-id>-<slugified-description>` (e.g., `light-app-GEN-1641-add-auth-flow`)
+4. Compute worktree path: `<parent-of-project-dir>/<branch-name>/` (sibling of the project folder, e.g., `/Users/user/NeuronicRepos/light-app-GEN-1641-add-auth-flow/`)
+5. Run `git worktree add <worktree-path> -b <branch-name>` from the target project
+6. If `worktree_setup.copy_paths` is defined in the portfolio entry: copy each path from source to worktree (e.g., `cp -r <source>/<path> <worktree>/<path>`)
+7. If `worktree_setup.post_commands` is defined: run each command in the worktree directory
+8. Return WorktreeContext (see `domain/entities.md` → WorktreeContext)
 
 ### Output
 ```json
 {
-  "worktree_path": "/abs/path/to/project/.worktrees/<branch>",
-  "source_path": "/abs/path/to/project",
-  "branch_name": "<branch>"
+  "worktree_path": "/abs/path/to/parent/light-app-GEN-1641-add-auth-flow",
+  "source_path": "/abs/path/to/parent/light-app/main",
+  "branch_name": "light-app-GEN-1641-add-auth-flow",
+  "ticket_id": "GEN-1641"
 }
 ```
 
@@ -46,8 +52,8 @@ Core worktree lifecycle for isolating implementation agent work from the user's 
 ### Output
 - Table of worktree path, branch name, HEAD commit, and origin (`main` / `architect` / `external`)
   - `main`: the primary working tree
-  - `architect`: worktree under `<project>/.worktrees/` (created by architect)
-  - `external`: worktree outside `<project>/.worktrees/` (created manually or by other tools)
+  - `architect`: sibling folder matching `<project-dir-name>-*` pattern (created by architect)
+  - `external`: worktree elsewhere (created manually or by other tools)
 
 ## Cleanup
 
@@ -67,5 +73,5 @@ Core worktree lifecycle for isolating implementation agent work from the user's 
 2. `git branch -D <branch>`
 
 ### Post-conditions
-- Worktree directory is removed from `<project>/.worktrees/`
+- Sibling worktree directory is removed
 - Branch is deleted (discard) or preserved for PR (merge)

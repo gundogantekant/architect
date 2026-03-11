@@ -153,11 +153,15 @@ Stored at `portfolio/<org>/<project>/<component>.json`.
     "ci_cd": ["string"],
     "testing": ["string"]
   },
-  "custom_rules": ["string"]
+  "custom_rules": ["string"],
+  "worktree_setup": {
+    "copy_paths": ["string — relative paths to copy from source to worktree"],
+    "post_commands": ["string — shell commands to run in worktree after copy"]
+  }
 }
 ```
 
-**Optional fields**: `brief` and `doc_paths` are absent on entries onboarded before the profiler was added.
+**Optional fields**: `brief`, `doc_paths`, and `worktree_setup` are absent on entries onboarded before the profiler was added or where no setup is needed.
 
 ## Organization
 
@@ -231,7 +235,8 @@ Tracks an active worktree created for implementation isolation.
 {
   "worktree_path": "string (absolute path to worktree)",
   "source_path": "string (absolute path to original project)",
-  "branch_name": "string"
+  "branch_name": "string",
+  "ticket_id": "string (Notion ticket ID, e.g. GEN-1641)"
 }
 ```
 

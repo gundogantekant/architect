@@ -27,7 +27,11 @@
   .org-name .arrow { font-size: 10px; transition: transform .15s; }
   .org-name .arrow.open { transform: rotate(90deg); }
   .project-list { padding-left: 16px; }
-  .project-item { padding: 4px 16px; font-size: 12.5px; cursor: pointer; border-radius: 4px; margin: 1px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .project-item { padding: 4px 16px; font-size: 12.5px; cursor: pointer; border-radius: 4px; margin: 1px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; }
+  .signal-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; flex-shrink: 0; }
+  .signal-dot.red { background: var(--red); }
+  .signal-dot.yellow { background: var(--orange); }
+  .signal-dot.green { background: var(--green); }
   .project-item:hover { background: #313244; }
   .project-item.active { background: var(--accent); color: #fff; }
 
@@ -114,6 +118,12 @@
   .modal .btn-cancel { background: #f1f5f9; color: var(--text); }
   .modal .btn-dispatch { background: var(--accent); color: #fff; }
   .modal .btn-dispatch:hover { opacity: 0.9; }
+  .modal input[type="text"], .modal select { width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 13px; font-family: inherit; }
+  .modal input[type="text"]:focus, .modal select:focus { outline: none; border-color: var(--accent); }
+  .btn-add-wi { cursor: pointer; color: #fff; font-size: 12px; border: none; background: var(--accent); padding: 6px 14px; border-radius: 4px; margin-bottom: 12px; }
+  .btn-add-wi:hover { opacity: 0.85; }
+  .edit-btn { cursor: pointer; color: var(--accent); font-size: 12px; border: 1px solid var(--accent); background: none; padding: 3px 10px; border-radius: 4px; margin-left: 4px; }
+  .edit-btn:hover { background: #ede9fe; }
 
   /* Dispatch panels */
   .dispatch-panel { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
@@ -420,8 +430,23 @@ async function restoreDispatches() {
 }
 
 // --- Sidebar ---
+function countOpenItems(bl, key) {
+  const items = bl?.projects?.[key]?.items;
+  if (!items) return 0;
+  return items.filter(i => i.status === 'open' || i.status === 'in-progress' || i.status === 'blocked').length;
+}
+
+function signalColor(bl, key) {
+  const items = bl?.projects?.[key]?.items;
+  if (!items) return 'green';
+  const open = items.filter(i => i.status === 'open' || i.status === 'in-progress' || i.status === 'blocked');
+  if (open.length === 0) return 'green';
+  if (open.some(i => i.priority === 'critical' || i.priority === 'high')) return 'red';
+  return 'yellow';
+}
+
 async function buildTree() {
-  const orgs = await api('orgs');
+  const [orgs, bl] = await Promise.all([api('orgs'), getBacklog()]);
   const tree = $('#tree');
   tree.innerHTML = '';
   for (const org of orgs) {
@@ -446,21 +471,30 @@ async function buildTree() {
     const list = document.createElement('div');
     list.className = 'project-list';
 
+    // Collect components, then sort by open work item count
+    const componentEntries = [];
     for (const proj of projects) {
       const files = await api(`project/${org}/${proj}`);
       const components = files.filter(f => f.endsWith('.json'));
       for (const file of components) {
         const comp = file.replace(/\.json$/, '');
-        const item = document.createElement('div');
-        item.className = 'project-item';
-        item.dataset.key = `${org}/${proj}/${comp}`;
-        item.textContent = `${proj} / ${comp}`;
-        item.onclick = (e) => {
-          e.stopPropagation();
-          location.hash = `#component/${org}/${proj}/${comp}`;
-        };
-        list.appendChild(item);
+        const key = `${org}/${proj}/${comp}`;
+        componentEntries.push({ org, proj, comp, key });
       }
+    }
+    componentEntries.sort((a, b) => countOpenItems(bl, b.key) - countOpenItems(bl, a.key));
+
+    for (const { org: o, proj, comp, key } of componentEntries) {
+      const color = signalColor(bl, key);
+      const item = document.createElement('div');
+      item.className = 'project-item';
+      item.dataset.key = key;
+      item.innerHTML = `<span class="signal-dot ${color}"></span>${esc(proj)} / ${esc(comp)}`;
+      item.onclick = (e) => {
+        e.stopPropagation();
+        location.hash = `#component/${o}/${proj}/${comp}`;
+      };
+      list.appendChild(item);
     }
 
     group.appendChild(header);
@@ -529,7 +563,7 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
   currentWorkItems = workItems;
   currentProjectKey = `${org}/${proj}/${comp}`;
 
-  const tabs = ['Profile', 'Guidance', 'Agents', 'Work Items', 'Docs'];
+  const tabs = ['Work Items', 'Overview', 'Docs'];
   let html = `<div class="card"><h2>${esc(data.name || `${proj}/${comp}`)}</h2>`;
   html += `<span class="badge badge-role">${esc(data.role || 'unknown')}</span>`;
   html += `<div class="tabs" id="comp-tabs">`;
@@ -538,8 +572,42 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
   });
   html += `</div>`;
 
-  // Tab 0: Profile
+  // Tab 0: Work Items
   html += `<div class="tab-content active" data-panel="0">`;
+  html += `<button class="btn-add-wi" id="add-work-item">+ Add Work Item</button>`;
+  if (workItems.length) {
+    html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Tags</th><th></th></tr></thead><tbody>`;
+    workItems.forEach((w, idx) => {
+      const sc = w.status === 'done' ? 'done' : (w.blocked_by ? 'blocked' : 'open');
+      const canDispatch = w.status === 'open' || w.status === 'in-progress';
+      html += `<tr><td><code>${esc(w.id)}</code></td><td>${esc(w.title)}</td>`;
+      html += `<td><span class="badge badge-${sc}">${esc(w.status)}${w.blocked_by ? ` (${esc(w.blocked_by)})` : ''}</span></td>`;
+      html += `<td><span class="badge badge-${w.priority || 'medium'}">${esc(w.priority || '—')}</span></td>`;
+      html += `<td>${(w.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
+      html += `<td><button class="expand-btn" data-wi="${idx}">details</button>`;
+      html += `<button class="edit-btn" data-wi-edit="${idx}">edit</button>`;
+      if (canDispatch) html += `<button class="dispatch-btn" data-wi-idx="${idx}">dispatch</button>`;
+      html += `</td>`;
+      html += `</tr>`;
+      html += `<tr class="wi-detail" data-wi-detail="${idx}" style="display:none"><td colspan="6">`;
+      if (w.description) html += `<div style="margin-bottom:8px">${esc(w.description)}</div>`;
+      if (w.session_log?.length) {
+        html += `<div class="session-log">`;
+        for (const e of w.session_log) html += `<div class="entry"><span class="date">${esc(e.date)}</span>${esc(e.summary)}</div>`;
+        html += `</div>`;
+      }
+      html += `</td></tr>`;
+    });
+    html += `</tbody></table>`;
+  } else {
+    html += `<p class="empty">No work items for this project.</p>`;
+  }
+  html += `</div>`;
+
+  // Tab 1: Overview (Profile + Guidance + Agents)
+  html += `<div class="tab-content" data-panel="1">`;
+  // Profile
+  html += `<h3>Profile</h3>`;
   html += `<dl class="kv">`;
   html += `<dt>Path</dt><dd><code>${esc(data.path || '—')}</code></dd>`;
   html += `<dt>Onboarded</dt><dd>${esc(data.onboarded_at || '—')}</dd>`;
@@ -561,10 +629,9 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
     }
     html += `</dl>`;
   }
-  html += `</div>`;
-
-  // Tab 1: Guidance
-  html += `<div class="tab-content" data-panel="1">`;
+  // Guidance
+  html += `<hr style="margin:16px 0">`;
+  html += `<h3>Guidance</h3>`;
   if (data.guidance) {
     const g = data.guidance;
     if (g.stack_summary) html += `<p style="margin-bottom:12px">${esc(g.stack_summary)}</p>`;
@@ -585,10 +652,9 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
     for (const r of data.custom_rules) html += `<li>${esc(r)}</li>`;
     html += `</ul>`;
   }
-  html += `</div>`;
-
-  // Tab 2: Agents
-  html += `<div class="tab-content" data-panel="2">`;
+  // Agents
+  html += `<hr style="margin:16px 0">`;
+  html += `<h3>Agents</h3>`;
   if (data.agents) {
     if (data.agents.recommended?.length) {
       html += `<h3>Recommended</h3><div>`;
@@ -607,39 +673,9 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
   }
   html += `</div>`;
 
-  // Tab 3: Work Items
-  html += `<div class="tab-content" data-panel="3">`;
-  if (workItems.length) {
-    html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Tags</th><th></th></tr></thead><tbody>`;
-    workItems.forEach((w, idx) => {
-      const sc = w.status === 'done' ? 'done' : (w.blocked_by ? 'blocked' : 'open');
-      const canDispatch = w.status === 'open' || w.status === 'in-progress';
-      html += `<tr><td><code>${esc(w.id)}</code></td><td>${esc(w.title)}</td>`;
-      html += `<td><span class="badge badge-${sc}">${esc(w.status)}${w.blocked_by ? ` (${esc(w.blocked_by)})` : ''}</span></td>`;
-      html += `<td><span class="badge badge-${w.priority || 'medium'}">${esc(w.priority || '—')}</span></td>`;
-      html += `<td>${(w.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
-      html += `<td><button class="expand-btn" data-wi="${idx}">details</button>`;
-      if (canDispatch) html += `<button class="dispatch-btn" data-wi-idx="${idx}">dispatch</button>`;
-      html += `</td>`;
-      html += `</tr>`;
-      html += `<tr class="wi-detail" data-wi-detail="${idx}" style="display:none"><td colspan="6">`;
-      if (w.description) html += `<div style="margin-bottom:8px">${esc(w.description)}</div>`;
-      if (w.session_log?.length) {
-        html += `<div class="session-log">`;
-        for (const e of w.session_log) html += `<div class="entry"><span class="date">${esc(e.date)}</span>${esc(e.summary)}</div>`;
-        html += `</div>`;
-      }
-      html += `</td></tr>`;
-    });
-    html += `</tbody></table>`;
-  } else {
-    html += `<p class="empty">No work items for this project.</p>`;
-  }
-  html += `</div>`;
-
-  // Tab 4: Docs
+  // Tab 2: Docs
   const mdFiles = files.filter(f => f.endsWith('.md'));
-  html += `<div class="tab-content" data-panel="4">`;
+  html += `<div class="tab-content" data-panel="2">`;
   if (mdFiles.length) {
     html += `<div id="doc-files">`;
     for (const f of mdFiles) html += `<span class="file-link" data-doc="${esc(f)}">${esc(f)}</span>`;
@@ -671,6 +707,19 @@ function bindTabs() {
       const showing = row.style.display !== 'none';
       row.style.display = showing ? 'none' : '';
       btn.textContent = showing ? 'details' : 'hide';
+    };
+  });
+
+  // Add work item button
+  const addBtn = document.getElementById('add-work-item');
+  if (addBtn) addBtn.onclick = () => showWorkItemModal(null);
+
+  // Edit buttons
+  document.querySelectorAll('.edit-btn').forEach(btn => {
+    btn.onclick = () => {
+      const idx = parseInt(btn.dataset.wiEdit);
+      const wi = currentWorkItems[idx];
+      if (wi) showWorkItemModal(wi);
     };
   });
 
@@ -707,6 +756,90 @@ function setActive(key) {
   document.querySelectorAll('.project-item').forEach(el => {
     el.classList.toggle('active', el.dataset.key === key);
   });
+}
+
+// --- Work Item Modal ---
+function showWorkItemModal(existingItem = null) {
+  const isEdit = !!existingItem;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>${isEdit ? `Edit ${esc(existingItem.id)}` : 'New Work Item'}</h3>
+      <div class="field">
+        <label>Title *</label>
+        <input type="text" id="wi-title" value="${isEdit ? esc(existingItem.title) : ''}" />
+      </div>
+      <div class="field">
+        <label>Status</label>
+        <select id="wi-status">
+          ${['open','in-progress','blocked','done'].map(s => `<option value="${s}"${(isEdit ? existingItem.status : 'open') === s ? ' selected' : ''}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Priority</label>
+        <select id="wi-priority">
+          ${['critical','high','medium','low'].map(p => `<option value="${p}"${(isEdit ? existingItem.priority : 'medium') === p ? ' selected' : ''}>${p}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Description</label>
+        <textarea id="wi-description">${isEdit && existingItem.description ? esc(existingItem.description) : ''}</textarea>
+      </div>
+      <div class="field">
+        <label>Tags (comma-separated)</label>
+        <input type="text" id="wi-tags" value="${isEdit && existingItem.tags ? esc(existingItem.tags.join(', ')) : ''}" />
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" id="wi-cancel">Cancel</button>
+        <button class="btn btn-dispatch" id="wi-save">${isEdit ? 'Save' : 'Create'}</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#wi-cancel').onclick = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  overlay.querySelector('#wi-save').onclick = async () => {
+    const title = overlay.querySelector('#wi-title').value.trim();
+    if (!title) { alert('Title is required'); return; }
+
+    const btn = overlay.querySelector('#wi-save');
+    btn.disabled = true;
+    btn.textContent = isEdit ? 'Saving...' : 'Creating...';
+
+    const payload = {
+      title,
+      status: overlay.querySelector('#wi-status').value,
+      priority: overlay.querySelector('#wi-priority').value,
+      description: overlay.querySelector('#wi-description').value.trim(),
+      tags: overlay.querySelector('#wi-tags').value.split(',').map(t => t.trim()).filter(Boolean),
+    };
+
+    try {
+      const url = isEdit ? `/api/work-items/${existingItem.id}` : '/api/work-items';
+      const method = isEdit ? 'PATCH' : 'POST';
+      if (!isEdit) payload.project_key = currentProjectKey;
+
+      const resp = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error || 'Failed');
+
+      overlay.remove();
+      backlog = null; // bust cache
+      await buildTree();
+      route();
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = isEdit ? 'Save' : 'Create';
+      alert('Error: ' + e.message);
+    }
+  };
 }
 
 // --- Router ---

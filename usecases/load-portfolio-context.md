@@ -66,6 +66,8 @@ When a WorktreeContext is active (see `domain/entities.md` → WorktreeContext):
 - Implementation agents use `worktree_path` as their working directory
 - Read-only agents use `source_path` (the original project path)
 - Portfolio lookup always uses `source_path` — never a worktree path
+- Worktrees may be sibling directories of the project folder (not inside it); detection via
+  `git rev-parse --git-common-dir` works regardless of worktree location
 - When the target path is inside an external worktree, resolve `source_path` via
   `git rev-parse --git-common-dir` for registry lookups — the registry stores main
   repo paths only
