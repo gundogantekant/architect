@@ -91,8 +91,8 @@ Examples:
 - Organization: gundogantekant
   Project: my-app
   Component: frontend
-  Path: /Users/user/.claude/worktrees/my-app-frontend-abc123
-  Branch: feat/auth-flow, worktree
+  Path: /Users/user/projects/my-app-frontend-GEN-1234-auth-flow
+  Branch: my-app-frontend-GEN-1234-auth-flow, worktree
 
 - Organization: –
   Project: scratch
@@ -126,6 +126,16 @@ before dispatching any agent or executing any skill. Resolution sources, in prio
 If none of these provide a clear target, the orchestrator must ask the user which project
 they intend to work on before proceeding. This applies to all modes: plan mode, PM dispatch,
 direct agent invocation, slash commands, and trivial tasks.
+
+### Plan File Requirement
+
+When the orchestrator operates in plan mode and produces a plan file, the plan must
+include a **Target Project** section containing all five fields. This section must appear
+near the top of the plan (immediately after any Context/summary section). Plans that
+omit the target project section are incomplete and must not proceed to execution.
+
+For architect self-changes, use the standard self-reference:
+Organization=–, Project=architect, Component=–.
 
 ### Portfolio-Aware Disambiguation
 
@@ -205,11 +215,13 @@ Shared git rules enforced by all implementation agents.
 
 ## Worktree Rules
 
-- Implementation agents operate in a git worktree, not the main working tree
-- Worktrees are stored at `<project>/.worktrees/<branch-name>/`
-- Read-only agents operate on the main working tree (no worktree needed)
-- The orchestrator creates worktrees before dispatching implementation agents (see `usecases/manage-worktree.md`)
-- `.worktrees/` must be in the target project's `.gitignore`
+- **All work on portfolio projects MUST use a worktree by default.** This applies to implementation agents, direct orchestrator edits, and any skill that modifies code in a portfolio project. The only exception is when the user explicitly requests working without a worktree (e.g., "edit in place", "no worktree", "work on main").
+- Read-only operations (review, audit, diagnosis, scouting) do not require a worktree.
+- Worktrees are sibling directories of the project folder, not inside it
+- Path: `<parent-of-project-dir>/<project-dir-name>-<branch-name>/`
+- Branch/folder naming: `<project-dir-name>-<branch-prefix><ticket-id>-<slug>` (e.g., `light-app-GEN-1641-add-auth-flow`)
+- Ticket ID comes from Notion (via MCP) or user input; the orchestrator obtains it before creating the worktree
+- After worktree creation, `worktree_setup` hooks from the PortfolioEntry run if defined (copy paths, post commands)
 - After implementation, the user decides: merge via `/pr` or discard via `/worktree cleanup`
 - Portfolio registry always stores the original project path, never worktree paths
 

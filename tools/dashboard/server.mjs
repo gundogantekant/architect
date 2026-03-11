@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createServer } from 'node:http';
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readFile, writeFile, readdir, stat } from 'node:fs/promises';
 import { join, resolve, extname } from 'node:path';
 import { spawn } from 'node:child_process';
 
@@ -115,6 +115,73 @@ const routes = [
   // Backlog
   [/^\/api\/backlog$/, 'GET', async (_m, _req, res) => {
     json(res, await readJson(join(WORK, 'backlog.json')));
+  }],
+
+  // --- Work item endpoints ---
+
+  // Create work item
+  [/^\/api\/work-items$/, 'POST', async (_m, req, res) => {
+    const body = await parseBody(req);
+    const { project_key, title, status, priority, description, tags } = body;
+    if (!project_key || !title) {
+      return err(res, 'project_key and title are required', 400);
+    }
+
+    const blPath = join(WORK, 'backlog.json');
+    const bl = await readJson(blPath);
+
+    const id = `W-${String(bl.next_id).padStart(3, '0')}`;
+    bl.next_id++;
+
+    const today = new Date().toISOString().slice(0, 10);
+    const item = {
+      id,
+      title,
+      status: status || 'open',
+      priority: priority || 'medium',
+      description: description || '',
+      tags: tags || [],
+      blocked_by: '',
+      created: today,
+      updated: today,
+      session_log: [],
+    };
+
+    if (!bl.projects[project_key]) {
+      bl.projects[project_key] = { items: [] };
+    }
+    bl.projects[project_key].items.push(item);
+
+    await writeFile(blPath, JSON.stringify(bl, null, 2) + '\n');
+    json(res, item, 201);
+  }],
+
+  // Update work item
+  [/^\/api\/work-items\/([A-Za-z0-9_-]+)$/, 'PATCH', async (m, req, res) => {
+    const itemId = m[1];
+    const body = await parseBody(req);
+    const allowed = ['title', 'status', 'priority', 'description', 'tags', 'blocked_by'];
+
+    const blPath = join(WORK, 'backlog.json');
+    const bl = await readJson(blPath);
+
+    let found = null;
+    for (const group of Object.values(bl.projects)) {
+      if (!group.items) continue;
+      found = group.items.find(i => i.id === itemId);
+      if (found) break;
+    }
+
+    if (!found) return err(res, 'work item not found', 404);
+
+    const today = new Date().toISOString().slice(0, 10);
+    for (const key of allowed) {
+      if (key in body) found[key] = body[key];
+    }
+    found.updated = today;
+
+    await writeFile(blPath, JSON.stringify(bl, null, 2) + '\n');
+    json(res, found);
   }],
 
   // --- Dispatch endpoints ---

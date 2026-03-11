@@ -110,12 +110,14 @@ See `domain/entities.md` → WorkItem, WorkBacklog for schema, `domain/rules.md`
 ## Rules
 
 - Before any work (plans, agent dispatch, skill invocation), the orchestrator must resolve the target project with all five fields: Organization, Project, Component, Path, and Branch. If the target is ambiguous, ask the user. See `domain/rules.md` → Target Project Identification. For architect self-changes, use Organization=–, Project=architect, Component=–.
+- Plan files must include a **Target Project** section (Organization, Project, Component, Path, Branch) immediately after the Context section when the work targets a specific project. For architect self-changes, include the architect target. See `domain/rules.md` → Target Project Identification for field definitions and detection steps.
 - Run scout (or load portfolio) before dispatching implementation agents on any new project
 - Pass the portfolio context or detection report to every subsequent agent invocation
 - Use parallel fan-out when tasks are independent (frontend/backend/infra)
 - Use sequential pipeline when output feeds into the next step
 - Read-only agents do not modify code (see `domain/rules.md` → Agent Permission Model)
 - Implementation agents (coder-*) use acceptEdits permission mode
+- All work on portfolio projects uses a git worktree by default — create one before making any code changes. Skip only when the user explicitly opts out. See `domain/rules.md` → Worktree Rules.
 - Follow git standards defined in `domain/rules.md`
 - Before using Playwright MCP tools directly in the main session, follow Model Affinity Rules in `domain/rules.md` to prompt model switching
 
