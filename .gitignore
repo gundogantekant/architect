@@ -4,3 +4,6 @@ node_modules/
 portfolio/
 work/
 projects/
+.claude/worktrees/
+.playwright-mcp/
+projectspace/

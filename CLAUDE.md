@@ -135,8 +135,11 @@ The dashboard supports dispatching Claude Code agents directly from work items:
 - Live output streams to the browser via SSE; multiple dispatches run concurrently
 - Each dispatch panel shows a terminal guidance command for taking over from CLI
 - Dispatch state is ephemeral (in-memory, lost on server restart). See `domain/entities.md` → DispatchRequest for schema.
+- Interactive terminals use xterm.js + WebSocket for bidirectional PTY I/O (node-pty). See `domain/entities.md` → TerminalSession for schema.
+- Kill buttons on dispatch/terminal panels; "Kill All Sessions" button for bulk cleanup.
+- Auto-cleanup: exited terminals removed after 10min, completed dispatches after 30min.
 
-Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/stream` (SSE), `GET /api/dispatch/active`. Epic endpoints: `GET/POST /api/epics`, `GET/PATCH/DELETE /api/epics/:id`, `POST /api/epics/:id/link`, `POST /api/epics/:id/unlink`, `GET/PUT /api/epics/:id/plan`, `GET/PUT /api/epics/:id/doc`.
+Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/stream` (SSE), `GET /api/dispatch/active`, `DELETE /api/dispatch/:id`, `DELETE /api/dispatch/all`. Terminal endpoints: `POST /api/terminal`, `GET /api/terminal/active`, `DELETE /api/terminal/:id`, `DELETE /api/terminal/all`, `WS /api/terminal/:id/ws`. Epic endpoints: `GET/POST /api/epics`, `GET/PATCH/DELETE /api/epics/:id`, `POST /api/epics/:id/link`, `POST /api/epics/:id/unlink`, `GET/PUT /api/epics/:id/plan`, `GET/PUT /api/epics/:id/doc`.
 
 ## Available Skills
 

@@ -290,6 +290,23 @@ Ephemeral in-memory record created when the dashboard dispatches a Claude agent 
 }
 ```
 
+## TerminalSession
+
+Ephemeral in-memory record for an interactive PTY terminal session spawned from the dashboard. Not persisted to disk.
+
+```json
+{
+  "id": "string (T-<timestamp>)",
+  "work_item_id": "string (W-XXX or null)",
+  "project_key": "string (org/project/component)",
+  "project_path": "string (absolute path)",
+  "title": "string",
+  "status": "running|completed|failed|killed",
+  "started_at": "string (ISO 8601)",
+  "exited_at": "string (ISO 8601, null while running)"
+}
+```
+
 ## RegistryEntry
 
 Stored in `portfolio/registry.json`.

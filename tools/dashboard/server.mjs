@@ -3,6 +3,8 @@ import { createServer } from 'node:http';
 import { readFile, writeFile, readdir, stat, mkdir } from 'node:fs/promises';
 import { join, resolve, extname } from 'node:path';
 import { spawn } from 'node:child_process';
+import pty from 'node-pty';
+import { WebSocketServer } from 'ws';
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
 const PORTFOLIO = join(ROOT, 'portfolio');
@@ -53,6 +55,21 @@ async function parseBody(req) {
 
 // --- Dispatch registry (ephemeral, in-memory) ---
 const dispatches = new Map();
+
+// --- Terminal registry (ephemeral, in-memory) ---
+const terminals = new Map();
+const SCROLLBACK_LIMIT = 100 * 1024; // 100KB ring buffer
+
+function killProcess(proc, signal = 'SIGTERM') {
+  try { proc.kill(signal); } catch {}
+}
+
+function killProcessGraceful(proc) {
+  killProcess(proc, 'SIGTERM');
+  return setTimeout(() => {
+    try { proc.kill('SIGKILL'); } catch {}
+  }, 5000);
+}
 
 async function resolveProjectPath(projectKey) {
   const registry = await readJson(join(PORTFOLIO, 'registry.json'));
@@ -131,53 +148,17 @@ async function loadEpicPlanSnippet(epicId) {
   }
 }
 
-function buildDispatchPrompt({ workItem, projectKey, additionalInstructions, portfolio, epicContext }) {
+function buildDispatchPrompt({ workItem, projectKey, additionalInstructions, portfolio, epicContext, relatedProjects }) {
   const sections = [];
 
-  // Epic Context section (when dispatching with epic)
-  if (epicContext) {
-    const lines = ['# Epic Context', ''];
-    lines.push(`- **Epic**: ${epicContext.id} — ${epicContext.title}`);
-    lines.push(`- **Status**: ${epicContext.status}`);
-    lines.push(`- **Progress**: ${epicContext.progress}`);
-    if (epicContext.acceptance_criteria) lines.push(`- **Acceptance Criteria**: ${epicContext.acceptance_criteria}`);
-    if (epicContext.items && epicContext.items.length) {
-      lines.push('', '**Linked Items**:');
-      for (const item of epicContext.items) {
-        lines.push(`- ${item.id} [${item.status}] (${item.project_key}): ${item.title}`);
-      }
-    }
-    if (epicContext.plan_snippet) {
-      lines.push('', '**Plan (excerpt)**:', epicContext.plan_snippet);
-    }
-    sections.push(lines.join('\n'));
-  }
+  // --- Scope ---
+  const scopeLines = ['# Scope', ''];
+  scopeLines.push(`- **Project**: ${projectKey}`);
+  if (workItem) scopeLines.push(`- **Work Item**: ${workItem.id}`);
+  if (epicContext) scopeLines.push(`- **Epic**: ${epicContext.id}`);
+  sections.push(scopeLines.join('\n'));
 
-  // Task section
-  if (workItem) {
-    sections.push(`# Task\n\nWork on backlog item ${workItem.id}: ${workItem.title}`);
-  } else if (additionalInstructions) {
-    sections.push(`# Task\n\n${additionalInstructions}`);
-  }
-
-  // Work Item section
-  if (workItem) {
-    const lines = ['# Work Item', ''];
-    lines.push(`- **Status**: ${workItem.status}`);
-    lines.push(`- **Priority**: ${workItem.priority}`);
-    if (workItem.tags && workItem.tags.length) lines.push(`- **Tags**: ${workItem.tags.join(', ')}`);
-    if (workItem.blocked_by) lines.push(`- **Blocked by**: ${workItem.blocked_by}`);
-    if (workItem.description) lines.push(`- **Description**: ${workItem.description}`);
-    if (workItem.session_log && workItem.session_log.length) {
-      lines.push('', '**Session Log**:');
-      for (const entry of workItem.session_log) {
-        lines.push(`- ${entry.date}: ${entry.summary}`);
-      }
-    }
-    sections.push(lines.join('\n'));
-  }
-
-  // Project Context section (standard depth)
+  // --- Layer 1: Project Context (first — stack, structure, conventions, org rules) ---
   if (portfolio && portfolio.entry) {
     const e = portfolio.entry;
     const lines = ['# Project Context', ''];
@@ -202,7 +183,6 @@ function buildDispatchPrompt({ workItem, projectKey, additionalInstructions, por
     sections.push(lines.join('\n'));
   }
 
-  // Organization section
   if (portfolio && portfolio.org) {
     const o = portfolio.org;
     const lines = ['# Organization Conventions', ''];
@@ -215,9 +195,61 @@ function buildDispatchPrompt({ workItem, projectKey, additionalInstructions, por
     sections.push(lines.join('\n'));
   }
 
-  // Additional Instructions (only when work item exists — otherwise it's already the Task)
+  // Related projects (cross-project awareness for epic dispatches)
+  if (relatedProjects && relatedProjects.length) {
+    const lines = ['# Related Projects', ''];
+    for (const rp of relatedProjects) {
+      lines.push(`## ${rp.key}`);
+      if (rp.entry?.guidance?.stack_summary) lines.push(`- Stack: ${rp.entry.guidance.stack_summary}`);
+      if (rp.entry?.brief?.purpose) lines.push(`- Purpose: ${rp.entry.brief.purpose}`);
+      lines.push('');
+    }
+    sections.push(lines.join('\n'));
+  }
+
+  // --- Layer 2: Task Context (second — work item details, description, session log) ---
+  if (workItem) {
+    sections.push(`# Task\n\nWork on backlog item ${workItem.id}: ${workItem.title}`);
+
+    const lines = ['# Work Item', ''];
+    lines.push(`- **Status**: ${workItem.status}`);
+    lines.push(`- **Priority**: ${workItem.priority}`);
+    if (workItem.tags && workItem.tags.length) lines.push(`- **Tags**: ${workItem.tags.join(', ')}`);
+    if (workItem.blocked_by) lines.push(`- **Blocked by**: ${workItem.blocked_by}`);
+    if (workItem.description) lines.push(`- **Description**: ${workItem.description}`);
+    if (workItem.session_log && workItem.session_log.length) {
+      lines.push('', '**Session Log**:');
+      for (const entry of workItem.session_log) {
+        lines.push(`- ${entry.date}: ${entry.summary}`);
+      }
+    }
+    sections.push(lines.join('\n'));
+  } else if (additionalInstructions) {
+    sections.push(`# Task\n\n${additionalInstructions}`);
+  }
+
+  // --- Layer 3: Epic Context (third — lightweight: title, status, progress, plan snippet, AC) ---
+  if (epicContext) {
+    const lines = ['# Epic Context', ''];
+    lines.push(`- **Epic**: ${epicContext.id} — ${epicContext.title}`);
+    lines.push(`- **Status**: ${epicContext.status}`);
+    lines.push(`- **Progress**: ${epicContext.progress}`);
+    if (epicContext.acceptance_criteria) lines.push(`- **Acceptance Criteria**: ${epicContext.acceptance_criteria}`);
+    if (epicContext.items && epicContext.items.length) {
+      lines.push('', '**Linked Items**:');
+      for (const item of epicContext.items) {
+        lines.push(`- ${item.id} [${item.status}] (${item.project_key}): ${item.title}`);
+      }
+    }
+    if (epicContext.plan_snippet) {
+      lines.push('', '**Plan (excerpt)**:', epicContext.plan_snippet);
+    }
+    sections.push(lines.join('\n'));
+  }
+
+  // --- Constraints ---
   if (workItem && additionalInstructions) {
-    sections.push(`# Additional Instructions\n\n${additionalInstructions}`);
+    sections.push(`# Constraints\n\n${additionalInstructions}`);
   }
 
   return sections.join('\n\n');
@@ -441,7 +473,7 @@ const routes = [
       description: description || '',
       acceptance_criteria: acceptance_criteria || '',
       target_date: target_date || '',
-      project_keys: [],
+      project_keys: Array.isArray(body.project_keys) ? body.project_keys : [],
       work_item_ids: [],
       tags: tags || [],
       created: today,
@@ -457,7 +489,7 @@ const routes = [
   // Update epic
   [/^\/api\/epics\/(E-\d+)$/, 'PATCH', async (m, req, res) => {
     const body = await parseBody(req);
-    const allowed = ['title', 'status', 'priority', 'description', 'acceptance_criteria', 'target_date', 'tags'];
+    const allowed = ['title', 'status', 'priority', 'description', 'acceptance_criteria', 'target_date', 'tags', 'project_keys'];
 
     const blPath = join(WORK, 'backlog.json');
     const bl = await ensureV3(await readJson(blPath), blPath);
@@ -722,12 +754,27 @@ const routes = [
       } catch {}
     }
 
+    // Load related project contexts for epic dispatches
+    let relatedProjects = null;
+    if (epicContext && epicContext.items) {
+      const relatedKeys = [...new Set(epicContext.items.map(i => i.project_key))].filter(k => k !== project_key);
+      if (relatedKeys.length) {
+        relatedProjects = (await Promise.all(
+          relatedKeys.map(async k => {
+            const ctx = await loadPortfolioContext(k);
+            return ctx ? { key: k, entry: ctx.entry } : null;
+          })
+        )).filter(Boolean);
+      }
+    }
+
     const prompt = buildDispatchPrompt({
       workItem: workItem || (work_item_id ? { id: work_item_id, title: title || '', description: description || '', status: 'open', priority: 'medium', tags: [], session_log: [] } : null),
       projectKey: project_key,
       additionalInstructions: additional_instructions,
       portfolio,
       epicContext,
+      relatedProjects,
     });
 
     const dispatch = {
@@ -856,6 +903,193 @@ const routes = [
     }
     json(res, list);
   }],
+
+  // Kill all dispatches (must be before :id route)
+  [/^\/api\/dispatch\/all$/, 'DELETE', async (_m, _req, res) => {
+    let killed = 0;
+    for (const [id, dispatch] of dispatches) {
+      if (dispatch.status !== 'running') continue;
+      if (dispatch.process) {
+        const timer = killProcessGraceful(dispatch.process);
+        dispatch.process.on('close', () => clearTimeout(timer));
+      }
+      dispatch.status = 'killed';
+      dispatch.completed_at = new Date().toISOString();
+      for (const listener of dispatch.listeners) listener(null);
+      dispatch.listeners.clear();
+      killed++;
+    }
+    json(res, { killed });
+  }],
+
+  // Kill a dispatch
+  [/^\/api\/dispatch\/([A-Za-z0-9_-]+)$/, 'DELETE', async (m, _req, res) => {
+    const dispatch = dispatches.get(m[1]);
+    if (!dispatch) return err(res, 'dispatch not found');
+    if (dispatch.process) {
+      const timer = killProcessGraceful(dispatch.process);
+      dispatch.process.on('close', () => clearTimeout(timer));
+    }
+    dispatch.status = 'killed';
+    dispatch.completed_at = new Date().toISOString();
+    for (const listener of dispatch.listeners) listener(null);
+    dispatch.listeners.clear();
+    json(res, { status: 'killed', id: m[1] });
+  }],
+
+  // --- Terminal endpoints ---
+
+  // Create terminal session
+  [/^\/api\/terminal$/, 'POST', async (_m, req, res) => {
+    const body = await parseBody(req);
+    const { work_item_id, epic_id, project_key, title, description, additional_instructions } = body;
+
+    if (!project_key) return err(res, 'project_key is required', 400);
+
+    const projectPath = await resolveProjectPath(project_key);
+    if (!projectPath) return err(res, `Could not resolve path for project: ${project_key}`, 400);
+
+    const id = `T-${Date.now()}`;
+
+    // Build prompt same as dispatch
+    const [portfolio, workItem] = await Promise.all([
+      loadPortfolioContext(project_key),
+      work_item_id ? loadWorkItem(work_item_id, project_key) : null,
+    ]);
+
+    let epicContext = null;
+    if (epic_id) {
+      try {
+        const bl = await readJson(join(WORK, 'backlog.json'));
+        const epic = (bl.epics || []).find(e => e.id === epic_id);
+        if (epic) {
+          const items = resolveEpicItems(epic, bl);
+          const done = items.filter(i => i.status === 'done').length;
+          const planSnippet = await loadEpicPlanSnippet(epic_id);
+          epicContext = {
+            id: epic.id, title: epic.title, status: epic.status,
+            progress: `${done}/${items.length}`,
+            acceptance_criteria: epic.acceptance_criteria, items, plan_snippet: planSnippet,
+          };
+        }
+      } catch {}
+    }
+
+    const prompt = buildDispatchPrompt({
+      workItem: workItem || (work_item_id ? { id: work_item_id, title: title || '', description: description || '', status: 'open', priority: 'medium', tags: [], session_log: [] } : null),
+      projectKey: project_key,
+      additionalInstructions: additional_instructions,
+      portfolio,
+      epicContext,
+    });
+
+    // Spawn interactive PTY with claude
+    const ptyProcess = pty.spawn('claude', [], {
+      name: 'xterm-256color',
+      cols: 80,
+      rows: 24,
+      cwd: projectPath,
+      env: { ...process.env, TERM: 'xterm-256color' },
+    });
+
+    const terminal = {
+      id,
+      work_item_id: work_item_id || null,
+      project_key,
+      project_path: projectPath,
+      title: title || additional_instructions?.slice(0, 60) || 'Interactive session',
+      status: 'running',
+      ptyProcess,
+      scrollback: '',
+      wsClients: new Set(),
+      started_at: new Date().toISOString(),
+      exited_at: null,
+    };
+
+    ptyProcess.onData((data) => {
+      // Append to scrollback ring buffer
+      terminal.scrollback += data;
+      if (terminal.scrollback.length > SCROLLBACK_LIMIT) {
+        terminal.scrollback = terminal.scrollback.slice(-SCROLLBACK_LIMIT);
+      }
+      // Send to all connected WebSocket clients
+      for (const ws of terminal.wsClients) {
+        try { ws.send(JSON.stringify({ type: 'data', data })); } catch {}
+      }
+    });
+
+    ptyProcess.onExit(({ exitCode }) => {
+      terminal.status = exitCode === 0 ? 'completed' : 'failed';
+      terminal.exited_at = new Date().toISOString();
+      terminal.ptyProcess = null;
+      for (const ws of terminal.wsClients) {
+        try { ws.send(JSON.stringify({ type: 'exit', code: exitCode })); } catch {}
+      }
+    });
+
+    // After PTY is ready, write the prompt as first input
+    setTimeout(() => {
+      if (terminal.ptyProcess) {
+        terminal.ptyProcess.write(prompt + '\r');
+      }
+    }, 500);
+
+    terminals.set(id, terminal);
+    json(res, { terminal_id: id, status: 'running' });
+  }],
+
+  // List active terminals
+  [/^\/api\/terminal\/active$/, 'GET', async (_m, _req, res) => {
+    const list = [];
+    for (const [id, t] of terminals) {
+      list.push({
+        id,
+        work_item_id: t.work_item_id,
+        project_key: t.project_key,
+        project_path: t.project_path,
+        title: t.title,
+        status: t.status,
+        started_at: t.started_at,
+        exited_at: t.exited_at,
+      });
+    }
+    json(res, list);
+  }],
+
+  // Kill all terminals (must be before :id route)
+  [/^\/api\/terminal\/all$/, 'DELETE', async (_m, _req, res) => {
+    let killed = 0;
+    for (const [, terminal] of terminals) {
+      if (terminal.status !== 'running') continue;
+      if (terminal.ptyProcess) {
+        try { terminal.ptyProcess.kill('SIGHUP'); } catch {}
+      }
+      terminal.status = 'killed';
+      terminal.exited_at = new Date().toISOString();
+      for (const ws of terminal.wsClients) {
+        try { ws.send(JSON.stringify({ type: 'exit', code: -1 })); ws.close(); } catch {}
+      }
+      terminal.wsClients.clear();
+      killed++;
+    }
+    json(res, { killed });
+  }],
+
+  // Kill a terminal
+  [/^\/api\/terminal\/([A-Za-z0-9_-]+)$/, 'DELETE', async (m, _req, res) => {
+    const terminal = terminals.get(m[1]);
+    if (!terminal) return err(res, 'terminal not found');
+    if (terminal.ptyProcess) {
+      try { terminal.ptyProcess.kill('SIGHUP'); } catch {}
+    }
+    terminal.status = 'killed';
+    terminal.exited_at = new Date().toISOString();
+    for (const ws of terminal.wsClients) {
+      try { ws.send(JSON.stringify({ type: 'exit', code: -1 })); ws.close(); } catch {}
+    }
+    terminal.wsClients.clear();
+    json(res, { status: 'killed', id: m[1] });
+  }],
 ];
 
 const server = createServer(async (req, res) => {
@@ -875,6 +1109,69 @@ const server = createServer(async (req, res) => {
   }
   err(res, 'not found');
 });
+
+// --- WebSocket server for terminal I/O ---
+const wss = new WebSocketServer({ noServer: true });
+
+server.on('upgrade', (req, socket, head) => {
+  const url = new URL(req.url, 'http://localhost');
+  const match = url.pathname.match(/^\/api\/terminal\/([A-Za-z0-9_-]+)\/ws$/);
+  if (!match) {
+    socket.destroy();
+    return;
+  }
+  const terminal = terminals.get(match[1]);
+  if (!terminal) {
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    // Replay scrollback buffer
+    if (terminal.scrollback) {
+      ws.send(JSON.stringify({ type: 'data', data: terminal.scrollback }));
+    }
+    // If already exited, send exit event
+    if (terminal.status !== 'running') {
+      ws.send(JSON.stringify({ type: 'exit', code: 0 }));
+    }
+
+    terminal.wsClients.add(ws);
+
+    ws.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'input' && terminal.ptyProcess) {
+          terminal.ptyProcess.write(msg.data);
+        } else if (msg.type === 'resize' && terminal.ptyProcess && msg.cols && msg.rows) {
+          terminal.ptyProcess.resize(msg.cols, msg.rows);
+        }
+      } catch {}
+    });
+
+    ws.on('close', () => {
+      terminal.wsClients.delete(ws);
+    });
+  });
+});
+
+// --- Auto-cleanup stale sessions ---
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, terminal] of terminals) {
+    if (terminal.status !== 'running' && terminal.exited_at) {
+      if (now - new Date(terminal.exited_at).getTime() > 10 * 60 * 1000) {
+        terminals.delete(id);
+      }
+    }
+  }
+  for (const [id, dispatch] of dispatches) {
+    if (dispatch.status !== 'running' && dispatch.completed_at) {
+      if (now - new Date(dispatch.completed_at).getTime() > 30 * 60 * 1000) {
+        dispatches.delete(id);
+      }
+    }
+  }
+}, 60 * 1000);
 
 server.listen(port, '127.0.0.1', () => {
   console.log(`Dashboard: http://127.0.0.1:${port}`);

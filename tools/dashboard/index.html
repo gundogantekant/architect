@@ -169,7 +169,30 @@
   /* Markdown editor modal */
   .modal-wide { max-width: 700px; }
   .modal-wide textarea { min-height: 300px; font-family: monospace; font-size: 13px; }
+
+  /* Kill buttons */
+  .kill-btn { cursor: pointer; color: #fff; font-size: 11px; border: none; background: var(--red); padding: 3px 10px; border-radius: 4px; }
+  .kill-btn:hover { opacity: 0.85; }
+  .kill-btn:disabled { opacity: 0.4; cursor: default; }
+  .kill-all-btn { cursor: pointer; color: var(--red); font-size: 11px; border: 1px solid var(--red); background: none; padding: 4px 12px; border-radius: 4px; margin-bottom: 8px; }
+  .kill-all-btn:hover { background: #fee2e2; }
+
+  /* Terminal panels */
+  .terminal-panel { background: var(--bg-card); border: 1px solid var(--accent); border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+  .terminal-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--accent); background: #1e1e2e; }
+  .terminal-header .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .terminal-header .status-dot.running { background: var(--green); animation: pulse 1.5s infinite; }
+  .terminal-header .status-dot.completed, .terminal-header .status-dot.failed, .terminal-header .status-dot.killed { background: var(--red); }
+  .terminal-header .terminal-title { font-size: 13px; font-weight: 600; flex: 1; color: #cdd6f4; }
+  .terminal-header .terminal-meta { font-size: 11px; color: #6c7086; }
+  .terminal-container { height: 400px; background: #1e1e2e; }
+
+  /* Interactive checkbox in modals */
+  .interactive-toggle { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .interactive-toggle label { font-size: 13px; cursor: pointer; color: var(--text); text-transform: none; font-weight: 400; }
+  .interactive-toggle input[type="checkbox"] { cursor: pointer; }
 </style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/css/xterm.min.css">
 </head>
 <body>
 
@@ -281,7 +304,8 @@ const activeDispatches = [];
 
 function updateDispatchBadge() {
   const badge = $('#dispatch-badge');
-  const running = activeDispatches.filter(d => d.status === 'running').length;
+  const running = activeDispatches.filter(d => d.status === 'running').length
+    + activeTerminals.filter(t => t.status === 'running').length;
   if (running > 0) {
     badge.textContent = running;
     badge.classList.remove('empty');
@@ -331,11 +355,13 @@ function createDispatchPanel(dispatch) {
   const guidancePrompt = dispatch.work_item_id
     ? `Continue ${dispatch.work_item_id}: ${dispatch.title || ''}`
     : dispatch.title || '';
+  const isRunning = dispatch.status === 'running';
   panel.innerHTML = `
     <div class="dispatch-header">
-      <span class="status-dot running"></span>
+      <span class="status-dot ${isRunning ? 'running' : dispatch.status}"></span>
       <span class="dispatch-title">${esc(titleParts.join(' — '))}</span>
       <span class="dispatch-meta">${new Date(dispatch.started_at).toLocaleTimeString()}</span>
+      <button class="kill-btn" data-kill-dispatch="${esc(dispatch.id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
     </div>
     <div class="dispatch-log" id="log-${dispatch.id}"></div>
     <div class="dispatch-guidance">
@@ -345,6 +371,19 @@ function createDispatchPanel(dispatch) {
         : `cd ${esc(dispatch.project_path)} && claude "${esc(guidancePrompt)}"`}</code>
     </div>
   `;
+  // Bind kill button
+  panel.querySelector(`[data-kill-dispatch="${dispatch.id}"]`).onclick = async (e) => {
+    const btn = e.target;
+    btn.disabled = true;
+    try {
+      await fetch(`/api/dispatch/${dispatch.id}`, { method: 'DELETE' });
+      dispatch.status = 'killed';
+      const dot = panel.querySelector('.status-dot');
+      dot.classList.remove('running');
+      dot.classList.add('killed', 'failed');
+      updateDispatchBadge();
+    } catch {}
+  };
   return panel;
 }
 
@@ -405,10 +444,172 @@ function getDispatchContainer() {
   if (!container) {
     container = document.createElement('div');
     container.id = 'dispatch-panels';
+    // Add Kill All button at top
+    const killAllBtn = document.createElement('button');
+    killAllBtn.className = 'kill-all-btn';
+    killAllBtn.textContent = 'Kill All Sessions';
+    killAllBtn.onclick = async () => {
+      if (!confirm('Kill all running dispatches and terminals?')) return;
+      await Promise.all([
+        fetch('/api/dispatch/all', { method: 'DELETE' }),
+        fetch('/api/terminal/all', { method: 'DELETE' }),
+      ]);
+      // Update UI for all dispatches
+      activeDispatches.forEach(d => { d.status = 'killed'; });
+      activeTerminals.forEach(t => { t.status = 'killed'; });
+      document.querySelectorAll('.dispatch-panel .status-dot.running, .terminal-header .status-dot.running').forEach(dot => {
+        dot.classList.remove('running');
+        dot.classList.add('failed');
+      });
+      document.querySelectorAll('.kill-btn').forEach(btn => { btn.disabled = true; });
+      updateDispatchBadge();
+    };
+    container.appendChild(killAllBtn);
     const main = $('#main');
     main.insertBefore(container, main.firstChild);
   }
   return container;
+}
+
+// --- xterm.js dynamic loading ---
+let xtermLoaded = false;
+let xtermModules = null;
+
+async function loadXterm() {
+  if (xtermLoaded) return xtermModules;
+  try {
+    const [xtermMod, fitMod, webLinksMod] = await Promise.all([
+      import('https://cdn.jsdelivr.net/npm/@xterm/xterm@5/+esm'),
+      import('https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0/+esm'),
+      import('https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0/+esm'),
+    ]);
+    xtermModules = { Terminal: xtermMod.Terminal, FitAddon: fitMod.FitAddon, WebLinksAddon: webLinksMod.WebLinksAddon };
+    xtermLoaded = true;
+    return xtermModules;
+  } catch (e) {
+    console.error('Failed to load xterm.js:', e);
+    return null;
+  }
+}
+
+// --- Terminal state ---
+const activeTerminals = [];
+
+function createTerminalPanel(terminalInfo) {
+  const panel = document.createElement('div');
+  panel.className = 'terminal-panel';
+  panel.id = `terminal-${terminalInfo.id}`;
+  const isRunning = terminalInfo.status === 'running';
+  panel.innerHTML = `
+    <div class="terminal-header">
+      <span class="status-dot ${isRunning ? 'running' : 'failed'}"></span>
+      <span class="terminal-title">${esc(terminalInfo.id)} — ${esc(terminalInfo.title || 'Terminal')}</span>
+      <span class="terminal-meta">${new Date(terminalInfo.started_at).toLocaleTimeString()}</span>
+      <button class="kill-btn" data-kill-terminal="${esc(terminalInfo.id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
+    </div>
+    <div class="terminal-container" id="term-container-${terminalInfo.id}"></div>
+  `;
+  // Bind kill button
+  panel.querySelector(`[data-kill-terminal="${terminalInfo.id}"]`).onclick = async (e) => {
+    const btn = e.target;
+    btn.disabled = true;
+    try {
+      await fetch(`/api/terminal/${terminalInfo.id}`, { method: 'DELETE' });
+      terminalInfo.status = 'killed';
+      const dot = panel.querySelector('.status-dot');
+      dot.classList.remove('running');
+      dot.classList.add('failed');
+      updateDispatchBadge();
+    } catch {}
+  };
+  return panel;
+}
+
+async function connectTerminalWs(terminalInfo) {
+  const mods = await loadXterm();
+  if (!mods) return;
+
+  const containerEl = document.getElementById(`term-container-${terminalInfo.id}`);
+  if (!containerEl) return;
+
+  const { Terminal, FitAddon, WebLinksAddon } = mods;
+
+  const term = new Terminal({
+    cursorBlink: true,
+    fontSize: 13,
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+    theme: { background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#f5e0dc' },
+  });
+
+  const fitAddon = new FitAddon();
+  term.loadAddon(fitAddon);
+  term.loadAddon(new WebLinksAddon());
+  term.open(containerEl);
+  fitAddon.fit();
+
+  terminalInfo._term = term;
+  terminalInfo._fitAddon = fitAddon;
+
+  // WebSocket connection
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${proto}//${location.host}/api/terminal/${terminalInfo.id}/ws`);
+  terminalInfo._ws = ws;
+
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'data') {
+        term.write(msg.data);
+      } else if (msg.type === 'exit') {
+        terminalInfo.status = msg.code === 0 ? 'completed' : 'failed';
+        const dot = document.querySelector(`#terminal-${terminalInfo.id} .status-dot`);
+        if (dot) { dot.classList.remove('running'); dot.classList.add('failed'); }
+        const killBtn = document.querySelector(`[data-kill-terminal="${terminalInfo.id}"]`);
+        if (killBtn) killBtn.disabled = true;
+        updateDispatchBadge();
+      }
+    } catch {}
+  };
+
+  ws.onclose = () => {
+    terminalInfo._ws = null;
+  };
+
+  // Send keystrokes to server
+  term.onData((data) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'input', data }));
+    }
+  });
+
+  // Handle resize
+  const resizeObserver = new ResizeObserver(() => {
+    fitAddon.fit();
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+    }
+  });
+  resizeObserver.observe(containerEl);
+  terminalInfo._resizeObserver = resizeObserver;
+}
+
+// Restore terminals on page load
+async function restoreTerminals() {
+  try {
+    const list = await api('terminal/active');
+    for (const t of list) {
+      if (activeTerminals.some(a => a.id === t.id)) continue;
+      const terminalInfo = { ...t };
+      activeTerminals.push(terminalInfo);
+      const container = getDispatchContainer();
+      const panel = createTerminalPanel(terminalInfo);
+      container.appendChild(panel);
+      if (t.status === 'running') {
+        await connectTerminalWs(terminalInfo);
+      }
+    }
+    updateDispatchBadge();
+  } catch {}
 }
 
 async function dispatchWorkItem(workItem, projectKey) {
@@ -436,6 +637,10 @@ async function dispatchWorkItem(workItem, projectKey) {
           <label>Additional Instructions</label>
           <textarea id="dispatch-instructions" placeholder="Optional: add context, constraints, or specific instructions for the agent..."></textarea>
         </div>
+        <div class="interactive-toggle">
+          <input type="checkbox" id="dispatch-interactive" />
+          <label for="dispatch-interactive">Interactive terminal (xterm.js)</label>
+        </div>
         <div class="modal-actions">
           <button class="btn btn-cancel" id="modal-cancel">Cancel</button>
           <button class="btn btn-dispatch" id="modal-dispatch">Dispatch</button>
@@ -454,12 +659,14 @@ async function dispatchWorkItem(workItem, projectKey) {
 
     overlay.querySelector('#modal-dispatch').onclick = async () => {
       const instructions = overlay.querySelector('#dispatch-instructions').value.trim();
+      const interactive = overlay.querySelector('#dispatch-interactive').checked;
       const btn = overlay.querySelector('#modal-dispatch');
       btn.disabled = true;
       btn.textContent = 'Dispatching...';
 
       try {
-        const resp = await fetch('/api/dispatch', {
+        const endpoint = interactive ? '/api/terminal' : '/api/dispatch';
+        const resp = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -485,25 +692,43 @@ async function dispatchWorkItem(workItem, projectKey) {
           }
         } catch {}
 
-        const dispatch = {
-          id: result.dispatch_id,
-          work_item_id: workItem.id,
-          project_key: projectKey,
-          project_path: projectPath,
-          title: workItem.title,
-          status: 'running',
-          started_at: new Date().toISOString(),
-        };
-        activeDispatches.push(dispatch);
-        updateDispatchBadge();
-
-        const container = getDispatchContainer();
-        const panel = createDispatchPanel(dispatch);
-        container.prepend(panel);
-        connectDispatchStream(dispatch);
-
-        overlay.remove();
-        resolve(dispatch);
+        if (interactive) {
+          const terminalInfo = {
+            id: result.terminal_id,
+            work_item_id: workItem.id,
+            project_key: projectKey,
+            project_path: projectPath,
+            title: workItem.title,
+            status: 'running',
+            started_at: new Date().toISOString(),
+          };
+          activeTerminals.push(terminalInfo);
+          updateDispatchBadge();
+          const container = getDispatchContainer();
+          const panel = createTerminalPanel(terminalInfo);
+          container.prepend(panel);
+          await connectTerminalWs(terminalInfo);
+          overlay.remove();
+          resolve(terminalInfo);
+        } else {
+          const dispatch = {
+            id: result.dispatch_id,
+            work_item_id: workItem.id,
+            project_key: projectKey,
+            project_path: projectPath,
+            title: workItem.title,
+            status: 'running',
+            started_at: new Date().toISOString(),
+          };
+          activeDispatches.push(dispatch);
+          updateDispatchBadge();
+          const container = getDispatchContainer();
+          const panel = createDispatchPanel(dispatch);
+          container.prepend(panel);
+          connectDispatchStream(dispatch);
+          overlay.remove();
+          resolve(dispatch);
+        }
       } catch (e) {
         btn.disabled = false;
         btn.textContent = 'Dispatch';
@@ -1027,6 +1252,10 @@ function showDiscussModal() {
         <label>Prompt / Instructions *</label>
         <textarea id="discuss-instructions" placeholder="What would you like to discuss? e.g., architecture decisions, code exploration, questions about the project..."></textarea>
       </div>
+      <div class="interactive-toggle">
+        <input type="checkbox" id="discuss-interactive" />
+        <label for="discuss-interactive">Interactive terminal (xterm.js)</label>
+      </div>
       <div class="modal-actions">
         <button class="btn btn-cancel" id="discuss-cancel">Cancel</button>
         <button class="btn btn-dispatch" id="discuss-submit">Dispatch</button>
@@ -1041,13 +1270,15 @@ function showDiscussModal() {
   overlay.querySelector('#discuss-submit').onclick = async () => {
     const instructions = overlay.querySelector('#discuss-instructions').value.trim();
     if (!instructions) { alert('Instructions are required'); return; }
+    const interactive = overlay.querySelector('#discuss-interactive').checked;
 
     const btn = overlay.querySelector('#discuss-submit');
     btn.disabled = true;
     btn.textContent = 'Dispatching...';
 
     try {
-      const resp = await fetch('/api/dispatch', {
+      const endpoint = interactive ? '/api/terminal' : '/api/dispatch';
+      const resp = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1069,22 +1300,39 @@ function showDiscussModal() {
         }
       } catch {}
 
-      const dispatch = {
-        id: result.dispatch_id,
-        work_item_id: null,
-        project_key: currentProjectKey,
-        project_path: projectPath,
-        title: instructions.slice(0, 60) + (instructions.length > 60 ? '...' : ''),
-        status: 'running',
-        started_at: new Date().toISOString(),
-      };
-      activeDispatches.push(dispatch);
-      updateDispatchBadge();
-
-      const container = getDispatchContainer();
-      const panel = createDispatchPanel(dispatch);
-      container.prepend(panel);
-      connectDispatchStream(dispatch);
+      if (interactive) {
+        const terminalInfo = {
+          id: result.terminal_id,
+          work_item_id: null,
+          project_key: currentProjectKey,
+          project_path: projectPath,
+          title: instructions.slice(0, 60) + (instructions.length > 60 ? '...' : ''),
+          status: 'running',
+          started_at: new Date().toISOString(),
+        };
+        activeTerminals.push(terminalInfo);
+        updateDispatchBadge();
+        const container = getDispatchContainer();
+        const panel = createTerminalPanel(terminalInfo);
+        container.prepend(panel);
+        await connectTerminalWs(terminalInfo);
+      } else {
+        const dispatch = {
+          id: result.dispatch_id,
+          work_item_id: null,
+          project_key: currentProjectKey,
+          project_path: projectPath,
+          title: instructions.slice(0, 60) + (instructions.length > 60 ? '...' : ''),
+          status: 'running',
+          started_at: new Date().toISOString(),
+        };
+        activeDispatches.push(dispatch);
+        updateDispatchBadge();
+        const container = getDispatchContainer();
+        const panel = createDispatchPanel(dispatch);
+        container.prepend(panel);
+        connectDispatchStream(dispatch);
+      }
 
       overlay.remove();
     } catch (e) {
@@ -1292,7 +1540,7 @@ function bindEpicDetailEvents(epicId) {
   document.querySelectorAll('[data-epic-task-dispatch]').forEach(btn => {
     btn.onclick = async () => {
       const wid = btn.dataset.epicTaskDispatch;
-      const pk = btn.dataset.epicTaskPk;
+      let pk = btn.dataset.epicTaskPk;
       const bl = await getBacklog();
       let wi = null;
       for (const group of Object.values(bl.projects)) {
@@ -1300,7 +1548,12 @@ function bindEpicDetailEvents(epicId) {
         wi = group.items.find(i => i.id === wid);
         if (wi) break;
       }
-      if (wi) dispatchWorkItem(wi, pk);
+      // Fallback: if pk is empty, use epic's project_keys[0]
+      if (!pk && epic.project_keys && epic.project_keys.length) {
+        pk = epic.project_keys[0];
+      }
+      if (wi && pk) dispatchWorkItem(wi, pk);
+      else if (wi) alert('No project key available. Link a project to this epic first.');
     };
   });
 }
@@ -1378,8 +1631,21 @@ function showMdEditorModal(title, content, onSave) {
   };
 }
 
-function showEpicModal(existingEpic = null) {
+async function showEpicModal(existingEpic = null) {
   const isEdit = !!existingEpic;
+
+  // Fetch registry for project multi-select
+  let registryKeys = [];
+  try {
+    const registry = await api('registry');
+    for (const [, entry] of Object.entries(registry.entries)) {
+      registryKeys.push(`${entry.org}/${entry.project}/${entry.component}`);
+    }
+    registryKeys.sort();
+  } catch {}
+
+  const selectedKeys = isEdit && existingEpic.project_keys ? existingEpic.project_keys : [];
+
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
@@ -1400,6 +1666,13 @@ function showEpicModal(existingEpic = null) {
         <select id="epic-priority">
           ${['critical','high','medium','low'].map(p => `<option value="${p}"${(isEdit ? existingEpic.priority : 'medium') === p ? ' selected' : ''}>${p}</option>`).join('')}
         </select>
+      </div>
+      <div class="field">
+        <label>Projects</label>
+        <select id="epic-projects" multiple style="min-height:80px">
+          ${registryKeys.map(k => `<option value="${esc(k)}"${selectedKeys.includes(k) ? ' selected' : ''}>${esc(k)}</option>`).join('')}
+        </select>
+        <div style="font-size:11px;color:var(--text-light);margin-top:2px">Ctrl/Cmd+click to select multiple</div>
       </div>
       <div class="field">
         <label>Description</label>
@@ -1433,6 +1706,9 @@ function showEpicModal(existingEpic = null) {
     const btn = overlay.querySelector('#epic-save');
     btn.disabled = true; btn.textContent = isEdit ? 'Saving...' : 'Creating...';
 
+    const projectsEl = overlay.querySelector('#epic-projects');
+    const project_keys = [...projectsEl.selectedOptions].map(o => o.value);
+
     const payload = {
       title,
       priority: overlay.querySelector('#epic-priority').value,
@@ -1440,6 +1716,7 @@ function showEpicModal(existingEpic = null) {
       acceptance_criteria: overlay.querySelector('#epic-ac').value.trim(),
       target_date: overlay.querySelector('#epic-target').value.trim(),
       tags: overlay.querySelector('#epic-tags').value.split(',').map(t => t.trim()).filter(Boolean),
+      project_keys,
     };
     if (isEdit) {
       const statusEl = overlay.querySelector('#epic-status');
@@ -1642,8 +1919,21 @@ async function showEpicDispatchModal(epicId) {
   const epic = await api(`epics/${epicId}`);
   const items = epic.resolved_items || [];
   const openItems = items.filter(i => i.status === 'open' || i.status === 'in-progress');
-  const projectKeys = epic.project_keys || [];
+  let projectKeys = epic.project_keys || [];
   const p = epic.progress || { done: 0, total: 0 };
+
+  // If no project keys, fetch registry as fallback
+  let registryKeys = [];
+  if (!projectKeys.length) {
+    try {
+      const registry = await api('registry');
+      for (const [, entry] of Object.entries(registry.entries)) {
+        registryKeys.push(`${entry.org}/${entry.project}/${entry.component}`);
+      }
+      registryKeys.sort();
+    } catch {}
+    projectKeys = registryKeys;
+  }
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -1661,11 +1951,12 @@ async function showEpicDispatchModal(epicId) {
           ${openItems.map(i => `<option value="${esc(i.id)}">${esc(i.id)}: ${esc(i.title)}</option>`).join('')}
         </select>
       </div>
-      <div class="field" id="epic-dispatch-project-field" style="${projectKeys.length <= 1 ? 'display:none' : ''}">
+      <div class="field" id="epic-dispatch-project-field">
         <label>Target Project</label>
         <select id="epic-dispatch-project">
           ${projectKeys.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join('')}
         </select>
+        ${registryKeys.length ? '<div style="font-size:11px;color:var(--text-light);margin-top:2px">No linked projects — showing all registry projects</div>' : ''}
       </div>
       <div class="field">
         <label>Additional Instructions</label>
@@ -1684,13 +1975,10 @@ async function showEpicDispatchModal(epicId) {
   const projectSelect = overlay.querySelector('#epic-dispatch-project');
 
   modeSelect.onchange = () => {
-    if (modeSelect.value === 'general') {
-      projectField.style.display = projectKeys.length <= 1 ? 'none' : '';
-    } else {
+    if (modeSelect.value !== 'general') {
       const item = openItems.find(i => i.id === modeSelect.value);
       if (item) {
         projectSelect.value = item.project_key;
-        projectField.style.display = 'none';
       }
     }
   };
@@ -1711,11 +1999,11 @@ async function showEpicDispatchModal(epicId) {
     } else {
       wid = mode;
       const item = openItems.find(i => i.id === wid);
-      pk = item ? item.project_key : projectKeys[0];
+      pk = item ? item.project_key : (projectSelect.value || projectKeys[0]);
     }
 
     if (!pk) {
-      alert('No project key available for dispatch');
+      alert('No project key available for dispatch. Onboard a project first.');
       btn.disabled = false; btn.textContent = 'Dispatch';
       return;
     }
@@ -1929,7 +2217,7 @@ async function route() {
 }
 
 window.addEventListener('hashchange', route);
-Promise.all([buildTree(), buildEpicTree()]).then(() => { route(); restoreDispatches(); });
+Promise.all([buildTree(), buildEpicTree()]).then(() => { route(); restoreDispatches(); restoreTerminals(); });
 </script>
 </body>
 </html>
