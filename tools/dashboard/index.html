@@ -124,6 +124,8 @@
   .btn-add-wi:hover { opacity: 0.85; }
   .edit-btn { cursor: pointer; color: var(--accent); font-size: 12px; border: 1px solid var(--accent); background: none; padding: 3px 10px; border-radius: 4px; margin-left: 4px; }
   .edit-btn:hover { background: #ede9fe; }
+  .delete-btn { cursor: pointer; color: var(--red); font-size: 12px; border: 1px solid var(--red); background: none; padding: 3px 10px; border-radius: 4px; margin-left: 4px; }
+  .delete-btn:hover { background: #fee2e2; }
 
   /* Dispatch panels */
   .dispatch-panel { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
@@ -139,12 +141,41 @@
   .dispatch-guidance { padding: 12px 16px; background: #fffbeb; border-top: 1px solid #fde68a; font-size: 12.5px; }
   .dispatch-guidance code { background: #fef3c7; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
   .dispatch-guidance .label { font-weight: 600; font-size: 11px; text-transform: uppercase; color: #92400e; margin-bottom: 4px; }
+
+  /* Epic sidebar */
+  .sidebar-section-label { padding: 10px 16px 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #6c7086; cursor: pointer; }
+  .sidebar-section-label:hover { color: #cdd6f4; }
+  .epic-item { padding: 4px 16px; font-size: 12px; cursor: pointer; border-radius: 4px; margin: 1px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; }
+  .epic-item:hover { background: #313244; }
+  .epic-item.active { background: var(--accent); color: #fff; }
+  .epic-progress { font-size: 10px; color: #888; flex-shrink: 0; }
+  .signal-dot.grey { background: #6c7086; }
+  .sidebar-divider { border: none; border-top: 1px solid #313244; margin: 8px 16px; }
+  .sidebar-onboard-btn { padding: 6px 16px; font-size: 11px; cursor: pointer; color: #a6adc8; }
+  .sidebar-onboard-btn:hover { color: #cdd6f4; background: #313244; }
+
+  /* Progress bar */
+  .progress-bar-container { background: #e2e2e2; border-radius: 6px; height: 8px; overflow: hidden; margin: 8px 0 16px; }
+  .progress-bar-fill { height: 100%; border-radius: 6px; background: var(--green); transition: width .3s; }
+
+  /* Epic badge in tables */
+  .badge-epic { background: #faf5ff; color: #7c3aed; border: 1px solid #e9d5ff; cursor: pointer; }
+  .badge-epic:hover { background: #ede9fe; }
+
+  /* Unlink button */
+  .unlink-btn { cursor: pointer; color: var(--red); font-size: 11px; border: 1px solid var(--red); background: none; padding: 2px 8px; border-radius: 4px; }
+  .unlink-btn:hover { background: #fee2e2; }
+
+  /* Markdown editor modal */
+  .modal-wide { max-width: 700px; }
+  .modal-wide textarea { min-height: 300px; font-family: monospace; font-size: 13px; }
 </style>
 </head>
 <body>
 
 <nav id="sidebar">
   <h1>Architect <span id="dispatch-badge" class="dispatch-count empty"></span></h1>
+  <div id="epic-tree"></div>
   <div id="tree"></div>
 </nav>
 
@@ -191,6 +222,60 @@ async function getBacklog() {
   return backlog;
 }
 
+let epicCache = null;
+async function getEpics() {
+  epicCache = await api('epics');
+  return epicCache;
+}
+
+function epicSignalColor(epic, progress) {
+  if (epic.status === 'draft') return 'grey';
+  if (epic.status === 'done') return 'green';
+  if (epic.status === 'cancelled') return 'grey';
+  const items = progress || { done: 0, total: 0 };
+  if (items.total === 0) return 'grey';
+  if (items.done === items.total) return 'green';
+  if (epic.priority === 'critical' || epic.priority === 'high') return 'red';
+  return 'yellow';
+}
+
+async function buildEpicTree() {
+  const epicTree = document.getElementById('epic-tree');
+  epicTree.innerHTML = '';
+  // EPICS label — always visible
+  const label = document.createElement('div');
+  label.className = 'sidebar-section-label';
+  label.textContent = 'EPICS';
+  label.onclick = () => { location.hash = '#epics'; };
+  epicTree.appendChild(label);
+
+  try {
+    const epics = await getEpics();
+
+    for (const epic of epics) {
+      const item = document.createElement('div');
+      item.className = 'epic-item';
+      item.dataset.epicId = epic.id;
+      const color = epicSignalColor(epic, epic.progress);
+      const p = epic.progress || { done: 0, total: 0 };
+      item.innerHTML = `<span class="signal-dot ${color}"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis">${esc(epic.id)} ${esc(epic.title)}</span><span class="epic-progress">(${p.done}/${p.total})</span>`;
+      item.onclick = () => { location.hash = `#epic/${epic.id}`; };
+      epicTree.appendChild(item);
+    }
+  } catch {}
+
+  // Onboard button — always visible
+  const onboardBtn = document.createElement('div');
+  onboardBtn.className = 'sidebar-onboard-btn';
+  onboardBtn.textContent = '+ Onboard Project';
+  onboardBtn.onclick = () => showOnboardModal();
+  epicTree.appendChild(onboardBtn);
+
+  const divider = document.createElement('hr');
+  divider.className = 'sidebar-divider';
+  epicTree.appendChild(divider);
+}
+
 // --- Dispatch state ---
 const activeDispatches = [];
 
@@ -220,8 +305,11 @@ function extractStreamText(line) {
     if (evt.type === 'content_block_start' && evt.content_block?.text) {
       return evt.content_block.text;
     }
+    if (evt.type === 'system' && evt.subtype === 'init') {
+      return null;
+    }
     if (evt.type === 'result') {
-      const cost = evt.cost_usd ? ` (cost: $${evt.cost_usd.toFixed(4)})` : '';
+      const cost = evt.total_cost_usd ? ` (cost: $${evt.total_cost_usd.toFixed(4)})` : '';
       return `\n--- Agent finished${cost} ---\n`;
     }
     if (evt.type === 'stderr') {
@@ -237,16 +325,24 @@ function createDispatchPanel(dispatch) {
   const panel = document.createElement('div');
   panel.className = 'dispatch-panel';
   panel.id = `dispatch-${dispatch.id}`;
+  const titleParts = [dispatch.id];
+  if (dispatch.work_item_id) titleParts.push(dispatch.work_item_id);
+  titleParts.push(dispatch.title || '');
+  const guidancePrompt = dispatch.work_item_id
+    ? `Continue ${dispatch.work_item_id}: ${dispatch.title || ''}`
+    : dispatch.title || '';
   panel.innerHTML = `
     <div class="dispatch-header">
       <span class="status-dot running"></span>
-      <span class="dispatch-title">${esc(dispatch.id)} — ${esc(dispatch.work_item_id)} — ${esc(dispatch.title || '')}</span>
+      <span class="dispatch-title">${esc(titleParts.join(' — '))}</span>
       <span class="dispatch-meta">${new Date(dispatch.started_at).toLocaleTimeString()}</span>
     </div>
     <div class="dispatch-log" id="log-${dispatch.id}"></div>
     <div class="dispatch-guidance">
       <div class="label">Continue from terminal</div>
-      <code>cd ${esc(dispatch.project_path)} && claude "Continue ${esc(dispatch.work_item_id)}: ${esc(dispatch.title || '')}"</code>
+      <code data-dispatch-id="${esc(dispatch.id)}">${dispatch.session_id
+        ? `cd ${esc(dispatch.project_path)} && claude --resume ${esc(dispatch.session_id)}`
+        : `cd ${esc(dispatch.project_path)} && claude "${esc(guidancePrompt)}"`}</code>
     </div>
   `;
   return panel;
@@ -260,6 +356,17 @@ function connectDispatchStream(dispatch) {
   const es = new EventSource(`/api/dispatch/${dispatch.id}/stream`);
 
   es.onmessage = (e) => {
+    // Check for session_id in system init events
+    try {
+      const evt = JSON.parse(e.data);
+      if (evt.type === 'system' && evt.subtype === 'init' && evt.session_id) {
+        dispatch.session_id = evt.session_id;
+        const codeEl = document.querySelector(`code[data-dispatch-id="${dispatch.id}"]`);
+        if (codeEl) {
+          codeEl.textContent = `cd ${dispatch.project_path} && claude --resume ${evt.session_id}`;
+        }
+      }
+    } catch {}
     const text = extractStreamText(e.data);
     if (text) {
       logEl.textContent += text;
@@ -412,7 +519,7 @@ async function restoreDispatches() {
     const list = await api('dispatch/active');
     for (const d of list) {
       if (activeDispatches.some(a => a.id === d.id)) continue;
-      const dispatch = { ...d, title: d.work_item_id };
+      const dispatch = { ...d, title: d.work_item_id, session_id: d.session_id || null };
       activeDispatches.push(dispatch);
       const container = getDispatchContainer();
       const panel = createDispatchPanel(dispatch);
@@ -575,27 +682,34 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
   // Tab 0: Work Items
   html += `<div class="tab-content active" data-panel="0">`;
   html += `<button class="btn-add-wi" id="add-work-item">+ Add Work Item</button>`;
+  html += `<button class="btn-add-wi" id="discuss-agent" style="background:var(--teal);margin-left:8px">Discuss with Agent</button>`;
   if (workItems.length) {
-    html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Tags</th><th></th></tr></thead><tbody>`;
+    html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Epic</th><th>Tags</th><th></th></tr></thead><tbody>`;
     workItems.forEach((w, idx) => {
       const sc = w.status === 'done' ? 'done' : (w.blocked_by ? 'blocked' : 'open');
       const canDispatch = w.status === 'open' || w.status === 'in-progress';
       html += `<tr><td><code>${esc(w.id)}</code></td><td>${esc(w.title)}</td>`;
       html += `<td><span class="badge badge-${sc}">${esc(w.status)}${w.blocked_by ? ` (${esc(w.blocked_by)})` : ''}</span></td>`;
       html += `<td><span class="badge badge-${w.priority || 'medium'}">${esc(w.priority || '—')}</span></td>`;
+      html += `<td>${w.epic_id ? `<span class="badge badge-epic" data-epic-nav="${esc(w.epic_id)}">${esc(w.epic_id)}</span>` : ''}</td>`;
       html += `<td>${(w.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
       html += `<td><button class="expand-btn" data-wi="${idx}">details</button>`;
       html += `<button class="edit-btn" data-wi-edit="${idx}">edit</button>`;
       if (canDispatch) html += `<button class="dispatch-btn" data-wi-idx="${idx}">dispatch</button>`;
+      html += `<button class="delete-btn" data-wi-del="${idx}">delete</button>`;
       html += `</td>`;
       html += `</tr>`;
-      html += `<tr class="wi-detail" data-wi-detail="${idx}" style="display:none"><td colspan="6">`;
+      html += `<tr class="wi-detail" data-wi-detail="${idx}" style="display:none"><td colspan="7">`;
       if (w.description) html += `<div style="margin-bottom:8px">${esc(w.description)}</div>`;
       if (w.session_log?.length) {
         html += `<div class="session-log">`;
         for (const e of w.session_log) html += `<div class="entry"><span class="date">${esc(e.date)}</span>${esc(e.summary)}</div>`;
         html += `</div>`;
       }
+      html += `<div style="margin-top:8px;display:flex;gap:6px;align-items:center">`;
+      html += `<input type="text" class="log-input" data-log-wi="${esc(w.id)}" placeholder="Add log entry..." style="flex:1;padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px" />`;
+      html += `<button class="btn-add-wi" data-log-submit="${esc(w.id)}" style="margin:0;padding:4px 10px;font-size:11px">Add Log</button>`;
+      html += `</div>`;
       html += `</td></tr>`;
     });
     html += `</tbody></table>`;
@@ -723,6 +837,26 @@ function bindTabs() {
     };
   });
 
+  // Delete buttons
+  document.querySelectorAll('.delete-btn').forEach(btn => {
+    btn.onclick = async () => {
+      const idx = parseInt(btn.dataset.wiDel);
+      const wi = currentWorkItems[idx];
+      if (!wi) return;
+      if (!confirm(`Delete work item ${wi.id}: "${wi.title}"?`)) return;
+      try {
+        const resp = await fetch(`/api/work-items/${wi.id}`, { method: 'DELETE' });
+        const result = await resp.json();
+        if (!resp.ok) throw new Error(result.error || 'Delete failed');
+        backlog = null;
+        await buildTree();
+        route();
+      } catch (e) {
+        alert('Delete failed: ' + e.message);
+      }
+    };
+  });
+
   // Dispatch buttons
   document.querySelectorAll('.dispatch-btn').forEach(btn => {
     btn.onclick = () => {
@@ -731,6 +865,42 @@ function bindTabs() {
       if (wi) dispatchWorkItem(wi, currentProjectKey);
     };
   });
+
+  // Session log submit buttons
+  document.querySelectorAll('[data-log-submit]').forEach(btn => {
+    btn.onclick = async () => {
+      const wid = btn.dataset.logSubmit;
+      const input = document.querySelector(`[data-log-wi="${wid}"]`);
+      const message = input?.value?.trim();
+      if (!message) return;
+      btn.disabled = true; btn.textContent = '...';
+      try {
+        const resp = await fetch(`/api/work-items/${wid}/log`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message }),
+        });
+        if (!resp.ok) throw new Error('Failed');
+        backlog = null;
+        route();
+      } catch (e) {
+        alert('Error: ' + e.message);
+        btn.disabled = false; btn.textContent = 'Add Log';
+      }
+    };
+  });
+
+  // Epic badge navigation
+  document.querySelectorAll('[data-epic-nav]').forEach(el => {
+    el.onclick = (e) => {
+      e.stopPropagation();
+      location.hash = `#epic/${el.dataset.epicNav}`;
+    };
+  });
+
+  // Discuss with Agent button
+  const discussBtn = document.getElementById('discuss-agent');
+  if (discussBtn) discussBtn.onclick = () => showDiscussModal();
 
   // Doc links
   document.querySelectorAll('.file-link').forEach(link => {
@@ -842,6 +1012,826 @@ function showWorkItemModal(existingItem = null) {
   };
 }
 
+// --- Discuss Modal ---
+function showDiscussModal() {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Discuss with Agent</h3>
+      <div class="field">
+        <label>Project</label>
+        <div style="font-size:13px"><code>${esc(currentProjectKey)}</code></div>
+      </div>
+      <div class="field">
+        <label>Prompt / Instructions *</label>
+        <textarea id="discuss-instructions" placeholder="What would you like to discuss? e.g., architecture decisions, code exploration, questions about the project..."></textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" id="discuss-cancel">Cancel</button>
+        <button class="btn btn-dispatch" id="discuss-submit">Dispatch</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#discuss-cancel').onclick = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  overlay.querySelector('#discuss-submit').onclick = async () => {
+    const instructions = overlay.querySelector('#discuss-instructions').value.trim();
+    if (!instructions) { alert('Instructions are required'); return; }
+
+    const btn = overlay.querySelector('#discuss-submit');
+    btn.disabled = true;
+    btn.textContent = 'Dispatching...';
+
+    try {
+      const resp = await fetch('/api/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_key: currentProjectKey,
+          additional_instructions: instructions,
+        }),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
+
+      let projectPath = '';
+      try {
+        const registry = await api('registry');
+        for (const [path, entry] of Object.entries(registry.entries)) {
+          if (`${entry.org}/${entry.project}/${entry.component}` === currentProjectKey) {
+            projectPath = path;
+            break;
+          }
+        }
+      } catch {}
+
+      const dispatch = {
+        id: result.dispatch_id,
+        work_item_id: null,
+        project_key: currentProjectKey,
+        project_path: projectPath,
+        title: instructions.slice(0, 60) + (instructions.length > 60 ? '...' : ''),
+        status: 'running',
+        started_at: new Date().toISOString(),
+      };
+      activeDispatches.push(dispatch);
+      updateDispatchBadge();
+
+      const container = getDispatchContainer();
+      const panel = createDispatchPanel(dispatch);
+      container.prepend(panel);
+      connectDispatchStream(dispatch);
+
+      overlay.remove();
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = 'Dispatch';
+      alert('Dispatch failed: ' + e.message);
+    }
+  };
+}
+
+// --- Epic Views ---
+
+function renderEpicListView(epics) {
+  let html = `<div class="card"><h2>Epics</h2>`;
+  html += `<button class="btn-add-wi" id="create-epic">+ New Epic</button>`;
+  if (epics.length) {
+    html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Progress</th><th>Projects</th><th>Target</th><th></th></tr></thead><tbody>`;
+    for (const epic of epics) {
+      const p = epic.progress || { done: 0, total: 0 };
+      const pct = p.total ? Math.round(p.done / p.total * 100) : 0;
+      html += `<tr>`;
+      html += `<td><code style="cursor:pointer" data-epic-nav="${esc(epic.id)}">${esc(epic.id)}</code></td>`;
+      html += `<td>${esc(epic.title)}</td>`;
+      html += `<td><span class="badge badge-${epic.status === 'active' ? 'open' : epic.status === 'done' ? 'done' : 'medium'}">${esc(epic.status)}</span></td>`;
+      html += `<td><span class="badge badge-${epic.priority || 'medium'}">${esc(epic.priority || 'medium')}</span></td>`;
+      html += `<td>${p.done}/${p.total} (${pct}%)</td>`;
+      html += `<td>${(epic.project_keys || []).map(k => `<span class="tag">${esc(k)}</span>`).join('')}</td>`;
+      html += `<td>${epic.target_date || '—'}</td>`;
+      html += `<td><button class="dispatch-btn" data-epic-dispatch="${esc(epic.id)}">dispatch</button></td>`;
+      html += `</tr>`;
+    }
+    html += `</tbody></table>`;
+  } else {
+    html += `<p class="empty">No epics yet.</p>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+function bindEpicListEvents() {
+  document.querySelectorAll('[data-epic-nav]').forEach(el => {
+    el.onclick = () => { location.hash = `#epic/${el.dataset.epicNav}`; };
+  });
+  const createBtn = document.getElementById('create-epic');
+  if (createBtn) createBtn.onclick = () => showEpicModal(null);
+  document.querySelectorAll('[data-epic-dispatch]').forEach(btn => {
+    btn.onclick = () => showEpicDispatchModal(btn.dataset.epicDispatch);
+  });
+}
+
+async function renderEpicDetailView(epicId) {
+  const epic = await api(`epics/${epicId}`);
+  const items = epic.resolved_items || [];
+  const p = epic.progress || { done: 0, total: 0 };
+  const pct = p.total ? Math.round(p.done / p.total * 100) : 0;
+
+  const tabs = ['Tasks', 'Planning', 'Documentation', 'Details'];
+  let html = `<div class="card"><h2>${esc(epic.id)}: ${esc(epic.title)}</h2>`;
+  html += `<span class="badge badge-${epic.status === 'active' ? 'open' : epic.status === 'done' ? 'done' : 'medium'}">${esc(epic.status)}</span> `;
+  html += `<span class="badge badge-${epic.priority || 'medium'}">${esc(epic.priority || 'medium')}</span>`;
+  if (epic.target_date) html += ` <span class="tag">Target: ${esc(epic.target_date)}</span>`;
+  html += `<div class="tabs" id="epic-tabs" style="margin-top:16px">`;
+  tabs.forEach((t, i) => {
+    html += `<div class="tab${i === 0 ? ' active' : ''}" data-tab="${i}">${t}</div>`;
+  });
+  html += `</div>`;
+
+  // Tab 0: Tasks
+  html += `<div class="tab-content active" data-panel="0">`;
+  html += `<div style="margin-bottom:12px;font-size:14px">${p.done} of ${p.total} tasks done (${pct}%)</div>`;
+  html += `<div class="progress-bar-container"><div class="progress-bar-fill" style="width:${pct}%"></div></div>`;
+  html += `<button class="btn-add-wi" id="epic-link-item">+ Link Item</button>`;
+  html += `<button class="btn-add-wi" id="epic-create-task" style="margin-left:8px">+ Create Task</button>`;
+  if (items.length) {
+    html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Project</th><th>Tags</th><th></th></tr></thead><tbody>`;
+    for (const item of items) {
+      const sc = item.status === 'done' ? 'done' : (item.blocked_by ? 'blocked' : 'open');
+      const canDispatch = item.status === 'open' || item.status === 'in-progress';
+      html += `<tr>`;
+      html += `<td><code>${esc(item.id)}</code></td>`;
+      html += `<td>${esc(item.title)}</td>`;
+      html += `<td><span class="badge badge-${sc}">${esc(item.status)}</span></td>`;
+      html += `<td><span class="badge badge-${item.priority || 'medium'}">${esc(item.priority || 'medium')}</span></td>`;
+      html += `<td><span class="tag">${esc(item.project_key)}</span></td>`;
+      html += `<td>${(item.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
+      html += `<td>`;
+      if (canDispatch) html += `<button class="dispatch-btn" data-epic-task-dispatch="${esc(item.id)}" data-epic-task-pk="${esc(item.project_key)}">dispatch</button>`;
+      html += `<button class="unlink-btn" data-unlink-item="${esc(item.id)}">unlink</button>`;
+      html += `</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  } else {
+    html += `<p class="empty">No linked tasks.</p>`;
+  }
+  html += `</div>`;
+
+  // Tab 1: Planning
+  html += `<div class="tab-content" data-panel="1">`;
+  html += `<div id="epic-plan-container"><p class="empty">Loading...</p></div>`;
+  html += `</div>`;
+
+  // Tab 2: Documentation
+  html += `<div class="tab-content" data-panel="2">`;
+  html += `<div id="epic-doc-container"><p class="empty">Loading...</p></div>`;
+  html += `</div>`;
+
+  // Tab 3: Details
+  html += `<div class="tab-content" data-panel="3">`;
+  html += `<button class="edit-btn" id="epic-edit-details" style="margin-bottom:12px">Edit</button>`;
+  html += `<button class="dispatch-btn" id="epic-dispatch-btn" style="margin-bottom:12px;margin-left:8px">Dispatch</button>`;
+  html += `<button class="delete-btn" id="epic-delete-btn" style="margin-bottom:12px;margin-left:8px">Delete</button>`;
+  html += `<dl class="kv">`;
+  html += `<dt>Title</dt><dd>${esc(epic.title)}</dd>`;
+  html += `<dt>Status</dt><dd><span class="badge badge-${epic.status === 'active' ? 'open' : epic.status === 'done' ? 'done' : 'medium'}">${esc(epic.status)}</span></dd>`;
+  html += `<dt>Priority</dt><dd><span class="badge badge-${epic.priority || 'medium'}">${esc(epic.priority || 'medium')}</span></dd>`;
+  html += `<dt>Target Date</dt><dd>${epic.target_date || '—'}</dd>`;
+  html += `<dt>Tags</dt><dd>${(epic.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('') || '—'}</dd>`;
+  html += `<dt>Projects</dt><dd>${(epic.project_keys || []).map(k => `<span class="tag">${esc(k)}</span>`).join('') || '—'}</dd>`;
+  html += `<dt>Created</dt><dd>${esc(epic.created || '—')}</dd>`;
+  html += `<dt>Updated</dt><dd>${esc(epic.updated || '—')}</dd>`;
+  html += `</dl>`;
+  if (epic.description) {
+    html += `<h3>Description</h3><p style="font-size:13px">${esc(epic.description)}</p>`;
+  }
+  if (epic.acceptance_criteria) {
+    html += `<h3>Acceptance Criteria</h3><div class="md-container">${renderMd(epic.acceptance_criteria)}</div>`;
+  }
+  if (epic.session_log?.length) {
+    html += `<h3>Session Log</h3><div class="session-log">`;
+    for (const e of epic.session_log) html += `<div class="entry"><span class="date">${esc(e.date)}</span>${esc(e.summary)}</div>`;
+    html += `</div>`;
+  }
+  html += `</div>`;
+
+  html += `</div>`;
+  return { html, epicId, epic };
+}
+
+function bindEpicDetailEvents(epicId) {
+  // Tabs
+  const tabs = document.querySelectorAll('#epic-tabs .tab');
+  tabs.forEach(tab => {
+    tab.onclick = () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelectorAll('.tab-content').forEach(p => p.classList.remove('active'));
+      document.querySelector(`.tab-content[data-panel="${tab.dataset.tab}"]`).classList.add('active');
+      if (tab.dataset.tab === '1') loadEpicPlan(epicId);
+      if (tab.dataset.tab === '2') loadEpicDoc(epicId);
+    };
+  });
+
+  // Unlink buttons
+  document.querySelectorAll('[data-unlink-item]').forEach(btn => {
+    btn.onclick = async () => {
+      const wid = btn.dataset.unlinkItem;
+      if (!confirm(`Unlink ${wid} from ${epicId}?`)) return;
+      await fetch(`/api/epics/${epicId}/unlink`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ work_item_id: wid }),
+      });
+      backlog = null; epicCache = null;
+      await buildEpicTree();
+      route();
+    };
+  });
+
+  // Link item button
+  const linkBtn = document.getElementById('epic-link-item');
+  if (linkBtn) linkBtn.onclick = () => showLinkItemModal(epicId);
+
+  // Create task button
+  const createTaskBtn = document.getElementById('epic-create-task');
+  if (createTaskBtn) createTaskBtn.onclick = () => showCreateEpicTaskModal(epicId);
+
+  // Delete epic button
+  const deleteBtn = document.getElementById('epic-delete-btn');
+  if (deleteBtn) deleteBtn.onclick = async () => {
+    if (!confirm(`Delete epic ${epicId}? Linked items will be unlinked.`)) return;
+    try {
+      const resp = await fetch(`/api/epics/${epicId}`, { method: 'DELETE' });
+      if (!resp.ok) throw new Error('Delete failed');
+      backlog = null; epicCache = null;
+      await buildEpicTree();
+      location.hash = '#epics';
+      route();
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  };
+
+  // Edit details
+  const editBtn = document.getElementById('epic-edit-details');
+  if (editBtn) editBtn.onclick = async () => {
+    const epic = await api(`epics/${epicId}`);
+    showEpicModal(epic);
+  };
+
+  // Dispatch from detail
+  const dispatchBtn = document.getElementById('epic-dispatch-btn');
+  if (dispatchBtn) dispatchBtn.onclick = () => showEpicDispatchModal(epicId);
+
+  // Task dispatch buttons
+  document.querySelectorAll('[data-epic-task-dispatch]').forEach(btn => {
+    btn.onclick = async () => {
+      const wid = btn.dataset.epicTaskDispatch;
+      const pk = btn.dataset.epicTaskPk;
+      const bl = await getBacklog();
+      let wi = null;
+      for (const group of Object.values(bl.projects)) {
+        if (!group.items) continue;
+        wi = group.items.find(i => i.id === wid);
+        if (wi) break;
+      }
+      if (wi) dispatchWorkItem(wi, pk);
+    };
+  });
+}
+
+async function loadEpicPlan(epicId) {
+  const container = document.getElementById('epic-plan-container');
+  if (!container) return;
+  try {
+    const content = await apiText(`epics/${epicId}/plan`);
+    if (content) {
+      container.innerHTML = `<button class="edit-btn" id="edit-plan-btn" style="margin-bottom:12px">Edit</button><div class="md-container">${renderMd(content)}</div>`;
+    } else {
+      container.innerHTML = `<p class="empty">No plan yet.</p><button class="btn-add-wi" id="edit-plan-btn">Create Plan</button>`;
+    }
+    document.getElementById('edit-plan-btn').onclick = () => showMdEditorModal('Plan', content, async (newContent) => {
+      await fetch(`/api/epics/${epicId}/plan`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: newContent }),
+      });
+      loadEpicPlan(epicId);
+    });
+  } catch {
+    container.innerHTML = `<p class="empty">Failed to load plan.</p>`;
+  }
+}
+
+async function loadEpicDoc(epicId) {
+  const container = document.getElementById('epic-doc-container');
+  if (!container) return;
+  try {
+    const content = await apiText(`epics/${epicId}/doc`);
+    if (content) {
+      container.innerHTML = `<button class="edit-btn" id="edit-doc-btn" style="margin-bottom:12px">Edit</button><div class="md-container">${renderMd(content)}</div>`;
+    } else {
+      container.innerHTML = `<p class="empty">No documentation yet.</p><button class="btn-add-wi" id="edit-doc-btn">Create Documentation</button>`;
+    }
+    document.getElementById('edit-doc-btn').onclick = () => showMdEditorModal('Documentation', content, async (newContent) => {
+      await fetch(`/api/epics/${epicId}/doc`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: newContent }),
+      });
+      loadEpicDoc(epicId);
+    });
+  } catch {
+    container.innerHTML = `<p class="empty">Failed to load documentation.</p>`;
+  }
+}
+
+function showMdEditorModal(title, content, onSave) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal modal-wide">
+      <h3>Edit ${esc(title)}</h3>
+      <div class="field">
+        <textarea id="md-editor-content">${esc(content || '')}</textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" id="md-cancel">Cancel</button>
+        <button class="btn btn-dispatch" id="md-save">Save</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#md-cancel').onclick = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  overlay.querySelector('#md-save').onclick = async () => {
+    const val = overlay.querySelector('#md-editor-content').value;
+    const btn = overlay.querySelector('#md-save');
+    btn.disabled = true; btn.textContent = 'Saving...';
+    await onSave(val);
+    overlay.remove();
+  };
+}
+
+function showEpicModal(existingEpic = null) {
+  const isEdit = !!existingEpic;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>${isEdit ? `Edit ${esc(existingEpic.id)}` : 'New Epic'}</h3>
+      <div class="field">
+        <label>Title *</label>
+        <input type="text" id="epic-title" value="${isEdit ? esc(existingEpic.title) : ''}" />
+      </div>
+      ${isEdit ? `<div class="field">
+        <label>Status</label>
+        <select id="epic-status">
+          ${['draft','active','done','cancelled'].map(s => `<option value="${s}"${existingEpic.status === s ? ' selected' : ''}>${s}</option>`).join('')}
+        </select>
+      </div>` : ''}
+      <div class="field">
+        <label>Priority</label>
+        <select id="epic-priority">
+          ${['critical','high','medium','low'].map(p => `<option value="${p}"${(isEdit ? existingEpic.priority : 'medium') === p ? ' selected' : ''}>${p}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Description</label>
+        <textarea id="epic-description">${isEdit && existingEpic.description ? esc(existingEpic.description) : ''}</textarea>
+      </div>
+      <div class="field">
+        <label>Acceptance Criteria (markdown)</label>
+        <textarea id="epic-ac">${isEdit && existingEpic.acceptance_criteria ? esc(existingEpic.acceptance_criteria) : ''}</textarea>
+      </div>
+      <div class="field">
+        <label>Target Date</label>
+        <input type="text" id="epic-target" placeholder="YYYY-MM-DD" value="${isEdit && existingEpic.target_date ? esc(existingEpic.target_date) : ''}" />
+      </div>
+      <div class="field">
+        <label>Tags (comma-separated)</label>
+        <input type="text" id="epic-tags" value="${isEdit && existingEpic.tags ? esc(existingEpic.tags.join(', ')) : ''}" />
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" id="epic-cancel">Cancel</button>
+        <button class="btn btn-dispatch" id="epic-save">${isEdit ? 'Save' : 'Create'}</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#epic-cancel').onclick = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  overlay.querySelector('#epic-save').onclick = async () => {
+    const title = overlay.querySelector('#epic-title').value.trim();
+    if (!title) { alert('Title is required'); return; }
+    const btn = overlay.querySelector('#epic-save');
+    btn.disabled = true; btn.textContent = isEdit ? 'Saving...' : 'Creating...';
+
+    const payload = {
+      title,
+      priority: overlay.querySelector('#epic-priority').value,
+      description: overlay.querySelector('#epic-description').value.trim(),
+      acceptance_criteria: overlay.querySelector('#epic-ac').value.trim(),
+      target_date: overlay.querySelector('#epic-target').value.trim(),
+      tags: overlay.querySelector('#epic-tags').value.split(',').map(t => t.trim()).filter(Boolean),
+    };
+    if (isEdit) {
+      const statusEl = overlay.querySelector('#epic-status');
+      if (statusEl) payload.status = statusEl.value;
+    }
+
+    try {
+      const url = isEdit ? `/api/epics/${existingEpic.id}` : '/api/epics';
+      const method = isEdit ? 'PATCH' : 'POST';
+      const resp = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error || 'Failed');
+      overlay.remove();
+      backlog = null; epicCache = null;
+      await buildEpicTree();
+      if (isEdit) location.hash = `#epic/${existingEpic.id}`;
+      route();
+    } catch (e) {
+      btn.disabled = false; btn.textContent = isEdit ? 'Save' : 'Create';
+      alert('Error: ' + e.message);
+    }
+  };
+}
+
+async function showLinkItemModal(epicId) {
+  const bl = await api('backlog');
+  const allItems = [];
+  for (const [key, group] of Object.entries(bl.projects || {})) {
+    for (const item of (group.items || [])) {
+      if (!item.epic_id && (item.status === 'open' || item.status === 'in-progress')) {
+        allItems.push({ ...item, project_key: key });
+      }
+    }
+  }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Link Items to ${esc(epicId)}</h3>
+      <div class="field">
+        <label>Search Items</label>
+        <input type="text" id="link-search" placeholder="Filter by title or ID..." />
+      </div>
+      <div id="link-items-list" style="max-height:300px;overflow-y:auto"></div>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" id="link-cancel">Cancel</button>
+        <button class="btn btn-dispatch" id="link-save">Link Selected</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const selected = new Set();
+  function renderItems(filter) {
+    const listEl = document.getElementById('link-items-list');
+    const filtered = filter ? allItems.filter(i => i.id.toLowerCase().includes(filter) || i.title.toLowerCase().includes(filter)) : allItems;
+    if (!filtered.length) { listEl.innerHTML = '<p class="empty">No unlinked items found.</p>'; return; }
+    listEl.innerHTML = filtered.map(i => `
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f0f0f0;font-size:13px;cursor:pointer">
+        <input type="checkbox" data-link-wid="${esc(i.id)}" ${selected.has(i.id) ? 'checked' : ''} />
+        <code>${esc(i.id)}</code>
+        <span style="flex:1">${esc(i.title)}</span>
+        <span class="tag">${esc(i.project_key)}</span>
+      </label>
+    `).join('');
+    listEl.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.onchange = () => {
+        if (cb.checked) selected.add(cb.dataset.linkWid);
+        else selected.delete(cb.dataset.linkWid);
+      };
+    });
+  }
+  renderItems('');
+  overlay.querySelector('#link-search').oninput = (e) => renderItems(e.target.value.toLowerCase());
+  overlay.querySelector('#link-cancel').onclick = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  overlay.querySelector('#link-save').onclick = async () => {
+    if (!selected.size) { overlay.remove(); return; }
+    const btn = overlay.querySelector('#link-save');
+    btn.disabled = true; btn.textContent = 'Linking...';
+    try {
+      const resp = await fetch(`/api/epics/${epicId}/link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ work_item_ids: [...selected] }),
+      });
+      if (!resp.ok) throw new Error('Link failed');
+      overlay.remove();
+      backlog = null; epicCache = null;
+      await buildEpicTree();
+      route();
+    } catch (e) {
+      btn.disabled = false; btn.textContent = 'Link Selected';
+      alert('Error: ' + e.message);
+    }
+  };
+}
+
+async function showCreateEpicTaskModal(epicId) {
+  const bl = await api('backlog');
+  const projectKeys = Object.keys(bl.projects || {}).sort();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Create Task for ${esc(epicId)}</h3>
+      <div class="field">
+        <label>Title *</label>
+        <input type="text" id="ct-title" />
+      </div>
+      <div class="field">
+        <label>Project *</label>
+        <select id="ct-project">
+          ${projectKeys.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join('')}
+          <option value="__new__">— New project key —</option>
+        </select>
+      </div>
+      <div class="field" id="ct-new-pk-field" style="display:none">
+        <label>New Project Key</label>
+        <input type="text" id="ct-new-pk" placeholder="org/project/component" />
+      </div>
+      <div class="field">
+        <label>Priority</label>
+        <select id="ct-priority">
+          ${['critical','high','medium','low'].map(p => `<option value="${p}"${p === 'medium' ? ' selected' : ''}>${p}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Description</label>
+        <textarea id="ct-description"></textarea>
+      </div>
+      <div class="field">
+        <label>Tags (comma-separated)</label>
+        <input type="text" id="ct-tags" />
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" id="ct-cancel">Cancel</button>
+        <button class="btn btn-dispatch" id="ct-save">Create & Link</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#ct-project').onchange = (e) => {
+    document.getElementById('ct-new-pk-field').style.display = e.target.value === '__new__' ? '' : 'none';
+  };
+  overlay.querySelector('#ct-cancel').onclick = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  overlay.querySelector('#ct-save').onclick = async () => {
+    const title = overlay.querySelector('#ct-title').value.trim();
+    if (!title) { alert('Title is required'); return; }
+
+    let projectKey = overlay.querySelector('#ct-project').value;
+    if (projectKey === '__new__') {
+      projectKey = overlay.querySelector('#ct-new-pk').value.trim();
+      if (!projectKey) { alert('Project key is required'); return; }
+    }
+
+    const btn = overlay.querySelector('#ct-save');
+    btn.disabled = true; btn.textContent = 'Creating...';
+
+    try {
+      const resp = await fetch('/api/work-items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_key: projectKey,
+          title,
+          priority: overlay.querySelector('#ct-priority').value,
+          description: overlay.querySelector('#ct-description').value.trim(),
+          tags: overlay.querySelector('#ct-tags').value.split(',').map(t => t.trim()).filter(Boolean),
+        }),
+      });
+      const item = await resp.json();
+      if (!resp.ok) throw new Error(item.error || 'Create failed');
+
+      const linkResp = await fetch(`/api/epics/${epicId}/link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ work_item_ids: [item.id] }),
+      });
+      if (!linkResp.ok) throw new Error('Link failed');
+
+      overlay.remove();
+      backlog = null; epicCache = null;
+      await buildEpicTree();
+      route();
+    } catch (e) {
+      btn.disabled = false; btn.textContent = 'Create & Link';
+      alert('Error: ' + e.message);
+    }
+  };
+}
+
+async function showEpicDispatchModal(epicId) {
+  const epic = await api(`epics/${epicId}`);
+  const items = epic.resolved_items || [];
+  const openItems = items.filter(i => i.status === 'open' || i.status === 'in-progress');
+  const projectKeys = epic.project_keys || [];
+  const p = epic.progress || { done: 0, total: 0 };
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Dispatch from ${esc(epic.id)}</h3>
+      <div style="margin-bottom:14px">
+        <strong>${esc(epic.title)}</strong>
+        <div style="font-size:12px;color:var(--text-light);margin-top:4px">Progress: ${p.done}/${p.total}</div>
+      </div>
+      <div class="field">
+        <label>Mode</label>
+        <select id="epic-dispatch-mode">
+          <option value="general">Work on epic (general)</option>
+          ${openItems.map(i => `<option value="${esc(i.id)}">${esc(i.id)}: ${esc(i.title)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field" id="epic-dispatch-project-field" style="${projectKeys.length <= 1 ? 'display:none' : ''}">
+        <label>Target Project</label>
+        <select id="epic-dispatch-project">
+          ${projectKeys.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Additional Instructions</label>
+        <textarea id="epic-dispatch-instructions" placeholder="Optional context..."></textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" id="epic-dispatch-cancel">Cancel</button>
+        <button class="btn btn-dispatch" id="epic-dispatch-go">Dispatch</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const modeSelect = overlay.querySelector('#epic-dispatch-mode');
+  const projectField = overlay.querySelector('#epic-dispatch-project-field');
+  const projectSelect = overlay.querySelector('#epic-dispatch-project');
+
+  modeSelect.onchange = () => {
+    if (modeSelect.value === 'general') {
+      projectField.style.display = projectKeys.length <= 1 ? 'none' : '';
+    } else {
+      const item = openItems.find(i => i.id === modeSelect.value);
+      if (item) {
+        projectSelect.value = item.project_key;
+        projectField.style.display = 'none';
+      }
+    }
+  };
+
+  overlay.querySelector('#epic-dispatch-cancel').onclick = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  overlay.querySelector('#epic-dispatch-go').onclick = async () => {
+    const mode = modeSelect.value;
+    const instructions = overlay.querySelector('#epic-dispatch-instructions').value.trim();
+    const btn = overlay.querySelector('#epic-dispatch-go');
+    btn.disabled = true; btn.textContent = 'Dispatching...';
+
+    let pk, wid;
+    if (mode === 'general') {
+      pk = projectSelect.value || projectKeys[0];
+      wid = null;
+    } else {
+      wid = mode;
+      const item = openItems.find(i => i.id === wid);
+      pk = item ? item.project_key : projectKeys[0];
+    }
+
+    if (!pk) {
+      alert('No project key available for dispatch');
+      btn.disabled = false; btn.textContent = 'Dispatch';
+      return;
+    }
+
+    try {
+      const resp = await fetch('/api/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          work_item_id: wid,
+          epic_id: epicId,
+          project_key: pk,
+          title: wid ? `${wid} (${epic.title})` : epic.title,
+          additional_instructions: instructions,
+        }),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
+
+      let projectPath = '';
+      try {
+        const registry = await api('registry');
+        for (const [path, entry] of Object.entries(registry.entries)) {
+          if (`${entry.org}/${entry.project}/${entry.component}` === pk) { projectPath = path; break; }
+        }
+      } catch {}
+
+      const dispatch = {
+        id: result.dispatch_id,
+        work_item_id: wid,
+        project_key: pk,
+        project_path: projectPath,
+        title: wid ? `${wid} (${epic.title})` : epic.title,
+        status: 'running',
+        started_at: new Date().toISOString(),
+      };
+      activeDispatches.push(dispatch);
+      updateDispatchBadge();
+      const container = getDispatchContainer();
+      const panel = createDispatchPanel(dispatch);
+      container.prepend(panel);
+      connectDispatchStream(dispatch);
+      overlay.remove();
+    } catch (e) {
+      btn.disabled = false; btn.textContent = 'Dispatch';
+      alert('Dispatch failed: ' + e.message);
+    }
+  };
+}
+
+// --- Onboard Modal ---
+function showOnboardModal() {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Onboard Project</h3>
+      <div class="field">
+        <label>Project Path *</label>
+        <input type="text" id="onboard-path" placeholder="/absolute/path/to/project" />
+      </div>
+      <div class="field">
+        <label>Organization (optional)</label>
+        <input type="text" id="onboard-org" placeholder="Auto-detect if empty" />
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" id="onboard-cancel">Cancel</button>
+        <button class="btn btn-dispatch" id="onboard-go">Onboard</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#onboard-cancel').onclick = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  overlay.querySelector('#onboard-go').onclick = async () => {
+    const path = overlay.querySelector('#onboard-path').value.trim();
+    if (!path) { alert('Path is required'); return; }
+
+    const org = overlay.querySelector('#onboard-org').value.trim();
+    const btn = overlay.querySelector('#onboard-go');
+    btn.disabled = true; btn.textContent = 'Dispatching...';
+
+    try {
+      const resp = await fetch('/api/onboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, organization: org || undefined }),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error || 'Onboard failed');
+
+      const dispatch = {
+        id: result.dispatch_id,
+        work_item_id: null,
+        project_key: 'onboard',
+        project_path: path,
+        title: `Onboard: ${path.split('/').pop()}`,
+        status: 'running',
+        started_at: new Date().toISOString(),
+      };
+      activeDispatches.push(dispatch);
+      updateDispatchBadge();
+      const container = getDispatchContainer();
+      const panel = createDispatchPanel(dispatch);
+      container.prepend(panel);
+      connectDispatchStream(dispatch);
+      overlay.remove();
+    } catch (e) {
+      btn.disabled = false; btn.textContent = 'Onboard';
+      alert('Onboard failed: ' + e.message);
+    }
+  };
+}
+
 // --- Router ---
 async function route() {
   const hash = location.hash.slice(1);
@@ -859,6 +1849,36 @@ async function route() {
   }
 
   const parts = hash.split('/');
+
+  if (parts[0] === 'epics') {
+    try {
+      const epics = await getEpics();
+      main.innerHTML = renderEpicListView(epics);
+      bindEpicListEvents();
+    } catch (e) {
+      main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
+    }
+    setActive('');
+    document.querySelectorAll('.epic-item').forEach(el => el.classList.remove('active'));
+    if (savedPanels) main.insertAdjacentHTML('afterbegin', savedPanels);
+    return;
+  }
+
+  if (parts[0] === 'epic' && parts[1]) {
+    try {
+      const { html, epicId } = await renderEpicDetailView(parts[1]);
+      main.innerHTML = html;
+      bindEpicDetailEvents(epicId);
+      document.querySelectorAll('.epic-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.epicId === parts[1]);
+      });
+    } catch (e) {
+      main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
+    }
+    setActive('');
+    if (savedPanels) main.insertAdjacentHTML('afterbegin', savedPanels);
+    return;
+  }
 
   if (parts[0] === 'org' && parts[1]) {
     const org = parts[1];
@@ -909,7 +1929,7 @@ async function route() {
 }
 
 window.addEventListener('hashchange', route);
-buildTree().then(() => { route(); restoreDispatches(); });
+Promise.all([buildTree(), buildEpicTree()]).then(() => { route(); restoreDispatches(); });
 </script>
 </body>
 </html>

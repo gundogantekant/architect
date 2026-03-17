@@ -2,9 +2,9 @@
 
 ## Overview
 
-The `/work` command provides persistent work item tracking across sessions. Items are stored in `work/backlog.json` and can reference portfolio projects.
+The `/work` command provides persistent work item and epic tracking across sessions. Items are stored in `work/backlog.json` grouped by project key. Epics provide cross-project strategic grouping.
 
-## Commands
+## Work Item Commands
 
 | Command | Action |
 |---------|--------|
@@ -21,6 +21,7 @@ The `/work` command provides persistent work item tracking across sessions. Item
 - `--project <org/project/component>` — link to portfolio project (auto-resolved from cwd if omitted)
 - `--priority <low|medium|high|critical>` — default: medium
 - `--tags <a,b,c>` — comma-separated tags
+- `--epic <E-XXX>` — link to an existing epic
 
 ## Filters for `list`
 
@@ -28,7 +29,7 @@ The `/work` command provides persistent work item tracking across sessions. Item
 - `--project <org/project/component>`
 - `--tag <tag>`
 
-## Statuses
+## Work Item Statuses
 
 | Status | Meaning |
 |--------|---------|
@@ -38,13 +39,58 @@ The `/work` command provides persistent work item tracking across sessions. Item
 | done | Completed |
 | cancelled | No longer needed |
 
+## Epics
+
+Epics are cross-project strategic goals that group related work items. They span multiple projects and provide a higher-level view of progress.
+
+### Epic Commands
+
+| Command | Action |
+|---------|--------|
+| `/work epic list [--status X]` | List epics (default: draft + active) |
+| `/work epic create <title> [options]` | Create an epic |
+| `/work epic show <E-XXX>` | Full detail with linked items |
+| `/work epic update <E-XXX> <status>` | Change epic status |
+| `/work epic link <E-XXX> <W-XXX> [...]` | Link work items to epic |
+| `/work epic unlink <E-XXX> <W-XXX>` | Unlink a work item |
+| `/work epic log <E-XXX> <message>` | Append session log entry |
+| `/work epic plan <E-XXX> [--edit]` | View or edit epic plan |
+| `/work epic doc <E-XXX> [--edit]` | View or edit epic docs |
+
+### Epic Statuses
+
+| Status | Meaning |
+|--------|---------|
+| draft | Planning phase, no work started |
+| active | Work is underway |
+| done | All linked items completed |
+| cancelled | Abandoned |
+
+### Cross-Project Usage
+
+Epics are top-level entities (not nested under a project). When work items from different projects are linked, the epic's `project_keys` field is auto-derived. This enables tracking strategic goals that span frontend, backend, and infrastructure.
+
+### Dashboard
+
+The dashboard shows epics in the sidebar above the org tree. Clicking an epic opens a detail view with four tabs:
+- **Tasks** — progress bar, linked items table, link/unlink controls
+- **Planning** — markdown plan editor (`work/epics/E-XXX/plan.md`)
+- **Documentation** — markdown doc editor (`work/epics/E-XXX/docs.md`)
+- **Details** — metadata form, session log, dispatch button
+
+Epic-aware dispatch includes epic context (title, progress, acceptance criteria, linked items, plan excerpt) in the agent prompt.
+
 ## Session Log
 
-Each item has an append-only session log for cross-session continuity. Use `/work log W-001 "message"` to record progress at the end of a session or when switching context.
+Each item and epic has an append-only session log for cross-session continuity. Use `/work log W-001 "message"` or `/work epic log E-001 "message"` to record progress.
 
 ## Data Store
 
-`work/backlog.json` — single JSON file with sequential W-XXX IDs. IDs are never reused.
+- `work/backlog.json` — work items (W-XXX) and epics (E-XXX) in a single file
+- `work/epics/E-XXX/plan.md` — epic plan documents
+- `work/epics/E-XXX/docs.md` — epic documentation
+
+IDs are sequential and never reused.
 
 ## PM Integration
 

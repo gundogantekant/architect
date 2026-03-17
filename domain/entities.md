@@ -18,7 +18,7 @@ Canonical schemas for all structured data in the architect system. Agents and sk
 **Interactive agents**: browser (interacts with web via Playwright, no code/data writes)
 **Implementation agents**: coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer
 **Onboarding agents**: profiler (writes only CLAUDE.md to the target project)
-**Data-write agents**: tracker (writes only `work/backlog.json`)
+**Data-write agents**: tracker (writes only `work/backlog.json` and `work/epics/E-XXX/*.md`)
 
 ## RequestClassification
 
@@ -201,6 +201,7 @@ Stored in `work/backlog.json` under `projects[key].items`. The project key (`org
   "status": "open|in-progress|blocked|done|cancelled",
   "priority": "low|medium|high|critical",
   "description": "string",
+  "epic_id": "string (E-XXX or empty, optional)",
   "created": "YYYY-MM-DD",
   "updated": "YYYY-MM-DD",
   "blocked_by": "string (W-XXX or empty)",
@@ -211,14 +212,46 @@ Stored in `work/backlog.json` under `projects[key].items`. The project key (`org
 }
 ```
 
-## WorkBacklog
+## Epic
 
-Top-level structure of `work/backlog.json`. Items are grouped under project keys.
+Top-level entity in `work/backlog.json` under the `epics` array. Epics group work items across projects into strategic goals.
 
 ```json
 {
-  "version": 2,
+  "id": "string (E-XXX format, zero-padded)",
+  "title": "string",
+  "status": "draft|active|done|cancelled",
+  "priority": "low|medium|high|critical",
+  "description": "string",
+  "acceptance_criteria": "string (markdown, optional)",
+  "target_date": "YYYY-MM-DD (optional, empty string if unset)",
+  "project_keys": ["string (org/project/component) — auto-derived from linked items"],
+  "work_item_ids": ["string (W-XXX)"],
+  "tags": ["string"],
+  "created": "YYYY-MM-DD",
+  "updated": "YYYY-MM-DD",
+  "session_log": [
+    { "date": "YYYY-MM-DD", "summary": "string" }
+  ]
+}
+```
+
+Status semantics:
+- `draft` — planning phase, no work started
+- `active` — at least one linked item is open/in-progress
+- `done` — all linked items done (or manually closed)
+- `cancelled` — abandoned
+
+## WorkBacklog
+
+Top-level structure of `work/backlog.json`. Items are grouped under project keys. Epics are top-level (cross-project).
+
+```json
+{
+  "version": 3,
   "next_id": "number",
+  "next_epic_id": "number",
+  "epics": [{ "$ref": "Epic" }],
   "projects": {
     "org/project/component": {
       "items": [{ "$ref": "WorkItem" }]
@@ -248,6 +281,7 @@ Ephemeral in-memory record created when the dashboard dispatches a Claude agent 
 {
   "id": "string (D-<timestamp>)",
   "work_item_id": "string (W-XXX)",
+  "epic_id": "string (E-XXX or empty, optional)",
   "project_key": "string (org/project/component)",
   "additional_instructions": "string (optional)",
   "status": "running|completed|failed",

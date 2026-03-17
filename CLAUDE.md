@@ -105,7 +105,9 @@ All skills follow `usecases/load-portfolio-context.md` as their first step. See 
 
 Persistent backlog in `work/backlog.json` (gitignored, local instance data created by `/work add`) using a project-keyed structure: items are nested under `projects["org/project/component"].items` instead of a flat array. IDs are globally unique (`W-XXX`). Use `/work` to view open items at session start.
 
-See `domain/entities.md` → WorkItem, WorkBacklog for schema, `domain/rules.md` → Work Item Rules for tracking rules.
+**Epics** (`E-XXX`) provide cross-project strategic grouping. Epics are top-level in `backlog.json` (not nested under a project key) and link to work items via bidirectional references. Epic plans and docs are stored at `work/epics/E-XXX/` (plan.md, docs.md). Use `/work epic list` to view active epics.
+
+See `domain/entities.md` → WorkItem, Epic, WorkBacklog for schemas, `domain/rules.md` → Work Item Rules and Epic Rules for tracking rules, `docs/work-tracking.md` for full documentation.
 
 ## Rules
 
@@ -134,7 +136,7 @@ The dashboard supports dispatching Claude Code agents directly from work items:
 - Each dispatch panel shows a terminal guidance command for taking over from CLI
 - Dispatch state is ephemeral (in-memory, lost on server restart). See `domain/entities.md` → DispatchRequest for schema.
 
-Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/stream` (SSE), `GET /api/dispatch/active`.
+Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/stream` (SSE), `GET /api/dispatch/active`. Epic endpoints: `GET/POST /api/epics`, `GET/PATCH/DELETE /api/epics/:id`, `POST /api/epics/:id/link`, `POST /api/epics/:id/unlink`, `GET/PUT /api/epics/:id/plan`, `GET/PUT /api/epics/:id/doc`.
 
 ## Available Skills
 

@@ -110,7 +110,3 @@ Every skill loads portfolio context as step 1:
 3. Read component profile + organization conventions
 4. Pass combined context to agents
 5. Fall back to inline scout if not in portfolio
-
-## History
-
-When `/onboard <path> rescan` runs, the existing profile is archived as `<component>.<date>.json` alongside the active profile before overwriting.
