@@ -23,7 +23,7 @@ Scan a project, profile its purpose and architecture, and register it in the arc
 
 1. Read `portfolio/registry.json` — check if path already exists
    - If found and no rescan: display existing profile and exit
-   - If found and rescan: proceed (will archive and update)
+   - If found and rescan: proceed (will update)
 2. Detect organization:
    - Read all `portfolio/*/organization.json` files
    - Match by provided org name, or by path_root prefix
@@ -41,7 +41,6 @@ Scan a project, profile its purpose and architecture, and register it in the arc
 6. Derive project and component names from path
 7. Build PortfolioEntry (see `domain/entities.md` → PortfolioEntry)
    - Include scout_report, brief, and doc_paths
-   - For rescans: archive current profile as `<component>.<date>.json`
 8. Present for user approval
 9. Write component profile and update registry
 

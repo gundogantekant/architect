@@ -78,7 +78,6 @@ The profiler collects relative paths to all documentation files found (README, d
 ## Rescanning
 
 Running `/onboard <path> rescan` on an already-registered project:
-- Archives the current profile as `<component>.<date>.json`
 - Runs scout again to refresh the detection report
 - Runs profiler again to refresh the brief and doc_paths
 - Asks before overwriting an existing CLAUDE.md
