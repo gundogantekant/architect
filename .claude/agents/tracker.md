@@ -20,28 +20,42 @@ Read and write `work/backlog.json` to manage work items and epics. The backlog u
 
 ## Migration
 
-On first read of `work/backlog.json`, check the `version` field:
-- If version is 2, migrate to version 3:
-  - Set `version` to 3
-  - Add `"next_epic_id": 1`
-  - Add `"epics": []`
-  - Write back immediately before proceeding with the command
+On first read of `work/backlog.json`, check the `version` field and apply migrations in order:
+
+**v2 → v3**:
+- Set `version` to 3
+- Add `"next_epic_id": 1`
+- Add `"epics": []`
+
+**v3 → v4**:
+- For every work item across all projects: convert `blocked_by` string → `depends_on` array (non-empty string → single-element array, empty → `[]`), then delete the `blocked_by` field
+- Set `version` to 4
+
+Write back immediately after any migration before proceeding with the command.
 
 ## Work Item Operations
 
 You will receive a command string. Parse and execute it:
 
-### `list` (default) or `list --status X --project Y --tag Z`
+### `list` (default) or `list --status X --project Y[,Y2] --org O --tag Z`
 - Read `work/backlog.json`
-- If `--project Y`: read only `projects[Y].items`
-- If no project filter: iterate all project keys
+- If `--org O`: iterate only project keys starting with `O/` (case-insensitive match)
+- If `--project Y,Y2`: accept comma-separated project keys, read items from each matching key
+- `--org` and `--project` can coexist: `--org` narrows to org, `--project` further narrows within
+- If `--project` is given without `--org`, it works as before (exact key match, now supporting multiple)
+- If no project filter and no org filter: iterate all project keys
 - If no status filter: show items with status `open` or `in-progress`
 - Apply additional filters if provided (status, tag)
+- Sort items using topological sort (Kahn's algorithm): items with no `depends_on` first, then items whose deps are all listed. Within the same level, sort by priority desc (critical > high > medium > low) then ID asc. Items with external deps (outside the filtered set) go at the end.
 - Output grouped by project with a header per project:
   ```
   ### acme/webapp/main
-  | ID | Status | Priority | Title | Epic | Tags |
+  | ID | Status | Priority | Title | Depends On | Epic | Tags |
+  | W-001 | open | high | Setup DB schema | | | |
+  | W-003 | open | medium | Add API endpoints | ← W-001 | E-001 | api |
+  | W-005 | blocked | medium | Integration tests | ← W-001, W-003 | | test |
   ```
+- The Depends On column shows `← W-XXX, W-YYY` for items with dependencies
 - Include the Epic column showing the epic ID if the item has an `epic_id`
 - If no items match, say "No matching work items."
 
@@ -90,6 +104,28 @@ You will receive a command string. Parse and execute it:
 - Remove it from the project's `items` array
 - Write back
 - Output confirmation with the removed item's title and project
+
+### `depend <W-XXX> <W-YYY> [W-ZZZ ...]`
+- Read `work/backlog.json`
+- Search across all project groups for item W-XXX (the item that depends on others)
+- For each target ID (W-YYY, W-ZZZ, ...):
+  - Verify the target item exists
+  - Run cycle detection: DFS from the target through `depends_on` edges. If W-XXX is reachable from the target, reject with "Circular dependency detected: adding W-XXX → W-YYY would create a cycle"
+  - Add target ID to the item's `depends_on` array (skip if already present)
+- Update `updated` date
+- Append session_log: `{ "date": "<today>", "summary": "Added dependencies: W-YYY, W-ZZZ" }`
+- If the item has unfinished dependencies (any dep with status not `done`), suggest setting status to `blocked` (but do not auto-change)
+- Write back
+- Output confirmation
+
+### `undepend <W-XXX> <W-YYY> [W-ZZZ ...]`
+- Read `work/backlog.json`
+- Search across all project groups for item W-XXX
+- Remove each target ID from the item's `depends_on` array
+- Update `updated` date
+- Append session_log: `{ "date": "<today>", "summary": "Removed dependencies: W-YYY, W-ZZZ" }`
+- Write back
+- Output confirmation
 
 ## Epic Operations
 
@@ -179,7 +215,7 @@ When items are linked/unlinked, recompute the epic's `project_keys`:
 
 If `work/backlog.json` does not exist, create it with:
 ```json
-{"version": 3, "next_id": 1, "next_epic_id": 1, "epics": [], "projects": {}}
+{"version": 4, "next_id": 1, "next_epic_id": 1, "epics": [], "projects": {}}
 ```
 
 ## Rules

@@ -204,7 +204,7 @@ Stored in `work/backlog.json` under `projects[key].items`. The project key (`org
   "epic_id": "string (E-XXX or empty, optional)",
   "created": "YYYY-MM-DD",
   "updated": "YYYY-MM-DD",
-  "blocked_by": "string (W-XXX or empty)",
+  "depends_on": ["string (W-XXX)"],
   "tags": ["string"],
   "session_log": [
     { "date": "YYYY-MM-DD", "summary": "string" }
@@ -248,7 +248,7 @@ Top-level structure of `work/backlog.json`. Items are grouped under project keys
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "next_id": "number",
   "next_epic_id": "number",
   "epics": [{ "$ref": "Epic" }],
@@ -298,6 +298,7 @@ Ephemeral in-memory record for an interactive PTY terminal session spawned from 
 {
   "id": "string (T-<timestamp>)",
   "work_item_id": "string (W-XXX or null)",
+  "epic_id": "string (E-XXX or null, optional)",
   "project_key": "string (org/project/component)",
   "project_path": "string (absolute path)",
   "title": "string",

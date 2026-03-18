@@ -15,6 +15,8 @@ The `/work` command provides persistent work item and epic tracking across sessi
 | `/work log <ID> <message>` | Append session log entry |
 | `/work list [filters]` | Filtered listing |
 | `/work remove <ID>` | Delete an item |
+| `/work depend <ID> <ID> [...]` | Add dependencies |
+| `/work undepend <ID> <ID> [...]` | Remove dependencies |
 
 ## Options for `add`
 
@@ -26,8 +28,44 @@ The `/work` command provides persistent work item and epic tracking across sessi
 ## Filters for `list`
 
 - `--status <open|in-progress|blocked|done|cancelled>`
-- `--project <org/project/component>`
+- `--project <org/project/component>` — supports comma-separated values for multi-project filtering
+- `--org <org-name>` — scope to all projects in an organization
 - `--tag <tag>`
+
+## Organization & Multi-Project Scoping
+
+Filter work items by organization or across multiple projects:
+
+```
+/work list --org neuronic                                         All items in neuronic org
+/work list --project neuronic/light-app/main,neuronic/cloud/main  Items from two projects
+/work list --org neuronic --project neuronic/light-app/main       Combined: org narrows, project filters within
+```
+
+`--org` and `--project` can be combined: org narrows first, then project filters within the org scope.
+
+## Dependencies
+
+Work items support multi-dependency tracking via the `depends_on` array field.
+
+### Dependency Commands
+
+| Command | Action |
+|---------|--------|
+| `/work depend <W-XXX> <W-YYY> [...]` | W-XXX depends on W-YYY (and others) |
+| `/work undepend <W-XXX> <W-YYY> [...]` | Remove dependencies from W-XXX |
+
+### Cross-Project Dependencies
+
+Dependencies work across project boundaries since work item IDs are globally unique. An item in `acme/frontend/main` can depend on an item in `acme/backend/main`.
+
+### Cycle Detection
+
+Before adding a dependency, the system performs a DFS from the target back through `depends_on` edges. If the source item is reachable, the dependency is rejected to prevent circular chains.
+
+### Display Ordering
+
+Both CLI and dashboard use topological sort (Kahn's algorithm) for work item listings. Items with no dependencies appear first, followed by items whose dependencies are all listed above them. Within the same level, items are sorted by priority (critical > high > medium > low) then by ID.
 
 ## Work Item Statuses
 

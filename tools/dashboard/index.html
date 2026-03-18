@@ -232,6 +232,27 @@
   /* Focus button on inline panels */
   .focus-btn { cursor: pointer; color: var(--accent); font-size: 11px; border: 1px solid var(--accent); background: none; padding: 3px 10px; border-radius: 4px; }
   .focus-btn:hover { background: #ede9fe; }
+
+  /* Agent tiles */
+  .agents-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+  .agent-tile { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; transition: box-shadow .15s, border-color .15s; overflow: hidden; }
+  .agent-tile:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); border-color: var(--accent); }
+  .agent-tile-header { display: flex; align-items: center; gap: 8px; padding: 12px 14px 8px; }
+  .agent-tile-header .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .agent-tile-header .status-dot.running { background: var(--green); animation: pulse 1.5s infinite; }
+  .agent-tile-header .status-dot.completed { background: var(--green); }
+  .agent-tile-header .status-dot.failed, .agent-tile-header .status-dot.killed { background: var(--red); }
+  .agent-tile-title { font-size: 13px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agent-tile-elapsed { font-size: 11px; color: var(--text-light); flex-shrink: 0; }
+  .agent-tile-badges { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 14px 8px; }
+  .agent-tile-preview { background: #1e1e2e; color: #cdd6f4; font-family: monospace; font-size: 11px; line-height: 1.5; padding: 8px 12px; max-height: 60px; overflow: hidden; white-space: pre-wrap; word-break: break-word; margin: 0 14px 8px; border-radius: 4px; }
+  .agent-tile-footer { display: flex; gap: 6px; padding: 8px 14px 12px; border-top: 1px solid #f0f0f0; }
+  .agents-filter-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+  .agents-filter-bar .filter-tab { padding: 5px 14px; border-radius: 16px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: #fff; color: var(--text); }
+  .agents-filter-bar .filter-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .agents-filter-bar select { padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border); font-size: 12px; }
+  .agents-badge { background: var(--accent); color: #fff; font-size: 10px; padding: 1px 7px; border-radius: 10px; font-weight: 700; margin-left: 4px; }
+  .agents-badge.empty { display: none; }
 </style>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/css/xterm.min.css">
 </head>
@@ -277,6 +298,29 @@ function renderMd(text) {
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function topoSort(items) {
+  const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+  const cmp = (a, b) => (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2) || a.id.localeCompare(b.id);
+  const itemMap = new Map(items.map(i => [i.id, i]));
+  const inDeg = new Map(items.map(i => [i.id, 0]));
+  for (const item of items) {
+    for (const dep of (item.depends_on || [])) {
+      if (itemMap.has(dep)) inDeg.set(item.id, (inDeg.get(item.id) || 0) + 1);
+    }
+  }
+  const queue = items.filter(i => inDeg.get(i.id) === 0).sort(cmp);
+  const sorted = [], done = new Set();
+  while (queue.length) {
+    const item = queue.shift();
+    sorted.push(item);
+    done.add(item.id);
+    const ready = items.filter(i => !done.has(i.id) && !queue.some(q => q.id === i.id) &&
+      (i.depends_on || []).every(d => !itemMap.has(d) || done.has(d)));
+    queue.push(...ready.sort(cmp));
+  }
+  return [...sorted, ...items.filter(i => !done.has(i.id))];
+}
 
 // --- Data cache ---
 let backlog = null;
@@ -329,6 +373,13 @@ async function buildEpicTree() {
     }
   } catch {}
 
+  // AGENTS label
+  const agentsLabel = document.createElement('div');
+  agentsLabel.className = 'sidebar-section-label';
+  agentsLabel.innerHTML = 'AGENTS <span id="agents-badge" class="agents-badge empty"></span>';
+  agentsLabel.onclick = () => { location.hash = '#agents'; };
+  epicTree.appendChild(agentsLabel);
+
   // Onboard button — always visible
   const onboardBtn = document.createElement('div');
   onboardBtn.className = 'sidebar-onboard-btn';
@@ -353,6 +404,12 @@ function updateDispatchBadge() {
     badge.classList.remove('empty');
   } else {
     badge.classList.add('empty');
+  }
+  const agentsBadge = document.getElementById('agents-badge');
+  if (agentsBadge) {
+    const total = activeDispatches.length + activeTerminals.length;
+    if (total > 0) { agentsBadge.textContent = total; agentsBadge.classList.remove('empty'); }
+    else { agentsBadge.classList.add('empty'); }
   }
   refreshSessionsSidebar();
 }
@@ -670,7 +727,7 @@ async function dispatchWorkItem(workItem, projectKey) {
       <div class="modal">
         <h3>Dispatch ${esc(workItem.id)}</h3>
         <div style="margin-bottom:14px">
-          <span class="badge badge-${workItem.status === 'done' ? 'done' : (workItem.blocked_by ? 'blocked' : 'open')}">${esc(workItem.status)}</span>
+          <span class="badge badge-${workItem.status === 'done' ? 'done' : (workItem.depends_on?.length ? 'blocked' : 'open')}">${esc(workItem.status)}</span>
           <span class="badge badge-${workItem.priority || 'medium'}">${esc(workItem.priority || 'medium')}</span>
         </div>
         <div class="field">
@@ -957,14 +1014,19 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
   html += `<div class="tab-content active" data-panel="0">`;
   html += `<button class="btn-add-wi" id="add-work-item">+ Add Work Item</button>`;
   html += `<button class="btn-add-wi" id="discuss-agent" style="background:var(--teal);margin-left:8px">Discuss with Agent</button>`;
+  html += `<a href="#agents?project=${esc(currentProjectKey)}" style="margin-left:8px;font-size:12px;color:var(--accent)">View agents</a>`;
   if (workItems.length) {
-    html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Epic</th><th>Tags</th><th></th></tr></thead><tbody>`;
-    workItems.forEach((w, idx) => {
-      const sc = w.status === 'done' ? 'done' : (w.blocked_by ? 'blocked' : 'open');
+    const sortedItems = topoSort(workItems);
+    html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Depends On</th><th>Epic</th><th>Tags</th><th></th></tr></thead><tbody>`;
+    sortedItems.forEach((w) => {
+      const idx = workItems.indexOf(w);
+      const sc = w.status === 'done' ? 'done' : (w.depends_on?.length ? 'blocked' : 'open');
       const canDispatch = w.status === 'open' || w.status === 'in-progress';
+      const deps = (w.depends_on || []).length ? `← ${w.depends_on.map(d => esc(d)).join(', ')}` : '';
       html += `<tr><td><code>${esc(w.id)}</code></td><td>${esc(w.title)}</td>`;
-      html += `<td><span class="badge badge-${sc}">${esc(w.status)}${w.blocked_by ? ` (${esc(w.blocked_by)})` : ''}</span></td>`;
+      html += `<td><span class="badge badge-${sc}">${esc(w.status)}</span></td>`;
       html += `<td><span class="badge badge-${w.priority || 'medium'}">${esc(w.priority || '—')}</span></td>`;
+      html += `<td><code style="font-size:11px">${deps}</code></td>`;
       html += `<td>${w.epic_id ? `<span class="badge badge-epic" data-epic-nav="${esc(w.epic_id)}">${esc(w.epic_id)}</span>` : ''}</td>`;
       html += `<td>${(w.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
       html += `<td><button class="expand-btn" data-wi="${idx}">details</button>`;
@@ -973,7 +1035,7 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
       html += `<button class="delete-btn" data-wi-del="${idx}">delete</button>`;
       html += `</td>`;
       html += `</tr>`;
-      html += `<tr class="wi-detail" data-wi-detail="${idx}" style="display:none"><td colspan="7">`;
+      html += `<tr class="wi-detail" data-wi-detail="${idx}" style="display:none"><td colspan="8">`;
       if (w.description) html += `<div style="margin-bottom:8px">${esc(w.description)}</div>`;
       if (w.session_log?.length) {
         html += `<div class="session-log">`;
@@ -1234,6 +1296,10 @@ function showWorkItemModal(existingItem = null) {
         <label>Tags (comma-separated)</label>
         <input type="text" id="wi-tags" value="${isEdit && existingItem.tags ? esc(existingItem.tags.join(', ')) : ''}" />
       </div>
+      <div class="field">
+        <label>Depends On (comma-separated W-XXX IDs)</label>
+        <input type="text" id="wi-depends" value="${isEdit && existingItem.depends_on ? esc(existingItem.depends_on.join(', ')) : ''}" />
+      </div>
       <div class="modal-actions">
         <button class="btn btn-cancel" id="wi-cancel">Cancel</button>
         <button class="btn btn-dispatch" id="wi-save">${isEdit ? 'Save' : 'Create'}</button>
@@ -1259,6 +1325,7 @@ function showWorkItemModal(existingItem = null) {
       priority: overlay.querySelector('#wi-priority').value,
       description: overlay.querySelector('#wi-description').value.trim(),
       tags: overlay.querySelector('#wi-tags').value.split(',').map(t => t.trim()).filter(Boolean),
+      depends_on: overlay.querySelector('#wi-depends').value.split(',').map(t => t.trim()).filter(Boolean),
     };
 
     try {
@@ -1455,16 +1522,20 @@ async function renderEpicDetailView(epicId) {
   html += `<div class="progress-bar-container"><div class="progress-bar-fill" style="width:${pct}%"></div></div>`;
   html += `<button class="btn-add-wi" id="epic-link-item">+ Link Item</button>`;
   html += `<button class="btn-add-wi" id="epic-create-task" style="margin-left:8px">+ Create Task</button>`;
+  html += `<a href="#agents?epic=${esc(epic.id)}" style="margin-left:8px;font-size:12px;color:var(--accent)">View agents</a>`;
   if (items.length) {
-    html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Project</th><th>Tags</th><th></th></tr></thead><tbody>`;
-    for (const item of items) {
-      const sc = item.status === 'done' ? 'done' : (item.blocked_by ? 'blocked' : 'open');
+    const sortedEpicItems = topoSort(items);
+    html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Depends On</th><th>Project</th><th>Tags</th><th></th></tr></thead><tbody>`;
+    for (const item of sortedEpicItems) {
+      const sc = item.status === 'done' ? 'done' : (item.depends_on?.length ? 'blocked' : 'open');
       const canDispatch = item.status === 'open' || item.status === 'in-progress';
+      const deps = (item.depends_on || []).length ? `← ${item.depends_on.map(d => esc(d)).join(', ')}` : '';
       html += `<tr>`;
       html += `<td><code>${esc(item.id)}</code></td>`;
       html += `<td>${esc(item.title)}</td>`;
       html += `<td><span class="badge badge-${sc}">${esc(item.status)}</span></td>`;
       html += `<td><span class="badge badge-${item.priority || 'medium'}">${esc(item.priority || 'medium')}</span></td>`;
+      html += `<td><code style="font-size:11px">${deps}</code></td>`;
       html += `<td><span class="tag">${esc(item.project_key)}</span></td>`;
       html += `<td>${(item.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
       html += `<td>`;
@@ -2389,6 +2460,357 @@ function closeFocusPopup() {
   activeFocusPopup = null;
 }
 
+// --- Agents View ---
+let agentsTileInterval = null;
+let agentsFullRefreshInterval = null;
+
+function renderAgentTile(agent) {
+  const dotClass = agent.status === 'running' ? 'running' : (agent.status === 'completed' ? 'completed' : 'failed');
+  const elapsed = formatElapsed(agent.started_at);
+  const title = agent.work_item_id ? `${agent.work_item_id} — ${agent.title || ''}` : (agent.title || agent.id);
+  const preview = (agent.last_output || []).slice(-3).join('\n') || '(no output yet)';
+  const typeLabel = agent.type === 'terminal' ? 'interactive' : 'non-interactive';
+  const typeBadgeClass = agent.type === 'terminal' ? 'badge-agent' : 'badge-open';
+
+  let badges = '';
+  if (agent.project_key) badges += `<span class="tag">${esc(agent.project_key)}</span>`;
+  if (agent.work_item_id) badges += `<span class="badge badge-open">${esc(agent.work_item_id)}</span>`;
+  if (agent.epic_id) badges += `<span class="badge badge-epic">${esc(agent.epic_id)}</span>`;
+  badges += `<span class="badge ${typeBadgeClass}">${typeLabel}</span>`;
+
+  return `<div class="agent-tile" data-agent-type="${esc(agent.type)}" data-agent-id="${esc(agent.id)}">
+    <div class="agent-tile-header">
+      <span class="status-dot ${dotClass}"></span>
+      <span class="agent-tile-title">${esc(title)}</span>
+      <span class="agent-tile-elapsed" data-started="${agent.started_at}">${elapsed}</span>
+    </div>
+    <div class="agent-tile-badges">${badges}</div>
+    <div class="agent-tile-preview">${esc(preview)}</div>
+    <div class="agent-tile-footer">
+      <button class="kill-btn" data-tile-kill="${esc(agent.type)}:${esc(agent.id)}" ${agent.status !== 'running' ? 'disabled' : ''}>Kill</button>
+      <button class="focus-btn" data-tile-focus="${esc(agent.type)}:${esc(agent.id)}">Focus</button>
+    </div>
+  </div>`;
+}
+
+async function fetchAgentsList() {
+  const [dispatches, terminals] = await Promise.all([
+    api('dispatch/active').catch(() => []),
+    api('terminal/active').catch(() => []),
+  ]);
+  const agents = [];
+  for (const d of dispatches) {
+    agents.push({ type: 'dispatch', id: d.id, status: d.status, title: d.work_item_id || d.id, work_item_id: d.work_item_id, project_key: d.project_key, epic_id: d.epic_id, started_at: d.started_at, last_output: d.last_output || [], session_id: d.session_id, cost_usd: d.cost_usd });
+  }
+  for (const t of terminals) {
+    agents.push({ type: 'terminal', id: t.id, status: t.status, title: t.title || t.id, work_item_id: t.work_item_id, project_key: t.project_key, epic_id: t.epic_id, started_at: t.started_at, last_output: t.last_output || [] });
+  }
+  // Sort: running first, then by started_at desc
+  agents.sort((a, b) => {
+    if (a.status === 'running' && b.status !== 'running') return -1;
+    if (b.status === 'running' && a.status !== 'running') return 1;
+    return new Date(b.started_at) - new Date(a.started_at);
+  });
+  return agents;
+}
+
+function renderAgentsView(agents, filters = {}) {
+  const statusFilter = filters.status || 'all';
+  const epicFilter = filters.epic || '';
+  const projectFilter = filters.project || '';
+
+  let filtered = agents;
+  if (statusFilter === 'active') filtered = filtered.filter(a => a.status === 'running');
+  else if (statusFilter === 'recent') filtered = filtered.filter(a => a.status !== 'running');
+  if (epicFilter) filtered = filtered.filter(a => a.epic_id === epicFilter);
+  if (projectFilter) filtered = filtered.filter(a => a.project_key === projectFilter);
+
+  // Collect unique epics/projects for dropdowns
+  const allEpics = [...new Set(agents.map(a => a.epic_id).filter(Boolean))].sort();
+  const allProjects = [...new Set(agents.map(a => a.project_key).filter(Boolean))].sort();
+
+  let html = `<div class="card"><h2>Agents</h2>`;
+  html += `<div class="agents-filter-bar">`;
+  html += `<span class="filter-tab${statusFilter === 'all' ? ' active' : ''}" data-agents-status="all">All (${agents.length})</span>`;
+  html += `<span class="filter-tab${statusFilter === 'active' ? ' active' : ''}" data-agents-status="active">Running (${agents.filter(a => a.status === 'running').length})</span>`;
+  html += `<span class="filter-tab${statusFilter === 'recent' ? ' active' : ''}" data-agents-status="recent">Completed</span>`;
+  if (allEpics.length) {
+    html += `<select id="agents-epic-filter"><option value="">All Epics</option>`;
+    for (const e of allEpics) html += `<option value="${esc(e)}"${epicFilter === e ? ' selected' : ''}>${esc(e)}</option>`;
+    html += `</select>`;
+  }
+  if (allProjects.length) {
+    html += `<select id="agents-project-filter"><option value="">All Projects</option>`;
+    for (const p of allProjects) html += `<option value="${esc(p)}"${projectFilter === p ? ' selected' : ''}>${esc(p)}</option>`;
+    html += `</select>`;
+  }
+  html += `<button class="btn-add-wi" id="agents-quick-dispatch">+ Dispatch</button>`;
+  html += `</div>`;
+
+  if (filtered.length) {
+    html += `<div class="agents-grid">`;
+    for (const agent of filtered) html += renderAgentTile(agent);
+    html += `</div>`;
+  } else {
+    html += `<p class="empty">No agents match the current filters.</p>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+function bindAgentsEvents(agents, filters) {
+  // Tile click → focus
+  document.querySelectorAll('.agent-tile').forEach(tile => {
+    tile.onclick = (e) => {
+      if (e.target.closest('button')) return;
+      const type = tile.dataset.agentType;
+      const id = tile.dataset.agentId;
+      openFocusPopup(type, id);
+    };
+  });
+
+  // Focus buttons
+  document.querySelectorAll('[data-tile-focus]').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const [type, id] = btn.dataset.tileFocus.split(':');
+      openFocusPopup(type, id);
+    };
+  });
+
+  // Kill buttons
+  document.querySelectorAll('[data-tile-kill]').forEach(btn => {
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      const [type, id] = btn.dataset.tileKill.split(':');
+      btn.disabled = true;
+      const endpoint = type === 'terminal' ? `/api/terminal/${id}` : `/api/dispatch/${id}`;
+      try {
+        await fetch(endpoint, { method: 'DELETE' });
+        const agent = agents.find(a => a.id === id);
+        if (agent) agent.status = 'killed';
+        // Update local state
+        const d = activeDispatches.find(a => a.id === id);
+        if (d) d.status = 'killed';
+        const t = activeTerminals.find(a => a.id === id);
+        if (t) t.status = 'killed';
+        updateDispatchBadge();
+        // Update tile visually
+        const tile = btn.closest('.agent-tile');
+        const dot = tile.querySelector('.status-dot');
+        dot.classList.remove('running');
+        dot.classList.add('failed');
+      } catch {}
+    };
+  });
+
+  // Status filter tabs
+  document.querySelectorAll('[data-agents-status]').forEach(tab => {
+    tab.onclick = () => {
+      const status = tab.dataset.agentsStatus;
+      const hash = buildAgentsHash({ ...filters, status });
+      location.hash = hash;
+    };
+  });
+
+  // Epic filter
+  const epicSelect = document.getElementById('agents-epic-filter');
+  if (epicSelect) {
+    epicSelect.onchange = () => {
+      const hash = buildAgentsHash({ ...filters, epic: epicSelect.value });
+      location.hash = hash;
+    };
+  }
+
+  // Project filter
+  const projSelect = document.getElementById('agents-project-filter');
+  if (projSelect) {
+    projSelect.onchange = () => {
+      const hash = buildAgentsHash({ ...filters, project: projSelect.value });
+      location.hash = hash;
+    };
+  }
+
+  // Quick dispatch button
+  const quickDispatchBtn = document.getElementById('agents-quick-dispatch');
+  if (quickDispatchBtn) quickDispatchBtn.onclick = () => showQuickDispatchModal();
+}
+
+function buildAgentsHash(filters) {
+  let hash = '#agents';
+  const params = [];
+  if (filters.status && filters.status !== 'all') params.push(`status=${filters.status}`);
+  if (filters.epic) params.push(`epic=${filters.epic}`);
+  if (filters.project) params.push(`project=${filters.project}`);
+  if (params.length) hash += '?' + params.join('&');
+  return hash;
+}
+
+function parseAgentsFilters(hash) {
+  const filters = { status: 'all', epic: '', project: '' };
+  const qIdx = hash.indexOf('?');
+  if (qIdx === -1) return filters;
+  const params = new URLSearchParams(hash.slice(qIdx + 1));
+  if (params.get('status')) filters.status = params.get('status');
+  if (params.get('epic')) filters.epic = params.get('epic');
+  if (params.get('project')) filters.project = params.get('project');
+  return filters;
+}
+
+function startAgentsTileRefresh(agents, filters) {
+  stopAgentsTileRefresh();
+  // Update elapsed times every 3s
+  agentsTileInterval = setInterval(() => {
+    document.querySelectorAll('.agent-tile-elapsed[data-started]').forEach(el => {
+      el.textContent = formatElapsed(el.dataset.started);
+    });
+  }, 3000);
+  // Full refresh every 15s
+  agentsFullRefreshInterval = setInterval(async () => {
+    if (!location.hash.startsWith('#agents')) { stopAgentsTileRefresh(); return; }
+    const freshAgents = await fetchAgentsList();
+    const main = $('#main');
+    let savedContainer = document.getElementById('dispatch-panels');
+    if (savedContainer) savedContainer.remove();
+    main.innerHTML = renderAgentsView(freshAgents, filters);
+    bindAgentsEvents(freshAgents, filters);
+    if (savedContainer) main.insertBefore(savedContainer, main.firstChild);
+  }, 15000);
+}
+
+function stopAgentsTileRefresh() {
+  if (agentsTileInterval) { clearInterval(agentsTileInterval); agentsTileInterval = null; }
+  if (agentsFullRefreshInterval) { clearInterval(agentsFullRefreshInterval); agentsFullRefreshInterval = null; }
+}
+
+async function showQuickDispatchModal() {
+  let registryKeys = [];
+  try {
+    const registry = await api('registry');
+    for (const [, entry] of Object.entries(registry.entries)) {
+      registryKeys.push(`${entry.org}/${entry.project}/${entry.component}`);
+    }
+    registryKeys.sort();
+  } catch {}
+
+  let epicsList = [];
+  try { epicsList = await getEpics(); } catch {}
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Quick Dispatch</h3>
+      <div class="field">
+        <label>Target Project *</label>
+        <select id="qd-project">
+          ${registryKeys.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Work Item ID (optional)</label>
+        <input type="text" id="qd-work-item" placeholder="W-XXX" />
+      </div>
+      <div class="field">
+        <label>Epic (optional)</label>
+        <select id="qd-epic">
+          <option value="">None</option>
+          ${epicsList.map(e => `<option value="${esc(e.id)}">${esc(e.id)}: ${esc(e.title)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Instructions</label>
+        <textarea id="qd-instructions" placeholder="What should the agent do?"></textarea>
+      </div>
+      <div class="interactive-toggle">
+        <input type="checkbox" id="qd-interactive" />
+        <label for="qd-interactive">Interactive terminal (xterm.js)</label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" id="qd-cancel">Cancel</button>
+        <button class="btn btn-dispatch" id="qd-go">Dispatch</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#qd-cancel').onclick = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  overlay.querySelector('#qd-go').onclick = async () => {
+    const pk = overlay.querySelector('#qd-project').value;
+    const wid = overlay.querySelector('#qd-work-item').value.trim() || null;
+    const epicId = overlay.querySelector('#qd-epic').value || null;
+    const instructions = overlay.querySelector('#qd-instructions').value.trim();
+    const interactive = overlay.querySelector('#qd-interactive').checked;
+    const btn = overlay.querySelector('#qd-go');
+
+    if (!pk) { alert('Project is required'); return; }
+    if (!wid && !instructions) { alert('Work item or instructions required'); return; }
+
+    btn.disabled = true; btn.textContent = 'Dispatching...';
+
+    try {
+      const endpoint = interactive ? '/api/terminal' : '/api/dispatch';
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          work_item_id: wid,
+          epic_id: epicId,
+          project_key: pk,
+          title: wid || instructions?.slice(0, 60) || 'Quick dispatch',
+          additional_instructions: instructions,
+        }),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
+
+      let projectPath = '';
+      try {
+        const registry = await api('registry');
+        for (const [path, entry] of Object.entries(registry.entries)) {
+          if (`${entry.org}/${entry.project}/${entry.component}` === pk) { projectPath = path; break; }
+        }
+      } catch {}
+
+      if (interactive) {
+        const terminalInfo = {
+          id: result.terminal_id, work_item_id: wid, epic_id: epicId,
+          project_key: pk, project_path: projectPath,
+          title: wid || instructions?.slice(0, 60) || 'Quick dispatch',
+          status: 'running', started_at: new Date().toISOString(),
+        };
+        activeTerminals.push(terminalInfo);
+        updateDispatchBadge();
+        const container = getDispatchContainer();
+        const panel = createTerminalPanel(terminalInfo);
+        container.prepend(panel);
+        await connectTerminalWs(terminalInfo);
+      } else {
+        const dispatch = {
+          id: result.dispatch_id, work_item_id: wid, epic_id: epicId,
+          project_key: pk, project_path: projectPath,
+          title: wid || instructions?.slice(0, 60) || 'Quick dispatch',
+          status: 'running', started_at: new Date().toISOString(),
+        };
+        activeDispatches.push(dispatch);
+        updateDispatchBadge();
+        const container = getDispatchContainer();
+        const panel = createDispatchPanel(dispatch);
+        container.prepend(panel);
+        connectDispatchStream(dispatch);
+      }
+      overlay.remove();
+      // Refresh agents view if on that page
+      if (location.hash.startsWith('#agents')) route();
+    } catch (e) {
+      btn.disabled = false; btn.textContent = 'Dispatch';
+      alert('Dispatch failed: ' + e.message);
+    }
+  };
+}
+
 // --- Router ---
 async function route() {
   const hash = location.hash.slice(1);
@@ -2396,6 +2818,7 @@ async function route() {
 
   // Close any focus popup before navigation
   closeFocusPopup();
+  stopAgentsTileRefresh();
 
   // Preserve dispatch panels via DOM detach/reattach
   let savedContainer = document.getElementById('dispatch-panels');
@@ -2420,6 +2843,21 @@ async function route() {
     }
     setActive('');
     document.querySelectorAll('.epic-item').forEach(el => el.classList.remove('active'));
+    if (savedContainer) main.insertBefore(savedContainer, main.firstChild);
+    return;
+  }
+
+  if (parts[0] === 'agents' || hash.startsWith('agents?')) {
+    try {
+      const filters = parseAgentsFilters(hash);
+      const agents = await fetchAgentsList();
+      main.innerHTML = renderAgentsView(agents, filters);
+      bindAgentsEvents(agents, filters);
+      startAgentsTileRefresh(agents, filters);
+    } catch (e) {
+      main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
+    }
+    setActive('');
     if (savedContainer) main.insertBefore(savedContainer, main.firstChild);
     return;
   }

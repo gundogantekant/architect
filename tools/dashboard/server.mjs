@@ -2,9 +2,18 @@
 import { createServer } from 'node:http';
 import { readFile, writeFile, readdir, stat, mkdir } from 'node:fs/promises';
 import { join, resolve, extname } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import pty from 'node-pty';
 import { WebSocketServer } from 'ws';
+
+const CLAUDE_BIN = (() => {
+  try {
+    return execFileSync('which', ['claude'], { encoding: 'utf8' }).trim();
+  } catch {
+    console.warn('WARNING: "claude" binary not found in PATH. Terminal and dispatch features will fail.');
+    return 'claude';
+  }
+})();
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
 const PORTFOLIO = join(ROOT, 'portfolio');
@@ -60,6 +69,16 @@ const dispatches = new Map();
 const terminals = new Map();
 const SCROLLBACK_LIMIT = 100 * 1024; // 100KB ring buffer
 
+function extractStreamText(evt) {
+  if (evt.type === 'assistant' && evt.message?.content) {
+    return evt.message.content.filter(b => b.type === 'text').map(b => b.text).join('');
+  }
+  if (evt.type === 'content_block_delta' && evt.delta?.text) return evt.delta.text;
+  if (evt.type === 'content_block_start' && evt.content_block?.text) return evt.content_block.text;
+  if (evt.type === 'result') return `--- Agent finished ---`;
+  return null;
+}
+
 function killProcess(proc, signal = 'SIGTERM') {
   try { proc.kill(signal); } catch {}
 }
@@ -101,13 +120,79 @@ async function loadWorkItem(workItemId, projectKey) {
   }
 }
 
-async function ensureV3(bl, blPath) {
+async function migrateBacklog(bl, blPath) {
   let changed = false;
-  if (bl.version < 3) { bl.version = 3; changed = true; }
-  if (!bl.next_epic_id) { bl.next_epic_id = 1; changed = true; }
-  if (!bl.epics) { bl.epics = []; changed = true; }
+  if (bl.version < 3) {
+    bl.version = 3;
+    if (!bl.next_epic_id) bl.next_epic_id = 1;
+    if (!bl.epics) bl.epics = [];
+    changed = true;
+  }
+  if (bl.version < 4) {
+    for (const group of Object.values(bl.projects || {})) {
+      if (!group.items) continue;
+      for (const item of group.items) {
+        if ('blocked_by' in item) {
+          item.depends_on = item.blocked_by ? [item.blocked_by] : [];
+          delete item.blocked_by;
+        } else if (!item.depends_on) {
+          item.depends_on = [];
+        }
+      }
+    }
+    bl.version = 4;
+    changed = true;
+  }
   if (changed) await writeFile(blPath, JSON.stringify(bl, null, 2) + '\n');
   return bl;
+}
+
+function detectCycle(itemId, targetId, projects) {
+  const visited = new Set();
+  const stack = [targetId];
+  while (stack.length) {
+    const current = stack.pop();
+    if (current === itemId) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    for (const group of Object.values(projects)) {
+      if (!group.items) continue;
+      const item = group.items.find(i => i.id === current);
+      if (item && item.depends_on) {
+        for (const dep of item.depends_on) stack.push(dep);
+      }
+    }
+  }
+  return false;
+}
+
+function topoSort(items) {
+  const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+  const itemMap = new Map(items.map(i => [i.id, i]));
+  const inDegree = new Map(items.map(i => [i.id, 0]));
+  for (const item of items) {
+    for (const dep of (item.depends_on || [])) {
+      if (itemMap.has(dep)) {
+        inDegree.set(item.id, (inDegree.get(item.id) || 0) + 1);
+      }
+    }
+  }
+  const queue = items.filter(i => inDegree.get(i.id) === 0)
+    .sort((a, b) => (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2) || a.id.localeCompare(b.id));
+  const sorted = [];
+  const processed = new Set();
+  while (queue.length) {
+    const item = queue.shift();
+    sorted.push(item);
+    processed.add(item.id);
+    const next = items.filter(i => !processed.has(i.id) && (i.depends_on || []).every(d => !itemMap.has(d) || processed.has(d)))
+      .sort((a, b) => (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2) || a.id.localeCompare(b.id));
+    for (const n of next) {
+      if (!processed.has(n.id) && !queue.includes(n)) queue.push(n);
+    }
+  }
+  const remaining = items.filter(i => !processed.has(i.id));
+  return [...sorted, ...remaining];
 }
 
 function resolveEpicItems(epic, backlog) {
@@ -153,6 +238,8 @@ function buildDispatchPrompt({ workItem, projectKey, additionalInstructions, por
 
   // --- Scope ---
   const scopeLines = ['# Scope', ''];
+  const org = projectKey.split('/')[0];
+  if (org && org !== '–') scopeLines.push(`- **Organization**: ${org}`);
   scopeLines.push(`- **Project**: ${projectKey}`);
   if (workItem) scopeLines.push(`- **Work Item**: ${workItem.id}`);
   if (epicContext) scopeLines.push(`- **Epic**: ${epicContext.id}`);
@@ -215,7 +302,7 @@ function buildDispatchPrompt({ workItem, projectKey, additionalInstructions, por
     lines.push(`- **Status**: ${workItem.status}`);
     lines.push(`- **Priority**: ${workItem.priority}`);
     if (workItem.tags && workItem.tags.length) lines.push(`- **Tags**: ${workItem.tags.join(', ')}`);
-    if (workItem.blocked_by) lines.push(`- **Blocked by**: ${workItem.blocked_by}`);
+    if (workItem.depends_on && workItem.depends_on.length) lines.push(`- **Depends on**: ${workItem.depends_on.join(', ')}`);
     if (workItem.description) lines.push(`- **Description**: ${workItem.description}`);
     if (workItem.session_log && workItem.session_log.length) {
       lines.push('', '**Session Log**:');
@@ -305,8 +392,19 @@ const routes = [
   }],
 
   // Backlog
-  [/^\/api\/backlog$/, 'GET', async (_m, _req, res) => {
-    json(res, await readJson(join(WORK, 'backlog.json')));
+  [/^\/api\/backlog$/, 'GET', async (_m, req, res) => {
+    const reqUrl = new URL(req.url, 'http://localhost');
+    const orgFilter = reqUrl.searchParams.get('org');
+    const bl = await readJson(join(WORK, 'backlog.json'));
+    if (orgFilter) {
+      const prefix = orgFilter.toLowerCase() + '/';
+      const filtered = {};
+      for (const [key, group] of Object.entries(bl.projects)) {
+        if (key.toLowerCase().startsWith(prefix)) filtered[key] = group;
+      }
+      bl.projects = filtered;
+    }
+    json(res, bl);
   }],
 
   // --- Work item endpoints ---
@@ -333,7 +431,7 @@ const routes = [
       priority: priority || 'medium',
       description: description || '',
       tags: tags || [],
-      blocked_by: '',
+      depends_on: [],
       created: today,
       updated: today,
       session_log: [],
@@ -352,7 +450,7 @@ const routes = [
   [/^\/api\/work-items\/([A-Za-z0-9_-]+)$/, 'PATCH', async (m, req, res) => {
     const itemId = m[1];
     const body = await parseBody(req);
-    const allowed = ['title', 'status', 'priority', 'description', 'tags', 'blocked_by'];
+    const allowed = ['title', 'status', 'priority', 'description', 'tags', 'depends_on'];
 
     const blPath = join(WORK, 'backlog.json');
     const bl = await readJson(blPath);
@@ -427,12 +525,87 @@ const routes = [
     json(res, found);
   }],
 
+  // Add dependencies to work item
+  [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/depend$/, 'POST', async (m, req, res) => {
+    const itemId = m[1];
+    const body = await parseBody(req);
+    const { targets } = body;
+    if (!targets || !targets.length) return err(res, 'targets array is required', 400);
+
+    const blPath = join(WORK, 'backlog.json');
+    const bl = await migrateBacklog(await readJson(blPath), blPath);
+
+    let found = null;
+    for (const group of Object.values(bl.projects)) {
+      if (!group.items) continue;
+      found = group.items.find(i => i.id === itemId);
+      if (found) break;
+    }
+    if (!found) return err(res, 'work item not found', 404);
+
+    if (!found.depends_on) found.depends_on = [];
+    const added = [];
+    for (const tid of targets) {
+      let targetExists = false;
+      for (const group of Object.values(bl.projects)) {
+        if (!group.items) continue;
+        if (group.items.some(i => i.id === tid)) { targetExists = true; break; }
+      }
+      if (!targetExists) return err(res, `Target ${tid} not found`, 404);
+      if (found.depends_on.includes(tid)) continue;
+      if (detectCycle(itemId, tid, bl.projects)) {
+        return err(res, `Circular dependency: ${itemId} → ${tid} would create a cycle`, 400);
+      }
+      found.depends_on.push(tid);
+      added.push(tid);
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    found.updated = today;
+    if (!found.session_log) found.session_log = [];
+    if (added.length) found.session_log.push({ date: today, summary: `Added dependencies: ${added.join(', ')}` });
+
+    await writeFile(blPath, JSON.stringify(bl, null, 2) + '\n');
+    json(res, found);
+  }],
+
+  // Remove dependencies from work item
+  [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/depend$/, 'DELETE', async (m, req, res) => {
+    const itemId = m[1];
+    const body = await parseBody(req);
+    const { targets } = body;
+    if (!targets || !targets.length) return err(res, 'targets array is required', 400);
+
+    const blPath = join(WORK, 'backlog.json');
+    const bl = await migrateBacklog(await readJson(blPath), blPath);
+
+    let found = null;
+    for (const group of Object.values(bl.projects)) {
+      if (!group.items) continue;
+      found = group.items.find(i => i.id === itemId);
+      if (found) break;
+    }
+    if (!found) return err(res, 'work item not found', 404);
+
+    if (!found.depends_on) found.depends_on = [];
+    const removed = targets.filter(t => found.depends_on.includes(t));
+    found.depends_on = found.depends_on.filter(d => !targets.includes(d));
+
+    const today = new Date().toISOString().slice(0, 10);
+    found.updated = today;
+    if (!found.session_log) found.session_log = [];
+    if (removed.length) found.session_log.push({ date: today, summary: `Removed dependencies: ${removed.join(', ')}` });
+
+    await writeFile(blPath, JSON.stringify(bl, null, 2) + '\n');
+    json(res, found);
+  }],
+
   // --- Epic endpoints ---
 
   // List epics
   [/^\/api\/epics$/, 'GET', async (_m, _req, res) => {
     const blPath = join(WORK, 'backlog.json');
-    const bl = await ensureV3(await readJson(blPath), blPath);
+    const bl = await migrateBacklog(await readJson(blPath), blPath);
     const epics = (bl.epics || []).map(epic => {
       const items = resolveEpicItems(epic, bl);
       const done = items.filter(i => i.status === 'done').length;
@@ -444,7 +617,7 @@ const routes = [
   // Get epic detail
   [/^\/api\/epics\/(E-\d+)$/, 'GET', async (m, _req, res) => {
     const blPath = join(WORK, 'backlog.json');
-    const bl = await ensureV3(await readJson(blPath), blPath);
+    const bl = await migrateBacklog(await readJson(blPath), blPath);
     const epic = (bl.epics || []).find(e => e.id === m[1]);
     if (!epic) return err(res, 'epic not found', 404);
     const items = resolveEpicItems(epic, bl);
@@ -459,7 +632,7 @@ const routes = [
     if (!title) return err(res, 'title is required', 400);
 
     const blPath = join(WORK, 'backlog.json');
-    const bl = await ensureV3(await readJson(blPath), blPath);
+    const bl = await migrateBacklog(await readJson(blPath), blPath);
 
     const id = `E-${String(bl.next_epic_id).padStart(3, '0')}`;
     bl.next_epic_id++;
@@ -492,7 +665,7 @@ const routes = [
     const allowed = ['title', 'status', 'priority', 'description', 'acceptance_criteria', 'target_date', 'tags', 'project_keys'];
 
     const blPath = join(WORK, 'backlog.json');
-    const bl = await ensureV3(await readJson(blPath), blPath);
+    const bl = await migrateBacklog(await readJson(blPath), blPath);
 
     const epic = (bl.epics || []).find(e => e.id === m[1]);
     if (!epic) return err(res, 'epic not found', 404);
@@ -510,7 +683,7 @@ const routes = [
   // Delete epic
   [/^\/api\/epics\/(E-\d+)$/, 'DELETE', async (m, _req, res) => {
     const blPath = join(WORK, 'backlog.json');
-    const bl = await ensureV3(await readJson(blPath), blPath);
+    const bl = await migrateBacklog(await readJson(blPath), blPath);
 
     const idx = (bl.epics || []).findIndex(e => e.id === m[1]);
     if (idx === -1) return err(res, 'epic not found', 404);
@@ -539,7 +712,7 @@ const routes = [
     if (!work_item_ids || !work_item_ids.length) return err(res, 'work_item_ids required', 400);
 
     const blPath = join(WORK, 'backlog.json');
-    const bl = await ensureV3(await readJson(blPath), blPath);
+    const bl = await migrateBacklog(await readJson(blPath), blPath);
 
     const epic = (bl.epics || []).find(e => e.id === m[1]);
     if (!epic) return err(res, 'epic not found', 404);
@@ -573,7 +746,7 @@ const routes = [
     if (!work_item_id) return err(res, 'work_item_id required', 400);
 
     const blPath = join(WORK, 'backlog.json');
-    const bl = await ensureV3(await readJson(blPath), blPath);
+    const bl = await migrateBacklog(await readJson(blPath), blPath);
 
     const epic = (bl.epics || []).find(e => e.id === m[1]);
     if (!epic) return err(res, 'epic not found', 404);
@@ -656,11 +829,16 @@ const routes = [
       completed_at: null,
     };
 
-    const proc = spawn('claude', ['-p', '--output-format', 'stream-json', '--verbose'], {
-      cwd: ROOT,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env },
-    });
+    let proc;
+    try {
+      proc = spawn(CLAUDE_BIN, ['-p', '--output-format', 'stream-json', '--verbose'], {
+        cwd: ROOT,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env },
+      });
+    } catch (err) {
+      return send(res, 500, { error: `Failed to spawn claude: ${err.message}` });
+    }
 
     proc.stdin.write(prompt);
     proc.stdin.end();
@@ -780,20 +958,27 @@ const routes = [
     const dispatch = {
       id,
       work_item_id,
+      epic_id: epic_id || null,
       project_key,
       project_path: projectPath,
       status: 'running',
       output: [],
+      lastLines: [],
       listeners: new Set(),
       started_at: new Date().toISOString(),
       completed_at: null,
     };
 
-    const proc = spawn('claude', ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'plan'], {
-      cwd: projectPath,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env },
-    });
+    let proc;
+    try {
+      proc = spawn(CLAUDE_BIN, ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'plan'], {
+        cwd: projectPath,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env },
+      });
+    } catch (err) {
+      return send(res, 500, { error: `Failed to spawn claude: ${err.message}` });
+    }
 
     proc.stdin.write(prompt);
     proc.stdin.end();
@@ -815,6 +1000,12 @@ const routes = [
           }
           if (evt.type === 'result' && evt.total_cost_usd != null) {
             dispatch.cost_usd = evt.total_cost_usd;
+          }
+          // Extract text for lastLines preview
+          const text = extractStreamText(evt);
+          if (text) {
+            dispatch.lastLines.push(text);
+            if (dispatch.lastLines.length > 5) dispatch.lastLines.shift();
           }
         } catch {}
         dispatch.output.push(line);
@@ -892,6 +1083,7 @@ const routes = [
       list.push({
         id,
         work_item_id: d.work_item_id,
+        epic_id: d.epic_id || null,
         project_key: d.project_key,
         project_path: d.project_path,
         status: d.status,
@@ -899,6 +1091,7 @@ const routes = [
         cost_usd: d.cost_usd || null,
         started_at: d.started_at,
         completed_at: d.completed_at,
+        last_output: d.lastLines || [],
       });
     }
     json(res, list);
@@ -983,18 +1176,24 @@ const routes = [
       epicContext,
     });
 
-    // Spawn interactive PTY with claude
-    const ptyProcess = pty.spawn('claude', [], {
-      name: 'xterm-256color',
-      cols: 80,
-      rows: 24,
-      cwd: projectPath,
-      env: { ...process.env, TERM: 'xterm-256color' },
-    });
+    // Spawn interactive PTY with claude (use absolute path to avoid posix_spawnp PATH issues)
+    let ptyProcess;
+    try {
+      ptyProcess = pty.spawn(CLAUDE_BIN, [], {
+        name: 'xterm-256color',
+        cols: 80,
+        rows: 24,
+        cwd: projectPath,
+        env: { ...process.env, TERM: 'xterm-256color' },
+      });
+    } catch (err) {
+      return send(res, 500, { error: `Failed to spawn terminal: ${err.message}` });
+    }
 
     const terminal = {
       id,
       work_item_id: work_item_id || null,
+      epic_id: epic_id || null,
       project_key,
       project_path: projectPath,
       title: title || additional_instructions?.slice(0, 60) || 'Interactive session',
@@ -1042,15 +1241,18 @@ const routes = [
   [/^\/api\/terminal\/active$/, 'GET', async (_m, _req, res) => {
     const list = [];
     for (const [id, t] of terminals) {
+      const scrollLines = t.scrollback ? t.scrollback.split('\n').filter(l => l.trim()).slice(-3) : [];
       list.push({
         id,
         work_item_id: t.work_item_id,
+        epic_id: t.epic_id || null,
         project_key: t.project_key,
         project_path: t.project_path,
         title: t.title,
         status: t.status,
         started_at: t.started_at,
         exited_at: t.exited_at,
+        last_output: scrollLines,
       });
     }
     json(res, list);
