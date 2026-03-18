@@ -191,6 +191,47 @@
   .interactive-toggle { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
   .interactive-toggle label { font-size: 13px; cursor: pointer; color: var(--text); text-transform: none; font-weight: 400; }
   .interactive-toggle input[type="checkbox"] { cursor: pointer; }
+
+  /* Sessions sidebar section */
+  .sessions-section { margin-top: 4px; }
+  .session-entry { padding: 5px 16px; font-size: 12px; cursor: pointer; border-radius: 4px; margin: 1px 8px; display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; }
+  .session-entry:hover { background: #313244; }
+  .session-entry .session-label { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .session-entry .session-meta { font-size: 10px; color: #6c7086; flex-shrink: 0; }
+
+  /* Focus overlay & popup */
+  .focus-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center; }
+  .focus-popup { background: #fff; border-radius: 12px; width: 90vw; height: 85vh; display: flex; flex-direction: column; box-shadow: 0 12px 48px rgba(0,0,0,0.25); overflow: hidden; }
+  .focus-popup-header { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--border); background: #fafafa; flex-shrink: 0; }
+  .focus-popup-header .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .focus-popup-header .status-dot.running { background: var(--green); animation: pulse 1.5s infinite; }
+  .focus-popup-header .status-dot.completed { background: var(--green); }
+  .focus-popup-header .status-dot.failed, .focus-popup-header .status-dot.killed { background: var(--red); }
+  .focus-popup-header .focus-title { font-size: 14px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .focus-popup-header .focus-meta { font-size: 11px; color: var(--text-light); flex-shrink: 0; }
+  .focus-popup-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+  .focus-popup-body .dispatch-log { max-height: none; flex: 1; }
+  .focus-popup-body .terminal-container { height: 100% !important; flex: 1; }
+  .focus-popup-footer { display: flex; align-items: center; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border); background: #fafafa; flex-shrink: 0; }
+  .focus-popup-footer .btn { padding: 6px 16px; border-radius: 6px; border: none; cursor: pointer; font-size: 12px; font-weight: 600; }
+  .focus-popup-footer .btn-close { background: #f1f5f9; color: var(--text); }
+  .focus-popup-footer .btn-close:hover { background: #e2e8f0; }
+  .focus-popup-footer .btn-kill { background: var(--red); color: #fff; }
+  .focus-popup-footer .btn-kill:hover { opacity: 0.85; }
+  .focus-popup-footer .btn-kill:disabled { opacity: 0.4; cursor: default; }
+  .focus-popup-footer .btn-copy { background: var(--accent); color: #fff; }
+  .focus-popup-footer .btn-copy:hover { opacity: 0.85; }
+
+  /* Dark theme variant for terminal focus */
+  .focus-popup.terminal-focus { background: #1e1e2e; }
+  .focus-popup.terminal-focus .focus-popup-header { background: #181825; border-color: #313244; }
+  .focus-popup.terminal-focus .focus-popup-header .focus-title { color: #cdd6f4; }
+  .focus-popup.terminal-focus .focus-popup-header .focus-meta { color: #6c7086; }
+  .focus-popup.terminal-focus .focus-popup-footer { background: #181825; border-color: #313244; }
+
+  /* Focus button on inline panels */
+  .focus-btn { cursor: pointer; color: var(--accent); font-size: 11px; border: 1px solid var(--accent); background: none; padding: 3px 10px; border-radius: 4px; }
+  .focus-btn:hover { background: #ede9fe; }
 </style>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/css/xterm.min.css">
 </head>
@@ -199,6 +240,7 @@
 <nav id="sidebar">
   <h1>Architect <span id="dispatch-badge" class="dispatch-count empty"></span></h1>
   <div id="epic-tree"></div>
+  <div id="sessions-sidebar" class="sessions-section"></div>
   <div id="tree"></div>
 </nav>
 
@@ -312,6 +354,7 @@ function updateDispatchBadge() {
   } else {
     badge.classList.add('empty');
   }
+  refreshSessionsSidebar();
 }
 
 function extractStreamText(line) {
@@ -361,6 +404,7 @@ function createDispatchPanel(dispatch) {
       <span class="status-dot ${isRunning ? 'running' : dispatch.status}"></span>
       <span class="dispatch-title">${esc(titleParts.join(' — '))}</span>
       <span class="dispatch-meta">${new Date(dispatch.started_at).toLocaleTimeString()}</span>
+      <button class="focus-btn" data-focus-dispatch="${esc(dispatch.id)}">Focus</button>
       <button class="kill-btn" data-kill-dispatch="${esc(dispatch.id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
     </div>
     <div class="dispatch-log" id="log-${dispatch.id}"></div>
@@ -371,6 +415,8 @@ function createDispatchPanel(dispatch) {
         : `cd ${esc(dispatch.project_path)} && claude "${esc(guidancePrompt)}"`}</code>
     </div>
   `;
+  // Bind focus button
+  panel.querySelector(`[data-focus-dispatch="${dispatch.id}"]`).onclick = () => openFocusPopup('dispatch', dispatch.id);
   // Bind kill button
   panel.querySelector(`[data-kill-dispatch="${dispatch.id}"]`).onclick = async (e) => {
     const btn = e.target;
@@ -505,10 +551,13 @@ function createTerminalPanel(terminalInfo) {
       <span class="status-dot ${isRunning ? 'running' : 'failed'}"></span>
       <span class="terminal-title">${esc(terminalInfo.id)} — ${esc(terminalInfo.title || 'Terminal')}</span>
       <span class="terminal-meta">${new Date(terminalInfo.started_at).toLocaleTimeString()}</span>
+      <button class="focus-btn" data-focus-terminal="${esc(terminalInfo.id)}">Focus</button>
       <button class="kill-btn" data-kill-terminal="${esc(terminalInfo.id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
     </div>
     <div class="terminal-container" id="term-container-${terminalInfo.id}"></div>
   `;
+  // Bind focus button
+  panel.querySelector(`[data-focus-terminal="${terminalInfo.id}"]`).onclick = () => openFocusPopup('terminal', terminalInfo.id);
   // Bind kill button
   panel.querySelector(`[data-kill-terminal="${terminalInfo.id}"]`).onclick = async (e) => {
     const btn = e.target;
@@ -2120,19 +2169,242 @@ function showOnboardModal() {
   };
 }
 
+// --- Sessions Sidebar ---
+function buildSessionsSidebar() {
+  const container = document.getElementById('sessions-sidebar');
+  if (!container) return;
+  // Label
+  const label = document.createElement('div');
+  label.className = 'sidebar-section-label';
+  label.textContent = 'SESSIONS';
+  container.appendChild(label);
+  const list = document.createElement('div');
+  list.id = 'sessions-list';
+  container.appendChild(list);
+  const divider = document.createElement('hr');
+  divider.className = 'sidebar-divider';
+  container.appendChild(divider);
+}
+
+function formatElapsed(startedAt) {
+  const ms = Date.now() - new Date(startedAt).getTime();
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+function refreshSessionsSidebar() {
+  const list = document.getElementById('sessions-list');
+  if (!list) return;
+  list.innerHTML = '';
+  const allSessions = [
+    ...activeDispatches.map(d => ({ type: 'dispatch', id: d.id, status: d.status, label: d.work_item_id || d.title || d.id, started_at: d.started_at, cost: d._cost })),
+    ...activeTerminals.map(t => ({ type: 'terminal', id: t.id, status: t.status, label: t.title || t.id, started_at: t.started_at })),
+  ];
+  if (!allSessions.length) return;
+  for (const s of allSessions) {
+    const entry = document.createElement('div');
+    entry.className = 'session-entry';
+    const dotClass = s.status === 'running' ? 'running' : (s.status === 'completed' ? 'completed' : 'failed');
+    const elapsed = formatElapsed(s.started_at);
+    entry.innerHTML = `<span class="status-dot ${dotClass}" style="width:8px;height:8px"></span><span class="session-label">${esc(s.label)}</span><span class="session-meta">${elapsed}</span>`;
+    entry.onclick = () => openFocusPopup(s.type, s.id);
+    list.appendChild(entry);
+  }
+}
+
+let sessionsSidebarInterval = null;
+function startSessionsSidebarRefresh() {
+  buildSessionsSidebar();
+  refreshSessionsSidebar();
+  if (sessionsSidebarInterval) clearInterval(sessionsSidebarInterval);
+  sessionsSidebarInterval = setInterval(refreshSessionsSidebar, 3000);
+}
+
+// --- Focus Popup ---
+let activeFocusPopup = null;
+
+function openFocusPopup(type, id) {
+  closeFocusPopup();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'focus-overlay';
+
+  const popup = document.createElement('div');
+  popup.className = 'focus-popup' + (type === 'terminal' ? ' terminal-focus' : '');
+
+  let sourceEl, parentEl, title, status, startedAt, sessionId, dispatch, terminalInfo;
+
+  if (type === 'dispatch') {
+    dispatch = activeDispatches.find(d => d.id === id);
+    if (!dispatch) return;
+    sourceEl = document.getElementById(`log-${id}`);
+    parentEl = sourceEl?.parentElement;
+    title = dispatch.work_item_id ? `${dispatch.work_item_id} — ${dispatch.title || ''}` : (dispatch.title || dispatch.id);
+    status = dispatch.status;
+    startedAt = dispatch.started_at;
+    sessionId = dispatch.session_id;
+  } else {
+    terminalInfo = activeTerminals.find(t => t.id === id);
+    if (!terminalInfo) return;
+    sourceEl = document.getElementById(`term-container-${id}`);
+    parentEl = sourceEl?.parentElement;
+    title = terminalInfo.title || terminalInfo.id;
+    status = terminalInfo.status;
+    startedAt = terminalInfo.started_at;
+  }
+
+  if (!sourceEl) return;
+
+  // Header
+  const header = document.createElement('div');
+  header.className = 'focus-popup-header';
+  const dotClass = status === 'running' ? 'running' : (status === 'completed' ? 'completed' : 'failed');
+  let metaHtml = formatElapsed(startedAt);
+  if (type === 'dispatch' && sessionId) metaHtml += ` | ${sessionId}`;
+  header.innerHTML = `<span class="status-dot ${dotClass}"></span><span class="focus-title">${esc(title)}</span><span class="focus-meta">${metaHtml}</span>`;
+
+  // Body — relocate DOM element
+  const body = document.createElement('div');
+  body.className = 'focus-popup-body';
+  sourceEl.remove();
+  body.appendChild(sourceEl);
+
+  // For terminals, fit to new size
+  if (type === 'terminal' && terminalInfo?._fitAddon) {
+    requestAnimationFrame(() => terminalInfo._fitAddon.fit());
+  }
+
+  // Footer
+  const footer = document.createElement('div');
+  footer.className = 'focus-popup-footer';
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'btn btn-close';
+  closeBtn.textContent = 'Close';
+  closeBtn.onclick = () => closeFocusPopup();
+  footer.appendChild(closeBtn);
+
+  const isRunning = status === 'running';
+  const killBtn = document.createElement('button');
+  killBtn.className = 'btn btn-kill';
+  killBtn.textContent = 'Kill';
+  killBtn.disabled = !isRunning;
+  killBtn.onclick = async () => {
+    killBtn.disabled = true;
+    const endpoint = type === 'dispatch' ? `/api/dispatch/${id}` : `/api/terminal/${id}`;
+    try {
+      await fetch(endpoint, { method: 'DELETE' });
+      if (dispatch) dispatch.status = 'killed';
+      if (terminalInfo) terminalInfo.status = 'killed';
+      const dot = header.querySelector('.status-dot');
+      dot.classList.remove('running');
+      dot.classList.add('failed');
+      // Also update inline panel dot
+      const inlineDot = document.querySelector(`#${type === 'dispatch' ? 'dispatch' : 'terminal'}-${id} .status-dot`);
+      if (inlineDot) { inlineDot.classList.remove('running'); inlineDot.classList.add('failed'); }
+      const inlineKill = document.querySelector(`[data-kill-${type === 'dispatch' ? 'dispatch' : 'terminal'}="${id}"]`);
+      if (inlineKill) inlineKill.disabled = true;
+      updateDispatchBadge();
+      refreshSessionsSidebar();
+    } catch {}
+  };
+  footer.appendChild(killBtn);
+
+  if (type === 'dispatch' && dispatch) {
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'btn btn-copy';
+    copyBtn.textContent = 'Copy Resume';
+    copyBtn.onclick = () => {
+      const cmd = dispatch.session_id
+        ? `cd ${dispatch.project_path} && claude --resume ${dispatch.session_id}`
+        : `cd ${dispatch.project_path} && claude "${dispatch.title || ''}"`;
+      navigator.clipboard.writeText(cmd).then(() => {
+        copyBtn.textContent = 'Copied!';
+        setTimeout(() => { copyBtn.textContent = 'Copy Resume'; }, 1500);
+      });
+    };
+    footer.appendChild(copyBtn);
+  }
+
+  popup.appendChild(header);
+  popup.appendChild(body);
+  popup.appendChild(footer);
+  overlay.appendChild(popup);
+  document.body.appendChild(overlay);
+
+  activeFocusPopup = { overlay, popup, type, id, sourceEl, parentEl };
+
+  // Close handlers
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeFocusPopup(); });
+  const escHandler = (e) => { if (e.key === 'Escape') closeFocusPopup(); };
+  document.addEventListener('keydown', escHandler);
+  activeFocusPopup.escHandler = escHandler;
+
+  // Update header periodically
+  const headerInterval = setInterval(() => {
+    if (!activeFocusPopup || activeFocusPopup.id !== id) { clearInterval(headerInterval); return; }
+    const metaEl = header.querySelector('.focus-meta');
+    if (metaEl) {
+      let meta = formatElapsed(startedAt);
+      if (type === 'dispatch' && dispatch?.session_id) meta += ` | ${dispatch.session_id}`;
+      metaEl.textContent = meta;
+    }
+    // Update status dot in popup
+    const currentStatus = type === 'dispatch' ? dispatch?.status : terminalInfo?.status;
+    if (currentStatus && currentStatus !== 'running') {
+      const dot = header.querySelector('.status-dot');
+      dot.classList.remove('running');
+      dot.classList.add(currentStatus === 'completed' ? 'completed' : 'failed');
+      killBtn.disabled = true;
+    }
+  }, 1000);
+  activeFocusPopup.headerInterval = headerInterval;
+}
+
+function closeFocusPopup() {
+  if (!activeFocusPopup) return;
+  const { overlay, type, id, sourceEl, parentEl, escHandler, headerInterval } = activeFocusPopup;
+
+  // Move DOM element back to inline panel
+  if (sourceEl && parentEl && parentEl.isConnected) {
+    sourceEl.remove();
+    parentEl.appendChild(sourceEl);
+  }
+
+  // For terminals, refit to inline size
+  if (type === 'terminal') {
+    const terminalInfo = activeTerminals.find(t => t.id === id);
+    if (terminalInfo?._fitAddon) {
+      requestAnimationFrame(() => terminalInfo._fitAddon.fit());
+    }
+  }
+
+  if (escHandler) document.removeEventListener('keydown', escHandler);
+  if (headerInterval) clearInterval(headerInterval);
+  overlay.remove();
+  activeFocusPopup = null;
+}
+
 // --- Router ---
 async function route() {
   const hash = location.hash.slice(1);
   const main = $('#main');
 
-  // Preserve dispatch panels
-  const dispatchContainer = document.getElementById('dispatch-panels');
-  const savedPanels = dispatchContainer ? dispatchContainer.outerHTML : '';
+  // Close any focus popup before navigation
+  closeFocusPopup();
+
+  // Preserve dispatch panels via DOM detach/reattach
+  let savedContainer = document.getElementById('dispatch-panels');
+  if (savedContainer) savedContainer.remove();
 
   if (!hash) {
     main.innerHTML = `<div class="card"><h2>Portfolio Dashboard</h2><p style="color:var(--text-light);font-size:14px">Select an organization or project from the sidebar.</p></div>`;
     setActive('');
-    if (savedPanels) main.insertAdjacentHTML('afterbegin', savedPanels);
+    if (savedContainer) main.insertBefore(savedContainer, main.firstChild);
     return;
   }
 
@@ -2148,7 +2420,7 @@ async function route() {
     }
     setActive('');
     document.querySelectorAll('.epic-item').forEach(el => el.classList.remove('active'));
-    if (savedPanels) main.insertAdjacentHTML('afterbegin', savedPanels);
+    if (savedContainer) main.insertBefore(savedContainer, main.firstChild);
     return;
   }
 
@@ -2164,7 +2436,7 @@ async function route() {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
     }
     setActive('');
-    if (savedPanels) main.insertAdjacentHTML('afterbegin', savedPanels);
+    if (savedContainer) main.insertBefore(savedContainer, main.firstChild);
     return;
   }
 
@@ -2178,7 +2450,7 @@ async function route() {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
     }
     setActive('');
-    if (savedPanels) main.insertAdjacentHTML('afterbegin', savedPanels);
+    if (savedContainer) main.insertBefore(savedContainer, main.firstChild);
     return;
   }
 
@@ -2208,16 +2480,22 @@ async function route() {
     } catch (e) {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
     }
-    if (savedPanels) main.insertAdjacentHTML('afterbegin', savedPanels);
+    if (savedContainer) main.insertBefore(savedContainer, main.firstChild);
     return;
   }
 
   main.innerHTML = `<div class="card"><p class="empty">Unknown route: ${esc(hash)}</p></div>`;
-  if (savedPanels) main.insertAdjacentHTML('afterbegin', savedPanels);
+  if (savedContainer) main.insertBefore(savedContainer, main.firstChild);
 }
 
 window.addEventListener('hashchange', route);
-Promise.all([buildTree(), buildEpicTree()]).then(() => { route(); restoreDispatches(); restoreTerminals(); });
+Promise.all([buildTree(), buildEpicTree()]).then(async () => {
+  startSessionsSidebarRefresh();
+  route();
+  await restoreDispatches();
+  await restoreTerminals();
+  refreshSessionsSidebar();
+});
 </script>
 </body>
 </html>
