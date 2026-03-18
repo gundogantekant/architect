@@ -137,6 +137,12 @@ omit the target project section are incomplete and must not proceed to execution
 For architect self-changes, use the standard self-reference:
 Organization=–, Project=architect, Component=–.
 
+### Organization Awareness
+
+- **Org Context Propagation**: Every agent dispatch targeting a portfolio project must include org name and org conventions (from `portfolio/<org>/organization.json`) in the agent prompt
+- **Cross-Org Operations**: When a task or epic spans multiple orgs, the orchestrator must explicitly note this. Agents must not assume one org's conventions apply to another. Epics may span orgs; work items belong to exactly one org via their project key
+- **Case Normalization**: Org names in project keys are always lowercase. Tracker must lowercase the org portion when creating new project key entries
+
 ### Portfolio-Aware Disambiguation
 
 When the user references a project by name (not an absolute path), the orchestrator must
@@ -176,6 +182,9 @@ When PM's classification confidence is below **0.6**, always include clarificati
 - IDs use sequential `W-XXX` format (zero-padded, never reused)
 - Statuses: `open` → `in-progress` → `done` (or `blocked`, `cancelled`)
 - Session log is append-only
+- `list` supports `--org <name>` to filter by organization prefix
+- `list` supports `--project` with comma-separated values for multi-project filtering
+- `--org` and `--project` can be combined: org narrows first, project filters within
 
 ## Epic Rules
 
@@ -185,6 +194,14 @@ When PM's classification confidence is below **0.6**, always include clarificati
 - Status transitions: `draft → active → done` (or `cancelled` from any state)
 - Tracker agent suggests status transitions but does not auto-change them
 - Epic docs stored at `work/epics/E-XXX/` (plan.md, docs.md) — created lazily
+
+## Dependency Rules
+
+- `depends_on` is always an array (empty `[]` = no dependencies)
+- Cross-project dependencies are allowed — IDs are globally unique
+- Circular dependencies are forbidden: before adding A depends on B, DFS from B through `depends_on` edges; if A is reachable, reject the dependency
+- Tracker suggests `blocked` status when unfinished dependencies exist, but does not auto-change status
+- Topological sort (Kahn's algorithm) for display: roots first (no deps), then items whose deps are all listed; within same level, sort by priority desc then ID asc; items with external deps (outside filtered set) appended at end
 
 ## PM Dispatch Rules
 
