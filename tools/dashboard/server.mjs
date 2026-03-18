@@ -837,7 +837,7 @@ const routes = [
         env: { ...process.env },
       });
     } catch (err) {
-      return send(res, 500, { error: `Failed to spawn claude: ${err.message}` });
+      return json(res, { error: `Failed to spawn claude: ${err.message}` }, 500);
     }
 
     proc.stdin.write(prompt);
@@ -977,7 +977,7 @@ const routes = [
         env: { ...process.env },
       });
     } catch (err) {
-      return send(res, 500, { error: `Failed to spawn claude: ${err.message}` });
+      return json(res, { error: `Failed to spawn claude: ${err.message}` }, 500);
     }
 
     proc.stdin.write(prompt);
@@ -1187,7 +1187,7 @@ const routes = [
         env: { ...process.env, TERM: 'xterm-256color' },
       });
     } catch (err) {
-      return send(res, 500, { error: `Failed to spawn terminal: ${err.message}` });
+      return json(res, { error: `Failed to spawn terminal: ${err.message}` }, 500);
     }
 
     const terminal = {
