@@ -73,6 +73,12 @@ When a WorktreeContext is active (see `domain/entities.md` → WorktreeContext):
   repo paths only
 - Branch name is always included in the target label passed to agents
 
+## Org Boundary Awareness
+
+- Include org name in context passed to agents ("Working in org: X")
+- If a task spans multiple project keys, verify they belong to the same org unless explicitly cross-org (e.g., an epic)
+- Agents receiving org context must apply org-level rules as baseline constraints
+
 ## Post-conditions
 - All subsequent agents receive context filtered to the requested depth
 - Context includes: stack info, conventions, recommended agents, dispatch notes (based on tier)

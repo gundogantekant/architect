@@ -142,6 +142,7 @@ Organization=–, Project=architect, Component=–.
 - **Org Context Propagation**: Every agent dispatch targeting a portfolio project must include org name and org conventions (from `portfolio/<org>/organization.json`) in the agent prompt
 - **Cross-Org Operations**: When a task or epic spans multiple orgs, the orchestrator must explicitly note this. Agents must not assume one org's conventions apply to another. Epics may span orgs; work items belong to exactly one org via their project key
 - **Case Normalization**: Org names in project keys are always lowercase. Tracker must lowercase the org portion when creating new project key entries
+- **Convention Precedence**: Agents must apply org-level conventions (branch prefix, PR title pattern) as baseline defaults. Org-level rules act as constraints alongside project-level guidance. When org conventions conflict with project conventions, project conventions take precedence
 
 ### Portfolio-Aware Disambiguation
 
