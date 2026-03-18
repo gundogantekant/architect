@@ -15,7 +15,7 @@ Shared precondition for all skills that need project context. Eliminates duplica
 | Tier | Fields from PortfolioEntry | Used by |
 |------|---------------------------|---------|
 | minimal | `guidance.stack_summary` + `scout_report.language` + `scout_report.framework` | dependency-manager, tracker, work, portfolio |
-| standard | minimal + `guidance.structure` + `guidance.conventions` + `agents.dispatch_notes` + `brief.purpose` + `brief.domain` + `brief.users` + `doc_paths` | coders, planner, debugger, documenter, onboard |
+| standard | minimal + `guidance.structure` + `guidance.conventions` + `agents.dispatch_notes` + `brief.purpose` + `brief.domain` + `brief.users` + `doc_paths` + `portfolio_guides` | coders, planner, debugger, documenter, onboard |
 | full | standard + `guidance.ci_cd` + `guidance.testing` + `custom_rules` + complete `brief` object + `doc_paths` | tester, ci-cd, reviewer, security-auditor, deploy, migrate, status, secure |
 
 Organization conventions (`organization.json`) are always loaded regardless of tier.
@@ -38,6 +38,7 @@ Organization conventions (`organization.json`) are always loaded regardless of t
 3. If found:
    - Read `portfolio/<org>/<project>/<component>.json` (see `domain/entities.md` → PortfolioEntry)
    - Filter fields based on the requested depth tier
+   - If `portfolio_guides` is present and the tier includes it (standard or full): read each listed file from `portfolio/<org>/<project>/` and include the contents in the context passed to agents
    - Read `portfolio/<org>/organization.json` for org-level conventions (see `domain/entities.md` → Organization)
    - Return combined context at requested depth
 4. If not found:

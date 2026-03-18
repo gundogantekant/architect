@@ -95,11 +95,12 @@ Full onboarded repo context used by all skills and agents.
     "ci_cd": ["CI/CD pipeline details"],
     "testing": ["test commands and patterns"]
   },
-  "custom_rules": []
+  "custom_rules": [],
+  "portfolio_guides": ["debug-guide.md", "setup-guide.md"]
 }
 ```
 
-`brief` and `doc_paths` are optional — absent on entries onboarded before the profiler was added.
+`brief`, `doc_paths`, and `portfolio_guides` are optional — absent on entries onboarded before the profiler was added. `portfolio_guides` lists filenames of markdown guides in the same portfolio directory that are auto-loaded into agent context at standard tier and above.
 
 ## Context Loading
 

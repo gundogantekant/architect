@@ -154,6 +154,7 @@ Stored at `portfolio/<org>/<project>/<component>.json`.
     "testing": ["string"]
   },
   "custom_rules": ["string"],
+  "portfolio_guides": ["string — filenames of markdown guides in the same portfolio directory to auto-load"],
   "worktree_setup": {
     "copy_paths": ["string — relative paths to copy from source to worktree"],
     "post_commands": ["string — shell commands to run in worktree after copy"]
@@ -161,7 +162,7 @@ Stored at `portfolio/<org>/<project>/<component>.json`.
 }
 ```
 
-**Optional fields**: `brief`, `doc_paths`, and `worktree_setup` are absent on entries onboarded before the profiler was added or where no setup is needed.
+**Optional fields**: `brief`, `doc_paths`, `portfolio_guides`, and `worktree_setup` are absent on entries onboarded before the profiler was added or where no setup is needed.
 
 ## Organization
 
