@@ -1740,6 +1740,147 @@ function showDiscussModal() {
   };
 }
 
+async function showEpicDiscussModal(epicId) {
+  const epic = await api(`epics/${epicId}`);
+  let projectKeys = epic.project_keys || [];
+  const p = epic.progress || { done: 0, total: 0 };
+
+  let registryKeys = [];
+  if (!projectKeys.length) {
+    try {
+      const registry = await api('registry');
+      for (const [, entry] of Object.entries(registry.entries)) {
+        registryKeys.push(`${entry.org}/${entry.project}/${entry.component}`);
+      }
+      registryKeys.sort();
+    } catch {}
+    projectKeys = registryKeys;
+  }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Discuss Epic with Agent</h3>
+      <div style="margin-bottom:14px">
+        <strong>${esc(epic.title)}</strong>
+        <div style="font-size:12px;color:var(--text-light);margin-top:4px">Progress: ${p.done}/${p.total}</div>
+      </div>
+      <div class="field">
+        <label>Target Project</label>
+        <select id="epic-discuss-project">
+          ${projectKeys.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join('')}
+        </select>
+        ${registryKeys.length ? '<div style="font-size:11px;color:var(--text-light);margin-top:2px">No linked projects — showing all registry projects</div>' : ''}
+      </div>
+      <div class="field">
+        <label>Prompt / Instructions *</label>
+        <textarea id="epic-discuss-instructions" placeholder="What would you like to discuss? e.g., architecture decisions, scope planning, implementation strategy..."></textarea>
+      </div>
+      <div class="interactive-toggle">
+        <input type="checkbox" id="epic-discuss-interactive" checked />
+        <label for="epic-discuss-interactive">Interactive terminal (xterm.js)</label>
+      </div>
+      <div class="interactive-toggle">
+        <input type="checkbox" id="epic-discuss-skip-permissions" />
+        <label for="epic-discuss-skip-permissions">Skip permissions (autonomous)</label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" id="epic-discuss-cancel">Cancel</button>
+        <button class="btn btn-dispatch" id="epic-discuss-submit" style="background:var(--teal)">Discuss</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#epic-discuss-cancel').onclick = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  overlay.querySelector('#epic-discuss-submit').onclick = async () => {
+    const instructions = overlay.querySelector('#epic-discuss-instructions').value.trim();
+    if (!instructions) { alert('Instructions are required'); return; }
+    const interactive = overlay.querySelector('#epic-discuss-interactive').checked;
+    const skipPermissions = overlay.querySelector('#epic-discuss-skip-permissions').checked;
+    const pk = overlay.querySelector('#epic-discuss-project').value || projectKeys[0];
+
+    if (!pk) {
+      alert('No project key available. Onboard a project first.');
+      return;
+    }
+
+    const btn = overlay.querySelector('#epic-discuss-submit');
+    btn.disabled = true;
+    btn.textContent = 'Dispatching...';
+
+    try {
+      const endpoint = interactive ? '/api/terminal' : '/api/dispatch';
+      const body = {
+        epic_id: epicId,
+        project_key: pk,
+        additional_instructions: instructions,
+      };
+      if (!interactive) body.skip_permissions = skipPermissions;
+      if (interactive && skipPermissions) body.skip_permissions = true;
+
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
+
+      let projectPath = '';
+      try {
+        const registry = await api('registry');
+        for (const [path, entry] of Object.entries(registry.entries)) {
+          if (`${entry.org}/${entry.project}/${entry.component}` === pk) { projectPath = path; break; }
+        }
+      } catch {}
+
+      if (interactive) {
+        const terminalInfo = {
+          id: result.terminal_id,
+          work_item_id: null,
+          epic_id: epicId,
+          project_key: pk,
+          project_path: projectPath,
+          title: instructions.slice(0, 60) + (instructions.length > 60 ? '...' : ''),
+          status: 'running',
+          started_at: new Date().toISOString(),
+        };
+        activeTerminals.push(terminalInfo);
+        updateDispatchBadge();
+        createTerminalPanel(terminalInfo);
+        placeSessionPanels();
+        await connectTerminalWs(terminalInfo);
+      } else {
+        const dispatch = {
+          id: result.dispatch_id,
+          work_item_id: null,
+          epic_id: epicId,
+          project_key: pk,
+          project_path: projectPath,
+          title: instructions.slice(0, 60) + (instructions.length > 60 ? '...' : ''),
+          status: 'running',
+          started_at: new Date().toISOString(),
+        };
+        activeDispatches.push(dispatch);
+        updateDispatchBadge();
+        createDispatchPanel(dispatch);
+        placeSessionPanels();
+        connectDispatchStream(dispatch);
+      }
+
+      overlay.remove();
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = 'Discuss';
+      alert('Dispatch failed: ' + e.message);
+    }
+  };
+}
+
 // --- Epic Views ---
 
 function renderEpicListView(epics) {
@@ -1758,7 +1899,7 @@ function renderEpicListView(epics) {
       html += `<td>${p.done}/${p.total} (${pct}%)</td>`;
       html += `<td>${(epic.project_keys || []).map(k => `<span class="tag">${esc(k)}</span>`).join('')}</td>`;
       html += `<td>${epic.target_date || '—'}</td>`;
-      html += `<td><button class="dispatch-btn" data-epic-dispatch="${esc(epic.id)}">dispatch</button></td>`;
+      html += `<td><button class="dispatch-btn" data-epic-dispatch="${esc(epic.id)}">dispatch</button><button class="dispatch-btn" data-epic-discuss="${esc(epic.id)}" style="background:var(--teal);margin-left:4px">discuss</button></td>`;
       html += `</tr>`;
     }
     html += `</tbody></table>`;
@@ -1777,6 +1918,9 @@ function bindEpicListEvents() {
   if (createBtn) createBtn.onclick = () => showEpicModal(null);
   document.querySelectorAll('[data-epic-dispatch]').forEach(btn => {
     btn.onclick = () => showEpicDispatchModal(btn.dataset.epicDispatch);
+  });
+  document.querySelectorAll('[data-epic-discuss]').forEach(btn => {
+    btn.onclick = () => showEpicDiscussModal(btn.dataset.epicDiscuss);
   });
 }
 
@@ -1804,6 +1948,7 @@ async function renderEpicDetailView(epicId) {
   html += `<button class="btn-add-wi" id="epic-link-item">+ Link Item</button>`;
   html += `<button class="btn-add-wi" id="epic-create-task" style="margin-left:8px">+ Create Task</button>`;
   html += `<a href="#agents?epic=${esc(epic.id)}" style="margin-left:8px;font-size:12px;color:var(--accent)">View agents</a>`;
+  html += `<button class="dispatch-btn" id="epic-discuss-btn-tasks" style="background:var(--teal);margin-left:8px">Discuss with Agent</button>`;
   if (items.length) {
     const sortedEpicItems = topoSort(items);
     html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Depends On</th><th>Project</th><th>Tags</th><th></th></tr></thead><tbody>`;
@@ -1864,6 +2009,7 @@ async function renderEpicDetailView(epicId) {
   html += `<div class="tab-content" data-panel="3">`;
   html += `<button class="edit-btn" id="epic-edit-details" style="margin-bottom:12px">Edit</button>`;
   html += `<button class="dispatch-btn" id="epic-dispatch-btn" style="margin-bottom:12px;margin-left:8px">Dispatch</button>`;
+  html += `<button class="dispatch-btn" id="epic-discuss-btn" style="background:var(--teal);margin-bottom:12px;margin-left:8px">Discuss</button>`;
   html += `<button class="delete-btn" id="epic-delete-btn" style="margin-bottom:12px;margin-left:8px">Delete</button>`;
   html += `<dl class="kv">`;
   html += `<dt>Title</dt><dd>${esc(epic.title)}</dd>`;
@@ -1956,6 +2102,12 @@ function bindEpicDetailEvents(epicId) {
   // Dispatch from detail
   const dispatchBtn = document.getElementById('epic-dispatch-btn');
   if (dispatchBtn) dispatchBtn.onclick = () => showEpicDispatchModal(epicId);
+
+  // Discuss from detail
+  const discussBtn = document.getElementById('epic-discuss-btn');
+  if (discussBtn) discussBtn.onclick = () => showEpicDiscussModal(epicId);
+  const discussBtnTasks = document.getElementById('epic-discuss-btn-tasks');
+  if (discussBtnTasks) discussBtnTasks.onclick = () => showEpicDiscussModal(epicId);
 
   // Task dispatch buttons
   document.querySelectorAll('[data-epic-task-dispatch]').forEach(btn => {
