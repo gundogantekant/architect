@@ -1302,6 +1302,7 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
       html += `<div style="margin-top:8px;display:flex;gap:6px">`;
       html += `<button class="btn-add-wi" data-wi-plan="${esc(w.id)}" style="margin:0;padding:4px 10px;font-size:11px">Plan</button>`;
       html += `<button class="btn-add-wi" data-wi-doc="${esc(w.id)}" style="margin:0;padding:4px 10px;font-size:11px">Docs</button>`;
+      html += `<button class="btn-add-wi" data-wi-files="${esc(w.id)}" style="margin:0;padding:4px 10px;font-size:11px">Files</button>`;
       html += `</div>`;
       html += `<div class="wi-artifact-container" data-artifact-for="${esc(w.id)}" style="margin-top:8px"></div>`;
       html += `</td></tr>`;
@@ -1496,6 +1497,11 @@ function bindTabs() {
   // Work item doc buttons
   document.querySelectorAll('[data-wi-doc]').forEach(btn => {
     btn.onclick = () => loadItemArtifact(btn.dataset.wiDoc, 'doc');
+  });
+
+  // Work item files buttons
+  document.querySelectorAll('[data-wi-files]').forEach(btn => {
+    btn.onclick = () => loadItemArtifacts(btn.dataset.wiFiles);
   });
 
   // Epic badge navigation
@@ -1809,8 +1815,24 @@ async function renderEpicDetailView(epicId) {
       html += `<td><span class="tag">${esc(item.project_key)}</span></td>`;
       html += `<td>${(item.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
       html += `<td>`;
+      html += `<button class="expand-btn" data-epic-wi-expand="${esc(item.id)}">details</button>`;
       if (canDispatch) html += `<button class="dispatch-btn" data-epic-task-dispatch="${esc(item.id)}" data-epic-task-pk="${esc(item.project_key)}">dispatch</button>`;
       html += `<button class="unlink-btn" data-unlink-item="${esc(item.id)}">unlink</button>`;
+      html += `</td></tr>`;
+      // Detail row for this work item in epic view
+      html += `<tr class="wi-detail" data-epic-wi-detail="${esc(item.id)}" style="display:none"><td colspan="8">`;
+      if (item.description) html += `<div style="margin-bottom:8px">${esc(item.description)}</div>`;
+      if (item.session_log?.length) {
+        html += `<div class="session-log">`;
+        for (const e of item.session_log) html += `<div class="entry"><span class="date">${esc(e.date)}</span>${esc(e.summary)}</div>`;
+        html += `</div>`;
+      }
+      html += `<div style="margin-top:8px;display:flex;gap:6px">`;
+      html += `<button class="btn-add-wi" data-wi-plan="${esc(item.id)}" style="margin:0;padding:4px 10px;font-size:11px">Plan</button>`;
+      html += `<button class="btn-add-wi" data-wi-doc="${esc(item.id)}" style="margin:0;padding:4px 10px;font-size:11px">Docs</button>`;
+      html += `<button class="btn-add-wi" data-wi-files="${esc(item.id)}" style="margin:0;padding:4px 10px;font-size:11px">Files</button>`;
+      html += `</div>`;
+      html += `<div class="wi-artifact-container" data-artifact-for="${esc(item.id)}" style="margin-top:8px"></div>`;
       html += `</td></tr>`;
       // Session slot row for this work item
       html += `<tr class="wi-sessions-row" data-wi-sessions="${esc(item.id)}" style="display:none"><td colspan="8"><div class="wi-sessions-container" data-session-slot="${esc(item.id)}"></div></td></tr>`;
@@ -1950,6 +1972,26 @@ function bindEpicDetailEvents(epicId) {
       else if (wi) alert('No project key available. Link a project to this epic first.');
     };
   });
+
+  // Epic view: expand detail rows
+  document.querySelectorAll('[data-epic-wi-expand]').forEach(btn => {
+    btn.onclick = () => {
+      const wid = btn.dataset.epicWiExpand;
+      const row = document.querySelector(`[data-epic-wi-detail="${wid}"]`);
+      if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
+    };
+  });
+
+  // Epic view: plan/docs/files buttons (reuse same handlers)
+  document.querySelectorAll('[data-epic-wi-detail] [data-wi-plan]').forEach(btn => {
+    btn.onclick = () => loadItemArtifact(btn.dataset.wiPlan, 'plan');
+  });
+  document.querySelectorAll('[data-epic-wi-detail] [data-wi-doc]').forEach(btn => {
+    btn.onclick = () => loadItemArtifact(btn.dataset.wiDoc, 'doc');
+  });
+  document.querySelectorAll('[data-epic-wi-detail] [data-wi-files]').forEach(btn => {
+    btn.onclick = () => loadItemArtifacts(btn.dataset.wiFiles);
+  });
 }
 
 async function loadEpicPlan(epicId) {
@@ -2034,7 +2076,7 @@ async function loadItemArtifact(itemId, type) {
     const content = await resp.text();
     const label = type === 'plan' ? 'Plan' : 'Documentation';
     if (content.trim()) {
-      container.innerHTML = `<div style="border:1px solid var(--border);border-radius:6px;padding:10px;font-size:12px;white-space:pre-wrap;max-height:300px;overflow:auto">${esc(content)}</div><button class="btn-add-wi" id="edit-wi-${type}-${itemId}" style="margin-top:4px;padding:4px 10px;font-size:11px">Edit ${label}</button>`;
+      container.innerHTML = `<div style="border:1px solid var(--border);border-radius:6px;max-height:300px;overflow:auto" class="md-container">${renderMd(content)}</div><button class="btn-add-wi" id="edit-wi-${type}-${itemId}" style="margin-top:4px;padding:4px 10px;font-size:11px">Edit ${label}</button>`;
     } else {
       container.innerHTML = `<p class="empty" style="font-size:12px">No ${label.toLowerCase()} yet.</p><button class="btn-add-wi" id="edit-wi-${type}-${itemId}" style="padding:4px 10px;font-size:11px">Create ${label}</button>`;
     }
@@ -2048,6 +2090,102 @@ async function loadItemArtifact(itemId, type) {
     });
   } catch {
     container.innerHTML = `<p class="empty" style="font-size:12px">Failed to load.</p>`;
+  }
+}
+
+async function loadItemArtifacts(itemId) {
+  const container = document.querySelector(`[data-artifact-for="${itemId}"]`);
+  if (!container) return;
+  container.innerHTML = '<p style="color:var(--muted);font-size:12px">Loading files...</p>';
+  try {
+    const data = await api(`work-items/${itemId}/artifacts`);
+    const customFiles = (data.files || []).filter(f => f !== 'plan.md' && f !== 'docs.md' && f.endsWith('.md'));
+    let html = '';
+    if (customFiles.length) {
+      html += `<div style="border:1px solid var(--border);border-radius:6px;padding:10px;font-size:12px;max-height:300px;overflow:auto">`;
+      for (const file of customFiles) {
+        html += `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid #f0f0f0">`;
+        html += `<code style="flex:1">${esc(file)}</code>`;
+        html += `<button class="btn-add-wi" data-af-view="${esc(file)}" style="margin:0;padding:2px 8px;font-size:10px">View</button>`;
+        html += `<button class="btn-add-wi" data-af-edit="${esc(file)}" style="margin:0;padding:2px 8px;font-size:10px">Edit</button>`;
+        html += `<button class="delete-btn" data-af-del="${esc(file)}" style="padding:2px 8px;font-size:10px">Delete</button>`;
+        html += `</div>`;
+      }
+      html += `</div>`;
+    } else {
+      html += `<p class="empty" style="font-size:12px">No custom artifacts.</p>`;
+    }
+    html += `<button class="btn-add-wi" data-af-add="1" style="margin-top:4px;padding:4px 10px;font-size:11px">+ Add File</button>`;
+    html += `<div class="af-content-area" style="margin-top:8px"></div>`;
+    container.innerHTML = html;
+
+    const contentArea = container.querySelector('.af-content-area');
+
+    container.querySelectorAll('[data-af-view]').forEach(btn => {
+      btn.onclick = async () => {
+        const fname = btn.dataset.afView;
+        contentArea.innerHTML = '<p style="font-size:12px;color:var(--text-light)">Loading...</p>';
+        try {
+          const resp = await fetch(`/api/work-items/${itemId}/artifacts/${fname}`);
+          if (!resp.ok) throw new Error('Not found');
+          const content = await resp.text();
+          contentArea.innerHTML = `<div style="border:1px solid var(--border);border-radius:6px;max-height:300px;overflow:auto" class="md-container">${renderMd(content)}</div>`;
+        } catch {
+          contentArea.innerHTML = '<p class="empty" style="font-size:12px">Failed to load.</p>';
+        }
+      };
+    });
+
+    container.querySelectorAll('[data-af-edit]').forEach(btn => {
+      btn.onclick = async () => {
+        const fname = btn.dataset.afEdit;
+        let content = '';
+        try {
+          const resp = await fetch(`/api/work-items/${itemId}/artifacts/${fname}`);
+          if (resp.ok) content = await resp.text();
+        } catch {}
+        showMdEditorModal(fname, content, async (newContent) => {
+          await fetch(`/api/work-items/${itemId}/artifacts/${fname}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: newContent }),
+          });
+          loadItemArtifacts(itemId);
+        });
+      };
+    });
+
+    container.querySelectorAll('[data-af-del]').forEach(btn => {
+      btn.onclick = async () => {
+        const fname = btn.dataset.afDel;
+        if (!confirm(`Delete artifact "${fname}"?`)) return;
+        await fetch(`/api/work-items/${itemId}/artifacts/${fname}`, { method: 'DELETE' });
+        loadItemArtifacts(itemId);
+      };
+    });
+
+    container.querySelector('[data-af-add]').onclick = () => {
+      const fname = prompt('Filename (must end with .md):', 'notes.md');
+      if (!fname) return;
+      if (!fname.endsWith('.md') || !/^[a-zA-Z0-9_-]+\.md$/.test(fname)) {
+        alert('Filename must match [a-zA-Z0-9_-]+.md');
+        return;
+      }
+      if (fname === 'plan.md' || fname === 'docs.md') {
+        alert('Use the Plan/Docs buttons for those files.');
+        return;
+      }
+      showMdEditorModal(fname, '', async (newContent) => {
+        await fetch(`/api/work-items/${itemId}/artifacts/${fname}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: newContent }),
+        });
+        loadItemArtifacts(itemId);
+      });
+    };
+  } catch {
+    container.innerHTML = '<p class="empty" style="font-size:12px">Failed to load files.</p>';
   }
 }
 

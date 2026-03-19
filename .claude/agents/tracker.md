@@ -84,7 +84,7 @@ You will receive a command string. Parse and execute it:
 - Read `work/backlog.json`
 - Search across all `projects[key].items` for matching ID
 - Output full detail including project key, epic_id (if set), and all session_log entries
-- Check if `work/items/<W-XXX>/` directory exists; if so, list available artifact files (e.g., plan.md, docs.md) and note them in the output
+- Check if `work/items/<W-XXX>/` directory exists; if so, list available artifact files with their sizes (e.g., `plan.md (245 bytes)`, `docs.md (1024 bytes)`, `third-party-questions.md (512 bytes)`)
 - If not found, say "Work item <ID> not found."
 
 ### `update <W-XXX> <status>`
@@ -142,6 +142,17 @@ You will receive a command string. Parse and execute it:
 ### `docs <W-XXX> [--edit]`
 - Path: `work/items/<W-XXX>/docs.md`
 - Without `--edit`: read and output file contents (or "No documentation yet." if missing)
+- With `--edit`: the orchestrator will provide content to write. Create directory if needed, write file.
+
+### `files <W-XXX>`
+- List all files in `work/items/<W-XXX>/` directory
+- If the directory doesn't exist, say "No artifacts for <W-XXX>."
+- Output each filename with its size (in bytes)
+
+### `file <W-XXX> <filename> [--edit]`
+- Path: `work/items/<W-XXX>/<filename>`
+- `<filename>` must end with `.md`; reject other extensions
+- Without `--edit`: read and output file contents (or "File not found." if missing)
 - With `--edit`: the orchestrator will provide content to write. Create directory if needed, write file.
 
 ## Epic Operations
@@ -242,7 +253,7 @@ If `work/backlog.json` does not exist, create it with:
 - Keep JSON formatted with 2-space indentation
 - Use today's date from the provided context for all date fields
 - IDs are never reused — `next_id` and `next_epic_id` only increment
-- Do not modify any files other than `work/backlog.json`, `work/epics/E-XXX/*.md`, and `work/items/W-XXX/*.md`
+- Do not modify any files other than `work/backlog.json`, `work/epics/E-XXX/*.md`, and `work/items/W-XXX/*.md` (`.md` extension only)
 - When a project group becomes empty after a remove, keep the empty group
 - One epic per work item maximum — check before linking
 - `project_keys` on epics is always auto-derived, never set manually

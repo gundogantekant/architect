@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createServer } from 'node:http';
-import { readFile, writeFile, rename, readdir, stat, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, rename, readdir, stat, mkdir, unlink as unlinkFile } from 'node:fs/promises';
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { join, resolve, extname } from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
@@ -974,6 +974,35 @@ const routes = [
       json(res, { files });
     } catch {
       json(res, { files: [] });
+    }
+  }],
+
+  // Read a specific artifact file
+  [/^\/api\/work-items\/(W-\d+)\/artifacts\/([a-zA-Z0-9_-]+\.md)$/, 'GET', async (m, _req, res) => {
+    try {
+      const content = await readFile(join(WORK, 'items', m[1], m[2]), 'utf8');
+      text(res, content);
+    } catch {
+      err(res, 'artifact not found', 404);
+    }
+  }],
+
+  // Write a specific artifact file
+  [/^\/api\/work-items\/(W-\d+)\/artifacts\/([a-zA-Z0-9_-]+\.md)$/, 'PUT', async (m, req, res) => {
+    const body = await parseBody(req);
+    const dir = join(WORK, 'items', m[1]);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, m[2]), body.content || '');
+    json(res, { saved: true });
+  }],
+
+  // Delete a specific artifact file
+  [/^\/api\/work-items\/(W-\d+)\/artifacts\/([a-zA-Z0-9_-]+\.md)$/, 'DELETE', async (m, _req, res) => {
+    try {
+      await unlinkFile(join(WORK, 'items', m[1], m[2]));
+      json(res, { deleted: m[2] });
+    } catch {
+      err(res, 'artifact not found', 404);
     }
   }],
 
