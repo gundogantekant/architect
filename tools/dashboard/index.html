@@ -286,6 +286,37 @@
   .agents-filter-bar select { padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border); font-size: 12px; }
   .agents-badge { background: var(--accent); color: #fff; font-size: 10px; padding: 1px 7px; border-radius: 10px; font-weight: 700; margin-left: 4px; }
   .agents-badge.empty { display: none; }
+
+  /* Context session sections (project/epic level) */
+  .context-sessions-section.hidden { display: none; }
+  .context-sessions-section { padding: 8px 0; }
+  .context-sessions-section h3 { margin: 8px 0; font-size: 14px; color: var(--text-light); }
+
+  /* Hierarchical agent groups */
+  .agent-group { margin-bottom: 16px; }
+  .agent-group > summary { font-size: 14px; font-weight: 600; cursor: pointer; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .agent-subgroup { margin-left: 16px; margin-bottom: 8px; }
+  .agent-subgroup > summary { font-size: 13px; font-weight: 500; cursor: pointer; padding: 4px 0; color: var(--text-light); }
+
+  /* Sidebar project group */
+  .sidebar-project-label {
+    padding: 4px 16px; font-size: 10px; font-weight: 600;
+    color: #f5c2e7; text-transform: uppercase; letter-spacing: 0.3px;
+    margin-top: 6px; cursor: pointer;
+  }
+  .sidebar-project-label:hover { background: #313244; }
+  .sidebar-epic-sublabel {
+    padding: 3px 24px; font-size: 10px; font-weight: 600;
+    color: #6c7086; text-transform: uppercase; letter-spacing: 0.5px;
+    cursor: pointer;
+  }
+  .sidebar-epic-sublabel:hover { background: #313244; }
+  .session-entry.indented { padding-left: 32px; }
+
+  /* Org active agents */
+  .org-agents-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+  .org-agents-table th { text-align: left; padding: 6px 8px; border-bottom: 2px solid var(--border); font-size: 10px; text-transform: uppercase; color: var(--text-light); }
+  .org-agents-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
 </style>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/css/xterm.min.css">
 </head>
@@ -628,26 +659,46 @@ function placeSessionPanels() {
 
   let globalHasPanels = false;
 
-  // 3. Place each session panel
+  // 3. Place each session panel (cascading: work_item → epic → project → global)
   const allSessions = [
-    ...activeDispatches.map(d => ({ key: `dispatch:${d.id}`, work_item_id: d.work_item_id })),
-    ...activeTerminals.map(t => ({ key: `terminal:${t.id}`, work_item_id: t.work_item_id })),
+    ...activeDispatches.map(d => ({ key: `dispatch:${d.id}`, work_item_id: d.work_item_id, epic_id: d.epic_id, project_key: d.project_key })),
+    ...activeTerminals.map(t => ({ key: `terminal:${t.id}`, work_item_id: t.work_item_id, epic_id: t.epic_id, project_key: t.project_key })),
   ];
 
   for (const session of allSessions) {
     const panel = sessionPanels.get(session.key);
     if (!panel) continue;
 
-    const slot = session.work_item_id ? document.querySelector(`[data-session-slot="${session.work_item_id}"]`) : null;
-    if (slot) {
-      slot.appendChild(panel);
-      // Show the parent wi-sessions-row
-      const row = slot.closest('.wi-sessions-row');
+    // Tier 1: work-item-level slot
+    const wiSlot = session.work_item_id ? document.querySelector(`[data-session-slot="${session.work_item_id}"]`) : null;
+    if (wiSlot) {
+      wiSlot.appendChild(panel);
+      const row = wiSlot.closest('.wi-sessions-row');
       if (row) row.style.display = '';
-    } else {
-      globalContainer.appendChild(panel);
-      globalHasPanels = true;
+      continue;
     }
+
+    // Tier 2: epic-level slot
+    const epicSlot = session.epic_id ? document.querySelector(`[data-session-slot-epic="${session.epic_id}"]`) : null;
+    if (epicSlot) {
+      epicSlot.appendChild(panel);
+      const section = epicSlot.closest('.context-sessions-section');
+      if (section) section.classList.remove('hidden');
+      continue;
+    }
+
+    // Tier 3: project-level slot
+    const projSlot = session.project_key ? document.querySelector(`[data-session-slot-project="${session.project_key}"]`) : null;
+    if (projSlot) {
+      projSlot.appendChild(panel);
+      const section = projSlot.closest('.context-sessions-section');
+      if (section) section.classList.remove('hidden');
+      continue;
+    }
+
+    // Tier 4: global fallback
+    globalContainer.appendChild(panel);
+    globalHasPanels = true;
   }
 
   // 4. Insert global container only if it has panels
@@ -1114,7 +1165,7 @@ async function buildTree() {
 }
 
 // --- Views ---
-function renderOrgView(org, data) {
+function renderOrgView(org, data, orgSessions) {
   let html = `<div class="card"><h2>${esc(data.name || org)}</h2>`;
   html += `<dl class="kv"><dt>Path Root</dt><dd><code>${esc(data.path_root || '—')}</code></dd></dl>`;
 
@@ -1159,6 +1210,35 @@ function renderOrgView(org, data) {
     html += `<h3>Projects (${data.projects.length})</h3><div>`;
     for (const p of data.projects) html += `<span class="tag" style="font-size:12px;padding:3px 10px">${esc(p)}</span>`;
     html += `</div>`;
+  }
+
+  // Active agents for this organization
+  if (orgSessions && orgSessions.length) {
+    // Group by project_key
+    const byProject = new Map();
+    for (const s of orgSessions) {
+      const pk = s.project_key || 'unknown';
+      if (!byProject.has(pk)) byProject.set(pk, []);
+      byProject.get(pk).push(s);
+    }
+    html += `<h3>Active Agents (${orgSessions.length})</h3>`;
+    for (const [pk, sessions] of byProject) {
+      html += `<h4 style="font-size:13px;color:var(--text-light);margin:8px 0 4px">${esc(pk)}</h4>`;
+      html += `<table class="org-agents-table"><thead><tr><th></th><th>Title</th><th>Work Item</th><th>Status</th><th>Elapsed</th><th></th></tr></thead><tbody>`;
+      for (const s of sessions) {
+        const dotClass = s.status === 'running' ? 'running' : (s.status === 'completed' ? 'completed' : (s.status === 'interrupted' ? 'interrupted' : 'failed'));
+        const elapsed = formatElapsed(s.started_at);
+        html += `<tr>`;
+        html += `<td><span class="status-dot ${dotClass}" style="display:inline-block"></span></td>`;
+        html += `<td>${esc(s.title || s.id)}</td>`;
+        html += `<td>${s.work_item_id ? `<code>${esc(s.work_item_id)}</code>` : '—'}</td>`;
+        html += `<td><span class="badge badge-${s.status === 'running' ? 'open' : (s.status === 'completed' ? 'done' : 'medium')}">${esc(s.status)}</span></td>`;
+        html += `<td>${elapsed}</td>`;
+        html += `<td><button class="focus-btn" data-org-focus="${esc(s.type)}:${esc(s.id)}">Focus</button></td>`;
+        html += `</tr>`;
+      }
+      html += `</tbody></table>`;
+    }
   }
 
   html += `</div>`;
@@ -1226,6 +1306,8 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
   } else {
     html += `<p class="empty">No work items for this project.</p>`;
   }
+  // Project-level session slot (sessions with project_key but no matching work item slot)
+  html += `<div class="context-sessions-section hidden" style="margin-top:16px"><h3>Project Agents</h3><div data-session-slot-project="${esc(currentProjectKey)}"></div></div>`;
   html += `</div>`;
 
   // Tab 1: Overview (Profile + Guidance + Agents)
@@ -1721,6 +1803,8 @@ async function renderEpicDetailView(epicId) {
   } else {
     html += `<p class="empty">No linked tasks.</p>`;
   }
+  // Epic-level session slot (sessions with epic_id but no matching linked task slot)
+  html += `<div class="context-sessions-section hidden" style="margin-top:16px"><h3>Epic Agents</h3><div data-session-slot-epic="${esc(epicId)}"></div></div>`;
   html += `</div>`;
 
   // Tab 1: Planning
@@ -2445,28 +2529,38 @@ function formatElapsed(startedAt) {
   return `${h}h ${m % 60}m`;
 }
 
+function scrollToSessionPanel(session) {
+  const panel = sessionPanels.get(`${session.type}:${session.id}`);
+  if (panel && panel.isConnected) {
+    panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (panel.classList.contains('collapsed')) {
+      const btn = panel.querySelector('.minimize-btn');
+      if (btn) togglePanelCollapse(`${session.type}:${session.id}`, panel, btn);
+    }
+  }
+}
+
 function navigateToSession(session) {
   if (session.work_item_id && session.project_key) {
     const [org, proj, comp] = session.project_key.split('/');
     if (org && proj && comp) {
       location.hash = `#component/${org}/${proj}/${comp}`;
-      // After route renders, scroll to and expand the panel
-      setTimeout(() => {
-        const panel = sessionPanels.get(`${session.type}:${session.id}`);
-        if (panel && panel.isConnected) {
-          panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          if (panel.classList.contains('collapsed')) {
-            const btn = panel.querySelector('.minimize-btn');
-            if (btn) togglePanelCollapse(`${session.type}:${session.id}`, panel, btn);
-          }
-        }
-      }, 300);
+      setTimeout(() => scrollToSessionPanel(session), 300);
       return;
     }
   }
   if (session.epic_id) {
     location.hash = `#epic/${session.epic_id}`;
+    setTimeout(() => scrollToSessionPanel(session), 300);
     return;
+  }
+  if (session.project_key) {
+    const [org, proj, comp] = session.project_key.split('/');
+    if (org && proj && comp) {
+      location.hash = `#component/${org}/${proj}/${comp}`;
+      setTimeout(() => scrollToSessionPanel(session), 300);
+      return;
+    }
   }
   openFocusPopup(session.type, session.id);
 }
@@ -2481,21 +2575,27 @@ function refreshSessionsSidebar() {
   ];
   if (!allSessions.length) return;
 
-  // Group by epic_id, then standalone
-  const epicGroups = new Map(); // epic_id → sessions
+  // Group by project_key, then by epic_id within each project
+  const projectGroups = new Map(); // project_key → { epics: Map<epic_id, sessions[]>, noEpic: sessions[] }
   const standalone = [];
   for (const s of allSessions) {
-    if (s.epic_id) {
-      if (!epicGroups.has(s.epic_id)) epicGroups.set(s.epic_id, []);
-      epicGroups.get(s.epic_id).push(s);
+    if (s.project_key) {
+      if (!projectGroups.has(s.project_key)) projectGroups.set(s.project_key, { epics: new Map(), noEpic: [] });
+      const pg = projectGroups.get(s.project_key);
+      if (s.epic_id) {
+        if (!pg.epics.has(s.epic_id)) pg.epics.set(s.epic_id, []);
+        pg.epics.get(s.epic_id).push(s);
+      } else {
+        pg.noEpic.push(s);
+      }
     } else {
       standalone.push(s);
     }
   }
 
-  function renderEntry(s) {
+  function renderEntry(s, indented) {
     const entry = document.createElement('div');
-    entry.className = 'session-entry';
+    entry.className = 'session-entry' + (indented ? ' indented' : '');
     const dotClass = s.status === 'running' ? 'running' : (s.status === 'completed' ? 'completed' : (s.status === 'interrupted' ? 'interrupted' : 'failed'));
     const elapsed = formatElapsed(s.started_at);
     entry.innerHTML = `<span class="status-dot ${dotClass}" style="width:8px;height:8px"></span><span class="session-label">${esc(s.label)}</span><span class="session-meta">${elapsed}</span>`;
@@ -2503,25 +2603,42 @@ function refreshSessionsSidebar() {
     return entry;
   }
 
-  // Render epic groups
-  for (const [epicId, sessions] of epicGroups) {
-    const groupLabel = document.createElement('div');
-    groupLabel.className = 'sidebar-group-label';
-    groupLabel.textContent = epicId;
-    groupLabel.style.cursor = 'pointer';
-    groupLabel.onclick = () => { location.hash = `#epic/${epicId}`; };
-    list.appendChild(groupLabel);
-    for (const s of sessions) list.appendChild(renderEntry(s));
+  // Render project > epic > session hierarchy
+  for (const [pk, pg] of projectGroups) {
+    // Show project label (drop org prefix for brevity)
+    const parts = pk.split('/');
+    const shortLabel = parts.length >= 3 ? `${parts[1]}/${parts[2]}` : pk;
+    const projLabel = document.createElement('div');
+    projLabel.className = 'sidebar-project-label';
+    projLabel.textContent = shortLabel;
+    projLabel.onclick = () => {
+      const [org, proj, comp] = pk.split('/');
+      if (org && proj && comp) location.hash = `#component/${org}/${proj}/${comp}`;
+    };
+    list.appendChild(projLabel);
+
+    // Epic sub-groups
+    for (const [epicId, sessions] of pg.epics) {
+      const epicLabel = document.createElement('div');
+      epicLabel.className = 'sidebar-epic-sublabel';
+      epicLabel.textContent = epicId;
+      epicLabel.onclick = () => { location.hash = `#epic/${epicId}`; };
+      list.appendChild(epicLabel);
+      for (const s of sessions) list.appendChild(renderEntry(s, true));
+    }
+
+    // No-epic sessions
+    for (const s of pg.noEpic) list.appendChild(renderEntry(s, false));
   }
 
   // Render standalone
-  if (standalone.length && epicGroups.size > 0) {
+  if (standalone.length && projectGroups.size > 0) {
     const label = document.createElement('div');
     label.className = 'sidebar-group-label';
     label.textContent = 'STANDALONE';
     list.appendChild(label);
   }
-  for (const s of standalone) list.appendChild(renderEntry(s));
+  for (const s of standalone) list.appendChild(renderEntry(s, false));
 }
 
 let sessionsSidebarInterval = null;
@@ -2780,14 +2897,71 @@ function renderAgentsView(agents, filters = {}) {
   html += `</div>`;
 
   if (filtered.length) {
-    html += `<div class="agents-grid">`;
-    for (const agent of filtered) html += renderAgentTile(agent);
-    html += `</div>`;
+    // Build hierarchy: project → epic → task → agents
+    const hierarchy = buildAgentHierarchy(filtered);
+
+    // Render project groups
+    for (const [pk, projData] of hierarchy.projects) {
+      html += `<details class="agent-group" open><summary>${esc(pk)}</summary>`;
+      // Epics within project
+      for (const [eid, epicTasks] of projData.epics) {
+        html += `<details class="agent-subgroup" open><summary>${esc(eid)}</summary><div class="agents-grid">`;
+        for (const [, taskAgents] of epicTasks) {
+          for (const agent of taskAgents) html += renderAgentTile(agent);
+        }
+        html += `</div></details>`;
+      }
+      // No-epic agents within project
+      if (projData.noEpic.size) {
+        html += `<div class="agents-grid" style="margin-left:16px">`;
+        for (const [, taskAgents] of projData.noEpic) {
+          for (const agent of taskAgents) html += renderAgentTile(agent);
+        }
+        html += `</div>`;
+      }
+      html += `</details>`;
+    }
+
+    // Standalone agents (no project_key)
+    if (hierarchy.standalone.length) {
+      html += `<details class="agent-group" open><summary>Standalone</summary><div class="agents-grid">`;
+      for (const agent of hierarchy.standalone) html += renderAgentTile(agent);
+      html += `</div></details>`;
+    }
   } else {
     html += `<p class="empty">No agents match the current filters.</p>`;
   }
   html += `</div>`;
   return html;
+}
+
+function buildAgentHierarchy(agents) {
+  const projects = new Map(); // pk → { epics: Map<eid, Map<wi, agents[]>>, noEpic: Map<wi, agents[]> }
+  const standalone = [];
+
+  for (const agent of agents) {
+    if (!agent.project_key) {
+      standalone.push(agent);
+      continue;
+    }
+    if (!projects.has(agent.project_key)) {
+      projects.set(agent.project_key, { epics: new Map(), noEpic: new Map() });
+    }
+    const proj = projects.get(agent.project_key);
+    const taskKey = agent.work_item_id || '_none';
+
+    if (agent.epic_id) {
+      if (!proj.epics.has(agent.epic_id)) proj.epics.set(agent.epic_id, new Map());
+      const epicMap = proj.epics.get(agent.epic_id);
+      if (!epicMap.has(taskKey)) epicMap.set(taskKey, []);
+      epicMap.get(taskKey).push(agent);
+    } else {
+      if (!proj.noEpic.has(taskKey)) proj.noEpic.set(taskKey, []);
+      proj.noEpic.get(taskKey).push(agent);
+    }
+  }
+
+  return { projects, standalone };
 }
 
 function bindAgentsEvents(agents, filters) {
@@ -3131,7 +3305,19 @@ async function route() {
     try {
       const data = orgCache[org] || await api(`org/${org}`);
       orgCache[org] = data;
-      main.innerHTML = renderOrgView(org, data);
+      // Compute org sessions from active dispatches + terminals
+      const orgSessions = [
+        ...activeDispatches.filter(d => d.project_key && d.project_key.startsWith(org + '/')).map(d => ({ type: 'dispatch', id: d.id, status: d.status, title: d.work_item_id || d.title || d.id, work_item_id: d.work_item_id, project_key: d.project_key, started_at: d.started_at })),
+        ...activeTerminals.filter(t => t.project_key && t.project_key.startsWith(org + '/')).map(t => ({ type: 'terminal', id: t.id, status: t.status, title: t.title || t.id, work_item_id: t.work_item_id, project_key: t.project_key, started_at: t.started_at })),
+      ];
+      main.innerHTML = renderOrgView(org, data, orgSessions);
+      // Bind focus buttons in org agents table
+      document.querySelectorAll('[data-org-focus]').forEach(btn => {
+        btn.onclick = () => {
+          const [type, id] = btn.dataset.orgFocus.split(':');
+          openFocusPopup(type, id);
+        };
+      });
     } catch (e) {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
     }
