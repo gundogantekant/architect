@@ -2,6 +2,17 @@
 
 Business rules, heuristics, and decision logic for the architect system. Agents and skills reference this file instead of embedding rules inline.
 
+## Terminology: Project Knowledge
+
+| Term | Meaning |
+|------|---------|
+| "project files" / "project knowledge base" | Architect portfolio files about a project (`portfolio/<org>/<project>/`) |
+| "target project source files" / "source code" | The actual code in the target repository |
+
+- All project know-how is stored in and retrieved from the architect portfolio — never from the target project itself.
+- When the user says "project files" or "project knowledge base", they mean the architect portfolio entries, not target repo source files.
+- When loading context, prioritize architect-level portfolio data over target project introspection.
+
 ## Complexity Heuristics
 
 | Level | Criteria |

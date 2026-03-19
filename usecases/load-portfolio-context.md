@@ -85,3 +85,9 @@ When a WorktreeContext is active (see `domain/entities.md` → WorktreeContext):
 ## Post-conditions
 - All subsequent agents receive context filtered to the requested depth
 - Context includes: stack info, conventions, recommended agents, dispatch notes (based on tier)
+
+## Knowledge Isolation
+
+- "Project files" in user requests refers to architect portfolio entries (`portfolio/<org>/<project>/`), not target project source files.
+- Context loading always sources from the portfolio as the authoritative knowledge base.
+- Portfolio guides and component profiles are the canonical project knowledge; target project files are raw material, not the knowledge base.
