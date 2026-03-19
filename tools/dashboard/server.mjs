@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { createServer } from 'node:http';
 import { readFile, writeFile, readdir, stat, mkdir } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { join, resolve, extname } from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import pty from 'node-pty';
@@ -62,12 +63,81 @@ async function parseBody(req) {
   return JSON.parse(Buffer.concat(chunks).toString());
 }
 
-// --- Dispatch registry (ephemeral, in-memory) ---
+// --- Session persistence ---
+const SESSIONS_FILE = join(WORK, 'sessions.json');
+
+function loadSessions() {
+  try {
+    const data = JSON.parse(readFileSync(SESSIONS_FILE, 'utf8'));
+    return { dispatches: data.dispatches || {}, terminals: data.terminals || {} };
+  } catch {
+    return { dispatches: {}, terminals: {} };
+  }
+}
+
+let _saveSessionsTimer = null;
+function saveSessions() {
+  if (_saveSessionsTimer) return;
+  _saveSessionsTimer = setTimeout(() => {
+    _saveSessionsTimer = null;
+    const data = { dispatches: {}, terminals: {} };
+    for (const [id, d] of dispatches) {
+      data.dispatches[id] = {
+        id, work_item_id: d.work_item_id, epic_id: d.epic_id,
+        project_key: d.project_key, project_path: d.project_path,
+        title: d.title || d.work_item_id, status: d.status,
+        started_at: d.started_at, completed_at: d.completed_at,
+        session_id: d.session_id || null, cost_usd: d.cost_usd || null,
+        skip_permissions: d.skip_permissions || false,
+      };
+    }
+    for (const [id, t] of terminals) {
+      data.terminals[id] = {
+        id, work_item_id: t.work_item_id, epic_id: t.epic_id,
+        project_key: t.project_key, project_path: t.project_path,
+        title: t.title, status: t.status,
+        started_at: t.started_at, exited_at: t.exited_at,
+        skip_permissions: t.skip_permissions || false,
+      };
+    }
+    writeFile(SESSIONS_FILE, JSON.stringify(data, null, 2) + '\n').catch(() => {});
+  }, 500);
+}
+
+// --- Dispatch registry ---
 const dispatches = new Map();
 
-// --- Terminal registry (ephemeral, in-memory) ---
+// --- Terminal registry ---
 const terminals = new Map();
 const SCROLLBACK_LIMIT = 100 * 1024; // 100KB ring buffer
+
+// Restore persisted sessions on startup
+{
+  const persisted = loadSessions();
+  for (const [id, d] of Object.entries(persisted.dispatches)) {
+    dispatches.set(id, {
+      ...d,
+      output: [],
+      lastLines: [],
+      listeners: new Set(),
+      process: null,
+      status: d.status === 'running' ? 'interrupted' : d.status,
+    });
+  }
+  for (const [id, t] of Object.entries(persisted.terminals)) {
+    terminals.set(id, {
+      ...t,
+      ptyProcess: null,
+      scrollback: '',
+      wsClients: new Set(),
+      status: t.status === 'running' ? 'interrupted' : t.status,
+    });
+  }
+  if (Object.keys(persisted.dispatches).length || Object.keys(persisted.terminals).length) {
+    saveSessions();
+    console.log(`Restored ${Object.keys(persisted.dispatches).length} dispatches, ${Object.keys(persisted.terminals).length} terminals from sessions.json`);
+  }
+}
 
 function extractStreamText(evt) {
   if (evt.type === 'assistant' && evt.message?.content) {
@@ -233,7 +303,7 @@ async function loadEpicPlanSnippet(epicId) {
   }
 }
 
-function buildDispatchPrompt({ workItem, projectKey, additionalInstructions, portfolio, epicContext, relatedProjects }) {
+function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInstructions, portfolio, epicContext, relatedProjects }) {
   const sections = [];
 
   // --- Scope ---
@@ -337,6 +407,36 @@ function buildDispatchPrompt({ workItem, projectKey, additionalInstructions, por
   // --- Constraints ---
   if (workItem && additionalInstructions) {
     sections.push(`# Constraints\n\n${additionalInstructions}`);
+  }
+
+  // --- Environment (always included) ---
+  {
+    const envLines = ['# Environment', ''];
+    envLines.push(`You are running in the target project directory: ${projectPath || '(unknown)'}`);
+    envLines.push(`The architect project (portfolio, backlog, domain rules) is at: ${ROOT}`);
+    envLines.push(`- Backlog: ${ROOT}/work/backlog.json`);
+    envLines.push(`- Portfolio: ${ROOT}/portfolio/`);
+    envLines.push(`- Dashboard API: http://127.0.0.1:${port}`);
+    envLines.push('');
+    envLines.push('Use the architect project to look up cross-project context, related tasks, or domain rules when needed. Your primary work should happen in the current directory (the target project).');
+    sections.push(envLines.join('\n'));
+  }
+
+  // --- Tracking (only when workItem is present) ---
+  if (workItem) {
+    const trackLines = ['# Tracking', ''];
+    const epicLine = epicContext ? ` (part of ${epicContext.id}: ${epicContext.title})` : '';
+    trackLines.push(`You were dispatched for ${workItem.id}: ${workItem.title}${epicLine}.`);
+    trackLines.push('');
+    trackLines.push(`- Reference this work item in commit messages (e.g. "[${workItem.id}] ...")`);
+    trackLines.push(`- When your work is complete, add a session log entry:`);
+    trackLines.push(`  curl -s -X POST http://127.0.0.1:${port}/api/work-items/${workItem.id}/log \\`);
+    trackLines.push(`    -H 'Content-Type: application/json' -d '{"summary": "..."}'`);
+    trackLines.push(`- If you complete the task fully, update its status:`);
+    trackLines.push(`  curl -s -X PATCH http://127.0.0.1:${port}/api/work-items/${workItem.id} \\`);
+    trackLines.push(`    -H 'Content-Type: application/json' -d '{"status": "done"}'`);
+    trackLines.push('- Stay within the scope of this task. If you discover adjacent work needed, note it but do not pursue it.');
+    sections.push(trackLines.join('\n'));
   }
 
   return sections.join('\n\n');
@@ -820,10 +920,14 @@ const routes = [
     const dispatch = {
       id,
       work_item_id: null,
+      epic_id: null,
       project_key: 'onboard',
       project_path: projectPath,
+      title: `Onboard: ${projectPath.split('/').pop()}`,
+      skip_permissions: false,
       status: 'running',
       output: [],
+      lastLines: [],
       listeners: new Set(),
       started_at: new Date().toISOString(),
       completed_at: null,
@@ -834,7 +938,7 @@ const routes = [
       proc = spawn(CLAUDE_BIN, ['-p', '--output-format', 'stream-json', '--verbose'], {
         cwd: ROOT,
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env },
+        env: { ...process.env, ARCHITECT_ROOT: ROOT },
       });
     } catch (err) {
       return json(res, { error: `Failed to spawn claude: ${err.message}` }, 500);
@@ -856,9 +960,11 @@ const routes = [
           const evt = JSON.parse(line);
           if (evt.type === 'system' && evt.subtype === 'init' && evt.session_id) {
             dispatch.session_id = evt.session_id;
+            saveSessions();
           }
           if (evt.type === 'result' && evt.total_cost_usd != null) {
             dispatch.cost_usd = evt.total_cost_usd;
+            saveSessions();
           }
         } catch {}
         dispatch.output.push(line);
@@ -878,9 +984,11 @@ const routes = [
       dispatch.process = null;
       for (const listener of dispatch.listeners) listener(null);
       dispatch.listeners.clear();
+      saveSessions();
     });
 
     dispatches.set(id, dispatch);
+    saveSessions();
     json(res, { dispatch_id: id, status: 'running' });
   }],
 
@@ -889,7 +997,7 @@ const routes = [
   // Create dispatch
   [/^\/api\/dispatch$/, 'POST', async (_m, req, res) => {
     const body = await parseBody(req);
-    const { work_item_id, epic_id, project_key, title, description, additional_instructions } = body;
+    const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions } = body;
 
     if (!project_key) {
       return err(res, 'project_key is required', 400);
@@ -949,6 +1057,7 @@ const routes = [
     const prompt = buildDispatchPrompt({
       workItem: workItem || (work_item_id ? { id: work_item_id, title: title || '', description: description || '', status: 'open', priority: 'medium', tags: [], session_log: [] } : null),
       projectKey: project_key,
+      projectPath,
       additionalInstructions: additional_instructions,
       portfolio,
       epicContext,
@@ -961,6 +1070,8 @@ const routes = [
       epic_id: epic_id || null,
       project_key,
       project_path: projectPath,
+      title: title || work_item_id || '',
+      skip_permissions: !!skip_permissions,
       status: 'running',
       output: [],
       lastLines: [],
@@ -971,10 +1082,16 @@ const routes = [
 
     let proc;
     try {
-      proc = spawn(CLAUDE_BIN, ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'plan'], {
+      const args = ['-p', '--output-format', 'stream-json', '--verbose'];
+      if (skip_permissions) {
+        args.push('--dangerously-skip-permissions');
+      } else {
+        args.push('--permission-mode', 'plan');
+      }
+      proc = spawn(CLAUDE_BIN, args, {
         cwd: projectPath,
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env },
+        env: { ...process.env, ARCHITECT_ROOT: ROOT },
       });
     } catch (err) {
       return json(res, { error: `Failed to spawn claude: ${err.message}` }, 500);
@@ -997,9 +1114,11 @@ const routes = [
           const evt = JSON.parse(line);
           if (evt.type === 'system' && evt.subtype === 'init' && evt.session_id) {
             dispatch.session_id = evt.session_id;
+            saveSessions();
           }
           if (evt.type === 'result' && evt.total_cost_usd != null) {
             dispatch.cost_usd = evt.total_cost_usd;
+            saveSessions();
           }
           // Extract text for lastLines preview
           const text = extractStreamText(evt);
@@ -1031,9 +1150,11 @@ const routes = [
         listener(null); // signal done
       }
       dispatch.listeners.clear();
+      saveSessions();
     });
 
     dispatches.set(id, dispatch);
+    saveSessions();
     json(res, { dispatch_id: id, status: 'running' });
   }],
 
@@ -1076,7 +1197,7 @@ const routes = [
     });
   }],
 
-  // List active dispatches
+  // List dispatches (returns all including completed/failed/interrupted)
   [/^\/api\/dispatch\/active$/, 'GET', async (_m, _req, res) => {
     const list = [];
     for (const [id, d] of dispatches) {
@@ -1092,6 +1213,7 @@ const routes = [
         started_at: d.started_at,
         completed_at: d.completed_at,
         last_output: d.lastLines || [],
+        skip_permissions: d.skip_permissions || false,
       });
     }
     json(res, list);
@@ -1112,6 +1234,7 @@ const routes = [
       dispatch.listeners.clear();
       killed++;
     }
+    saveSessions();
     json(res, { killed });
   }],
 
@@ -1127,6 +1250,7 @@ const routes = [
     dispatch.completed_at = new Date().toISOString();
     for (const listener of dispatch.listeners) listener(null);
     dispatch.listeners.clear();
+    saveSessions();
     json(res, { status: 'killed', id: m[1] });
   }],
 
@@ -1135,7 +1259,7 @@ const routes = [
   // Create terminal session
   [/^\/api\/terminal$/, 'POST', async (_m, req, res) => {
     const body = await parseBody(req);
-    const { work_item_id, epic_id, project_key, title, description, additional_instructions } = body;
+    const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions } = body;
 
     if (!project_key) return err(res, 'project_key is required', 400);
 
@@ -1171,6 +1295,7 @@ const routes = [
     const prompt = buildDispatchPrompt({
       workItem: workItem || (work_item_id ? { id: work_item_id, title: title || '', description: description || '', status: 'open', priority: 'medium', tags: [], session_log: [] } : null),
       projectKey: project_key,
+      projectPath,
       additionalInstructions: additional_instructions,
       portfolio,
       epicContext,
@@ -1179,12 +1304,13 @@ const routes = [
     // Spawn interactive PTY with claude (use absolute path to avoid posix_spawnp PATH issues)
     let ptyProcess;
     try {
-      ptyProcess = pty.spawn(CLAUDE_BIN, [], {
+      const ptyArgs = skip_permissions ? ['--dangerously-skip-permissions'] : [];
+      ptyProcess = pty.spawn(CLAUDE_BIN, ptyArgs, {
         name: 'xterm-256color',
         cols: 80,
         rows: 24,
         cwd: projectPath,
-        env: { ...process.env, TERM: 'xterm-256color' },
+        env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT },
       });
     } catch (err) {
       return json(res, { error: `Failed to spawn terminal: ${err.message}` }, 500);
@@ -1197,6 +1323,7 @@ const routes = [
       project_key,
       project_path: projectPath,
       title: title || additional_instructions?.slice(0, 60) || 'Interactive session',
+      skip_permissions: !!skip_permissions,
       status: 'running',
       ptyProcess,
       scrollback: '',
@@ -1224,6 +1351,7 @@ const routes = [
       for (const ws of terminal.wsClients) {
         try { ws.send(JSON.stringify({ type: 'exit', code: exitCode })); } catch {}
       }
+      saveSessions();
     });
 
     // After PTY is ready, write the prompt as first input
@@ -1234,6 +1362,7 @@ const routes = [
     }, 500);
 
     terminals.set(id, terminal);
+    saveSessions();
     json(res, { terminal_id: id, status: 'running' });
   }],
 
@@ -1253,6 +1382,7 @@ const routes = [
         started_at: t.started_at,
         exited_at: t.exited_at,
         last_output: scrollLines,
+        skip_permissions: t.skip_permissions || false,
       });
     }
     json(res, list);
@@ -1274,6 +1404,7 @@ const routes = [
       terminal.wsClients.clear();
       killed++;
     }
+    saveSessions();
     json(res, { killed });
   }],
 
@@ -1290,6 +1421,7 @@ const routes = [
       try { ws.send(JSON.stringify({ type: 'exit', code: -1 })); ws.close(); } catch {}
     }
     terminal.wsClients.clear();
+    saveSessions();
     json(res, { status: 'killed', id: m[1] });
   }],
 ];
@@ -1359,10 +1491,12 @@ server.on('upgrade', (req, socket, head) => {
 // --- Auto-cleanup stale sessions ---
 setInterval(() => {
   const now = Date.now();
+  let changed = false;
   for (const [id, terminal] of terminals) {
     if (terminal.status !== 'running' && terminal.exited_at) {
       if (now - new Date(terminal.exited_at).getTime() > 10 * 60 * 1000) {
         terminals.delete(id);
+        changed = true;
       }
     }
   }
@@ -1370,9 +1504,11 @@ setInterval(() => {
     if (dispatch.status !== 'running' && dispatch.completed_at) {
       if (now - new Date(dispatch.completed_at).getTime() > 30 * 60 * 1000) {
         dispatches.delete(id);
+        changed = true;
       }
     }
   }
+  if (changed) saveSessions();
 }, 60 * 1000);
 
 server.listen(port, '127.0.0.1', () => {

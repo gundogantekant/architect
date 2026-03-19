@@ -276,7 +276,7 @@ Tracks an active worktree created for implementation isolation.
 
 ## DispatchRequest
 
-Ephemeral in-memory record created when the dashboard dispatches a Claude agent for a work item. Not persisted to disk — lives only for the server session.
+Record created when the dashboard dispatches a Claude agent for a work item. Persisted to `work/sessions.json` (excluding process handles and listeners). Previously-running sessions are marked `interrupted` on server restart.
 
 ```json
 {
@@ -284,16 +284,20 @@ Ephemeral in-memory record created when the dashboard dispatches a Claude agent 
   "work_item_id": "string (W-XXX)",
   "epic_id": "string (E-XXX or empty, optional)",
   "project_key": "string (org/project/component)",
+  "project_path": "string (absolute path)",
   "additional_instructions": "string (optional)",
-  "status": "running|completed|failed",
+  "skip_permissions": "boolean (true if dispatched with --dangerously-skip-permissions)",
+  "status": "running|completed|failed|killed|interrupted",
   "started_at": "string (ISO 8601)",
-  "completed_at": "string (ISO 8601, optional)"
+  "completed_at": "string (ISO 8601, optional)",
+  "session_id": "string (Claude session ID, optional)",
+  "cost_usd": "number (total cost, optional)"
 }
 ```
 
 ## TerminalSession
 
-Ephemeral in-memory record for an interactive PTY terminal session spawned from the dashboard. Not persisted to disk.
+Record for an interactive PTY terminal session spawned from the dashboard. Persisted to `work/sessions.json` (excluding ptyProcess, scrollback, wsClients). Previously-running sessions are marked `interrupted` on server restart.
 
 ```json
 {
@@ -303,9 +307,25 @@ Ephemeral in-memory record for an interactive PTY terminal session spawned from 
   "project_key": "string (org/project/component)",
   "project_path": "string (absolute path)",
   "title": "string",
-  "status": "running|completed|failed|killed",
+  "skip_permissions": "boolean (true if dispatched with --dangerously-skip-permissions)",
+  "status": "running|completed|failed|killed|interrupted",
   "started_at": "string (ISO 8601)",
   "exited_at": "string (ISO 8601, null while running)"
+}
+```
+
+## SessionsFile
+
+Persisted session state at `work/sessions.json`. Written by the dashboard server on every state change (debounced 500ms). On startup, any `running` sessions are re-marked as `interrupted`.
+
+```json
+{
+  "dispatches": {
+    "D-xxx": { "$ref": "DispatchRequest (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, completed_at, session_id, cost_usd, skip_permissions)" }
+  },
+  "terminals": {
+    "T-xxx": { "$ref": "TerminalSession (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, exited_at, skip_permissions)" }
+  }
 }
 ```
 

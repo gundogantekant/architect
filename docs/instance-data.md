@@ -16,6 +16,8 @@ Created by `/work add`. Contains `backlog.json` with cross-session work items ke
 
 Bootstrap: the tracker agent creates `work/backlog.json` automatically on first use.
 
+Also contains `sessions.json` — dashboard dispatch/terminal session metadata persisted across server restarts. Created automatically by the dashboard server.
+
 ## Backup
 
 These directories contain non-recoverable local data. Back them up if needed before destructive git operations.
