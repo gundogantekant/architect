@@ -723,11 +723,12 @@ function createTerminalPanel(terminalInfo) {
   panel.className = 'terminal-panel';
   panel.id = `terminal-${terminalInfo.id}`;
   const isRunning = terminalInfo.status === 'running';
+  const shellBadge = terminalInfo.type === 'shell' ? '<span class="auto-badge" style="background:#2d7d46">[shell]</span>' : '';
   const autoBadge = terminalInfo.skip_permissions ? '<span class="auto-badge">[auto]</span>' : '';
   panel.innerHTML = `
     <div class="terminal-header">
       <span class="status-dot ${isRunning ? 'running' : (terminalInfo.status === 'interrupted' ? 'interrupted' : 'failed')}"></span>
-      <span class="terminal-title">${esc(terminalInfo.id)} — ${esc(terminalInfo.title || 'Terminal')}${autoBadge}</span>
+      <span class="terminal-title">${esc(terminalInfo.id)} — ${esc(terminalInfo.title || 'Terminal')}${shellBadge}${autoBadge}</span>
       <span class="terminal-meta">${new Date(terminalInfo.started_at).toLocaleTimeString()}</span>
       <button class="focus-btn" data-focus-terminal="${esc(terminalInfo.id)}">Focus</button>
       <button class="minimize-btn" data-minimize-terminal="${esc(terminalInfo.id)}">▼</button>
@@ -886,11 +887,15 @@ async function dispatchWorkItem(workItem, projectKey) {
           <textarea id="dispatch-instructions" placeholder="Optional: add context, constraints, or specific instructions for the agent..."></textarea>
         </div>
         <div class="interactive-toggle">
-          <input type="checkbox" id="dispatch-interactive" />
+          <input type="checkbox" id="dispatch-plain-terminal" checked />
+          <label for="dispatch-plain-terminal">Plain terminal (shell only)</label>
+        </div>
+        <div class="interactive-toggle">
+          <input type="checkbox" id="dispatch-interactive" checked disabled />
           <label for="dispatch-interactive">Interactive terminal (xterm.js)</label>
         </div>
         <div class="interactive-toggle">
-          <input type="checkbox" id="dispatch-skip-permissions" />
+          <input type="checkbox" id="dispatch-skip-permissions" checked disabled />
           <label for="dispatch-skip-permissions">Skip permissions (autonomous)</label>
         </div>
         <div class="modal-actions">
@@ -909,8 +914,15 @@ async function dispatchWorkItem(workItem, projectKey) {
       if (e.target === overlay) { overlay.remove(); resolve(null); }
     });
 
+    overlay.querySelector('#dispatch-plain-terminal').onchange = () => {
+      const plain = overlay.querySelector('#dispatch-plain-terminal').checked;
+      overlay.querySelector('#dispatch-interactive').disabled = plain;
+      overlay.querySelector('#dispatch-skip-permissions').disabled = plain;
+    };
+
     overlay.querySelector('#modal-dispatch').onclick = async () => {
       const instructions = overlay.querySelector('#dispatch-instructions').value.trim();
+      const plainTerminal = overlay.querySelector('#dispatch-plain-terminal').checked;
       const interactive = overlay.querySelector('#dispatch-interactive').checked;
       const skipPermissions = overlay.querySelector('#dispatch-skip-permissions').checked;
       const btn = overlay.querySelector('#modal-dispatch');
@@ -918,18 +930,21 @@ async function dispatchWorkItem(workItem, projectKey) {
       btn.textContent = 'Dispatching...';
 
       try {
-        const endpoint = interactive ? '/api/terminal' : '/api/dispatch';
+        const endpoint = plainTerminal ? '/api/terminal/shell' : interactive ? '/api/terminal' : '/api/dispatch';
+        const body = plainTerminal
+          ? { work_item_id: workItem.id, project_key: projectKey, title: workItem.title, epic_id: workItem.epic_id || null }
+          : {
+              work_item_id: workItem.id,
+              project_key: projectKey,
+              title: workItem.title,
+              description: workItem.description || '',
+              additional_instructions: instructions,
+              skip_permissions: skipPermissions,
+            };
         const resp = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            work_item_id: workItem.id,
-            project_key: projectKey,
-            title: workItem.title,
-            description: workItem.description || '',
-            additional_instructions: instructions,
-            skip_permissions: skipPermissions,
-          }),
+          body: JSON.stringify(body),
         });
         const result = await resp.json();
         if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
@@ -946,14 +961,15 @@ async function dispatchWorkItem(workItem, projectKey) {
           }
         } catch {}
 
-        if (interactive) {
+        if (plainTerminal || interactive) {
           const terminalInfo = {
             id: result.terminal_id,
+            type: plainTerminal ? 'shell' : 'claude',
             work_item_id: workItem.id,
             project_key: projectKey,
             project_path: projectPath,
             title: workItem.title,
-            skip_permissions: skipPermissions,
+            skip_permissions: plainTerminal ? false : skipPermissions,
             status: 'running',
             started_at: new Date().toISOString(),
           };
@@ -2937,11 +2953,15 @@ async function showQuickDispatchModal() {
         <textarea id="qd-instructions" placeholder="What should the agent do?"></textarea>
       </div>
       <div class="interactive-toggle">
-        <input type="checkbox" id="qd-interactive" />
+        <input type="checkbox" id="qd-plain-terminal" checked />
+        <label for="qd-plain-terminal">Plain terminal (shell only)</label>
+      </div>
+      <div class="interactive-toggle">
+        <input type="checkbox" id="qd-interactive" checked disabled />
         <label for="qd-interactive">Interactive terminal (xterm.js)</label>
       </div>
       <div class="interactive-toggle">
-        <input type="checkbox" id="qd-skip-permissions" />
+        <input type="checkbox" id="qd-skip-permissions" checked disabled />
         <label for="qd-skip-permissions">Skip permissions (autonomous)</label>
       </div>
       <div class="modal-actions">
@@ -2955,33 +2975,44 @@ async function showQuickDispatchModal() {
   overlay.querySelector('#qd-cancel').onclick = () => overlay.remove();
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
+  overlay.querySelector('#qd-plain-terminal').onchange = () => {
+    const plain = overlay.querySelector('#qd-plain-terminal').checked;
+    overlay.querySelector('#qd-interactive').disabled = plain;
+    overlay.querySelector('#qd-skip-permissions').disabled = plain;
+  };
+
   overlay.querySelector('#qd-go').onclick = async () => {
     const pk = overlay.querySelector('#qd-project').value;
     const wid = overlay.querySelector('#qd-work-item').value.trim() || null;
     const epicId = overlay.querySelector('#qd-epic').value || null;
     const instructions = overlay.querySelector('#qd-instructions').value.trim();
+    const plainTerminal = overlay.querySelector('#qd-plain-terminal').checked;
     const interactive = overlay.querySelector('#qd-interactive').checked;
     const skipPermissions = overlay.querySelector('#qd-skip-permissions').checked;
     const btn = overlay.querySelector('#qd-go');
 
     if (!pk) { alert('Project is required'); return; }
-    if (!wid && !instructions) { alert('Work item or instructions required'); return; }
+    if (!plainTerminal && !wid && !instructions) { alert('Work item or instructions required'); return; }
 
     btn.disabled = true; btn.textContent = 'Dispatching...';
 
     try {
-      const endpoint = interactive ? '/api/terminal' : '/api/dispatch';
+      const endpoint = plainTerminal ? '/api/terminal/shell' : interactive ? '/api/terminal' : '/api/dispatch';
+      const titleText = wid || instructions?.slice(0, 60) || 'Quick dispatch';
+      const body = plainTerminal
+        ? { work_item_id: wid, epic_id: epicId, project_key: pk, title: titleText }
+        : {
+            work_item_id: wid,
+            epic_id: epicId,
+            project_key: pk,
+            title: titleText,
+            additional_instructions: instructions,
+            skip_permissions: skipPermissions,
+          };
       const resp = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          work_item_id: wid,
-          epic_id: epicId,
-          project_key: pk,
-          title: wid || instructions?.slice(0, 60) || 'Quick dispatch',
-          additional_instructions: instructions,
-          skip_permissions: skipPermissions,
-        }),
+        body: JSON.stringify(body),
       });
       const result = await resp.json();
       if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
@@ -2994,12 +3025,13 @@ async function showQuickDispatchModal() {
         }
       } catch {}
 
-      if (interactive) {
+      if (plainTerminal || interactive) {
         const terminalInfo = {
-          id: result.terminal_id, work_item_id: wid, epic_id: epicId,
+          id: result.terminal_id, type: plainTerminal ? 'shell' : 'claude',
+          work_item_id: wid, epic_id: epicId,
           project_key: pk, project_path: projectPath,
-          title: wid || instructions?.slice(0, 60) || 'Quick dispatch',
-          skip_permissions: skipPermissions,
+          title: titleText,
+          skip_permissions: plainTerminal ? false : skipPermissions,
           status: 'running', started_at: new Date().toISOString(),
         };
         activeTerminals.push(terminalInfo);

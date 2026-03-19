@@ -93,7 +93,7 @@ function saveSessions() {
     }
     for (const [id, t] of terminals) {
       data.terminals[id] = {
-        id, work_item_id: t.work_item_id, epic_id: t.epic_id,
+        id, type: t.type || 'claude', work_item_id: t.work_item_id, epic_id: t.epic_id,
         project_key: t.project_key, project_path: t.project_path,
         title: t.title, status: t.status,
         started_at: t.started_at, exited_at: t.exited_at,
@@ -1318,6 +1318,7 @@ const routes = [
 
     const terminal = {
       id,
+      type: 'claude',
       work_item_id: work_item_id || null,
       epic_id: epic_id || null,
       project_key,
@@ -1366,6 +1367,73 @@ const routes = [
     json(res, { terminal_id: id, status: 'running' });
   }],
 
+  // Spawn plain shell terminal (no Claude)
+  [/^\/api\/terminal\/shell$/, 'POST', async (_m, req, res) => {
+    const body = await parseBody(req);
+    const { project_key, work_item_id, epic_id, title } = body;
+
+    if (!project_key) return err(res, 'project_key is required', 400);
+
+    const projectPath = await resolveProjectPath(project_key);
+    if (!projectPath) return err(res, `Could not resolve path for project: ${project_key}`, 400);
+
+    const id = `T-${Date.now()}`;
+
+    let ptyProcess;
+    try {
+      ptyProcess = pty.spawn(process.env.SHELL || '/bin/zsh', [], {
+        name: 'xterm-256color',
+        cols: 80,
+        rows: 24,
+        cwd: projectPath,
+        env: { ...process.env, TERM: 'xterm-256color' },
+      });
+    } catch (e) {
+      return json(res, { error: `Failed to spawn shell: ${e.message}` }, 500);
+    }
+
+    const terminal = {
+      id,
+      type: 'shell',
+      work_item_id: work_item_id || null,
+      epic_id: epic_id || null,
+      project_key,
+      project_path: projectPath,
+      title: title || 'Shell',
+      skip_permissions: false,
+      status: 'running',
+      ptyProcess,
+      scrollback: '',
+      wsClients: new Set(),
+      started_at: new Date().toISOString(),
+      exited_at: null,
+    };
+
+    ptyProcess.onData((data) => {
+      terminal.scrollback += data;
+      if (terminal.scrollback.length > SCROLLBACK_LIMIT) {
+        terminal.scrollback = terminal.scrollback.slice(-SCROLLBACK_LIMIT);
+      }
+      for (const ws of terminal.wsClients) {
+        try { ws.send(JSON.stringify({ type: 'data', data })); } catch {}
+      }
+    });
+
+    ptyProcess.onExit(({ exitCode }) => {
+      terminal.status = exitCode === 0 ? 'completed' : 'failed';
+      terminal.exited_at = new Date().toISOString();
+      terminal.ptyProcess = null;
+      for (const ws of terminal.wsClients) {
+        try { ws.send(JSON.stringify({ type: 'exit', code: exitCode })); } catch {}
+      }
+      saveSessions();
+    });
+
+    terminals.set(id, terminal);
+    saveSessions();
+    json(res, { terminal_id: id, status: 'running' });
+  }],
+
   // List active terminals
   [/^\/api\/terminal\/active$/, 'GET', async (_m, _req, res) => {
     const list = [];
@@ -1373,6 +1441,7 @@ const routes = [
       const scrollLines = t.scrollback ? t.scrollback.split('\n').filter(l => l.trim()).slice(-3) : [];
       list.push({
         id,
+        type: t.type || 'claude',
         work_item_id: t.work_item_id,
         epic_id: t.epic_id || null,
         project_key: t.project_key,
