@@ -199,6 +199,16 @@
   .unlink-btn { cursor: pointer; color: var(--red); font-size: 11px; border: 1px solid var(--red); background: none; padding: 2px 8px; border-radius: 4px; }
   .unlink-btn:hover { background: #fee2e2; }
 
+  /* Inline status dropdown */
+  .status-dropdown { position: absolute; background: #fff; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); z-index: 200; min-width: 130px; padding: 4px 0; }
+  .status-option { display: block; width: 100%; padding: 6px 14px; border: none; background: none; text-align: left; font-size: 12px; cursor: pointer; font-family: inherit; }
+  .status-option:hover { background: #f1f5f9; }
+  .status-option.current { font-weight: 700; color: var(--accent); }
+
+  /* Cancelled badge */
+  .badge-cancelled { background: #f1f5f9; color: #64748b; }
+  .badge-in-progress { background: #fef3c7; color: #b45309; }
+
   /* CLI session panels */
   .cli-session-panel { background: var(--bg-card); border: 1px solid var(--border); border-left: 3px solid var(--teal); border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
   .cli-session-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: #fafafa; }
@@ -1383,11 +1393,11 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
     html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Depends On</th><th>Epic</th><th>Tags</th><th></th></tr></thead><tbody>`;
     sortedItems.forEach((w) => {
       const idx = workItems.indexOf(w);
-      const sc = w.status === 'done' ? 'done' : (w.depends_on?.length ? 'blocked' : 'open');
+      const sc = {'done':'done','blocked':'blocked','in-progress':'in-progress','cancelled':'cancelled'}[w.status] || 'open';
       const canDispatch = w.status === 'open' || w.status === 'in-progress';
       const deps = (w.depends_on || []).length ? `← ${w.depends_on.map(d => esc(d)).join(', ')}` : '';
       html += `<tr><td><code>${esc(w.id)}</code></td><td>${esc(w.title)}</td>`;
-      html += `<td><span class="badge badge-${sc}">${esc(w.status)}</span></td>`;
+      html += `<td><span class="badge badge-${sc}" data-status-click="${esc(w.id)}" data-current-status="${esc(w.status)}" style="cursor:pointer">${esc(w.status)}</span></td>`;
       html += `<td><span class="badge badge-${w.priority || 'medium'}">${esc(w.priority || '—')}</span></td>`;
       html += `<td><code style="font-size:11px">${deps}</code></td>`;
       html += `<td>${w.epic_id ? `<span class="badge badge-epic" data-epic-nav="${esc(w.epic_id)}">${esc(w.epic_id)}</span>` : ''}</td>`;
@@ -1575,6 +1585,14 @@ function bindTabs() {
     };
   });
 
+  // Status badge click (component view)
+  document.querySelectorAll('[data-status-click]').forEach(badge => {
+    badge.onclick = (e) => {
+      e.stopPropagation();
+      showStatusDropdown(badge, badge.dataset.statusClick, badge.dataset.currentStatus);
+    };
+  });
+
   // Session log submit buttons
   document.querySelectorAll('[data-log-submit]').forEach(btn => {
     btn.onclick = async () => {
@@ -1652,6 +1670,46 @@ function setActive(key) {
   });
 }
 
+// --- Inline Status Dropdown ---
+function showStatusDropdown(badge, itemId, currentStatus) {
+  // Remove any existing dropdown
+  document.querySelectorAll('.status-dropdown').forEach(d => d.remove());
+  const statuses = ['open', 'in-progress', 'blocked', 'done', 'cancelled'];
+  const dropdown = document.createElement('div');
+  dropdown.className = 'status-dropdown';
+  for (const s of statuses) {
+    const btn = document.createElement('button');
+    btn.className = 'status-option' + (s === currentStatus ? ' current' : '');
+    btn.textContent = s;
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      dropdown.remove();
+      if (s === currentStatus) return;
+      try {
+        const resp = await fetch(`/api/work-items/${itemId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: s }),
+        });
+        if (!resp.ok) { const r = await resp.json(); throw new Error(r.error || 'Failed'); }
+        backlog = null; epicCache = null;
+        await Promise.all([buildTree(), buildEpicTree()]);
+        route();
+      } catch (err) {
+        alert('Status update failed: ' + err.message);
+      }
+    };
+    dropdown.appendChild(btn);
+  }
+  const rect = badge.getBoundingClientRect();
+  dropdown.style.position = 'fixed';
+  dropdown.style.top = (rect.bottom + 4) + 'px';
+  dropdown.style.left = rect.left + 'px';
+  document.body.appendChild(dropdown);
+  const close = (e) => { if (!dropdown.contains(e.target) && e.target !== badge) { dropdown.remove(); document.removeEventListener('click', close); } };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+
 // --- Work Item Modal ---
 function showWorkItemModal(existingItem = null) {
   const isEdit = !!existingItem;
@@ -1667,7 +1725,7 @@ function showWorkItemModal(existingItem = null) {
       <div class="field">
         <label>Status</label>
         <select id="wi-status">
-          ${['open','in-progress','blocked','done'].map(s => `<option value="${s}"${(isEdit ? existingItem.status : 'open') === s ? ' selected' : ''}>${s}</option>`).join('')}
+          ${['open','in-progress','blocked','done','cancelled'].map(s => `<option value="${s}"${(isEdit ? existingItem.status : 'open') === s ? ' selected' : ''}>${s}</option>`).join('')}
         </select>
       </div>
       <div class="field">
@@ -1730,8 +1788,8 @@ function showWorkItemModal(existingItem = null) {
       if (!resp.ok) throw new Error(result.error || 'Failed');
 
       overlay.remove();
-      backlog = null; // bust cache
-      await buildTree();
+      backlog = null; epicCache = null; // bust cache
+      await Promise.all([buildTree(), buildEpicTree()]);
       route();
     } catch (e) {
       btn.disabled = false;
@@ -2058,20 +2116,22 @@ async function renderEpicDetailView(epicId) {
     const sortedEpicItems = topoSort(items);
     html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Depends On</th><th>Project</th><th>Tags</th><th></th></tr></thead><tbody>`;
     for (const item of sortedEpicItems) {
-      const sc = item.status === 'done' ? 'done' : (item.depends_on?.length ? 'blocked' : 'open');
+      const sc = {'done':'done','blocked':'blocked','in-progress':'in-progress','cancelled':'cancelled'}[item.status] || 'open';
       const canDispatch = item.status === 'open' || item.status === 'in-progress';
       const deps = (item.depends_on || []).length ? `← ${item.depends_on.map(d => esc(d)).join(', ')}` : '';
       html += `<tr>`;
       html += `<td><code>${esc(item.id)}</code></td>`;
       html += `<td>${esc(item.title)}</td>`;
-      html += `<td><span class="badge badge-${sc}">${esc(item.status)}</span></td>`;
+      html += `<td><span class="badge badge-${sc}" data-status-click="${esc(item.id)}" data-current-status="${esc(item.status)}" style="cursor:pointer">${esc(item.status)}</span></td>`;
       html += `<td><span class="badge badge-${item.priority || 'medium'}">${esc(item.priority || 'medium')}</span></td>`;
       html += `<td><code style="font-size:11px">${deps}</code></td>`;
       html += `<td><span class="tag">${esc(item.project_key)}</span></td>`;
       html += `<td>${(item.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
       html += `<td>`;
       html += `<button class="expand-btn" data-epic-wi-expand="${esc(item.id)}">details</button>`;
+      html += `<button class="edit-btn" data-epic-wi-edit="${esc(item.id)}">edit</button>`;
       if (canDispatch) html += `<button class="dispatch-btn" data-epic-task-dispatch="${esc(item.id)}" data-epic-task-pk="${esc(item.project_key)}">dispatch</button>`;
+      html += `<button class="delete-btn" data-epic-wi-del="${esc(item.id)}">delete</button>`;
       html += `<button class="unlink-btn" data-unlink-item="${esc(item.id)}">unlink</button>`;
       html += `</td></tr>`;
       // Detail row for this work item in epic view
@@ -2242,6 +2302,58 @@ function bindEpicDetailEvents(epicId) {
       const row = document.querySelector(`[data-epic-wi-detail="${wid}"]`);
       if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
     };
+  });
+
+  // Epic view: edit buttons
+  document.querySelectorAll('[data-epic-wi-edit]').forEach(btn => {
+    btn.onclick = async () => {
+      const wid = btn.dataset.epicWiEdit;
+      const bl = await getBacklog();
+      let wi = null;
+      for (const group of Object.values(bl.projects)) {
+        if (!group.items) continue;
+        wi = group.items.find(i => i.id === wid);
+        if (wi) break;
+      }
+      if (wi) showWorkItemModal(wi);
+    };
+  });
+
+  // Epic view: delete buttons
+  document.querySelectorAll('[data-epic-wi-del]').forEach(btn => {
+    btn.onclick = async () => {
+      const wid = btn.dataset.epicWiDel;
+      const bl = await getBacklog();
+      let wi = null;
+      for (const group of Object.values(bl.projects)) {
+        if (!group.items) continue;
+        wi = group.items.find(i => i.id === wid);
+        if (wi) break;
+      }
+      if (!wi) return;
+      if (!confirm(`Delete work item ${wi.id}: "${wi.title}"?`)) return;
+      try {
+        const resp = await fetch(`/api/work-items/${wi.id}`, { method: 'DELETE' });
+        const result = await resp.json();
+        if (!resp.ok) throw new Error(result.error || 'Delete failed');
+        backlog = null; epicCache = null;
+        await Promise.all([buildTree(), buildEpicTree()]);
+        route();
+      } catch (e) {
+        alert('Delete failed: ' + e.message);
+      }
+    };
+  });
+
+  // Epic view: status badge click
+  document.querySelectorAll('[data-status-click]').forEach(badge => {
+    if (!badge._statusBound) {
+      badge._statusBound = true;
+      badge.onclick = (e) => {
+        e.stopPropagation();
+        showStatusDropdown(badge, badge.dataset.statusClick, badge.dataset.currentStatus);
+      };
+    }
   });
 
   // Epic view: plan/docs/files buttons (reuse same handlers)
