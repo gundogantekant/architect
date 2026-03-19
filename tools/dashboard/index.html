@@ -3795,10 +3795,7 @@ function bindSettingsEvents(status, config) {
   });
 
   document.getElementById('settings-fresh')?.addEventListener('click', async () => {
-    const clearSessions = confirm('Clear all session data as well?
-
-OK = clear sessions + restart
-Cancel = restart only (keep sessions)');
+    const clearSessions = confirm('Clear all session data as well?\n\nOK = clear sessions + restart\nCancel = restart only (keep sessions)');
     try {
       await fetch('/api/server/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'fresh', clear_sessions: clearSessions }) });
       showReconnectingOverlay();
@@ -3883,7 +3880,7 @@ function showReconnectingOverlay() {
   setTimeout(() => {
     clearInterval(poll);
     if (overlay.isConnected) {
-      overlay.querySelector('.reconnecting-box').innerHTML = '<h3>Server not responding</h3><p>The server may be stopped. Use dashctl.sh to restart it.</p><button class="settings-btn" onclick="this.closest('.reconnecting-overlay').remove()" style="margin-top:12px">Dismiss</button>';
+      overlay.querySelector('.reconnecting-box').innerHTML = `<h3>Server not responding</h3><p>The server may be stopped. Use dashctl.sh to restart it.</p><button class="settings-btn" onclick="this.closest('.reconnecting-overlay').remove()" style="margin-top:12px">Dismiss</button>`;
     }
   }, 30000);
 }
