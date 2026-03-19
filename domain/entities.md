@@ -18,7 +18,7 @@ Canonical schemas for all structured data in the architect system. Agents and sk
 **Interactive agents**: browser (interacts with web via Playwright, no code/data writes)
 **Implementation agents**: coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer
 **Onboarding agents**: profiler (writes only CLAUDE.md to the target project)
-**Data-write agents**: tracker (writes only `work/backlog.json` and `work/epics/E-XXX/*.md`)
+**Data-write agents**: tracker (writes only `work/backlog.json`, `work/epics/E-XXX/*.md`, and `work/items/W-XXX/*.md`)
 
 ## RequestClassification
 
@@ -154,6 +154,7 @@ Stored at `portfolio/<org>/<project>/<component>.json`.
     "testing": ["string"]
   },
   "custom_rules": ["string"],
+  "portfolio_guides": ["string — filenames of markdown guides in the same portfolio directory to auto-load"],
   "worktree_setup": {
     "copy_paths": ["string — relative paths to copy from source to worktree"],
     "post_commands": ["string — shell commands to run in worktree after copy"]
@@ -161,7 +162,7 @@ Stored at `portfolio/<org>/<project>/<component>.json`.
 }
 ```
 
-**Optional fields**: `brief`, `doc_paths`, and `worktree_setup` are absent on entries onboarded before the profiler was added or where no setup is needed.
+**Optional fields**: `brief`, `doc_paths`, `portfolio_guides`, and `worktree_setup` are absent on entries onboarded before the profiler was added or where no setup is needed.
 
 ## Organization
 
@@ -212,6 +213,14 @@ Stored in `work/backlog.json` under `projects[key].items`. The project key (`org
 }
 ```
 
+### Work Item Artifact Directory
+
+Work item artifacts (plans, documentation) are stored as files at `work/items/W-XXX/`:
+- `plan.md` — implementation plan
+- `docs.md` — documentation and notes
+
+Directories are created lazily on first write. The `notes` field on WorkItem is **deprecated** — existing content is migrated to `work/items/W-XXX/docs.md` by the v4→v5 migration.
+
 ## Epic
 
 Top-level entity in `work/backlog.json` under the `epics` array. Epics group work items across projects into strategic goals.
@@ -248,7 +257,7 @@ Top-level structure of `work/backlog.json`. Items are grouped under project keys
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "next_id": "number",
   "next_epic_id": "number",
   "epics": [{ "$ref": "Epic" }],
@@ -275,7 +284,7 @@ Tracks an active worktree created for implementation isolation.
 
 ## DispatchRequest
 
-Ephemeral in-memory record created when the dashboard dispatches a Claude agent for a work item. Not persisted to disk — lives only for the server session.
+Record created when the dashboard dispatches a Claude agent for a work item. Persisted to `work/sessions.json` (excluding process handles and listeners). Previously-running sessions are marked `interrupted` on server restart.
 
 ```json
 {
@@ -283,16 +292,20 @@ Ephemeral in-memory record created when the dashboard dispatches a Claude agent 
   "work_item_id": "string (W-XXX)",
   "epic_id": "string (E-XXX or empty, optional)",
   "project_key": "string (org/project/component)",
+  "project_path": "string (absolute path)",
   "additional_instructions": "string (optional)",
-  "status": "running|completed|failed",
+  "skip_permissions": "boolean (true if dispatched with --dangerously-skip-permissions)",
+  "status": "running|completed|failed|killed|interrupted",
   "started_at": "string (ISO 8601)",
-  "completed_at": "string (ISO 8601, optional)"
+  "completed_at": "string (ISO 8601, optional)",
+  "session_id": "string (Claude session ID, optional)",
+  "cost_usd": "number (total cost, optional)"
 }
 ```
 
 ## TerminalSession
 
-Ephemeral in-memory record for an interactive PTY terminal session spawned from the dashboard. Not persisted to disk.
+Record for an interactive PTY terminal session spawned from the dashboard. Persisted to `work/sessions.json` (excluding ptyProcess, scrollback, wsClients). Previously-running sessions are marked `interrupted` on server restart.
 
 ```json
 {
@@ -302,9 +315,25 @@ Ephemeral in-memory record for an interactive PTY terminal session spawned from 
   "project_key": "string (org/project/component)",
   "project_path": "string (absolute path)",
   "title": "string",
-  "status": "running|completed|failed|killed",
+  "skip_permissions": "boolean (true if dispatched with --dangerously-skip-permissions)",
+  "status": "running|completed|failed|killed|interrupted",
   "started_at": "string (ISO 8601)",
   "exited_at": "string (ISO 8601, null while running)"
+}
+```
+
+## SessionsFile
+
+Persisted session state at `work/sessions.json`. Written by the dashboard server on every state change (debounced 500ms). On startup, any `running` sessions are re-marked as `interrupted`.
+
+```json
+{
+  "dispatches": {
+    "D-xxx": { "$ref": "DispatchRequest (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, completed_at, session_id, cost_usd, skip_permissions)" }
+  },
+  "terminals": {
+    "T-xxx": { "$ref": "TerminalSession (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, exited_at, skip_permissions)" }
+  }
 }
 ```
 

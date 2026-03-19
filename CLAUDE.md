@@ -136,13 +136,18 @@ The dashboard supports dispatching Claude Code agents directly from work items:
 - Add optional instructions, then dispatch — spawns `claude -p --output-format stream-json` as a child process
 - Live output streams to the browser via SSE; multiple dispatches run concurrently
 - Each dispatch panel shows a terminal guidance command for taking over from CLI
-- Dispatch state is ephemeral (in-memory, lost on server restart). See `domain/entities.md` → DispatchRequest for schema.
+- Session state persisted to `work/sessions.json` — survives server restarts. Previously-running sessions marked as `interrupted`. See `domain/entities.md` → DispatchRequest, TerminalSession, SessionsFile for schemas.
 - Interactive terminals use xterm.js + WebSocket for bidirectional PTY I/O (node-pty). See `domain/entities.md` → TerminalSession for schema.
 - Kill buttons on dispatch/terminal panels; "Kill All Sessions" button for bulk cleanup.
 - Auto-cleanup: exited terminals removed after 10min, completed dispatches after 30min.
 - `#agents` route: tile-based view of all dispatched agents, filterable by status/epic/project. Tiles show status, output preview, and support focus/kill actions. Quick dispatch modal available. Active list responses include `epic_id` and `last_output` fields.
+- **Foldable panels**: minimize/expand dispatch and terminal panels. Collapse state persisted to sessionStorage across navigation.
+- **Contextual placement**: session panels appear under their associated work item row in component/epic views. Standalone sessions fall back to a global container at the top.
+- **Skip permissions**: dispatch modal includes "Skip permissions (autonomous)" toggle — spawns agent with `--dangerously-skip-permissions`. Panels show `[auto]` badge.
+- **Grouped sidebar**: sessions sidebar groups entries by epic, with standalone sessions below. Clicking navigates to the session's context view.
+- **Architect-awareness**: dispatched agents receive `ARCHITECT_ROOT` env var and `# Environment` / `# Tracking` sections in their prompt with dashboard API endpoints for status updates and log entries.
 
-Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/stream` (SSE), `GET /api/dispatch/active`, `DELETE /api/dispatch/:id`, `DELETE /api/dispatch/all`. Terminal endpoints: `POST /api/terminal`, `GET /api/terminal/active`, `DELETE /api/terminal/:id`, `DELETE /api/terminal/all`, `WS /api/terminal/:id/ws`. Epic endpoints: `GET/POST /api/epics`, `GET/PATCH/DELETE /api/epics/:id`, `POST /api/epics/:id/link`, `POST /api/epics/:id/unlink`, `GET/PUT /api/epics/:id/plan`, `GET/PUT /api/epics/:id/doc`.
+Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/stream` (SSE), `GET /api/dispatch/active`, `DELETE /api/dispatch/:id`, `DELETE /api/dispatch/all`. Terminal endpoints: `POST /api/terminal`, `GET /api/terminal/active`, `DELETE /api/terminal/:id`, `DELETE /api/terminal/all`, `WS /api/terminal/:id/ws`. Epic endpoints: `GET/POST /api/epics`, `GET/PATCH/DELETE /api/epics/:id`, `POST /api/epics/:id/link`, `POST /api/epics/:id/unlink`, `GET/PUT /api/epics/:id/plan`, `GET/PUT /api/epics/:id/doc`. Work item artifact endpoints: `GET/PUT /api/work-items/:id/plan`, `GET/PUT /api/work-items/:id/doc`, `GET /api/work-items/:id/artifacts`, `GET/PUT/DELETE /api/work-items/:id/artifacts/:filename`.
 
 ## Available Skills
 

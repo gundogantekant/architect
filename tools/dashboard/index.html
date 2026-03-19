@@ -82,7 +82,7 @@
 
   /* Markdown */
   .md-container { max-height: 600px; overflow-y: auto; padding: 16px; background: #fafafa; border-radius: 6px; font-size: 14px; line-height: 1.6; }
-  .md-container pre { background: #1e1e2e; color: #cdd6f4; padding: 12px; border-radius: 6px; overflow-x: auto; }
+  .md-container pre { background: #f5f5f5; color: var(--text); padding: 12px; border-radius: 6px; overflow-x: auto; }
   .md-container code { font-size: 13px; }
   .md-container h1, .md-container h2, .md-container h3 { margin-top: 16px; margin-bottom: 8px; }
   .md-container ul, .md-container ol { padding-left: 20px; }
@@ -142,6 +142,39 @@
   .dispatch-guidance code { background: #fef3c7; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
   .dispatch-guidance .label { font-weight: 600; font-size: 11px; text-transform: uppercase; color: #92400e; margin-bottom: 4px; }
 
+  /* Collapsible panels */
+  .dispatch-panel.collapsed .dispatch-log,
+  .dispatch-panel.collapsed .dispatch-guidance,
+  .terminal-panel.collapsed .terminal-container { display: none; }
+  .minimize-btn {
+    cursor: pointer; color: var(--text-light); font-size: 11px;
+    border: 1px solid var(--border); background: none;
+    padding: 3px 10px; border-radius: 4px;
+  }
+  .minimize-btn:hover { background: #f1f5f9; }
+
+  /* Session slot rows under work items */
+  .wi-sessions-row td { padding: 0; border-bottom: 1px solid var(--border); }
+  .wi-sessions-container { padding: 8px 16px; background: #fafbfc; }
+  .wi-sessions-container .dispatch-panel,
+  .wi-sessions-container .terminal-panel { margin-bottom: 8px; }
+
+  /* Sidebar grouping */
+  .sidebar-group-label {
+    padding: 4px 16px; font-size: 10px; font-weight: 600;
+    color: #6c7086; text-transform: uppercase; letter-spacing: 0.5px;
+    margin-top: 6px;
+  }
+
+  /* Interrupted status */
+  .status-dot.interrupted { background: #94a3b8; }
+  .dispatch-header .status-dot.interrupted { background: #94a3b8; }
+  .terminal-header .status-dot.interrupted { background: #94a3b8; }
+  .badge-interrupted { background: #f1f5f9; color: #64748b; }
+
+  /* Auto badge */
+  .auto-badge { display: inline-block; font-size: 10px; color: #f59e0b; border: 1px solid #f59e0b; padding: 1px 6px; border-radius: 3px; margin-left: 4px; font-weight: 600; }
+
   /* Epic sidebar */
   .sidebar-section-label { padding: 10px 16px 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #6c7086; cursor: pointer; }
   .sidebar-section-label:hover { color: #cdd6f4; }
@@ -179,12 +212,12 @@
 
   /* Terminal panels */
   .terminal-panel { background: var(--bg-card); border: 1px solid var(--accent); border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
-  .terminal-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--accent); background: #1e1e2e; }
+  .terminal-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--accent); background: #fafafa; }
   .terminal-header .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
   .terminal-header .status-dot.running { background: var(--green); animation: pulse 1.5s infinite; }
   .terminal-header .status-dot.completed, .terminal-header .status-dot.failed, .terminal-header .status-dot.killed { background: var(--red); }
-  .terminal-header .terminal-title { font-size: 13px; font-weight: 600; flex: 1; color: #cdd6f4; }
-  .terminal-header .terminal-meta { font-size: 11px; color: #6c7086; }
+  .terminal-header .terminal-title { font-size: 13px; font-weight: 600; flex: 1; color: var(--text); }
+  .terminal-header .terminal-meta { font-size: 11px; color: var(--text-light); }
   .terminal-container { height: 400px; background: #1e1e2e; }
 
   /* Interactive checkbox in modals */
@@ -222,12 +255,12 @@
   .focus-popup-footer .btn-copy { background: var(--accent); color: #fff; }
   .focus-popup-footer .btn-copy:hover { opacity: 0.85; }
 
-  /* Dark theme variant for terminal focus */
-  .focus-popup.terminal-focus { background: #1e1e2e; }
-  .focus-popup.terminal-focus .focus-popup-header { background: #181825; border-color: #313244; }
-  .focus-popup.terminal-focus .focus-popup-header .focus-title { color: #cdd6f4; }
-  .focus-popup.terminal-focus .focus-popup-header .focus-meta { color: #6c7086; }
-  .focus-popup.terminal-focus .focus-popup-footer { background: #181825; border-color: #313244; }
+  /* Terminal focus popup — light chrome, dark terminal content inside */
+  .focus-popup.terminal-focus { background: #fff; }
+  .focus-popup.terminal-focus .focus-popup-header { background: #fafafa; border-color: var(--border); }
+  .focus-popup.terminal-focus .focus-popup-header .focus-title { color: var(--text); }
+  .focus-popup.terminal-focus .focus-popup-header .focus-meta { color: var(--text-light); }
+  .focus-popup.terminal-focus .focus-popup-footer { background: #fafafa; border-color: var(--border); }
 
   /* Focus button on inline panels */
   .focus-btn { cursor: pointer; color: var(--accent); font-size: 11px; border: 1px solid var(--accent); background: none; padding: 3px 10px; border-radius: 4px; }
@@ -245,7 +278,7 @@
   .agent-tile-title { font-size: 13px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .agent-tile-elapsed { font-size: 11px; color: var(--text-light); flex-shrink: 0; }
   .agent-tile-badges { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 14px 8px; }
-  .agent-tile-preview { background: #1e1e2e; color: #cdd6f4; font-family: monospace; font-size: 11px; line-height: 1.5; padding: 8px 12px; max-height: 60px; overflow: hidden; white-space: pre-wrap; word-break: break-word; margin: 0 14px 8px; border-radius: 4px; }
+  .agent-tile-preview { background: #f8f8f8; color: var(--text); font-family: monospace; font-size: 11px; line-height: 1.5; padding: 8px 12px; max-height: 60px; overflow: hidden; white-space: pre-wrap; word-break: break-word; margin: 0 14px 8px; border-radius: 4px; }
   .agent-tile-footer { display: flex; gap: 6px; padding: 8px 14px 12px; border-top: 1px solid #f0f0f0; }
   .agents-filter-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
   .agents-filter-bar .filter-tab { padding: 5px 14px; border-radius: 16px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: #fff; color: var(--text); }
@@ -253,6 +286,37 @@
   .agents-filter-bar select { padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border); font-size: 12px; }
   .agents-badge { background: var(--accent); color: #fff; font-size: 10px; padding: 1px 7px; border-radius: 10px; font-weight: 700; margin-left: 4px; }
   .agents-badge.empty { display: none; }
+
+  /* Context session sections (project/epic level) */
+  .context-sessions-section.hidden { display: none; }
+  .context-sessions-section { padding: 8px 0; }
+  .context-sessions-section h3 { margin: 8px 0; font-size: 14px; color: var(--text-light); }
+
+  /* Hierarchical agent groups */
+  .agent-group { margin-bottom: 16px; }
+  .agent-group > summary { font-size: 14px; font-weight: 600; cursor: pointer; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .agent-subgroup { margin-left: 16px; margin-bottom: 8px; }
+  .agent-subgroup > summary { font-size: 13px; font-weight: 500; cursor: pointer; padding: 4px 0; color: var(--text-light); }
+
+  /* Sidebar project group */
+  .sidebar-project-label {
+    padding: 4px 16px; font-size: 10px; font-weight: 600;
+    color: #f5c2e7; text-transform: uppercase; letter-spacing: 0.3px;
+    margin-top: 6px; cursor: pointer;
+  }
+  .sidebar-project-label:hover { background: #313244; }
+  .sidebar-epic-sublabel {
+    padding: 3px 24px; font-size: 10px; font-weight: 600;
+    color: #6c7086; text-transform: uppercase; letter-spacing: 0.5px;
+    cursor: pointer;
+  }
+  .sidebar-epic-sublabel:hover { background: #313244; }
+  .session-entry.indented { padding-left: 32px; }
+
+  /* Org active agents */
+  .org-agents-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+  .org-agents-table th { text-align: left; padding: 6px 8px; border-bottom: 2px solid var(--border); font-size: 10px; text-transform: uppercase; color: var(--text-light); }
+  .org-agents-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
 </style>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/css/xterm.min.css">
 </head>
@@ -456,12 +520,14 @@ function createDispatchPanel(dispatch) {
     ? `Continue ${dispatch.work_item_id}: ${dispatch.title || ''}`
     : dispatch.title || '';
   const isRunning = dispatch.status === 'running';
+  const autoBadge = dispatch.skip_permissions ? '<span class="auto-badge">[auto]</span>' : '';
   panel.innerHTML = `
     <div class="dispatch-header">
       <span class="status-dot ${isRunning ? 'running' : dispatch.status}"></span>
-      <span class="dispatch-title">${esc(titleParts.join(' — '))}</span>
+      <span class="dispatch-title">${esc(titleParts.join(' — '))}${autoBadge}</span>
       <span class="dispatch-meta">${new Date(dispatch.started_at).toLocaleTimeString()}</span>
       <button class="focus-btn" data-focus-dispatch="${esc(dispatch.id)}">Focus</button>
+      <button class="minimize-btn" data-minimize-dispatch="${esc(dispatch.id)}">▼</button>
       <button class="kill-btn" data-kill-dispatch="${esc(dispatch.id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
     </div>
     <div class="dispatch-log" id="log-${dispatch.id}"></div>
@@ -472,6 +538,18 @@ function createDispatchPanel(dispatch) {
         : `cd ${esc(dispatch.project_path)} && claude "${esc(guidancePrompt)}"`}</code>
     </div>
   `;
+  // Register in sessionPanels
+  const panelKey = `dispatch:${dispatch.id}`;
+  sessionPanels.set(panelKey, panel);
+  // Apply persisted collapse state
+  if (sessionCollapseState.get(panelKey)) {
+    panel.classList.add('collapsed');
+    panel.querySelector(`[data-minimize-dispatch="${dispatch.id}"]`).textContent = '▶';
+  }
+  // Bind minimize button
+  panel.querySelector(`[data-minimize-dispatch="${dispatch.id}"]`).onclick = () => {
+    togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-dispatch="${dispatch.id}"]`));
+  };
   // Bind focus button
   panel.querySelector(`[data-focus-dispatch="${dispatch.id}"]`).onclick = () => openFocusPopup('dispatch', dispatch.id);
   // Bind kill button
@@ -523,12 +601,15 @@ function connectDispatchStream(dispatch) {
     } catch {
       dispatch.status = 'completed';
     }
-    if (dotEl) {
-      dotEl.classList.remove('running');
-      dotEl.classList.add(dispatch.status);
-    }
-    updateDispatchBadge();
     es.close();
+    // Immediate cleanup: remove from array, DOM, and maps
+    const idx = activeDispatches.findIndex(d => d.id === dispatch.id);
+    if (idx !== -1) activeDispatches.splice(idx, 1);
+    const panelKey = `dispatch:${dispatch.id}`;
+    const panel = sessionPanels.get(panelKey);
+    if (panel?.parentElement) panel.remove();
+    sessionPanels.delete(panelKey);
+    updateDispatchBadge();
   });
 
   es.onerror = () => {
@@ -542,36 +623,101 @@ function connectDispatchStream(dispatch) {
   };
 }
 
-function getDispatchContainer() {
-  let container = document.getElementById('dispatch-panels');
-  if (!container) {
-    container = document.createElement('div');
-    container.id = 'dispatch-panels';
-    // Add Kill All button at top
+async function killAllSessions() {
+  if (!confirm('Kill all running dispatches and terminals?')) return;
+  await Promise.all([
+    fetch('/api/dispatch/all', { method: 'DELETE' }),
+    fetch('/api/terminal/all', { method: 'DELETE' }),
+  ]);
+  activeDispatches.forEach(d => { d.status = 'killed'; });
+  activeTerminals.forEach(t => { t.status = 'killed'; });
+  document.querySelectorAll('.dispatch-panel .status-dot.running, .terminal-header .status-dot.running').forEach(dot => {
+    dot.classList.remove('running');
+    dot.classList.add('failed');
+  });
+  document.querySelectorAll('.kill-btn').forEach(btn => { btn.disabled = true; });
+  updateDispatchBadge();
+}
+
+function placeSessionPanels() {
+  // 1. Detach all panels from DOM (keep alive in sessionPanels map)
+  for (const [, panel] of sessionPanels) {
+    if (panel.parentElement) panel.remove();
+  }
+
+  // 2. Ensure global fallback container exists
+  let globalContainer = document.getElementById('dispatch-panels');
+  if (!globalContainer) {
+    globalContainer = document.createElement('div');
+    globalContainer.id = 'dispatch-panels';
     const killAllBtn = document.createElement('button');
     killAllBtn.className = 'kill-all-btn';
     killAllBtn.textContent = 'Kill All Sessions';
-    killAllBtn.onclick = async () => {
-      if (!confirm('Kill all running dispatches and terminals?')) return;
-      await Promise.all([
-        fetch('/api/dispatch/all', { method: 'DELETE' }),
-        fetch('/api/terminal/all', { method: 'DELETE' }),
-      ]);
-      // Update UI for all dispatches
-      activeDispatches.forEach(d => { d.status = 'killed'; });
-      activeTerminals.forEach(t => { t.status = 'killed'; });
-      document.querySelectorAll('.dispatch-panel .status-dot.running, .terminal-header .status-dot.running').forEach(dot => {
-        dot.classList.remove('running');
-        dot.classList.add('failed');
-      });
-      document.querySelectorAll('.kill-btn').forEach(btn => { btn.disabled = true; });
-      updateDispatchBadge();
-    };
-    container.appendChild(killAllBtn);
-    const main = $('#main');
-    main.insertBefore(container, main.firstChild);
+    killAllBtn.onclick = killAllSessions;
+    globalContainer.appendChild(killAllBtn);
+  } else {
+    // Remove from DOM but keep reference — we'll re-insert if needed
+    if (globalContainer.parentElement) globalContainer.remove();
   }
-  return container;
+
+  let globalHasPanels = false;
+
+  // 3. Place each session panel (cascading: work_item → epic → project → global)
+  const allSessions = [
+    ...activeDispatches.map(d => ({ key: `dispatch:${d.id}`, work_item_id: d.work_item_id, epic_id: d.epic_id, project_key: d.project_key })),
+    ...activeTerminals.map(t => ({ key: `terminal:${t.id}`, work_item_id: t.work_item_id, epic_id: t.epic_id, project_key: t.project_key })),
+  ];
+
+  for (const session of allSessions) {
+    const panel = sessionPanels.get(session.key);
+    if (!panel) continue;
+
+    // Tier 1: work-item-level slot
+    const wiSlot = session.work_item_id ? document.querySelector(`[data-session-slot="${session.work_item_id}"]`) : null;
+    if (wiSlot) {
+      wiSlot.appendChild(panel);
+      const row = wiSlot.closest('.wi-sessions-row');
+      if (row) row.style.display = '';
+      continue;
+    }
+
+    // Tier 2: epic-level slot
+    const epicSlot = session.epic_id ? document.querySelector(`[data-session-slot-epic="${session.epic_id}"]`) : null;
+    if (epicSlot) {
+      epicSlot.appendChild(panel);
+      const section = epicSlot.closest('.context-sessions-section');
+      if (section) section.classList.remove('hidden');
+      continue;
+    }
+
+    // Tier 3: project-level slot
+    const projSlot = session.project_key ? document.querySelector(`[data-session-slot-project="${session.project_key}"]`) : null;
+    if (projSlot) {
+      projSlot.appendChild(panel);
+      const section = projSlot.closest('.context-sessions-section');
+      if (section) section.classList.remove('hidden');
+      continue;
+    }
+
+    // Tier 4: global fallback
+    globalContainer.appendChild(panel);
+    globalHasPanels = true;
+  }
+
+  // 4. Insert global container only if it has panels
+  if (globalHasPanels) {
+    const main = $('#main');
+    main.insertBefore(globalContainer, main.firstChild);
+  }
+
+  // 5. Fit visible, non-collapsed terminals
+  for (const t of activeTerminals) {
+    const panelKey = `terminal:${t.id}`;
+    const panel = sessionPanels.get(panelKey);
+    if (panel && !panel.classList.contains('collapsed') && panel.isConnected && t._fitAddon) {
+      requestAnimationFrame(() => t._fitAddon.fit());
+    }
+  }
 }
 
 // --- xterm.js dynamic loading ---
@@ -598,21 +744,64 @@ async function loadXterm() {
 // --- Terminal state ---
 const activeTerminals = [];
 
+// --- Session Panel Registry ---
+const sessionPanels = new Map(); // "dispatch:{id}" or "terminal:{id}" → DOM element
+const sessionCollapseState = new Map(); // same key → boolean
+
+// Load persisted collapse state
+try {
+  const saved = sessionStorage.getItem('sessionCollapseState');
+  if (saved) for (const [k, v] of Object.entries(JSON.parse(saved))) sessionCollapseState.set(k, v);
+} catch {}
+
+function saveCollapseState() {
+  try { sessionStorage.setItem('sessionCollapseState', JSON.stringify(Object.fromEntries(sessionCollapseState))); } catch {}
+}
+
+function togglePanelCollapse(key, panel, btn) {
+  const collapsed = !panel.classList.contains('collapsed');
+  panel.classList.toggle('collapsed', collapsed);
+  sessionCollapseState.set(key, collapsed);
+  btn.textContent = collapsed ? '▶' : '▼';
+  saveCollapseState();
+  // Re-fit xterm if expanding a terminal
+  if (!collapsed && key.startsWith('terminal:')) {
+    const tid = key.split(':')[1];
+    const t = activeTerminals.find(x => x.id === tid);
+    if (t?._fitAddon) requestAnimationFrame(() => { t._fitAddon.fit(); if (t._term) t._term.scrollToBottom(); });
+  }
+}
+
 function createTerminalPanel(terminalInfo) {
   const panel = document.createElement('div');
   panel.className = 'terminal-panel';
   panel.id = `terminal-${terminalInfo.id}`;
   const isRunning = terminalInfo.status === 'running';
+  const shellBadge = terminalInfo.type === 'shell' ? '<span class="auto-badge" style="background:#2d7d46">[shell]</span>' : '';
+  const autoBadge = terminalInfo.skip_permissions ? '<span class="auto-badge">[auto]</span>' : '';
   panel.innerHTML = `
     <div class="terminal-header">
-      <span class="status-dot ${isRunning ? 'running' : 'failed'}"></span>
-      <span class="terminal-title">${esc(terminalInfo.id)} — ${esc(terminalInfo.title || 'Terminal')}</span>
+      <span class="status-dot ${isRunning ? 'running' : (terminalInfo.status === 'interrupted' ? 'interrupted' : 'failed')}"></span>
+      <span class="terminal-title">${esc(terminalInfo.id)} — ${esc(terminalInfo.title || 'Terminal')}${shellBadge}${autoBadge}</span>
       <span class="terminal-meta">${new Date(terminalInfo.started_at).toLocaleTimeString()}</span>
       <button class="focus-btn" data-focus-terminal="${esc(terminalInfo.id)}">Focus</button>
+      <button class="minimize-btn" data-minimize-terminal="${esc(terminalInfo.id)}">▼</button>
       <button class="kill-btn" data-kill-terminal="${esc(terminalInfo.id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
     </div>
     <div class="terminal-container" id="term-container-${terminalInfo.id}"></div>
   `;
+  // Register in sessionPanels
+  const panelKey = `terminal:${terminalInfo.id}`;
+  sessionPanels.set(panelKey, panel);
+  // Apply persisted collapse state
+  if (sessionCollapseState.get(panelKey)) {
+    panel.classList.add('collapsed');
+    panel.querySelector(`[data-minimize-terminal="${terminalInfo.id}"]`).textContent = '▶';
+  }
+  // Bind minimize button
+  panel.querySelector(`[data-minimize-terminal="${terminalInfo.id}"]`).onclick = () => {
+    togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-terminal="${terminalInfo.id}"]`));
+  };
   // Bind focus button
   panel.querySelector(`[data-focus-terminal="${terminalInfo.id}"]`).onclick = () => openFocusPopup('terminal', terminalInfo.id);
   // Bind kill button
@@ -666,12 +855,19 @@ async function connectTerminalWs(terminalInfo) {
       const msg = JSON.parse(e.data);
       if (msg.type === 'data') {
         term.write(msg.data);
+        term.scrollToBottom();
       } else if (msg.type === 'exit') {
         terminalInfo.status = msg.code === 0 ? 'completed' : 'failed';
-        const dot = document.querySelector(`#terminal-${terminalInfo.id} .status-dot`);
-        if (dot) { dot.classList.remove('running'); dot.classList.add('failed'); }
-        const killBtn = document.querySelector(`[data-kill-terminal="${terminalInfo.id}"]`);
-        if (killBtn) killBtn.disabled = true;
+        // Dispose xterm instance
+        if (terminalInfo._term) { terminalInfo._term.dispose(); terminalInfo._term = null; }
+        if (terminalInfo._resizeObserver) { terminalInfo._resizeObserver.disconnect(); terminalInfo._resizeObserver = null; }
+        // Immediate cleanup: remove from array, DOM, and maps
+        const idx = activeTerminals.findIndex(t => t.id === terminalInfo.id);
+        if (idx !== -1) activeTerminals.splice(idx, 1);
+        const panelKey = `terminal:${terminalInfo.id}`;
+        const panel = sessionPanels.get(panelKey);
+        if (panel?.parentElement) panel.remove();
+        sessionPanels.delete(panelKey);
         updateDispatchBadge();
       }
     } catch {}
@@ -703,17 +899,26 @@ async function connectTerminalWs(terminalInfo) {
 async function restoreTerminals() {
   try {
     const list = await api('terminal/active');
+    const toConnect = [];
     for (const t of list) {
+      if (t.status !== 'running') continue; // skip exited sessions
       if (activeTerminals.some(a => a.id === t.id)) continue;
       const terminalInfo = { ...t };
       activeTerminals.push(terminalInfo);
-      const container = getDispatchContainer();
-      const panel = createTerminalPanel(terminalInfo);
-      container.appendChild(panel);
-      if (t.status === 'running') {
-        await connectTerminalWs(terminalInfo);
+      createTerminalPanel(terminalInfo);
+      toConnect.push(terminalInfo);
+    }
+    // Cleanup stale panels for sessions that no longer exist
+    const activeIds = new Set(list.map(t => `terminal:${t.id}`));
+    for (const key of sessionPanels.keys()) {
+      if (key.startsWith('terminal:') && !activeIds.has(key)) {
+        const panel = sessionPanels.get(key);
+        if (panel?.parentElement) panel.remove();
+        sessionPanels.delete(key);
       }
     }
+    placeSessionPanels();
+    for (const t of toConnect) await connectTerminalWs(t);
     updateDispatchBadge();
   } catch {}
 }
@@ -744,8 +949,16 @@ async function dispatchWorkItem(workItem, projectKey) {
           <textarea id="dispatch-instructions" placeholder="Optional: add context, constraints, or specific instructions for the agent..."></textarea>
         </div>
         <div class="interactive-toggle">
-          <input type="checkbox" id="dispatch-interactive" />
+          <input type="checkbox" id="dispatch-claude-agent" checked />
+          <label for="dispatch-claude-agent">Claude Agent</label>
+        </div>
+        <div class="interactive-toggle">
+          <input type="checkbox" id="dispatch-interactive" checked />
           <label for="dispatch-interactive">Interactive terminal (xterm.js)</label>
+        </div>
+        <div class="interactive-toggle">
+          <input type="checkbox" id="dispatch-skip-permissions" checked />
+          <label for="dispatch-skip-permissions">Skip permissions (autonomous)</label>
         </div>
         <div class="modal-actions">
           <button class="btn btn-cancel" id="modal-cancel">Cancel</button>
@@ -763,25 +976,37 @@ async function dispatchWorkItem(workItem, projectKey) {
       if (e.target === overlay) { overlay.remove(); resolve(null); }
     });
 
+    overlay.querySelector('#dispatch-claude-agent').onchange = () => {
+      const agent = overlay.querySelector('#dispatch-claude-agent').checked;
+      overlay.querySelector('#dispatch-interactive').disabled = !agent;
+      overlay.querySelector('#dispatch-skip-permissions').disabled = !agent;
+    };
+
     overlay.querySelector('#modal-dispatch').onclick = async () => {
       const instructions = overlay.querySelector('#dispatch-instructions').value.trim();
+      const plainTerminal = !overlay.querySelector('#dispatch-claude-agent').checked;
       const interactive = overlay.querySelector('#dispatch-interactive').checked;
+      const skipPermissions = overlay.querySelector('#dispatch-skip-permissions').checked;
       const btn = overlay.querySelector('#modal-dispatch');
       btn.disabled = true;
       btn.textContent = 'Dispatching...';
 
       try {
-        const endpoint = interactive ? '/api/terminal' : '/api/dispatch';
+        const endpoint = plainTerminal ? '/api/terminal/shell' : interactive ? '/api/terminal' : '/api/dispatch';
+        const body = plainTerminal
+          ? { work_item_id: workItem.id, project_key: projectKey, title: workItem.title, epic_id: workItem.epic_id || null }
+          : {
+              work_item_id: workItem.id,
+              project_key: projectKey,
+              title: workItem.title,
+              description: workItem.description || '',
+              additional_instructions: instructions,
+              skip_permissions: skipPermissions,
+            };
         const resp = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            work_item_id: workItem.id,
-            project_key: projectKey,
-            title: workItem.title,
-            description: workItem.description || '',
-            additional_instructions: instructions,
-          }),
+          body: JSON.stringify(body),
         });
         const result = await resp.json();
         if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
@@ -798,21 +1023,22 @@ async function dispatchWorkItem(workItem, projectKey) {
           }
         } catch {}
 
-        if (interactive) {
+        if (plainTerminal || interactive) {
           const terminalInfo = {
             id: result.terminal_id,
+            type: plainTerminal ? 'shell' : 'claude',
             work_item_id: workItem.id,
             project_key: projectKey,
             project_path: projectPath,
             title: workItem.title,
+            skip_permissions: plainTerminal ? false : skipPermissions,
             status: 'running',
             started_at: new Date().toISOString(),
           };
           activeTerminals.push(terminalInfo);
           updateDispatchBadge();
-          const container = getDispatchContainer();
-          const panel = createTerminalPanel(terminalInfo);
-          container.prepend(panel);
+          createTerminalPanel(terminalInfo);
+          placeSessionPanels();
           await connectTerminalWs(terminalInfo);
           overlay.remove();
           resolve(terminalInfo);
@@ -823,14 +1049,14 @@ async function dispatchWorkItem(workItem, projectKey) {
             project_key: projectKey,
             project_path: projectPath,
             title: workItem.title,
+            skip_permissions: skipPermissions,
             status: 'running',
             started_at: new Date().toISOString(),
           };
           activeDispatches.push(dispatch);
           updateDispatchBadge();
-          const container = getDispatchContainer();
-          const panel = createDispatchPanel(dispatch);
-          container.prepend(panel);
+          createDispatchPanel(dispatch);
+          placeSessionPanels();
           connectDispatchStream(dispatch);
           overlay.remove();
           resolve(dispatch);
@@ -849,20 +1075,23 @@ async function restoreDispatches() {
   try {
     const list = await api('dispatch/active');
     for (const d of list) {
+      if (d.status !== 'running') continue; // skip exited sessions
       if (activeDispatches.some(a => a.id === d.id)) continue;
       const dispatch = { ...d, title: d.work_item_id, session_id: d.session_id || null };
       activeDispatches.push(dispatch);
-      const container = getDispatchContainer();
-      const panel = createDispatchPanel(dispatch);
-      container.appendChild(panel);
-      if (d.status === 'running') {
-        connectDispatchStream(dispatch);
-      } else {
-        const dot = panel.querySelector('.status-dot');
-        dot.classList.remove('running');
-        dot.classList.add(d.status);
+      createDispatchPanel(dispatch);
+      connectDispatchStream(dispatch);
+    }
+    // Cleanup stale panels for sessions that no longer exist
+    const activeIds = new Set(list.map(d => `dispatch:${d.id}`));
+    for (const key of sessionPanels.keys()) {
+      if (key.startsWith('dispatch:') && !activeIds.has(key)) {
+        const panel = sessionPanels.get(key);
+        if (panel?.parentElement) panel.remove();
+        sessionPanels.delete(key);
       }
     }
+    placeSessionPanels();
     updateDispatchBadge();
   } catch {}
 }
@@ -942,7 +1171,7 @@ async function buildTree() {
 }
 
 // --- Views ---
-function renderOrgView(org, data) {
+function renderOrgView(org, data, orgSessions) {
   let html = `<div class="card"><h2>${esc(data.name || org)}</h2>`;
   html += `<dl class="kv"><dt>Path Root</dt><dd><code>${esc(data.path_root || '—')}</code></dd></dl>`;
 
@@ -987,6 +1216,35 @@ function renderOrgView(org, data) {
     html += `<h3>Projects (${data.projects.length})</h3><div>`;
     for (const p of data.projects) html += `<span class="tag" style="font-size:12px;padding:3px 10px">${esc(p)}</span>`;
     html += `</div>`;
+  }
+
+  // Active agents for this organization
+  if (orgSessions && orgSessions.length) {
+    // Group by project_key
+    const byProject = new Map();
+    for (const s of orgSessions) {
+      const pk = s.project_key || 'unknown';
+      if (!byProject.has(pk)) byProject.set(pk, []);
+      byProject.get(pk).push(s);
+    }
+    html += `<h3>Active Agents (${orgSessions.length})</h3>`;
+    for (const [pk, sessions] of byProject) {
+      html += `<h4 style="font-size:13px;color:var(--text-light);margin:8px 0 4px">${esc(pk)}</h4>`;
+      html += `<table class="org-agents-table"><thead><tr><th></th><th>Title</th><th>Work Item</th><th>Status</th><th>Elapsed</th><th></th></tr></thead><tbody>`;
+      for (const s of sessions) {
+        const dotClass = s.status === 'running' ? 'running' : (s.status === 'completed' ? 'completed' : (s.status === 'interrupted' ? 'interrupted' : 'failed'));
+        const elapsed = formatElapsed(s.started_at);
+        html += `<tr>`;
+        html += `<td><span class="status-dot ${dotClass}" style="display:inline-block"></span></td>`;
+        html += `<td>${esc(s.title || s.id)}</td>`;
+        html += `<td>${s.work_item_id ? `<code>${esc(s.work_item_id)}</code>` : '—'}</td>`;
+        html += `<td><span class="badge badge-${s.status === 'running' ? 'open' : (s.status === 'completed' ? 'done' : 'medium')}">${esc(s.status)}</span></td>`;
+        html += `<td>${elapsed}</td>`;
+        html += `<td><button class="focus-btn" data-org-focus="${esc(s.type)}:${esc(s.id)}">Focus</button></td>`;
+        html += `</tr>`;
+      }
+      html += `</tbody></table>`;
+    }
   }
 
   html += `</div>`;
@@ -1046,12 +1304,22 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
       html += `<input type="text" class="log-input" data-log-wi="${esc(w.id)}" placeholder="Add log entry..." style="flex:1;padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px" />`;
       html += `<button class="btn-add-wi" data-log-submit="${esc(w.id)}" style="margin:0;padding:4px 10px;font-size:11px">Add Log</button>`;
       html += `</div>`;
+      html += `<div style="margin-top:8px;display:flex;gap:6px">`;
+      html += `<button class="btn-add-wi" data-wi-plan="${esc(w.id)}" style="margin:0;padding:4px 10px;font-size:11px">Plan</button>`;
+      html += `<button class="btn-add-wi" data-wi-doc="${esc(w.id)}" style="margin:0;padding:4px 10px;font-size:11px">Docs</button>`;
+      html += `<button class="btn-add-wi" data-wi-files="${esc(w.id)}" style="margin:0;padding:4px 10px;font-size:11px">Files</button>`;
+      html += `</div>`;
+      html += `<div class="wi-artifact-container" data-artifact-for="${esc(w.id)}" style="margin-top:8px"></div>`;
       html += `</td></tr>`;
+      // Session slot row for this work item
+      html += `<tr class="wi-sessions-row" data-wi-sessions="${esc(w.id)}" style="display:none"><td colspan="8"><div class="wi-sessions-container" data-session-slot="${esc(w.id)}"></div></td></tr>`;
     });
     html += `</tbody></table>`;
   } else {
     html += `<p class="empty">No work items for this project.</p>`;
   }
+  // Project-level session slot (sessions with project_key but no matching work item slot)
+  html += `<div class="context-sessions-section hidden" style="margin-top:16px"><h3>Project Agents</h3><div data-session-slot-project="${esc(currentProjectKey)}"></div></div>`;
   html += `</div>`;
 
   // Tab 1: Overview (Profile + Guidance + Agents)
@@ -1224,6 +1492,21 @@ function bindTabs() {
         btn.disabled = false; btn.textContent = 'Add Log';
       }
     };
+  });
+
+  // Work item plan buttons
+  document.querySelectorAll('[data-wi-plan]').forEach(btn => {
+    btn.onclick = () => loadItemArtifact(btn.dataset.wiPlan, 'plan');
+  });
+
+  // Work item doc buttons
+  document.querySelectorAll('[data-wi-doc]').forEach(btn => {
+    btn.onclick = () => loadItemArtifact(btn.dataset.wiDoc, 'doc');
+  });
+
+  // Work item files buttons
+  document.querySelectorAll('[data-wi-files]').forEach(btn => {
+    btn.onclick = () => loadItemArtifacts(btn.dataset.wiFiles);
   });
 
   // Epic badge navigation
@@ -1428,9 +1711,8 @@ function showDiscussModal() {
         };
         activeTerminals.push(terminalInfo);
         updateDispatchBadge();
-        const container = getDispatchContainer();
-        const panel = createTerminalPanel(terminalInfo);
-        container.prepend(panel);
+        createTerminalPanel(terminalInfo);
+        placeSessionPanels();
         await connectTerminalWs(terminalInfo);
       } else {
         const dispatch = {
@@ -1444,9 +1726,8 @@ function showDiscussModal() {
         };
         activeDispatches.push(dispatch);
         updateDispatchBadge();
-        const container = getDispatchContainer();
-        const panel = createDispatchPanel(dispatch);
-        container.prepend(panel);
+        createDispatchPanel(dispatch);
+        placeSessionPanels();
         connectDispatchStream(dispatch);
       }
 
@@ -1454,6 +1735,147 @@ function showDiscussModal() {
     } catch (e) {
       btn.disabled = false;
       btn.textContent = 'Dispatch';
+      alert('Dispatch failed: ' + e.message);
+    }
+  };
+}
+
+async function showEpicDiscussModal(epicId) {
+  const epic = await api(`epics/${epicId}`);
+  let projectKeys = epic.project_keys || [];
+  const p = epic.progress || { done: 0, total: 0 };
+
+  let registryKeys = [];
+  if (!projectKeys.length) {
+    try {
+      const registry = await api('registry');
+      for (const [, entry] of Object.entries(registry.entries)) {
+        registryKeys.push(`${entry.org}/${entry.project}/${entry.component}`);
+      }
+      registryKeys.sort();
+    } catch {}
+    projectKeys = registryKeys;
+  }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Discuss Epic with Agent</h3>
+      <div style="margin-bottom:14px">
+        <strong>${esc(epic.title)}</strong>
+        <div style="font-size:12px;color:var(--text-light);margin-top:4px">Progress: ${p.done}/${p.total}</div>
+      </div>
+      <div class="field">
+        <label>Target Project</label>
+        <select id="epic-discuss-project">
+          ${projectKeys.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join('')}
+        </select>
+        ${registryKeys.length ? '<div style="font-size:11px;color:var(--text-light);margin-top:2px">No linked projects — showing all registry projects</div>' : ''}
+      </div>
+      <div class="field">
+        <label>Prompt / Instructions *</label>
+        <textarea id="epic-discuss-instructions" placeholder="What would you like to discuss? e.g., architecture decisions, scope planning, implementation strategy..."></textarea>
+      </div>
+      <div class="interactive-toggle">
+        <input type="checkbox" id="epic-discuss-interactive" checked />
+        <label for="epic-discuss-interactive">Interactive terminal (xterm.js)</label>
+      </div>
+      <div class="interactive-toggle">
+        <input type="checkbox" id="epic-discuss-skip-permissions" />
+        <label for="epic-discuss-skip-permissions">Skip permissions (autonomous)</label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" id="epic-discuss-cancel">Cancel</button>
+        <button class="btn btn-dispatch" id="epic-discuss-submit" style="background:var(--teal)">Discuss</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#epic-discuss-cancel').onclick = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  overlay.querySelector('#epic-discuss-submit').onclick = async () => {
+    const instructions = overlay.querySelector('#epic-discuss-instructions').value.trim();
+    if (!instructions) { alert('Instructions are required'); return; }
+    const interactive = overlay.querySelector('#epic-discuss-interactive').checked;
+    const skipPermissions = overlay.querySelector('#epic-discuss-skip-permissions').checked;
+    const pk = overlay.querySelector('#epic-discuss-project').value || projectKeys[0];
+
+    if (!pk) {
+      alert('No project key available. Onboard a project first.');
+      return;
+    }
+
+    const btn = overlay.querySelector('#epic-discuss-submit');
+    btn.disabled = true;
+    btn.textContent = 'Dispatching...';
+
+    try {
+      const endpoint = interactive ? '/api/terminal' : '/api/dispatch';
+      const body = {
+        epic_id: epicId,
+        project_key: pk,
+        additional_instructions: instructions,
+      };
+      if (!interactive) body.skip_permissions = skipPermissions;
+      if (interactive && skipPermissions) body.skip_permissions = true;
+
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
+
+      let projectPath = '';
+      try {
+        const registry = await api('registry');
+        for (const [path, entry] of Object.entries(registry.entries)) {
+          if (`${entry.org}/${entry.project}/${entry.component}` === pk) { projectPath = path; break; }
+        }
+      } catch {}
+
+      if (interactive) {
+        const terminalInfo = {
+          id: result.terminal_id,
+          work_item_id: null,
+          epic_id: epicId,
+          project_key: pk,
+          project_path: projectPath,
+          title: instructions.slice(0, 60) + (instructions.length > 60 ? '...' : ''),
+          status: 'running',
+          started_at: new Date().toISOString(),
+        };
+        activeTerminals.push(terminalInfo);
+        updateDispatchBadge();
+        createTerminalPanel(terminalInfo);
+        placeSessionPanels();
+        await connectTerminalWs(terminalInfo);
+      } else {
+        const dispatch = {
+          id: result.dispatch_id,
+          work_item_id: null,
+          epic_id: epicId,
+          project_key: pk,
+          project_path: projectPath,
+          title: instructions.slice(0, 60) + (instructions.length > 60 ? '...' : ''),
+          status: 'running',
+          started_at: new Date().toISOString(),
+        };
+        activeDispatches.push(dispatch);
+        updateDispatchBadge();
+        createDispatchPanel(dispatch);
+        placeSessionPanels();
+        connectDispatchStream(dispatch);
+      }
+
+      overlay.remove();
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = 'Discuss';
       alert('Dispatch failed: ' + e.message);
     }
   };
@@ -1477,7 +1899,7 @@ function renderEpicListView(epics) {
       html += `<td>${p.done}/${p.total} (${pct}%)</td>`;
       html += `<td>${(epic.project_keys || []).map(k => `<span class="tag">${esc(k)}</span>`).join('')}</td>`;
       html += `<td>${epic.target_date || '—'}</td>`;
-      html += `<td><button class="dispatch-btn" data-epic-dispatch="${esc(epic.id)}">dispatch</button></td>`;
+      html += `<td><button class="dispatch-btn" data-epic-dispatch="${esc(epic.id)}">dispatch</button><button class="dispatch-btn" data-epic-discuss="${esc(epic.id)}" style="background:var(--teal);margin-left:4px">discuss</button></td>`;
       html += `</tr>`;
     }
     html += `</tbody></table>`;
@@ -1496,6 +1918,9 @@ function bindEpicListEvents() {
   if (createBtn) createBtn.onclick = () => showEpicModal(null);
   document.querySelectorAll('[data-epic-dispatch]').forEach(btn => {
     btn.onclick = () => showEpicDispatchModal(btn.dataset.epicDispatch);
+  });
+  document.querySelectorAll('[data-epic-discuss]').forEach(btn => {
+    btn.onclick = () => showEpicDiscussModal(btn.dataset.epicDiscuss);
   });
 }
 
@@ -1523,6 +1948,7 @@ async function renderEpicDetailView(epicId) {
   html += `<button class="btn-add-wi" id="epic-link-item">+ Link Item</button>`;
   html += `<button class="btn-add-wi" id="epic-create-task" style="margin-left:8px">+ Create Task</button>`;
   html += `<a href="#agents?epic=${esc(epic.id)}" style="margin-left:8px;font-size:12px;color:var(--accent)">View agents</a>`;
+  html += `<button class="dispatch-btn" id="epic-discuss-btn-tasks" style="background:var(--teal);margin-left:8px">Discuss with Agent</button>`;
   if (items.length) {
     const sortedEpicItems = topoSort(items);
     html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Depends On</th><th>Project</th><th>Tags</th><th></th></tr></thead><tbody>`;
@@ -1539,14 +1965,34 @@ async function renderEpicDetailView(epicId) {
       html += `<td><span class="tag">${esc(item.project_key)}</span></td>`;
       html += `<td>${(item.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
       html += `<td>`;
+      html += `<button class="expand-btn" data-epic-wi-expand="${esc(item.id)}">details</button>`;
       if (canDispatch) html += `<button class="dispatch-btn" data-epic-task-dispatch="${esc(item.id)}" data-epic-task-pk="${esc(item.project_key)}">dispatch</button>`;
       html += `<button class="unlink-btn" data-unlink-item="${esc(item.id)}">unlink</button>`;
       html += `</td></tr>`;
+      // Detail row for this work item in epic view
+      html += `<tr class="wi-detail" data-epic-wi-detail="${esc(item.id)}" style="display:none"><td colspan="8">`;
+      if (item.description) html += `<div style="margin-bottom:8px">${esc(item.description)}</div>`;
+      if (item.session_log?.length) {
+        html += `<div class="session-log">`;
+        for (const e of item.session_log) html += `<div class="entry"><span class="date">${esc(e.date)}</span>${esc(e.summary)}</div>`;
+        html += `</div>`;
+      }
+      html += `<div style="margin-top:8px;display:flex;gap:6px">`;
+      html += `<button class="btn-add-wi" data-wi-plan="${esc(item.id)}" style="margin:0;padding:4px 10px;font-size:11px">Plan</button>`;
+      html += `<button class="btn-add-wi" data-wi-doc="${esc(item.id)}" style="margin:0;padding:4px 10px;font-size:11px">Docs</button>`;
+      html += `<button class="btn-add-wi" data-wi-files="${esc(item.id)}" style="margin:0;padding:4px 10px;font-size:11px">Files</button>`;
+      html += `</div>`;
+      html += `<div class="wi-artifact-container" data-artifact-for="${esc(item.id)}" style="margin-top:8px"></div>`;
+      html += `</td></tr>`;
+      // Session slot row for this work item
+      html += `<tr class="wi-sessions-row" data-wi-sessions="${esc(item.id)}" style="display:none"><td colspan="8"><div class="wi-sessions-container" data-session-slot="${esc(item.id)}"></div></td></tr>`;
     }
     html += `</tbody></table>`;
   } else {
     html += `<p class="empty">No linked tasks.</p>`;
   }
+  // Epic-level session slot (sessions with epic_id but no matching linked task slot)
+  html += `<div class="context-sessions-section hidden" style="margin-top:16px"><h3>Epic Agents</h3><div data-session-slot-epic="${esc(epicId)}"></div></div>`;
   html += `</div>`;
 
   // Tab 1: Planning
@@ -1563,6 +2009,7 @@ async function renderEpicDetailView(epicId) {
   html += `<div class="tab-content" data-panel="3">`;
   html += `<button class="edit-btn" id="epic-edit-details" style="margin-bottom:12px">Edit</button>`;
   html += `<button class="dispatch-btn" id="epic-dispatch-btn" style="margin-bottom:12px;margin-left:8px">Dispatch</button>`;
+  html += `<button class="dispatch-btn" id="epic-discuss-btn" style="background:var(--teal);margin-bottom:12px;margin-left:8px">Discuss</button>`;
   html += `<button class="delete-btn" id="epic-delete-btn" style="margin-bottom:12px;margin-left:8px">Delete</button>`;
   html += `<dl class="kv">`;
   html += `<dt>Title</dt><dd>${esc(epic.title)}</dd>`;
@@ -1656,6 +2103,12 @@ function bindEpicDetailEvents(epicId) {
   const dispatchBtn = document.getElementById('epic-dispatch-btn');
   if (dispatchBtn) dispatchBtn.onclick = () => showEpicDispatchModal(epicId);
 
+  // Discuss from detail
+  const discussBtn = document.getElementById('epic-discuss-btn');
+  if (discussBtn) discussBtn.onclick = () => showEpicDiscussModal(epicId);
+  const discussBtnTasks = document.getElementById('epic-discuss-btn-tasks');
+  if (discussBtnTasks) discussBtnTasks.onclick = () => showEpicDiscussModal(epicId);
+
   // Task dispatch buttons
   document.querySelectorAll('[data-epic-task-dispatch]').forEach(btn => {
     btn.onclick = async () => {
@@ -1675,6 +2128,26 @@ function bindEpicDetailEvents(epicId) {
       if (wi && pk) dispatchWorkItem(wi, pk);
       else if (wi) alert('No project key available. Link a project to this epic first.');
     };
+  });
+
+  // Epic view: expand detail rows
+  document.querySelectorAll('[data-epic-wi-expand]').forEach(btn => {
+    btn.onclick = () => {
+      const wid = btn.dataset.epicWiExpand;
+      const row = document.querySelector(`[data-epic-wi-detail="${wid}"]`);
+      if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
+    };
+  });
+
+  // Epic view: plan/docs/files buttons (reuse same handlers)
+  document.querySelectorAll('[data-epic-wi-detail] [data-wi-plan]').forEach(btn => {
+    btn.onclick = () => loadItemArtifact(btn.dataset.wiPlan, 'plan');
+  });
+  document.querySelectorAll('[data-epic-wi-detail] [data-wi-doc]').forEach(btn => {
+    btn.onclick = () => loadItemArtifact(btn.dataset.wiDoc, 'doc');
+  });
+  document.querySelectorAll('[data-epic-wi-detail] [data-wi-files]').forEach(btn => {
+    btn.onclick = () => loadItemArtifacts(btn.dataset.wiFiles);
   });
 }
 
@@ -1749,6 +2222,128 @@ function showMdEditorModal(title, content, onSave) {
     await onSave(val);
     overlay.remove();
   };
+}
+
+async function loadItemArtifact(itemId, type) {
+  const container = document.querySelector(`[data-artifact-for="${itemId}"]`);
+  if (!container) return;
+  container.innerHTML = '<p style="color:var(--muted);font-size:12px">Loading...</p>';
+  try {
+    const resp = await fetch(`/api/work-items/${itemId}/${type}`);
+    const content = await resp.text();
+    const label = type === 'plan' ? 'Plan' : 'Documentation';
+    if (content.trim()) {
+      container.innerHTML = `<div style="border:1px solid var(--border);border-radius:6px;max-height:300px;overflow:auto" class="md-container">${renderMd(content)}</div><button class="btn-add-wi" id="edit-wi-${type}-${itemId}" style="margin-top:4px;padding:4px 10px;font-size:11px">Edit ${label}</button>`;
+    } else {
+      container.innerHTML = `<p class="empty" style="font-size:12px">No ${label.toLowerCase()} yet.</p><button class="btn-add-wi" id="edit-wi-${type}-${itemId}" style="padding:4px 10px;font-size:11px">Create ${label}</button>`;
+    }
+    document.getElementById(`edit-wi-${type}-${itemId}`).onclick = () => showMdEditorModal(label, content, async (newContent) => {
+      await fetch(`/api/work-items/${itemId}/${type}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: newContent }),
+      });
+      loadItemArtifact(itemId, type);
+    });
+  } catch {
+    container.innerHTML = `<p class="empty" style="font-size:12px">Failed to load.</p>`;
+  }
+}
+
+async function loadItemArtifacts(itemId) {
+  const container = document.querySelector(`[data-artifact-for="${itemId}"]`);
+  if (!container) return;
+  container.innerHTML = '<p style="color:var(--muted);font-size:12px">Loading files...</p>';
+  try {
+    const data = await api(`work-items/${itemId}/artifacts`);
+    const customFiles = (data.files || []).filter(f => f !== 'plan.md' && f !== 'docs.md' && f.endsWith('.md'));
+    let html = '';
+    if (customFiles.length) {
+      html += `<div style="border:1px solid var(--border);border-radius:6px;padding:10px;font-size:12px;max-height:300px;overflow:auto">`;
+      for (const file of customFiles) {
+        html += `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid #f0f0f0">`;
+        html += `<code style="flex:1">${esc(file)}</code>`;
+        html += `<button class="btn-add-wi" data-af-view="${esc(file)}" style="margin:0;padding:2px 8px;font-size:10px">View</button>`;
+        html += `<button class="btn-add-wi" data-af-edit="${esc(file)}" style="margin:0;padding:2px 8px;font-size:10px">Edit</button>`;
+        html += `<button class="delete-btn" data-af-del="${esc(file)}" style="padding:2px 8px;font-size:10px">Delete</button>`;
+        html += `</div>`;
+      }
+      html += `</div>`;
+    } else {
+      html += `<p class="empty" style="font-size:12px">No custom artifacts.</p>`;
+    }
+    html += `<button class="btn-add-wi" data-af-add="1" style="margin-top:4px;padding:4px 10px;font-size:11px">+ Add File</button>`;
+    html += `<div class="af-content-area" style="margin-top:8px"></div>`;
+    container.innerHTML = html;
+
+    const contentArea = container.querySelector('.af-content-area');
+
+    container.querySelectorAll('[data-af-view]').forEach(btn => {
+      btn.onclick = async () => {
+        const fname = btn.dataset.afView;
+        contentArea.innerHTML = '<p style="font-size:12px;color:var(--text-light)">Loading...</p>';
+        try {
+          const resp = await fetch(`/api/work-items/${itemId}/artifacts/${fname}`);
+          if (!resp.ok) throw new Error('Not found');
+          const content = await resp.text();
+          contentArea.innerHTML = `<div style="border:1px solid var(--border);border-radius:6px;max-height:300px;overflow:auto" class="md-container">${renderMd(content)}</div>`;
+        } catch {
+          contentArea.innerHTML = '<p class="empty" style="font-size:12px">Failed to load.</p>';
+        }
+      };
+    });
+
+    container.querySelectorAll('[data-af-edit]').forEach(btn => {
+      btn.onclick = async () => {
+        const fname = btn.dataset.afEdit;
+        let content = '';
+        try {
+          const resp = await fetch(`/api/work-items/${itemId}/artifacts/${fname}`);
+          if (resp.ok) content = await resp.text();
+        } catch {}
+        showMdEditorModal(fname, content, async (newContent) => {
+          await fetch(`/api/work-items/${itemId}/artifacts/${fname}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: newContent }),
+          });
+          loadItemArtifacts(itemId);
+        });
+      };
+    });
+
+    container.querySelectorAll('[data-af-del]').forEach(btn => {
+      btn.onclick = async () => {
+        const fname = btn.dataset.afDel;
+        if (!confirm(`Delete artifact "${fname}"?`)) return;
+        await fetch(`/api/work-items/${itemId}/artifacts/${fname}`, { method: 'DELETE' });
+        loadItemArtifacts(itemId);
+      };
+    });
+
+    container.querySelector('[data-af-add]').onclick = () => {
+      const fname = prompt('Filename (must end with .md):', 'notes.md');
+      if (!fname) return;
+      if (!fname.endsWith('.md') || !/^[a-zA-Z0-9_-]+\.md$/.test(fname)) {
+        alert('Filename must match [a-zA-Z0-9_-]+.md');
+        return;
+      }
+      if (fname === 'plan.md' || fname === 'docs.md') {
+        alert('Use the Plan/Docs buttons for those files.');
+        return;
+      }
+      showMdEditorModal(fname, '', async (newContent) => {
+        await fetch(`/api/work-items/${itemId}/artifacts/${fname}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: newContent }),
+        });
+        loadItemArtifacts(itemId);
+      });
+    };
+  } catch {
+    container.innerHTML = '<p class="empty" style="font-size:12px">Failed to load files.</p>';
+  }
 }
 
 async function showEpicModal(existingEpic = null) {
@@ -2082,6 +2677,10 @@ async function showEpicDispatchModal(epicId) {
         <label>Additional Instructions</label>
         <textarea id="epic-dispatch-instructions" placeholder="Optional context..."></textarea>
       </div>
+      <div class="interactive-toggle">
+        <input type="checkbox" id="epic-dispatch-skip-permissions" />
+        <label for="epic-dispatch-skip-permissions">Skip permissions (autonomous)</label>
+      </div>
       <div class="modal-actions">
         <button class="btn btn-cancel" id="epic-dispatch-cancel">Cancel</button>
         <button class="btn btn-dispatch" id="epic-dispatch-go">Dispatch</button>
@@ -2109,6 +2708,7 @@ async function showEpicDispatchModal(epicId) {
   overlay.querySelector('#epic-dispatch-go').onclick = async () => {
     const mode = modeSelect.value;
     const instructions = overlay.querySelector('#epic-dispatch-instructions').value.trim();
+    const skipPermissions = overlay.querySelector('#epic-dispatch-skip-permissions').checked;
     const btn = overlay.querySelector('#epic-dispatch-go');
     btn.disabled = true; btn.textContent = 'Dispatching...';
 
@@ -2138,6 +2738,7 @@ async function showEpicDispatchModal(epicId) {
           project_key: pk,
           title: wid ? `${wid} (${epic.title})` : epic.title,
           additional_instructions: instructions,
+          skip_permissions: skipPermissions,
         }),
       });
       const result = await resp.json();
@@ -2162,9 +2763,8 @@ async function showEpicDispatchModal(epicId) {
       };
       activeDispatches.push(dispatch);
       updateDispatchBadge();
-      const container = getDispatchContainer();
-      const panel = createDispatchPanel(dispatch);
-      container.prepend(panel);
+      createDispatchPanel(dispatch);
+      placeSessionPanels();
       connectDispatchStream(dispatch);
       overlay.remove();
     } catch (e) {
@@ -2228,9 +2828,8 @@ function showOnboardModal() {
       };
       activeDispatches.push(dispatch);
       updateDispatchBadge();
-      const container = getDispatchContainer();
-      const panel = createDispatchPanel(dispatch);
-      container.prepend(panel);
+      createDispatchPanel(dispatch);
+      placeSessionPanels();
       connectDispatchStream(dispatch);
       overlay.remove();
     } catch (e) {
@@ -2267,24 +2866,116 @@ function formatElapsed(startedAt) {
   return `${h}h ${m % 60}m`;
 }
 
+function scrollToSessionPanel(session) {
+  const panel = sessionPanels.get(`${session.type}:${session.id}`);
+  if (panel && panel.isConnected) {
+    panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (panel.classList.contains('collapsed')) {
+      const btn = panel.querySelector('.minimize-btn');
+      if (btn) togglePanelCollapse(`${session.type}:${session.id}`, panel, btn);
+    }
+  }
+}
+
+function navigateToSession(session) {
+  if (session.work_item_id && session.project_key) {
+    const [org, proj, comp] = session.project_key.split('/');
+    if (org && proj && comp) {
+      location.hash = `#component/${org}/${proj}/${comp}`;
+      setTimeout(() => scrollToSessionPanel(session), 300);
+      return;
+    }
+  }
+  if (session.epic_id) {
+    location.hash = `#epic/${session.epic_id}`;
+    setTimeout(() => scrollToSessionPanel(session), 300);
+    return;
+  }
+  if (session.project_key) {
+    const [org, proj, comp] = session.project_key.split('/');
+    if (org && proj && comp) {
+      location.hash = `#component/${org}/${proj}/${comp}`;
+      setTimeout(() => scrollToSessionPanel(session), 300);
+      return;
+    }
+  }
+  openFocusPopup(session.type, session.id);
+}
+
 function refreshSessionsSidebar() {
   const list = document.getElementById('sessions-list');
   if (!list) return;
   list.innerHTML = '';
   const allSessions = [
-    ...activeDispatches.map(d => ({ type: 'dispatch', id: d.id, status: d.status, label: d.work_item_id || d.title || d.id, started_at: d.started_at, cost: d._cost })),
-    ...activeTerminals.map(t => ({ type: 'terminal', id: t.id, status: t.status, label: t.title || t.id, started_at: t.started_at })),
+    ...activeDispatches.map(d => ({ type: 'dispatch', id: d.id, status: d.status, label: d.work_item_id || d.title || d.id, started_at: d.started_at, epic_id: d.epic_id, work_item_id: d.work_item_id, project_key: d.project_key })),
+    ...activeTerminals.map(t => ({ type: 'terminal', id: t.id, status: t.status, label: t.title || t.id, started_at: t.started_at, epic_id: t.epic_id, work_item_id: t.work_item_id, project_key: t.project_key })),
   ];
   if (!allSessions.length) return;
+
+  // Group by project_key, then by epic_id within each project
+  const projectGroups = new Map(); // project_key → { epics: Map<epic_id, sessions[]>, noEpic: sessions[] }
+  const standalone = [];
   for (const s of allSessions) {
+    if (s.project_key) {
+      if (!projectGroups.has(s.project_key)) projectGroups.set(s.project_key, { epics: new Map(), noEpic: [] });
+      const pg = projectGroups.get(s.project_key);
+      if (s.epic_id) {
+        if (!pg.epics.has(s.epic_id)) pg.epics.set(s.epic_id, []);
+        pg.epics.get(s.epic_id).push(s);
+      } else {
+        pg.noEpic.push(s);
+      }
+    } else {
+      standalone.push(s);
+    }
+  }
+
+  function renderEntry(s, indented) {
     const entry = document.createElement('div');
-    entry.className = 'session-entry';
-    const dotClass = s.status === 'running' ? 'running' : (s.status === 'completed' ? 'completed' : 'failed');
+    entry.className = 'session-entry' + (indented ? ' indented' : '');
+    const dotClass = s.status === 'running' ? 'running' : (s.status === 'completed' ? 'completed' : (s.status === 'interrupted' ? 'interrupted' : 'failed'));
     const elapsed = formatElapsed(s.started_at);
     entry.innerHTML = `<span class="status-dot ${dotClass}" style="width:8px;height:8px"></span><span class="session-label">${esc(s.label)}</span><span class="session-meta">${elapsed}</span>`;
-    entry.onclick = () => openFocusPopup(s.type, s.id);
-    list.appendChild(entry);
+    entry.onclick = () => navigateToSession(s);
+    return entry;
   }
+
+  // Render project > epic > session hierarchy
+  for (const [pk, pg] of projectGroups) {
+    // Show project label (drop org prefix for brevity)
+    const parts = pk.split('/');
+    const shortLabel = parts.length >= 3 ? `${parts[1]}/${parts[2]}` : pk;
+    const projLabel = document.createElement('div');
+    projLabel.className = 'sidebar-project-label';
+    projLabel.textContent = shortLabel;
+    projLabel.onclick = () => {
+      const [org, proj, comp] = pk.split('/');
+      if (org && proj && comp) location.hash = `#component/${org}/${proj}/${comp}`;
+    };
+    list.appendChild(projLabel);
+
+    // Epic sub-groups
+    for (const [epicId, sessions] of pg.epics) {
+      const epicLabel = document.createElement('div');
+      epicLabel.className = 'sidebar-epic-sublabel';
+      epicLabel.textContent = epicId;
+      epicLabel.onclick = () => { location.hash = `#epic/${epicId}`; };
+      list.appendChild(epicLabel);
+      for (const s of sessions) list.appendChild(renderEntry(s, true));
+    }
+
+    // No-epic sessions
+    for (const s of pg.noEpic) list.appendChild(renderEntry(s, false));
+  }
+
+  // Render standalone
+  if (standalone.length && projectGroups.size > 0) {
+    const label = document.createElement('div');
+    label.className = 'sidebar-group-label';
+    label.textContent = 'STANDALONE';
+    list.appendChild(label);
+  }
+  for (const s of standalone) list.appendChild(renderEntry(s, false));
 }
 
 let sessionsSidebarInterval = null;
@@ -2346,7 +3037,7 @@ function openFocusPopup(type, id) {
 
   // For terminals, fit to new size
   if (type === 'terminal' && terminalInfo?._fitAddon) {
-    requestAnimationFrame(() => terminalInfo._fitAddon.fit());
+    requestAnimationFrame(() => { terminalInfo._fitAddon.fit(); if (terminalInfo._term) terminalInfo._term.scrollToBottom(); });
   }
 
   // Footer
@@ -2446,18 +3137,13 @@ function closeFocusPopup() {
     parentEl.appendChild(sourceEl);
   }
 
-  // For terminals, refit to inline size
-  if (type === 'terminal') {
-    const terminalInfo = activeTerminals.find(t => t.id === id);
-    if (terminalInfo?._fitAddon) {
-      requestAnimationFrame(() => terminalInfo._fitAddon.fit());
-    }
-  }
-
   if (escHandler) document.removeEventListener('keydown', escHandler);
   if (headerInterval) clearInterval(headerInterval);
   overlay.remove();
   activeFocusPopup = null;
+
+  // Re-place panels to ensure correct slot after route changes while popup was open
+  placeSessionPanels();
 }
 
 // --- Agents View ---
@@ -2548,14 +3234,71 @@ function renderAgentsView(agents, filters = {}) {
   html += `</div>`;
 
   if (filtered.length) {
-    html += `<div class="agents-grid">`;
-    for (const agent of filtered) html += renderAgentTile(agent);
-    html += `</div>`;
+    // Build hierarchy: project → epic → task → agents
+    const hierarchy = buildAgentHierarchy(filtered);
+
+    // Render project groups
+    for (const [pk, projData] of hierarchy.projects) {
+      html += `<details class="agent-group" open><summary>${esc(pk)}</summary>`;
+      // Epics within project
+      for (const [eid, epicTasks] of projData.epics) {
+        html += `<details class="agent-subgroup" open><summary>${esc(eid)}</summary><div class="agents-grid">`;
+        for (const [, taskAgents] of epicTasks) {
+          for (const agent of taskAgents) html += renderAgentTile(agent);
+        }
+        html += `</div></details>`;
+      }
+      // No-epic agents within project
+      if (projData.noEpic.size) {
+        html += `<div class="agents-grid" style="margin-left:16px">`;
+        for (const [, taskAgents] of projData.noEpic) {
+          for (const agent of taskAgents) html += renderAgentTile(agent);
+        }
+        html += `</div>`;
+      }
+      html += `</details>`;
+    }
+
+    // Standalone agents (no project_key)
+    if (hierarchy.standalone.length) {
+      html += `<details class="agent-group" open><summary>Standalone</summary><div class="agents-grid">`;
+      for (const agent of hierarchy.standalone) html += renderAgentTile(agent);
+      html += `</div></details>`;
+    }
   } else {
     html += `<p class="empty">No agents match the current filters.</p>`;
   }
   html += `</div>`;
   return html;
+}
+
+function buildAgentHierarchy(agents) {
+  const projects = new Map(); // pk → { epics: Map<eid, Map<wi, agents[]>>, noEpic: Map<wi, agents[]> }
+  const standalone = [];
+
+  for (const agent of agents) {
+    if (!agent.project_key) {
+      standalone.push(agent);
+      continue;
+    }
+    if (!projects.has(agent.project_key)) {
+      projects.set(agent.project_key, { epics: new Map(), noEpic: new Map() });
+    }
+    const proj = projects.get(agent.project_key);
+    const taskKey = agent.work_item_id || '_none';
+
+    if (agent.epic_id) {
+      if (!proj.epics.has(agent.epic_id)) proj.epics.set(agent.epic_id, new Map());
+      const epicMap = proj.epics.get(agent.epic_id);
+      if (!epicMap.has(taskKey)) epicMap.set(taskKey, []);
+      epicMap.get(taskKey).push(agent);
+    } else {
+      if (!proj.noEpic.has(taskKey)) proj.noEpic.set(taskKey, []);
+      proj.noEpic.get(taskKey).push(agent);
+    }
+  }
+
+  return { projects, standalone };
 }
 
 function bindAgentsEvents(agents, filters) {
@@ -2670,11 +3413,9 @@ function startAgentsTileRefresh(agents, filters) {
     if (!location.hash.startsWith('#agents')) { stopAgentsTileRefresh(); return; }
     const freshAgents = await fetchAgentsList();
     const main = $('#main');
-    let savedContainer = document.getElementById('dispatch-panels');
-    if (savedContainer) savedContainer.remove();
     main.innerHTML = renderAgentsView(freshAgents, filters);
     bindAgentsEvents(freshAgents, filters);
-    if (savedContainer) main.insertBefore(savedContainer, main.firstChild);
+    placeSessionPanels();
   }, 15000);
 }
 
@@ -2723,8 +3464,16 @@ async function showQuickDispatchModal() {
         <textarea id="qd-instructions" placeholder="What should the agent do?"></textarea>
       </div>
       <div class="interactive-toggle">
-        <input type="checkbox" id="qd-interactive" />
+        <input type="checkbox" id="qd-claude-agent" checked />
+        <label for="qd-claude-agent">Claude Agent</label>
+      </div>
+      <div class="interactive-toggle">
+        <input type="checkbox" id="qd-interactive" checked />
         <label for="qd-interactive">Interactive terminal (xterm.js)</label>
+      </div>
+      <div class="interactive-toggle">
+        <input type="checkbox" id="qd-skip-permissions" checked />
+        <label for="qd-skip-permissions">Skip permissions (autonomous)</label>
       </div>
       <div class="modal-actions">
         <button class="btn btn-cancel" id="qd-cancel">Cancel</button>
@@ -2737,31 +3486,44 @@ async function showQuickDispatchModal() {
   overlay.querySelector('#qd-cancel').onclick = () => overlay.remove();
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
+  overlay.querySelector('#qd-claude-agent').onchange = () => {
+    const agent = overlay.querySelector('#qd-claude-agent').checked;
+    overlay.querySelector('#qd-interactive').disabled = !agent;
+    overlay.querySelector('#qd-skip-permissions').disabled = !agent;
+  };
+
   overlay.querySelector('#qd-go').onclick = async () => {
     const pk = overlay.querySelector('#qd-project').value;
     const wid = overlay.querySelector('#qd-work-item').value.trim() || null;
     const epicId = overlay.querySelector('#qd-epic').value || null;
     const instructions = overlay.querySelector('#qd-instructions').value.trim();
+    const plainTerminal = !overlay.querySelector('#qd-claude-agent').checked;
     const interactive = overlay.querySelector('#qd-interactive').checked;
+    const skipPermissions = overlay.querySelector('#qd-skip-permissions').checked;
     const btn = overlay.querySelector('#qd-go');
 
     if (!pk) { alert('Project is required'); return; }
-    if (!wid && !instructions) { alert('Work item or instructions required'); return; }
+    if (!plainTerminal && !wid && !instructions) { alert('Work item or instructions required'); return; }
 
     btn.disabled = true; btn.textContent = 'Dispatching...';
 
     try {
-      const endpoint = interactive ? '/api/terminal' : '/api/dispatch';
+      const endpoint = plainTerminal ? '/api/terminal/shell' : interactive ? '/api/terminal' : '/api/dispatch';
+      const titleText = wid || instructions?.slice(0, 60) || 'Quick dispatch';
+      const body = plainTerminal
+        ? { work_item_id: wid, epic_id: epicId, project_key: pk, title: titleText }
+        : {
+            work_item_id: wid,
+            epic_id: epicId,
+            project_key: pk,
+            title: titleText,
+            additional_instructions: instructions,
+            skip_permissions: skipPermissions,
+          };
       const resp = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          work_item_id: wid,
-          epic_id: epicId,
-          project_key: pk,
-          title: wid || instructions?.slice(0, 60) || 'Quick dispatch',
-          additional_instructions: instructions,
-        }),
+        body: JSON.stringify(body),
       });
       const result = await resp.json();
       if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
@@ -2774,31 +3536,32 @@ async function showQuickDispatchModal() {
         }
       } catch {}
 
-      if (interactive) {
+      if (plainTerminal || interactive) {
         const terminalInfo = {
-          id: result.terminal_id, work_item_id: wid, epic_id: epicId,
+          id: result.terminal_id, type: plainTerminal ? 'shell' : 'claude',
+          work_item_id: wid, epic_id: epicId,
           project_key: pk, project_path: projectPath,
-          title: wid || instructions?.slice(0, 60) || 'Quick dispatch',
+          title: titleText,
+          skip_permissions: plainTerminal ? false : skipPermissions,
           status: 'running', started_at: new Date().toISOString(),
         };
         activeTerminals.push(terminalInfo);
         updateDispatchBadge();
-        const container = getDispatchContainer();
-        const panel = createTerminalPanel(terminalInfo);
-        container.prepend(panel);
+        createTerminalPanel(terminalInfo);
+        placeSessionPanels();
         await connectTerminalWs(terminalInfo);
       } else {
         const dispatch = {
           id: result.dispatch_id, work_item_id: wid, epic_id: epicId,
           project_key: pk, project_path: projectPath,
           title: wid || instructions?.slice(0, 60) || 'Quick dispatch',
+          skip_permissions: skipPermissions,
           status: 'running', started_at: new Date().toISOString(),
         };
         activeDispatches.push(dispatch);
         updateDispatchBadge();
-        const container = getDispatchContainer();
-        const panel = createDispatchPanel(dispatch);
-        container.prepend(panel);
+        createDispatchPanel(dispatch);
+        placeSessionPanels();
         connectDispatchStream(dispatch);
       }
       overlay.remove();
@@ -2820,14 +3583,10 @@ async function route() {
   closeFocusPopup();
   stopAgentsTileRefresh();
 
-  // Preserve dispatch panels via DOM detach/reattach
-  let savedContainer = document.getElementById('dispatch-panels');
-  if (savedContainer) savedContainer.remove();
-
   if (!hash) {
     main.innerHTML = `<div class="card"><h2>Portfolio Dashboard</h2><p style="color:var(--text-light);font-size:14px">Select an organization or project from the sidebar.</p></div>`;
     setActive('');
-    if (savedContainer) main.insertBefore(savedContainer, main.firstChild);
+    placeSessionPanels();
     return;
   }
 
@@ -2843,7 +3602,7 @@ async function route() {
     }
     setActive('');
     document.querySelectorAll('.epic-item').forEach(el => el.classList.remove('active'));
-    if (savedContainer) main.insertBefore(savedContainer, main.firstChild);
+    placeSessionPanels();
     return;
   }
 
@@ -2858,7 +3617,7 @@ async function route() {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
     }
     setActive('');
-    if (savedContainer) main.insertBefore(savedContainer, main.firstChild);
+    placeSessionPanels();
     return;
   }
 
@@ -2874,7 +3633,7 @@ async function route() {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
     }
     setActive('');
-    if (savedContainer) main.insertBefore(savedContainer, main.firstChild);
+    placeSessionPanels();
     return;
   }
 
@@ -2883,12 +3642,24 @@ async function route() {
     try {
       const data = orgCache[org] || await api(`org/${org}`);
       orgCache[org] = data;
-      main.innerHTML = renderOrgView(org, data);
+      // Compute org sessions from active dispatches + terminals
+      const orgSessions = [
+        ...activeDispatches.filter(d => d.project_key && d.project_key.startsWith(org + '/')).map(d => ({ type: 'dispatch', id: d.id, status: d.status, title: d.work_item_id || d.title || d.id, work_item_id: d.work_item_id, project_key: d.project_key, started_at: d.started_at })),
+        ...activeTerminals.filter(t => t.project_key && t.project_key.startsWith(org + '/')).map(t => ({ type: 'terminal', id: t.id, status: t.status, title: t.title || t.id, work_item_id: t.work_item_id, project_key: t.project_key, started_at: t.started_at })),
+      ];
+      main.innerHTML = renderOrgView(org, data, orgSessions);
+      // Bind focus buttons in org agents table
+      document.querySelectorAll('[data-org-focus]').forEach(btn => {
+        btn.onclick = () => {
+          const [type, id] = btn.dataset.orgFocus.split(':');
+          openFocusPopup(type, id);
+        };
+      });
     } catch (e) {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
     }
     setActive('');
-    if (savedContainer) main.insertBefore(savedContainer, main.firstChild);
+    placeSessionPanels();
     return;
   }
 
@@ -2918,12 +3689,12 @@ async function route() {
     } catch (e) {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
     }
-    if (savedContainer) main.insertBefore(savedContainer, main.firstChild);
+    placeSessionPanels();
     return;
   }
 
   main.innerHTML = `<div class="card"><p class="empty">Unknown route: ${esc(hash)}</p></div>`;
-  if (savedContainer) main.insertBefore(savedContainer, main.firstChild);
+  placeSessionPanels();
 }
 
 window.addEventListener('hashchange', route);

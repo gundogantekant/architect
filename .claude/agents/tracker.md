@@ -31,6 +31,10 @@ On first read of `work/backlog.json`, check the `version` field and apply migrat
 - For every work item across all projects: convert `blocked_by` string → `depends_on` array (non-empty string → single-element array, empty → `[]`), then delete the `blocked_by` field
 - Set `version` to 4
 
+**v4 → v5**:
+- For every work item across all projects: if the item has a non-empty `notes` field, write the content to `work/items/<item-id>/docs.md` (create directory with `mkdir -p` first), then set `notes` to empty string
+- Set `version` to 5
+
 Write back immediately after any migration before proceeding with the command.
 
 ## Work Item Operations
@@ -80,6 +84,7 @@ You will receive a command string. Parse and execute it:
 - Read `work/backlog.json`
 - Search across all `projects[key].items` for matching ID
 - Output full detail including project key, epic_id (if set), and all session_log entries
+- Check if `work/items/<W-XXX>/` directory exists; if so, list available artifact files with their sizes (e.g., `plan.md (245 bytes)`, `docs.md (1024 bytes)`, `third-party-questions.md (512 bytes)`)
 - If not found, say "Work item <ID> not found."
 
 ### `update <W-XXX> <status>`
@@ -126,6 +131,29 @@ You will receive a command string. Parse and execute it:
 - Append session_log: `{ "date": "<today>", "summary": "Removed dependencies: W-YYY, W-ZZZ" }`
 - Write back
 - Output confirmation
+
+## Work Item Artifact Operations
+
+### `plan <W-XXX> [--edit]`
+- Path: `work/items/<W-XXX>/plan.md`
+- Without `--edit`: read and output file contents (or "No plan yet." if missing)
+- With `--edit`: the orchestrator will provide content to write. Create directory if needed, write file.
+
+### `docs <W-XXX> [--edit]`
+- Path: `work/items/<W-XXX>/docs.md`
+- Without `--edit`: read and output file contents (or "No documentation yet." if missing)
+- With `--edit`: the orchestrator will provide content to write. Create directory if needed, write file.
+
+### `files <W-XXX>`
+- List all files in `work/items/<W-XXX>/` directory
+- If the directory doesn't exist, say "No artifacts for <W-XXX>."
+- Output each filename with its size (in bytes)
+
+### `file <W-XXX> <filename> [--edit]`
+- Path: `work/items/<W-XXX>/<filename>`
+- `<filename>` must end with `.md`; reject other extensions
+- Without `--edit`: read and output file contents (or "File not found." if missing)
+- With `--edit`: the orchestrator will provide content to write. Create directory if needed, write file.
 
 ## Epic Operations
 
@@ -215,7 +243,7 @@ When items are linked/unlinked, recompute the epic's `project_keys`:
 
 If `work/backlog.json` does not exist, create it with:
 ```json
-{"version": 4, "next_id": 1, "next_epic_id": 1, "epics": [], "projects": {}}
+{"version": 5, "next_id": 1, "next_epic_id": 1, "epics": [], "projects": {}}
 ```
 
 ## Rules
@@ -225,7 +253,7 @@ If `work/backlog.json` does not exist, create it with:
 - Keep JSON formatted with 2-space indentation
 - Use today's date from the provided context for all date fields
 - IDs are never reused — `next_id` and `next_epic_id` only increment
-- Do not modify any files other than `work/backlog.json` and `work/epics/E-XXX/*.md`
+- Do not modify any files other than `work/backlog.json`, `work/epics/E-XXX/*.md`, and `work/items/W-XXX/*.md` (`.md` extension only)
 - When a project group becomes empty after a remove, keep the empty group
 - One epic per work item maximum — check before linking
 - `project_keys` on epics is always auto-derived, never set manually

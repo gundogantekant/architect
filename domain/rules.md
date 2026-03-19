@@ -42,7 +42,7 @@ Business rules, heuristics, and decision logic for the architect system. Agents 
 | Interactive | browser | No | No | Yes | No |
 | Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer | Yes | No | No | Yes (worktree) |
 | Onboarding | profiler | No (writes only CLAUDE.md to target project) | No | No | No |
-| Data-write | tracker | No | Yes (`work/backlog.json`, `work/epics/E-XXX/*.md`) | No | No |
+| Data-write | tracker | No | Yes (`work/backlog.json`, `work/epics/E-XXX/*.md`, `work/items/W-XXX/*.md`) | No | No |
 
 **Exception**: strategist can write decision docs to `docs/`.
 **Exception**: profiler writes only `CLAUDE.md` to the target project during onboarding.
@@ -142,6 +142,7 @@ Organization=–, Project=architect, Component=–.
 - **Org Context Propagation**: Every agent dispatch targeting a portfolio project must include org name and org conventions (from `portfolio/<org>/organization.json`) in the agent prompt
 - **Cross-Org Operations**: When a task or epic spans multiple orgs, the orchestrator must explicitly note this. Agents must not assume one org's conventions apply to another. Epics may span orgs; work items belong to exactly one org via their project key
 - **Case Normalization**: Org names in project keys are always lowercase. Tracker must lowercase the org portion when creating new project key entries
+- **Convention Precedence**: Agents must apply org-level conventions (branch prefix, PR title pattern) as baseline defaults. Org-level rules act as constraints alongside project-level guidance. When org conventions conflict with project conventions, project conventions take precedence
 
 ### Portfolio-Aware Disambiguation
 
@@ -194,6 +195,7 @@ When PM's classification confidence is below **0.6**, always include clarificati
 - Status transitions: `draft → active → done` (or `cancelled` from any state)
 - Tracker agent suggests status transitions but does not auto-change them
 - Epic docs stored at `work/epics/E-XXX/` (plan.md, docs.md) — created lazily
+- Work item artifacts stored at `work/items/W-XXX/` (plan.md, docs.md) — created lazily. The `notes` field on WorkItem is deprecated; use file artifacts instead
 
 ## Dependency Rules
 

@@ -15,7 +15,7 @@ Shared precondition for all skills that need project context. Eliminates duplica
 | Tier | Fields from PortfolioEntry | Used by |
 |------|---------------------------|---------|
 | minimal | `guidance.stack_summary` + `scout_report.language` + `scout_report.framework` | dependency-manager, tracker, work, portfolio |
-| standard | minimal + `guidance.structure` + `guidance.conventions` + `agents.dispatch_notes` + `brief.purpose` + `brief.domain` + `brief.users` + `doc_paths` | coders, planner, debugger, documenter, onboard |
+| standard | minimal + `guidance.structure` + `guidance.conventions` + `agents.dispatch_notes` + `brief.purpose` + `brief.domain` + `brief.users` + `doc_paths` + `portfolio_guides` | coders, planner, debugger, documenter, onboard |
 | full | standard + `guidance.ci_cd` + `guidance.testing` + `custom_rules` + complete `brief` object + `doc_paths` | tester, ci-cd, reviewer, security-auditor, deploy, migrate, status, secure |
 
 Organization conventions (`organization.json`) are always loaded regardless of tier.
@@ -38,6 +38,7 @@ Organization conventions (`organization.json`) are always loaded regardless of t
 3. If found:
    - Read `portfolio/<org>/<project>/<component>.json` (see `domain/entities.md` → PortfolioEntry)
    - Filter fields based on the requested depth tier
+   - If `portfolio_guides` is present and the tier includes it (standard or full): read each listed file from `portfolio/<org>/<project>/` and include the contents in the context passed to agents
    - Read `portfolio/<org>/organization.json` for org-level conventions (see `domain/entities.md` → Organization)
    - Return combined context at requested depth
 4. If not found:
@@ -72,6 +73,12 @@ When a WorktreeContext is active (see `domain/entities.md` → WorktreeContext):
   `git rev-parse --git-common-dir` for registry lookups — the registry stores main
   repo paths only
 - Branch name is always included in the target label passed to agents
+
+## Org Boundary Awareness
+
+- Include org name in context passed to agents ("Working in org: X")
+- If a task spans multiple project keys, verify they belong to the same org unless explicitly cross-org (e.g., an epic)
+- Agents receiving org context must apply org-level rules as baseline constraints
 
 ## Post-conditions
 - All subsequent agents receive context filtered to the requested depth
