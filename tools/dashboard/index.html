@@ -601,12 +601,15 @@ function connectDispatchStream(dispatch) {
     } catch {
       dispatch.status = 'completed';
     }
-    if (dotEl) {
-      dotEl.classList.remove('running');
-      dotEl.classList.add(dispatch.status);
-    }
-    updateDispatchBadge();
     es.close();
+    // Immediate cleanup: remove from array, DOM, and maps
+    const idx = activeDispatches.findIndex(d => d.id === dispatch.id);
+    if (idx !== -1) activeDispatches.splice(idx, 1);
+    const panelKey = `dispatch:${dispatch.id}`;
+    const panel = sessionPanels.get(panelKey);
+    if (panel?.parentElement) panel.remove();
+    sessionPanels.delete(panelKey);
+    updateDispatchBadge();
   });
 
   es.onerror = () => {
@@ -855,10 +858,16 @@ async function connectTerminalWs(terminalInfo) {
         term.scrollToBottom();
       } else if (msg.type === 'exit') {
         terminalInfo.status = msg.code === 0 ? 'completed' : 'failed';
-        const dot = document.querySelector(`#terminal-${terminalInfo.id} .status-dot`);
-        if (dot) { dot.classList.remove('running'); dot.classList.add('failed'); }
-        const killBtn = document.querySelector(`[data-kill-terminal="${terminalInfo.id}"]`);
-        if (killBtn) killBtn.disabled = true;
+        // Dispose xterm instance
+        if (terminalInfo._term) { terminalInfo._term.dispose(); terminalInfo._term = null; }
+        if (terminalInfo._resizeObserver) { terminalInfo._resizeObserver.disconnect(); terminalInfo._resizeObserver = null; }
+        // Immediate cleanup: remove from array, DOM, and maps
+        const idx = activeTerminals.findIndex(t => t.id === terminalInfo.id);
+        if (idx !== -1) activeTerminals.splice(idx, 1);
+        const panelKey = `terminal:${terminalInfo.id}`;
+        const panel = sessionPanels.get(panelKey);
+        if (panel?.parentElement) panel.remove();
+        sessionPanels.delete(panelKey);
         updateDispatchBadge();
       }
     } catch {}
@@ -892,11 +901,12 @@ async function restoreTerminals() {
     const list = await api('terminal/active');
     const toConnect = [];
     for (const t of list) {
+      if (t.status !== 'running') continue; // skip exited sessions
       if (activeTerminals.some(a => a.id === t.id)) continue;
       const terminalInfo = { ...t };
       activeTerminals.push(terminalInfo);
       createTerminalPanel(terminalInfo);
-      if (t.status === 'running') toConnect.push(terminalInfo);
+      toConnect.push(terminalInfo);
     }
     // Cleanup stale panels for sessions that no longer exist
     const activeIds = new Set(list.map(t => `terminal:${t.id}`));
@@ -1065,17 +1075,12 @@ async function restoreDispatches() {
   try {
     const list = await api('dispatch/active');
     for (const d of list) {
+      if (d.status !== 'running') continue; // skip exited sessions
       if (activeDispatches.some(a => a.id === d.id)) continue;
       const dispatch = { ...d, title: d.work_item_id, session_id: d.session_id || null };
       activeDispatches.push(dispatch);
-      const panel = createDispatchPanel(dispatch);
-      if (d.status === 'running') {
-        connectDispatchStream(dispatch);
-      } else {
-        const dot = panel.querySelector('.status-dot');
-        dot.classList.remove('running');
-        dot.classList.add(d.status);
-      }
+      createDispatchPanel(dispatch);
+      connectDispatchStream(dispatch);
     }
     // Cleanup stale panels for sessions that no longer exist
     const activeIds = new Set(list.map(d => `dispatch:${d.id}`));

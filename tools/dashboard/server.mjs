@@ -133,29 +133,30 @@ const dispatches = new Map();
 const terminals = new Map();
 const SCROLLBACK_LIMIT = 100 * 1024; // 100KB ring buffer
 
-// Restore persisted sessions on startup
+// Restore persisted sessions on startup (skip dead/interrupted sessions)
 {
   const persisted = loadSessions();
+  let skipped = false;
   for (const [id, d] of Object.entries(persisted.dispatches)) {
+    if (d.status === 'running') { skipped = true; continue; } // process is gone
     dispatches.set(id, {
       ...d,
       output: [],
       lastLines: [],
       listeners: new Set(),
       process: null,
-      status: d.status === 'running' ? 'interrupted' : d.status,
     });
   }
   for (const [id, t] of Object.entries(persisted.terminals)) {
+    if (t.status === 'running') { skipped = true; continue; } // process is gone
     terminals.set(id, {
       ...t,
       ptyProcess: null,
       scrollback: '',
       wsClients: new Set(),
-      status: t.status === 'running' ? 'interrupted' : t.status,
     });
   }
-  if (Object.keys(persisted.dispatches).length || Object.keys(persisted.terminals).length) {
+  if (skipped || Object.keys(persisted.dispatches).length || Object.keys(persisted.terminals).length) {
     saveSessions();
     console.log(`Restored ${Object.keys(persisted.dispatches).length} dispatches, ${Object.keys(persisted.terminals).length} terminals from sessions.json`);
   }
@@ -1083,6 +1084,7 @@ const routes = [
       dispatch.process = null;
       for (const listener of dispatch.listeners) listener(null);
       dispatch.listeners.clear();
+      dispatches.delete(id);
       saveSessions();
     });
 
@@ -1249,6 +1251,7 @@ const routes = [
         listener(null); // signal done
       }
       dispatch.listeners.clear();
+      dispatches.delete(id);
       saveSessions();
     });
 
@@ -1449,8 +1452,10 @@ const routes = [
       terminal.exited_at = new Date().toISOString();
       terminal.ptyProcess = null;
       for (const ws of terminal.wsClients) {
-        try { ws.send(JSON.stringify({ type: 'exit', code: exitCode })); } catch {}
+        try { ws.send(JSON.stringify({ type: 'exit', code: exitCode })); ws.close(); } catch {}
       }
+      terminal.wsClients.clear();
+      terminals.delete(id);
       saveSessions();
     });
 
@@ -1523,8 +1528,10 @@ const routes = [
       terminal.exited_at = new Date().toISOString();
       terminal.ptyProcess = null;
       for (const ws of terminal.wsClients) {
-        try { ws.send(JSON.stringify({ type: 'exit', code: exitCode })); } catch {}
+        try { ws.send(JSON.stringify({ type: 'exit', code: exitCode })); ws.close(); } catch {}
       }
+      terminal.wsClients.clear();
+      terminals.delete(id);
       saveSessions();
     });
 
