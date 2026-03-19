@@ -887,15 +887,15 @@ async function dispatchWorkItem(workItem, projectKey) {
           <textarea id="dispatch-instructions" placeholder="Optional: add context, constraints, or specific instructions for the agent..."></textarea>
         </div>
         <div class="interactive-toggle">
-          <input type="checkbox" id="dispatch-plain-terminal" checked />
-          <label for="dispatch-plain-terminal">Plain terminal (shell only)</label>
+          <input type="checkbox" id="dispatch-claude-agent" checked />
+          <label for="dispatch-claude-agent">Claude Agent</label>
         </div>
         <div class="interactive-toggle">
-          <input type="checkbox" id="dispatch-interactive" checked disabled />
+          <input type="checkbox" id="dispatch-interactive" checked />
           <label for="dispatch-interactive">Interactive terminal (xterm.js)</label>
         </div>
         <div class="interactive-toggle">
-          <input type="checkbox" id="dispatch-skip-permissions" checked disabled />
+          <input type="checkbox" id="dispatch-skip-permissions" checked />
           <label for="dispatch-skip-permissions">Skip permissions (autonomous)</label>
         </div>
         <div class="modal-actions">
@@ -914,15 +914,15 @@ async function dispatchWorkItem(workItem, projectKey) {
       if (e.target === overlay) { overlay.remove(); resolve(null); }
     });
 
-    overlay.querySelector('#dispatch-plain-terminal').onchange = () => {
-      const plain = overlay.querySelector('#dispatch-plain-terminal').checked;
-      overlay.querySelector('#dispatch-interactive').disabled = plain;
-      overlay.querySelector('#dispatch-skip-permissions').disabled = plain;
+    overlay.querySelector('#dispatch-claude-agent').onchange = () => {
+      const agent = overlay.querySelector('#dispatch-claude-agent').checked;
+      overlay.querySelector('#dispatch-interactive').disabled = !agent;
+      overlay.querySelector('#dispatch-skip-permissions').disabled = !agent;
     };
 
     overlay.querySelector('#modal-dispatch').onclick = async () => {
       const instructions = overlay.querySelector('#dispatch-instructions').value.trim();
-      const plainTerminal = overlay.querySelector('#dispatch-plain-terminal').checked;
+      const plainTerminal = !overlay.querySelector('#dispatch-claude-agent').checked;
       const interactive = overlay.querySelector('#dispatch-interactive').checked;
       const skipPermissions = overlay.querySelector('#dispatch-skip-permissions').checked;
       const btn = overlay.querySelector('#modal-dispatch');
@@ -2953,15 +2953,15 @@ async function showQuickDispatchModal() {
         <textarea id="qd-instructions" placeholder="What should the agent do?"></textarea>
       </div>
       <div class="interactive-toggle">
-        <input type="checkbox" id="qd-plain-terminal" checked />
-        <label for="qd-plain-terminal">Plain terminal (shell only)</label>
+        <input type="checkbox" id="qd-claude-agent" checked />
+        <label for="qd-claude-agent">Claude Agent</label>
       </div>
       <div class="interactive-toggle">
-        <input type="checkbox" id="qd-interactive" checked disabled />
+        <input type="checkbox" id="qd-interactive" checked />
         <label for="qd-interactive">Interactive terminal (xterm.js)</label>
       </div>
       <div class="interactive-toggle">
-        <input type="checkbox" id="qd-skip-permissions" checked disabled />
+        <input type="checkbox" id="qd-skip-permissions" checked />
         <label for="qd-skip-permissions">Skip permissions (autonomous)</label>
       </div>
       <div class="modal-actions">
@@ -2975,10 +2975,10 @@ async function showQuickDispatchModal() {
   overlay.querySelector('#qd-cancel').onclick = () => overlay.remove();
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
-  overlay.querySelector('#qd-plain-terminal').onchange = () => {
-    const plain = overlay.querySelector('#qd-plain-terminal').checked;
-    overlay.querySelector('#qd-interactive').disabled = plain;
-    overlay.querySelector('#qd-skip-permissions').disabled = plain;
+  overlay.querySelector('#qd-claude-agent').onchange = () => {
+    const agent = overlay.querySelector('#qd-claude-agent').checked;
+    overlay.querySelector('#qd-interactive').disabled = !agent;
+    overlay.querySelector('#qd-skip-permissions').disabled = !agent;
   };
 
   overlay.querySelector('#qd-go').onclick = async () => {
@@ -2986,7 +2986,7 @@ async function showQuickDispatchModal() {
     const wid = overlay.querySelector('#qd-work-item').value.trim() || null;
     const epicId = overlay.querySelector('#qd-epic').value || null;
     const instructions = overlay.querySelector('#qd-instructions').value.trim();
-    const plainTerminal = overlay.querySelector('#qd-plain-terminal').checked;
+    const plainTerminal = !overlay.querySelector('#qd-claude-agent').checked;
     const interactive = overlay.querySelector('#qd-interactive').checked;
     const skipPermissions = overlay.querySelector('#qd-skip-permissions').checked;
     const btn = overlay.querySelector('#qd-go');
