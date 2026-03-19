@@ -25,11 +25,17 @@ Investigate and diagnose a bug or issue.
 4. If root cause identified and fix is straightforward:
    - Present proposed fix to user
    - If approved: create a worktree via `usecases/manage-worktree.md` → create, implement with coder agent in worktree, verify with tester agent in worktree
+   - After tester verification passes: dispatch coder to remove all debug artifacts introduced during investigation and fix. Debug artifacts must not be present in the final commit. See `domain/rules.md` → Debug Artifact Rules.
    - Present results: offer `/pr` to merge or `/worktree cleanup` to discard
 5. If root cause unclear:
    - Report what was investigated
    - Suggest additional diagnostic steps
 
+## Debugging Guidelines
+
+When portfolio context includes debug-related guidance (via `custom_rules`, `dispatch_notes.debugger`, or `portfolio_guides`), pass it to the debugger agent. The debugger must follow project-specific conventions over generic practices. See `usecases/load-portfolio-context.md` → Debug context augmentation.
+
 ## Post-conditions
 - Bug report includes file:line references
 - Fix is only implemented after user approval
+- All debug artifacts introduced during the workflow are removed before completion

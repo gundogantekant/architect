@@ -263,6 +263,15 @@ Shared git rules enforced by all implementation agents.
 | Review finds critical issues | Coder addresses findings, re-review (max 2 iterations) |
 | Scout finds no recognizable stack | Report findings, ask user to clarify project structure |
 
+## Debug Artifact Rules
+
+Rules governing debug artifacts (debug prints, temporary logging, debug flags, breakpoint markers, diagnostic instrumentation) introduced during investigation and fix workflows.
+
+- **Preservation**: Debug artifacts persist through investigation → fix → verification. No agent removes them prematurely — they are needed for coder implementation context and tester verification.
+- **Cleanup**: After tester verification passes, the orchestrator dispatches coder to remove all debug artifacts before the work is marked done. The final commit must not contain debug artifacts introduced during the workflow.
+- **Scope**: Only artifacts introduced during the current workflow are subject to cleanup. Existing project logging, observability, and instrumentation are never touched.
+- **Project guidelines precedence**: When the portfolio entry contains debug-related guidance (`portfolio_guides`, `agents.dispatch_notes.debugger`, debug-relevant `custom_rules`), those conventions take precedence over generic debug practices. Agents must follow project-specific debug functions, flags, and tools when specified.
+
 ## Expanded Agent Inclusion Rules
 
 Additional inclusion conditions beyond the base Agent Inclusion Rules table.
