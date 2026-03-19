@@ -82,7 +82,7 @@
 
   /* Markdown */
   .md-container { max-height: 600px; overflow-y: auto; padding: 16px; background: #fafafa; border-radius: 6px; font-size: 14px; line-height: 1.6; }
-  .md-container pre { background: #1e1e2e; color: #cdd6f4; padding: 12px; border-radius: 6px; overflow-x: auto; }
+  .md-container pre { background: #f5f5f5; color: var(--text); padding: 12px; border-radius: 6px; overflow-x: auto; }
   .md-container code { font-size: 13px; }
   .md-container h1, .md-container h2, .md-container h3 { margin-top: 16px; margin-bottom: 8px; }
   .md-container ul, .md-container ol { padding-left: 20px; }
@@ -212,12 +212,12 @@
 
   /* Terminal panels */
   .terminal-panel { background: var(--bg-card); border: 1px solid var(--accent); border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
-  .terminal-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--accent); background: #1e1e2e; }
+  .terminal-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--accent); background: #fafafa; }
   .terminal-header .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
   .terminal-header .status-dot.running { background: var(--green); animation: pulse 1.5s infinite; }
   .terminal-header .status-dot.completed, .terminal-header .status-dot.failed, .terminal-header .status-dot.killed { background: var(--red); }
-  .terminal-header .terminal-title { font-size: 13px; font-weight: 600; flex: 1; color: #cdd6f4; }
-  .terminal-header .terminal-meta { font-size: 11px; color: #6c7086; }
+  .terminal-header .terminal-title { font-size: 13px; font-weight: 600; flex: 1; color: var(--text); }
+  .terminal-header .terminal-meta { font-size: 11px; color: var(--text-light); }
   .terminal-container { height: 400px; background: #1e1e2e; }
 
   /* Interactive checkbox in modals */
@@ -255,12 +255,12 @@
   .focus-popup-footer .btn-copy { background: var(--accent); color: #fff; }
   .focus-popup-footer .btn-copy:hover { opacity: 0.85; }
 
-  /* Dark theme variant for terminal focus */
-  .focus-popup.terminal-focus { background: #1e1e2e; }
-  .focus-popup.terminal-focus .focus-popup-header { background: #181825; border-color: #313244; }
-  .focus-popup.terminal-focus .focus-popup-header .focus-title { color: #cdd6f4; }
-  .focus-popup.terminal-focus .focus-popup-header .focus-meta { color: #6c7086; }
-  .focus-popup.terminal-focus .focus-popup-footer { background: #181825; border-color: #313244; }
+  /* Terminal focus popup — light chrome, dark terminal content inside */
+  .focus-popup.terminal-focus { background: #fff; }
+  .focus-popup.terminal-focus .focus-popup-header { background: #fafafa; border-color: var(--border); }
+  .focus-popup.terminal-focus .focus-popup-header .focus-title { color: var(--text); }
+  .focus-popup.terminal-focus .focus-popup-header .focus-meta { color: var(--text-light); }
+  .focus-popup.terminal-focus .focus-popup-footer { background: #fafafa; border-color: var(--border); }
 
   /* Focus button on inline panels */
   .focus-btn { cursor: pointer; color: var(--accent); font-size: 11px; border: 1px solid var(--accent); background: none; padding: 3px 10px; border-radius: 4px; }
@@ -278,7 +278,7 @@
   .agent-tile-title { font-size: 13px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .agent-tile-elapsed { font-size: 11px; color: var(--text-light); flex-shrink: 0; }
   .agent-tile-badges { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 14px 8px; }
-  .agent-tile-preview { background: #1e1e2e; color: #cdd6f4; font-family: monospace; font-size: 11px; line-height: 1.5; padding: 8px 12px; max-height: 60px; overflow: hidden; white-space: pre-wrap; word-break: break-word; margin: 0 14px 8px; border-radius: 4px; }
+  .agent-tile-preview { background: #f8f8f8; color: var(--text); font-family: monospace; font-size: 11px; line-height: 1.5; padding: 8px 12px; max-height: 60px; overflow: hidden; white-space: pre-wrap; word-break: break-word; margin: 0 14px 8px; border-radius: 4px; }
   .agent-tile-footer { display: flex; gap: 6px; padding: 8px 14px 12px; border-top: 1px solid #f0f0f0; }
   .agents-filter-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
   .agents-filter-bar .filter-tab { padding: 5px 14px; border-radius: 16px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: #fff; color: var(--text); }
