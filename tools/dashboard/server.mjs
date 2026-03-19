@@ -160,12 +160,17 @@ const SCROLLBACK_LIMIT = 100 * 1024; // 100KB ring buffer
 // --- CLI session registry ---
 const cliSessions = new Map();
 
-// Restore persisted sessions on startup (skip dead/interrupted sessions)
+// Restore persisted sessions on startup (mark running sessions as interrupted)
 {
   const persisted = loadSessions();
-  let skipped = false;
+  let interruptedDispatches = 0;
+  let interruptedTerminals = 0;
   for (const [id, d] of Object.entries(persisted.dispatches)) {
-    if (d.status === 'running') { skipped = true; continue; } // process is gone
+    if (d.status === 'running') {
+      d.status = 'interrupted';
+      d.completed_at = new Date().toISOString();
+      interruptedDispatches++;
+    }
     dispatches.set(id, {
       ...d,
       output: [],
@@ -175,7 +180,11 @@ const cliSessions = new Map();
     });
   }
   for (const [id, t] of Object.entries(persisted.terminals)) {
-    if (t.status === 'running') { skipped = true; continue; } // process is gone
+    if (t.status === 'running') {
+      t.status = 'interrupted';
+      t.exited_at = new Date().toISOString();
+      interruptedTerminals++;
+    }
     terminals.set(id, {
       ...t,
       ptyProcess: null,
@@ -190,9 +199,9 @@ const cliSessions = new Map();
     }
     cliSessions.set(id, { ...c });
   }
-  if (skipped || Object.keys(persisted.dispatches).length || Object.keys(persisted.terminals).length || Object.keys(persisted.cli_sessions).length) {
+  if (dispatches.size || terminals.size || cliSessions.size) {
     saveSessions();
-    console.log(`Restored ${Object.keys(persisted.dispatches).length} dispatches, ${Object.keys(persisted.terminals).length} terminals, ${Object.keys(persisted.cli_sessions).length} CLI sessions from sessions.json`);
+    console.log(`Restored ${dispatches.size} dispatches (${interruptedDispatches} interrupted), ${terminals.size} terminals (${interruptedTerminals} interrupted), ${cliSessions.size} CLI sessions from sessions.json`);
   }
 }
 
@@ -2058,6 +2067,13 @@ setInterval(() => {
 
 function shutdownFlush() {
   clearTimeout(_saveSessionsTimer);
+  const now = new Date().toISOString();
+  for (const [, d] of dispatches) {
+    if (d.status === 'running') { d.status = 'interrupted'; d.completed_at = now; }
+  }
+  for (const [, t] of terminals) {
+    if (t.status === 'running') { t.status = 'interrupted'; t.exited_at = now; }
+  }
   saveSessionsSync();
 }
 process.on('SIGTERM', () => { shutdownFlush(); process.exit(0); });
