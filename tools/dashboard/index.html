@@ -765,7 +765,7 @@ function togglePanelCollapse(key, panel, btn) {
   if (!collapsed && key.startsWith('terminal:')) {
     const tid = key.split(':')[1];
     const t = activeTerminals.find(x => x.id === tid);
-    if (t?._fitAddon) requestAnimationFrame(() => t._fitAddon.fit());
+    if (t?._fitAddon) requestAnimationFrame(() => { t._fitAddon.fit(); if (t._term) t._term.scrollToBottom(); });
   }
 }
 
@@ -2701,7 +2701,7 @@ function openFocusPopup(type, id) {
 
   // For terminals, fit to new size
   if (type === 'terminal' && terminalInfo?._fitAddon) {
-    requestAnimationFrame(() => terminalInfo._fitAddon.fit());
+    requestAnimationFrame(() => { terminalInfo._fitAddon.fit(); if (terminalInfo._term) terminalInfo._term.scrollToBottom(); });
   }
 
   // Footer
