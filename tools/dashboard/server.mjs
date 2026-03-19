@@ -20,6 +20,7 @@ const CLAUDE_BIN = (() => {
 const ROOT = resolve(import.meta.dirname, '..', '..');
 const PORTFOLIO = join(ROOT, 'portfolio');
 const WORK = join(ROOT, 'work');
+const ARCHITECT_KEY = '\u2013/architect/\u2013';
 
 const port = (() => {
   const idx = process.argv.indexOf('--port');
@@ -227,6 +228,7 @@ function killProcessGraceful(proc) {
 }
 
 async function resolveProjectPath(projectKey) {
+  if (projectKey === ARCHITECT_KEY) return ROOT;
   const registry = await readJson(join(PORTFOLIO, 'registry.json'));
   for (const [path, entry] of Object.entries(registry.entries)) {
     const key = `${entry.org}/${entry.project}/${entry.component}`;

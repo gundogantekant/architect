@@ -1128,15 +1128,19 @@ async function dispatchWorkItem(workItem, projectKey) {
 
         // Resolve registry path for terminal guidance
         let projectPath = '';
-        try {
-          const registry = await api('registry');
-          for (const [path, entry] of Object.entries(registry.entries)) {
-            if (`${entry.org}/${entry.project}/${entry.component}` === projectKey) {
-              projectPath = path;
-              break;
+        if (projectKey === ARCHITECT_KEY) {
+          projectPath = '(architect root)';
+        } else {
+          try {
+            const registry = await api('registry');
+            for (const [path, entry] of Object.entries(registry.entries)) {
+              if (`${entry.org}/${entry.project}/${entry.component}` === projectKey) {
+                projectPath = path;
+                break;
+              }
             }
-          }
-        } catch {}
+          } catch {}
+        }
 
         if (plainTerminal || interactive) {
           const terminalInfo = {
@@ -1369,6 +1373,7 @@ function renderOrgView(org, data, orgSessions) {
 // Store current work items context for dispatch
 let currentWorkItems = [];
 let currentProjectKey = '';
+const ARCHITECT_KEY = '\u2013/architect/\u2013';
 
 function renderComponentView(org, proj, comp, data, workItems, files) {
   currentWorkItems = workItems;
@@ -1818,6 +1823,10 @@ function showDiscussModal() {
         <input type="checkbox" id="discuss-interactive" />
         <label for="discuss-interactive">Interactive terminal (xterm.js)</label>
       </div>
+      <div class="interactive-toggle">
+        <input type="checkbox" id="discuss-skip-permissions" checked />
+        <label for="discuss-skip-permissions">Skip permissions (autonomous)</label>
+      </div>
       <div class="modal-actions">
         <button class="btn btn-cancel" id="discuss-cancel">Cancel</button>
         <button class="btn btn-dispatch" id="discuss-submit">Dispatch</button>
@@ -1833,6 +1842,7 @@ function showDiscussModal() {
     const instructions = overlay.querySelector('#discuss-instructions').value.trim();
     if (!instructions) { alert('Instructions are required'); return; }
     const interactive = overlay.querySelector('#discuss-interactive').checked;
+    const skipPermissions = overlay.querySelector('#discuss-skip-permissions').checked;
 
     const btn = overlay.querySelector('#discuss-submit');
     btn.disabled = true;
@@ -1840,27 +1850,34 @@ function showDiscussModal() {
 
     try {
       const endpoint = interactive ? '/api/terminal' : '/api/dispatch';
+      const body = {
+        project_key: currentProjectKey,
+        additional_instructions: instructions,
+      };
+      if (!interactive) body.skip_permissions = skipPermissions;
+      if (interactive && skipPermissions) body.skip_permissions = true;
       const resp = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_key: currentProjectKey,
-          additional_instructions: instructions,
-        }),
+        body: JSON.stringify(body),
       });
       const result = await resp.json();
       if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
 
       let projectPath = '';
-      try {
-        const registry = await api('registry');
-        for (const [path, entry] of Object.entries(registry.entries)) {
-          if (`${entry.org}/${entry.project}/${entry.component}` === currentProjectKey) {
-            projectPath = path;
-            break;
+      if (currentProjectKey === ARCHITECT_KEY) {
+        projectPath = '(architect root)';
+      } else {
+        try {
+          const registry = await api('registry');
+          for (const [path, entry] of Object.entries(registry.entries)) {
+            if (`${entry.org}/${entry.project}/${entry.component}` === currentProjectKey) {
+              projectPath = path;
+              break;
+            }
           }
-        }
-      } catch {}
+        } catch {}
+      }
 
       if (interactive) {
         const terminalInfo = {
@@ -1919,6 +1936,7 @@ async function showEpicDiscussModal(epicId) {
     } catch {}
     projectKeys = registryKeys;
   }
+  if (!projectKeys.includes(ARCHITECT_KEY)) projectKeys.unshift(ARCHITECT_KEY);
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -1994,12 +2012,16 @@ async function showEpicDiscussModal(epicId) {
       if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
 
       let projectPath = '';
-      try {
-        const registry = await api('registry');
-        for (const [path, entry] of Object.entries(registry.entries)) {
-          if (`${entry.org}/${entry.project}/${entry.component}` === pk) { projectPath = path; break; }
-        }
-      } catch {}
+      if (pk === ARCHITECT_KEY) {
+        projectPath = '(architect root)';
+      } else {
+        try {
+          const registry = await api('registry');
+          for (const [path, entry] of Object.entries(registry.entries)) {
+            if (`${entry.org}/${entry.project}/${entry.component}` === pk) { projectPath = path; break; }
+          }
+        } catch {}
+      }
 
       if (interactive) {
         const terminalInfo = {
@@ -2866,6 +2888,7 @@ async function showEpicDispatchModal(epicId) {
     } catch {}
     projectKeys = registryKeys;
   }
+  if (!projectKeys.includes(ARCHITECT_KEY)) projectKeys.unshift(ARCHITECT_KEY);
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -2962,12 +2985,16 @@ async function showEpicDispatchModal(epicId) {
       if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
 
       let projectPath = '';
-      try {
-        const registry = await api('registry');
-        for (const [path, entry] of Object.entries(registry.entries)) {
-          if (`${entry.org}/${entry.project}/${entry.component}` === pk) { projectPath = path; break; }
-        }
-      } catch {}
+      if (pk === ARCHITECT_KEY) {
+        projectPath = '(architect root)';
+      } else {
+        try {
+          const registry = await api('registry');
+          for (const [path, entry] of Object.entries(registry.entries)) {
+            if (`${entry.org}/${entry.project}/${entry.component}` === pk) { projectPath = path; break; }
+          }
+        } catch {}
+      }
 
       const dispatch = {
         id: result.dispatch_id,
@@ -3656,6 +3683,7 @@ async function showQuickDispatchModal() {
     }
     registryKeys.sort();
   } catch {}
+  if (!registryKeys.includes(ARCHITECT_KEY)) registryKeys.unshift(ARCHITECT_KEY);
 
   let epicsList = [];
   try { epicsList = await getEpics(); } catch {}
@@ -3752,12 +3780,16 @@ async function showQuickDispatchModal() {
       if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
 
       let projectPath = '';
-      try {
-        const registry = await api('registry');
-        for (const [path, entry] of Object.entries(registry.entries)) {
-          if (`${entry.org}/${entry.project}/${entry.component}` === pk) { projectPath = path; break; }
-        }
-      } catch {}
+      if (pk === ARCHITECT_KEY) {
+        projectPath = '(architect root)';
+      } else {
+        try {
+          const registry = await api('registry');
+          for (const [path, entry] of Object.entries(registry.entries)) {
+            if (`${entry.org}/${entry.project}/${entry.component}` === pk) { projectPath = path; break; }
+          }
+        } catch {}
+      }
 
       if (plainTerminal || interactive) {
         const terminalInfo = {
