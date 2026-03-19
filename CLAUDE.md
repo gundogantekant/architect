@@ -131,7 +131,11 @@ Use `/work list --org <name>` to scope work items to a specific organization. Se
 
 ## Dashboard (`tools/dashboard/`)
 
-Local web dashboard at `http://127.0.0.1:3777` for viewing portfolio data and work items. Start with `node tools/dashboard/server.mjs`.
+Local web dashboard at `http://127.0.0.1:3777` for viewing portfolio data and work items. Start with `node tools/dashboard/server.mjs` or use `tools/dashboard/dashctl.sh start` for background lifecycle management.
+
+### Server Lifecycle (`dashctl.sh`)
+
+`tools/dashboard/dashctl.sh` manages the server process: `start`, `stop`, `restart`, `status`, `logs [-n N] [-f]`, `fresh [--clear-sessions]`, `install` (auto-start via launchd/systemd), `uninstall`, `help`. Uses `tmp/dashboard.pid` for PID tracking and `tmp/dashboard.log` for output. The `#settings` page in the dashboard provides a UI for these operations.
 
 ### Agent Dispatch
 
@@ -150,8 +154,9 @@ The dashboard supports dispatching Claude Code agents directly from work items:
 - **Skip permissions**: dispatch modal includes "Skip permissions (autonomous)" toggle — spawns agent with `--dangerously-skip-permissions`. Panels show `[auto]` badge.
 - **Grouped sidebar**: sessions sidebar groups entries by epic, with standalone sessions below. Clicking navigates to the session's context view.
 - **Architect-awareness**: dispatched agents receive `ARCHITECT_ROOT` env var and `# Environment` / `# Tracking` sections in their prompt with dashboard API endpoints for status updates and log entries.
+- **CLI session registration**: external CLI sessions can register as read-only entries via `POST /api/sessions/register`. The dashboard shows them with a `[CLI]` badge, teal left border, and no kill/focus buttons. PID liveness is checked every 60s; exited CLI sessions are auto-cleaned after 10min. Persisted in `work/sessions.json` under `cli_sessions`. See `domain/entities.md` → CliSession for schema.
 
-Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/stream` (SSE), `GET /api/dispatch/active`, `DELETE /api/dispatch/:id`, `DELETE /api/dispatch/all`. Terminal endpoints: `POST /api/terminal`, `GET /api/terminal/active`, `DELETE /api/terminal/:id`, `DELETE /api/terminal/all`, `WS /api/terminal/:id/ws`. Epic endpoints: `GET/POST /api/epics`, `GET/PATCH/DELETE /api/epics/:id`, `POST /api/epics/:id/link`, `POST /api/epics/:id/unlink`, `GET/PUT /api/epics/:id/plan`, `GET/PUT /api/epics/:id/doc`. Work item artifact endpoints: `GET/PUT /api/work-items/:id/plan`, `GET/PUT /api/work-items/:id/doc`, `GET /api/work-items/:id/artifacts`, `GET/PUT/DELETE /api/work-items/:id/artifacts/:filename`.
+Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/stream` (SSE), `GET /api/dispatch/active`, `DELETE /api/dispatch/:id`, `DELETE /api/dispatch/all`. Terminal endpoints: `POST /api/terminal`, `GET /api/terminal/active`, `DELETE /api/terminal/:id`, `DELETE /api/terminal/all`, `WS /api/terminal/:id/ws`. CLI session endpoints: `POST /api/sessions/register`, `GET /api/sessions/active`, `DELETE /api/sessions/:id`. Server management endpoints: `GET /api/server/status`, `GET /api/server/config`, `POST /api/server/action`, `GET /api/server/logs`. Epic endpoints: `GET/POST /api/epics`, `GET/PATCH/DELETE /api/epics/:id`, `POST /api/epics/:id/link`, `POST /api/epics/:id/unlink`, `GET/PUT /api/epics/:id/plan`, `GET/PUT /api/epics/:id/doc`. Work item artifact endpoints: `GET/PUT /api/work-items/:id/plan`, `GET/PUT /api/work-items/:id/doc`, `GET /api/work-items/:id/artifacts`, `GET/PUT/DELETE /api/work-items/:id/artifacts/:filename`.
 
 ## Available Skills
 

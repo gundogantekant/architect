@@ -188,6 +188,16 @@ Local web dashboard for portfolio and work item management:
 
 ```bash
 node tools/dashboard/server.mjs            # starts at http://127.0.0.1:3777
+
+# Or use dashctl.sh for lifecycle management
+./tools/dashboard/dashctl.sh start         # background start with PID tracking
+./tools/dashboard/dashctl.sh stop          # graceful shutdown
+./tools/dashboard/dashctl.sh restart       # stop + start
+./tools/dashboard/dashctl.sh status        # PID, port, uptime, health check
+./tools/dashboard/dashctl.sh fresh --clear-sessions  # clean restart
+./tools/dashboard/dashctl.sh install       # auto-start on login (launchd/systemd)
+./tools/dashboard/dashctl.sh uninstall     # remove auto-start service
+./tools/dashboard/dashctl.sh logs -f       # follow server logs
 ```
 
 - Portfolio browser with component-level detail
@@ -196,6 +206,8 @@ node tools/dashboard/server.mjs            # starts at http://127.0.0.1:3777
 - Live output streaming via SSE with concurrent dispatch support
 - Interactive terminals with bidirectional PTY I/O
 - Session persistence across server restarts
+- Settings page (`#settings`) for server status, restart/stop, and auto-start configuration
+- Auto-start support via launchd (macOS) and systemd (Linux)
 
 ## Templates
 

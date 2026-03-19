@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { createServer } from 'node:http';
 import { readFile, writeFile, rename, readdir, stat, mkdir, unlink as unlinkFile } from 'node:fs/promises';
-import { readFileSync, writeFileSync, renameSync } from 'node:fs';
-import { join, resolve, extname } from 'node:path';
+import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
+import { join, resolve, extname, dirname } from 'node:path';
+import { homedir } from 'node:os';
 import { spawn, execFileSync } from 'node:child_process';
 import pty from 'node-pty';
 import { WebSocketServer } from 'ws';
@@ -26,6 +27,11 @@ const port = (() => {
   if (process.env.PORT) return Number(process.env.PORT);
   return 3777;
 })();
+
+const SERVER_START_TIME = Date.now();
+const DASHCTL_PATH = join(import.meta.dirname, 'dashctl.sh');
+const PID_FILE = join(ROOT, 'tmp', 'dashboard.pid');
+const LOG_FILE = join(ROOT, 'tmp', 'dashboard.log');
 
 function json(res, data, status = 200) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -69,9 +75,9 @@ const SESSIONS_FILE = join(WORK, 'sessions.json');
 function loadSessions() {
   try {
     const data = JSON.parse(readFileSync(SESSIONS_FILE, 'utf8'));
-    return { dispatches: data.dispatches || {}, terminals: data.terminals || {} };
+    return { dispatches: data.dispatches || {}, terminals: data.terminals || {}, cli_sessions: data.cli_sessions || {} };
   } catch {
-    return { dispatches: {}, terminals: {} };
+    return { dispatches: {}, terminals: {}, cli_sessions: {} };
   }
 }
 
@@ -79,7 +85,7 @@ let _saveSessionsTimer = null;
 const SESSIONS_TMP = SESSIONS_FILE + '.tmp';
 
 function serializeSessions() {
-  const data = { dispatches: {}, terminals: {} };
+  const data = { dispatches: {}, terminals: {}, cli_sessions: {} };
   for (const [id, d] of dispatches) {
     data.dispatches[id] = {
       id, work_item_id: d.work_item_id, epic_id: d.epic_id,
@@ -97,6 +103,14 @@ function serializeSessions() {
       title: t.title, status: t.status,
       started_at: t.started_at, exited_at: t.exited_at,
       skip_permissions: t.skip_permissions || false,
+    };
+  }
+  for (const [id, c] of cliSessions) {
+    data.cli_sessions[id] = {
+      id, project_key: c.project_key, work_item_id: c.work_item_id,
+      epic_id: c.epic_id, title: c.title, pid: c.pid,
+      status: c.status, registered_at: c.registered_at,
+      exited_at: c.exited_at,
     };
   }
   return JSON.stringify(data, null, 2) + '\n';
@@ -126,12 +140,25 @@ function saveSessionsSync() {
   }
 }
 
+// --- PID liveness check ---
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // --- Dispatch registry ---
 const dispatches = new Map();
 
 // --- Terminal registry ---
 const terminals = new Map();
 const SCROLLBACK_LIMIT = 100 * 1024; // 100KB ring buffer
+
+// --- CLI session registry ---
+const cliSessions = new Map();
 
 // Restore persisted sessions on startup (skip dead/interrupted sessions)
 {
@@ -156,9 +183,16 @@ const SCROLLBACK_LIMIT = 100 * 1024; // 100KB ring buffer
       wsClients: new Set(),
     });
   }
-  if (skipped || Object.keys(persisted.dispatches).length || Object.keys(persisted.terminals).length) {
+  for (const [id, c] of Object.entries(persisted.cli_sessions)) {
+    if (c.status === 'running' && !isPidAlive(c.pid)) {
+      c.status = 'exited';
+      c.exited_at = new Date().toISOString();
+    }
+    cliSessions.set(id, { ...c });
+  }
+  if (skipped || Object.keys(persisted.dispatches).length || Object.keys(persisted.terminals).length || Object.keys(persisted.cli_sessions).length) {
     saveSessions();
-    console.log(`Restored ${Object.keys(persisted.dispatches).length} dispatches, ${Object.keys(persisted.terminals).length} terminals from sessions.json`);
+    console.log(`Restored ${Object.keys(persisted.dispatches).length} dispatches, ${Object.keys(persisted.terminals).length} terminals, ${Object.keys(persisted.cli_sessions).length} CLI sessions from sessions.json`);
   }
 }
 
@@ -1007,6 +1041,54 @@ const routes = [
     }
   }],
 
+  // --- CLI session endpoints ---
+
+  // Register CLI session
+  [/^\/api\/sessions\/register$/, 'POST', async (_m, req, res) => {
+    const body = await parseBody(req);
+    const { project_key, title, pid, work_item_id, epic_id } = body;
+    if (!project_key || !title || !pid) {
+      return err(res, 'project_key, title, and pid are required', 400);
+    }
+    if (!isPidAlive(pid)) {
+      return err(res, 'PID is not alive', 400);
+    }
+    const id = `C-${Date.now()}`;
+    const session = {
+      id,
+      project_key,
+      work_item_id: work_item_id || null,
+      epic_id: epic_id || null,
+      title,
+      pid,
+      status: 'running',
+      registered_at: new Date().toISOString(),
+      exited_at: null,
+    };
+    cliSessions.set(id, session);
+    saveSessions();
+    json(res, { id, status: session.status, registered_at: session.registered_at }, 201);
+  }],
+
+  // List CLI sessions
+  [/^\/api\/sessions\/active$/, 'GET', async (_m, _req, res) => {
+    const list = [];
+    for (const [, c] of cliSessions) {
+      list.push({ ...c });
+    }
+    json(res, list);
+  }],
+
+  // Deregister CLI session
+  [/^\/api\/sessions\/(C-[A-Za-z0-9_-]+)$/, 'DELETE', async (m, _req, res) => {
+    const session = cliSessions.get(m[1]);
+    if (!session) return err(res, 'CLI session not found', 404);
+    session.status = 'exited';
+    session.exited_at = new Date().toISOString();
+    saveSessions();
+    json(res, { status: 'exited', id: m[1] });
+  }],
+
   // --- Onboard endpoint ---
   [/^\/api\/onboard$/, 'POST', async (_m, req, res) => {
     const body = await parseBody(req);
@@ -1599,6 +1681,113 @@ const routes = [
     saveSessions();
     json(res, { status: 'killed', id: m[1] });
   }],
+
+  // --- Server management endpoints ---
+
+  // Server status
+  [/^\/api\/server\/status$/, 'GET', async (_m, _req, res) => {
+    const uptimeSeconds = Math.floor((Date.now() - SERVER_START_TIME) / 1000);
+    const dispatchesActive = [...dispatches.values()].filter(d => d.status === 'running').length;
+    const terminalsActive = [...terminals.values()].filter(t => t.status === 'running').length;
+    json(res, {
+      pid: process.pid,
+      port,
+      uptime_seconds: uptimeSeconds,
+      node_version: process.version,
+      platform: process.platform,
+      sessions: {
+        dispatches_active: dispatchesActive,
+        terminals_active: terminalsActive,
+        cli_sessions_active: [...cliSessions.values()].filter(c => c.status === 'running').length,
+        dispatches_total: dispatches.size,
+        terminals_total: terminals.size,
+        cli_sessions_total: cliSessions.size,
+      },
+    });
+  }],
+
+  // Server config
+  [/^\/api\/server\/config$/, 'GET', async (_m, _req, res) => {
+    const home = homedir();
+    const launchdPlist = join(home, 'Library', 'LaunchAgents', 'com.architect.dashboard.plist');
+    const systemdUnit = join(home, '.config', 'systemd', 'user', 'architect-dashboard.service');
+
+    let autoStart = { installed: false, type: null, service_name: null };
+    if (existsSync(launchdPlist)) {
+      autoStart = { installed: true, type: 'launchd', service_name: 'com.architect.dashboard' };
+    } else if (existsSync(systemdUnit)) {
+      autoStart = { installed: true, type: 'systemd', service_name: 'architect-dashboard' };
+    }
+
+    json(res, {
+      port,
+      auto_start: autoStart,
+      log_file: LOG_FILE,
+      pid_file: PID_FILE,
+      sessions_file: SESSIONS_FILE,
+    });
+  }],
+
+  // Server action (restart, stop, fresh, install, uninstall)
+  [/^\/api\/server\/action$/, 'POST', async (_m, req, res) => {
+    const body = await parseBody(req);
+    const { action, clear_sessions } = body;
+    const validActions = ['restart', 'stop', 'fresh', 'install', 'uninstall'];
+    if (!action || !validActions.includes(action)) {
+      return err(res, `Invalid action. Must be one of: ${validActions.join(', ')}`, 400);
+    }
+
+    if (action === 'install' || action === 'uninstall') {
+      try {
+        const output = execFileSync(DASHCTL_PATH, [action], {
+          encoding: 'utf8',
+          timeout: 15000,
+          cwd: ROOT,
+        });
+        json(res, { status: 'done', output: output.trim() });
+      } catch (e) {
+        json(res, { status: 'error', output: e.stderr || e.message }, 500);
+      }
+      return;
+    }
+
+    // For restart/stop/fresh — spawn detached dashctl process
+    const args = [action];
+    if (action === 'fresh' && clear_sessions) {
+      args.push('--clear-sessions');
+    }
+
+    try {
+      const child = spawn(DASHCTL_PATH, args, {
+        detached: true,
+        stdio: 'ignore',
+        cwd: ROOT,
+      });
+      child.unref();
+      json(res, { status: action === 'stop' ? 'stopping' : 'restarting' });
+    } catch (e) {
+      json(res, { status: 'error', output: e.message }, 500);
+    }
+  }],
+
+  // Server logs
+  [/^\/api\/server\/logs$/, 'GET', async (_m, req, res) => {
+    const reqUrl = new URL(req.url, 'http://localhost');
+    const lines = parseInt(reqUrl.searchParams.get('lines') || '50', 10);
+
+    try {
+      const content = await readFile(LOG_FILE, 'utf8');
+      const allLines = content.split('\n');
+      const tail = allLines.slice(-Math.min(lines, allLines.length)).join('\n');
+      text(res, tail);
+    } catch (e) {
+      if (e.code === 'ENOENT') {
+        text(res, '(no log file yet)');
+      } else {
+        text(res, `Error reading log: ${e.message}`, 'text/plain', 500);
+      }
+    }
+  }],
 ];
 
 const server = createServer(async (req, res) => {
@@ -1679,6 +1868,20 @@ setInterval(() => {
     if (dispatch.status !== 'running' && dispatch.completed_at) {
       if (now - new Date(dispatch.completed_at).getTime() > 30 * 60 * 1000) {
         dispatches.delete(id);
+        changed = true;
+      }
+    }
+  }
+  // CLI sessions: check PID liveness for running, remove exited after 10min
+  for (const [id, cli] of cliSessions) {
+    if (cli.status === 'running' && !isPidAlive(cli.pid)) {
+      cli.status = 'exited';
+      cli.exited_at = new Date().toISOString();
+      changed = true;
+    }
+    if (cli.status === 'exited' && cli.exited_at) {
+      if (now - new Date(cli.exited_at).getTime() > 10 * 60 * 1000) {
+        cliSessions.delete(id);
         changed = true;
       }
     }
