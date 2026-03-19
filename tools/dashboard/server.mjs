@@ -360,8 +360,145 @@ async function loadEpicPlanSnippet(epicId) {
   }
 }
 
+async function selectAgentsForDispatch({ workItem, portfolio }) {
+  const always = ['pm', 'scout', 'planner', 'coder', 'tester', 'reviewer'];
+  const conditional = {
+    'coder-frontend': /front.?end|ui|css|react|vue|angular|svelte|html|component|layout|responsive|tailwind/i,
+    'coder-backend': /back.?end|api|server|endpoint|database|graphql|rest|middleware|auth/i,
+    'coder-infra': /infra|docker|k8s|kubernetes|terraform|ci.?cd|deploy|devops|aws|gcp|azure|pipeline/i,
+    'coder-mobile': /mobile|ios|android|flutter|react.native|swift|kotlin/i,
+    'security-auditor': /secur|auth|token|secret|credential|permission|access.?control|encrypt|vulnerab/i,
+    'refactorer': /refactor|restructur|reorganiz|clean.?up|technical.?debt|migration/i,
+    'debugger': /bug|debug|fix|crash|error|broken|regression|investig|diagnos/i,
+    'documenter': /document|readme|changelog|api.?doc|jsdoc|typedoc/i,
+    'ci-cd': /ci.?cd|pipeline|github.?action|deploy|release|build.?system/i,
+  };
+
+  // Build search text from work item + stack
+  const textParts = [];
+  if (workItem) {
+    textParts.push(workItem.title || '', workItem.description || '', (workItem.tags || []).join(' '));
+  }
+  if (portfolio?.entry?.guidance?.stack_summary) textParts.push(portfolio.entry.guidance.stack_summary);
+  const searchText = textParts.join(' ');
+
+  const selected = [...always];
+  for (const [agent, pattern] of Object.entries(conditional)) {
+    if (pattern.test(searchText)) selected.push(agent);
+  }
+
+  // Cap at 10
+  const capped = selected.slice(0, 10);
+
+  // Read agent .md files, strip frontmatter, build --agents JSON
+  const agents = [];
+  for (const name of capped) {
+    try {
+      let content = await readFile(join(ROOT, '.claude', 'agents', `${name}.md`), 'utf8');
+      // Strip YAML frontmatter
+      if (content.startsWith('---')) {
+        const endIdx = content.indexOf('---', 3);
+        if (endIdx !== -1) content = content.slice(endIdx + 3).trim();
+      }
+      agents.push({ name, prompt: content });
+    } catch {
+      // Agent file not found, skip
+    }
+  }
+  return agents;
+}
+
 function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInstructions, portfolio, epicContext, relatedProjects }) {
   const sections = [];
+
+  // --- Identity ---
+  sections.push([
+    '# Identity',
+    '',
+    'You are an **architect SDLC agent** — a full software development lifecycle orchestrator, not a simple task worker.',
+    '',
+    '**Responsibilities**:',
+    '- Triage the assigned work item: assess complexity, identify risks, select the right workflow',
+    '- Plan before implementing — do not jump straight to code for non-trivial work',
+    '- Dispatch specialized sub-agents (pm, planner, tester, reviewer, etc.) as needed',
+    '- Track progress via the dashboard API',
+    '- Be critical — if the work item is vague or the approach seems suboptimal, document your assessment and propose alternatives before implementing',
+    '',
+    'You are not limited to writing code. You can perform planning, architecture review, security audit, testing strategy, documentation, and project management.',
+  ].join('\n'));
+
+  // --- SDLC Guide ---
+  sections.push([
+    '# SDLC Guide',
+    '',
+    '## Workflow Selection',
+    '',
+    '| Condition | Workflow |',
+    '|-----------|----------|',
+    '| Trivial tasks | direct — dispatch a single coder agent |',
+    '| Small features | sequential — scout → planner → coder → tester → reviewer |',
+    '| Full-stack work (independent FE/BE/infra) | parallel-fan-out — split then converge at tester → reviewer |',
+    '| Medium/large features | plan-then-execute — planner decomposes, then dispatch coders per task |',
+    '| Bugfixes | investigate-then-fix — debugger/scout → coder → tester |',
+    '| Vague scope, strategic decisions | strategic-evaluation — strategist evaluates first |',
+    '',
+    '## Agent Inclusion Rules',
+    '',
+    '| Agent | Include when |',
+    '|-------|-------------|',
+    '| scout | No portfolio entry exists for the target project |',
+    '| strategist | Large/vague/strategic requests, build-vs-buy decisions |',
+    '| planner | Medium+ complexity (skip for small/trivial) |',
+    '| tester | All code changes except trivial |',
+    '| reviewer | All code changes except trivial |',
+    '| security-auditor | Auth, secrets, input validation, or external data involved |',
+    '',
+    '## Coordination Rules',
+    '',
+    '- You act as the orchestrator. Dispatch sub-agents using the Agent tool.',
+    '- Sub-agents cannot spawn their own sub-agents — only you orchestrate.',
+    '- Read-only agents (reviewer, security-auditor, scout, debugger, pm, strategist) do not modify code.',
+    '- Implementation agents (coder, coder-frontend, coder-backend, coder-infra, coder-mobile) modify code.',
+    '- Run scout or load portfolio context before dispatching implementation agents on a new project.',
+    '- Use parallel fan-out when tasks are independent; sequential pipeline when output feeds the next step.',
+    '',
+    '## Process for Any Work Item',
+    '',
+    '1. Assess complexity (trivial / small / medium / large / strategic)',
+    '2. Select workflow from the table above',
+    '3. Plan if needed (medium+ complexity)',
+    '4. Dispatch agents per the workflow',
+    '5. Test (dispatch tester for all non-trivial code changes)',
+    '6. Review (dispatch reviewer)',
+    '7. Log results via the dashboard API',
+  ].join('\n'));
+
+  // --- Available Skills ---
+  sections.push([
+    '# Available Skills',
+    '',
+    'These workflows can be followed by reading use-case files from `$ARCHITECT_ROOT/usecases/`:',
+    '',
+    '| Command | Purpose |',
+    '|---------|---------|',
+    '| /onboard | Scan and register project in portfolio |',
+    '| /portfolio | View and manage project portfolio |',
+    '| /scaffold | Create new project from template |',
+    '| /review | Comprehensive code review |',
+    '| /test | Run and generate tests |',
+    '| /deploy | Local deployment |',
+    '| /pr | Create PR with review summary |',
+    '| /diagnose | Debug an issue |',
+    '| /secure | Security audit |',
+    '| /status | Project health check |',
+    '| /work | Track work items across sessions |',
+    '| /migrate | Technology migration |',
+    '| /explain | Codebase walkthrough |',
+    '| /release | Version bump, changelog, git tag |',
+    '| /refactor | Systematic refactoring |',
+    '| /browse | Web automation via browser agent |',
+    '| /worktree | Manage git worktrees |',
+  ].join('\n'));
 
   // --- Scope ---
   const scopeLines = ['# Scope', ''];
@@ -474,8 +611,12 @@ function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInst
     envLines.push(`- Backlog: ${ROOT}/work/backlog.json`);
     envLines.push(`- Portfolio: ${ROOT}/portfolio/`);
     envLines.push(`- Dashboard API: http://127.0.0.1:${port}`);
+    envLines.push(`- Domain rules: ${ROOT}/domain/rules.md`);
+    envLines.push(`- Domain entities: ${ROOT}/domain/entities.md`);
+    envLines.push(`- Agent prompts: ${ROOT}/.claude/agents/`);
+    envLines.push(`- Use-case workflows: ${ROOT}/usecases/`);
     envLines.push('');
-    envLines.push('Use the architect project to look up cross-project context, related tasks, or domain rules when needed. Your primary work should happen in the current directory (the target project).');
+    envLines.push('Use the architect project to look up cross-project context, related tasks, domain rules, or use-case workflows when needed. Your primary work should happen in the current directory (the target project).');
     sections.push(envLines.join('\n'));
   }
 
@@ -492,7 +633,11 @@ function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInst
     trackLines.push(`- If you complete the task fully, update its status:`);
     trackLines.push(`  curl -s -X PATCH http://127.0.0.1:${port}/api/work-items/${workItem.id} \\`);
     trackLines.push(`    -H 'Content-Type: application/json' -d '{"status": "done"}'`);
-    trackLines.push('- Stay within the scope of this task. If you discover adjacent work needed, note it but do not pursue it.');
+    trackLines.push('- Focus primarily on this work item\'s goals. If you discover adjacent work, log it as a new backlog item via the dashboard API rather than expanding scope silently.');
+    trackLines.push('- Be critical about the approach — if the work item description is vague or the approach seems suboptimal, document your assessment and propose alternatives before implementing.');
+    trackLines.push(`- To create a new work item for adjacent work discovered:`);
+    trackLines.push(`  curl -s -X POST http://127.0.0.1:${port}/api/work-items \\`);
+    trackLines.push(`    -H 'Content-Type: application/json' -d '{"project_key": "${projectKey}", "title": "...", "description": "...", "priority": "medium", "tags": []}'`);
     sections.push(trackLines.join('\n'));
   }
 
@@ -1237,8 +1382,10 @@ const routes = [
       }
     }
 
+    const effectiveWorkItem = workItem || (work_item_id ? { id: work_item_id, title: title || '', description: description || '', status: 'open', priority: 'medium', tags: [], session_log: [] } : null);
+
     const prompt = buildDispatchPrompt({
-      workItem: workItem || (work_item_id ? { id: work_item_id, title: title || '', description: description || '', status: 'open', priority: 'medium', tags: [], session_log: [] } : null),
+      workItem: effectiveWorkItem,
       projectKey: project_key,
       projectPath,
       additionalInstructions: additional_instructions,
@@ -1246,6 +1393,9 @@ const routes = [
       epicContext,
       relatedProjects,
     });
+
+    // Select sub-agents based on work item and portfolio context
+    const agentDefs = await selectAgentsForDispatch({ workItem: effectiveWorkItem, portfolio });
 
     const dispatch = {
       id,
@@ -1269,7 +1419,13 @@ const routes = [
       if (skip_permissions) {
         args.push('--dangerously-skip-permissions');
       } else {
-        args.push('--permission-mode', 'plan');
+        args.push('--permission-mode', 'acceptEdits');
+      }
+      // Give the agent access to the architect project directory
+      args.push('--add-dir', ROOT);
+      // Attach curated sub-agents
+      if (agentDefs.length) {
+        args.push('--agents', JSON.stringify(agentDefs));
       }
       proc = spawn(CLAUDE_BIN, args, {
         cwd: projectPath,
@@ -1476,8 +1632,10 @@ const routes = [
       } catch {}
     }
 
+    const effectiveTermWorkItem = workItem || (work_item_id ? { id: work_item_id, title: title || '', description: description || '', status: 'open', priority: 'medium', tags: [], session_log: [] } : null);
+
     const prompt = buildDispatchPrompt({
-      workItem: workItem || (work_item_id ? { id: work_item_id, title: title || '', description: description || '', status: 'open', priority: 'medium', tags: [], session_log: [] } : null),
+      workItem: effectiveTermWorkItem,
       projectKey: project_key,
       projectPath,
       additionalInstructions: additional_instructions,
@@ -1485,10 +1643,19 @@ const routes = [
       epicContext,
     });
 
+    // Select sub-agents for terminal session
+    const termAgentDefs = await selectAgentsForDispatch({ workItem: effectiveTermWorkItem, portfolio });
+
     // Spawn interactive PTY with claude (use absolute path to avoid posix_spawnp PATH issues)
     let ptyProcess;
     try {
       const ptyArgs = skip_permissions ? ['--dangerously-skip-permissions'] : [];
+      // Give the agent access to the architect project directory
+      ptyArgs.push('--add-dir', ROOT);
+      // Attach curated sub-agents
+      if (termAgentDefs.length) {
+        ptyArgs.push('--agents', JSON.stringify(termAgentDefs));
+      }
       ptyProcess = pty.spawn(CLAUDE_BIN, ptyArgs, {
         name: 'xterm-256color',
         cols: 80,
