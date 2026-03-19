@@ -147,7 +147,7 @@ The dashboard supports dispatching Claude Code agents directly from work items:
 - **Grouped sidebar**: sessions sidebar groups entries by epic, with standalone sessions below. Clicking navigates to the session's context view.
 - **Architect-awareness**: dispatched agents receive `ARCHITECT_ROOT` env var and `# Environment` / `# Tracking` sections in their prompt with dashboard API endpoints for status updates and log entries.
 
-Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/stream` (SSE), `GET /api/dispatch/active`, `DELETE /api/dispatch/:id`, `DELETE /api/dispatch/all`. Terminal endpoints: `POST /api/terminal`, `GET /api/terminal/active`, `DELETE /api/terminal/:id`, `DELETE /api/terminal/all`, `WS /api/terminal/:id/ws`. Epic endpoints: `GET/POST /api/epics`, `GET/PATCH/DELETE /api/epics/:id`, `POST /api/epics/:id/link`, `POST /api/epics/:id/unlink`, `GET/PUT /api/epics/:id/plan`, `GET/PUT /api/epics/:id/doc`.
+Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/stream` (SSE), `GET /api/dispatch/active`, `DELETE /api/dispatch/:id`, `DELETE /api/dispatch/all`. Terminal endpoints: `POST /api/terminal`, `GET /api/terminal/active`, `DELETE /api/terminal/:id`, `DELETE /api/terminal/all`, `WS /api/terminal/:id/ws`. Epic endpoints: `GET/POST /api/epics`, `GET/PATCH/DELETE /api/epics/:id`, `POST /api/epics/:id/link`, `POST /api/epics/:id/unlink`, `GET/PUT /api/epics/:id/plan`, `GET/PUT /api/epics/:id/doc`. Work item artifact endpoints: `GET/PUT /api/work-items/:id/plan`, `GET/PUT /api/work-items/:id/doc`, `GET /api/work-items/:id/artifacts`.
 
 ## Available Skills
 

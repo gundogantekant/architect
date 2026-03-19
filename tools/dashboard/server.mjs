@@ -907,6 +907,54 @@ const routes = [
     json(res, { saved: true });
   }],
 
+  // Read work item plan
+  [/^\/api\/work-items\/(W-\d+)\/plan$/, 'GET', async (m, _req, res) => {
+    try {
+      const content = await readFile(join(WORK, 'items', m[1], 'plan.md'), 'utf8');
+      text(res, content);
+    } catch {
+      text(res, '', 'text/plain', 200);
+    }
+  }],
+
+  // Write work item plan
+  [/^\/api\/work-items\/(W-\d+)\/plan$/, 'PUT', async (m, req, res) => {
+    const body = await parseBody(req);
+    const dir = join(WORK, 'items', m[1]);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'plan.md'), body.content || '');
+    json(res, { saved: true });
+  }],
+
+  // Read work item doc
+  [/^\/api\/work-items\/(W-\d+)\/doc$/, 'GET', async (m, _req, res) => {
+    try {
+      const content = await readFile(join(WORK, 'items', m[1], 'docs.md'), 'utf8');
+      text(res, content);
+    } catch {
+      text(res, '', 'text/plain', 200);
+    }
+  }],
+
+  // Write work item doc
+  [/^\/api\/work-items\/(W-\d+)\/doc$/, 'PUT', async (m, req, res) => {
+    const body = await parseBody(req);
+    const dir = join(WORK, 'items', m[1]);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'docs.md'), body.content || '');
+    json(res, { saved: true });
+  }],
+
+  // List work item artifacts
+  [/^\/api\/work-items\/(W-\d+)\/artifacts$/, 'GET', async (m, _req, res) => {
+    try {
+      const files = await readdir(join(WORK, 'items', m[1]));
+      json(res, { files });
+    } catch {
+      json(res, { files: [] });
+    }
+  }],
+
   // --- Onboard endpoint ---
   [/^\/api\/onboard$/, 'POST', async (_m, req, res) => {
     const body = await parseBody(req);

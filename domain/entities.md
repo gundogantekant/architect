@@ -18,7 +18,7 @@ Canonical schemas for all structured data in the architect system. Agents and sk
 **Interactive agents**: browser (interacts with web via Playwright, no code/data writes)
 **Implementation agents**: coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer
 **Onboarding agents**: profiler (writes only CLAUDE.md to the target project)
-**Data-write agents**: tracker (writes only `work/backlog.json` and `work/epics/E-XXX/*.md`)
+**Data-write agents**: tracker (writes only `work/backlog.json`, `work/epics/E-XXX/*.md`, and `work/items/W-XXX/*.md`)
 
 ## RequestClassification
 
@@ -213,6 +213,14 @@ Stored in `work/backlog.json` under `projects[key].items`. The project key (`org
 }
 ```
 
+### Work Item Artifact Directory
+
+Work item artifacts (plans, documentation) are stored as files at `work/items/W-XXX/`:
+- `plan.md` — implementation plan
+- `docs.md` — documentation and notes
+
+Directories are created lazily on first write. The `notes` field on WorkItem is **deprecated** — existing content is migrated to `work/items/W-XXX/docs.md` by the v4→v5 migration.
+
 ## Epic
 
 Top-level entity in `work/backlog.json` under the `epics` array. Epics group work items across projects into strategic goals.
@@ -249,7 +257,7 @@ Top-level structure of `work/backlog.json`. Items are grouped under project keys
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "next_id": "number",
   "next_epic_id": "number",
   "epics": [{ "$ref": "Epic" }],

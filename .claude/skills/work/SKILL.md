@@ -48,6 +48,10 @@ See `domain/rules.md` → Work Item Rules for ID format and status rules.
 /work list --project neuronic/light-app/main,neuronic/cloud/main   Multiple projects
 /work list --org neuronic --project neuronic/light-app/main        Combined filters
 /work remove W-001                             Delete (with confirmation)
+/work plan W-001                               Show plan for work item
+/work plan W-001 --edit                        Edit plan for work item
+/work docs W-001                               Show docs for work item
+/work docs W-001 --edit                        Edit docs for work item
 /work depend W-003 W-001                       W-003 depends on W-001
 /work depend W-005 W-001 W-003                 W-005 depends on W-001 and W-003
 /work undepend W-005 W-003                     Remove W-003 dependency from W-005

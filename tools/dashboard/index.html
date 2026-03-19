@@ -1299,6 +1299,11 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
       html += `<input type="text" class="log-input" data-log-wi="${esc(w.id)}" placeholder="Add log entry..." style="flex:1;padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px" />`;
       html += `<button class="btn-add-wi" data-log-submit="${esc(w.id)}" style="margin:0;padding:4px 10px;font-size:11px">Add Log</button>`;
       html += `</div>`;
+      html += `<div style="margin-top:8px;display:flex;gap:6px">`;
+      html += `<button class="btn-add-wi" data-wi-plan="${esc(w.id)}" style="margin:0;padding:4px 10px;font-size:11px">Plan</button>`;
+      html += `<button class="btn-add-wi" data-wi-doc="${esc(w.id)}" style="margin:0;padding:4px 10px;font-size:11px">Docs</button>`;
+      html += `</div>`;
+      html += `<div class="wi-artifact-container" data-artifact-for="${esc(w.id)}" style="margin-top:8px"></div>`;
       html += `</td></tr>`;
       // Session slot row for this work item
       html += `<tr class="wi-sessions-row" data-wi-sessions="${esc(w.id)}" style="display:none"><td colspan="8"><div class="wi-sessions-container" data-session-slot="${esc(w.id)}"></div></td></tr>`;
@@ -1481,6 +1486,16 @@ function bindTabs() {
         btn.disabled = false; btn.textContent = 'Add Log';
       }
     };
+  });
+
+  // Work item plan buttons
+  document.querySelectorAll('[data-wi-plan]').forEach(btn => {
+    btn.onclick = () => loadItemArtifact(btn.dataset.wiPlan, 'plan');
+  });
+
+  // Work item doc buttons
+  document.querySelectorAll('[data-wi-doc]').forEach(btn => {
+    btn.onclick = () => loadItemArtifact(btn.dataset.wiDoc, 'doc');
   });
 
   // Epic badge navigation
@@ -2008,6 +2023,32 @@ function showMdEditorModal(title, content, onSave) {
     await onSave(val);
     overlay.remove();
   };
+}
+
+async function loadItemArtifact(itemId, type) {
+  const container = document.querySelector(`[data-artifact-for="${itemId}"]`);
+  if (!container) return;
+  container.innerHTML = '<p style="color:var(--muted);font-size:12px">Loading...</p>';
+  try {
+    const resp = await fetch(`/api/work-items/${itemId}/${type}`);
+    const content = await resp.text();
+    const label = type === 'plan' ? 'Plan' : 'Documentation';
+    if (content.trim()) {
+      container.innerHTML = `<div style="border:1px solid var(--border);border-radius:6px;padding:10px;font-size:12px;white-space:pre-wrap;max-height:300px;overflow:auto">${esc(content)}</div><button class="btn-add-wi" id="edit-wi-${type}-${itemId}" style="margin-top:4px;padding:4px 10px;font-size:11px">Edit ${label}</button>`;
+    } else {
+      container.innerHTML = `<p class="empty" style="font-size:12px">No ${label.toLowerCase()} yet.</p><button class="btn-add-wi" id="edit-wi-${type}-${itemId}" style="padding:4px 10px;font-size:11px">Create ${label}</button>`;
+    }
+    document.getElementById(`edit-wi-${type}-${itemId}`).onclick = () => showMdEditorModal(label, content, async (newContent) => {
+      await fetch(`/api/work-items/${itemId}/${type}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: newContent }),
+      });
+      loadItemArtifact(itemId, type);
+    });
+  } catch {
+    container.innerHTML = `<p class="empty" style="font-size:12px">Failed to load.</p>`;
+  }
 }
 
 async function showEpicModal(existingEpic = null) {

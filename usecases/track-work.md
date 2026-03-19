@@ -3,7 +3,7 @@
 Manage persistent work items and epics across sessions. Items are grouped by project key in `work/backlog.json`. Epics are top-level cross-project groupings.
 
 ## Input
-- Subcommand: list, add, show, update, log, remove, depend, undepend
+- Subcommand: list, add, show, update, log, remove, depend, undepend, plan, docs
 - Epic subcommand: epic list, epic create, epic show, epic update, epic link, epic unlink, epic log, epic plan, epic doc
 - Arguments per subcommand (see `domain/entities.md` → WorkItem, Epic for schemas)
 
@@ -53,9 +53,21 @@ Manage persistent work items and epics across sessions. Items are grouped by pro
 /work epic doc <E-XXX> [--edit]
 ```
 
+## Work Item Artifact Subcommands
+
+```
+/work plan <W-XXX> [--edit]         Read or write plan for a work item
+/work docs <W-XXX> [--edit]         Read or write documentation for a work item
+```
+
+- Artifacts stored at `work/items/W-XXX/` (plan.md, docs.md) — created lazily
+- Same pattern as epic plan/doc commands
+- `show` includes artifact listing when the directory exists
+
 ## Post-conditions
 - `work/backlog.json` is the primary file modified
 - Tracker also writes `work/epics/E-XXX/plan.md` and `work/epics/E-XXX/docs.md` for epic plan/doc commands
+- Tracker also writes `work/items/W-XXX/plan.md` and `work/items/W-XXX/docs.md` for work item plan/docs commands
 - Items are nested under `projects[key].items` — no flat array
 - Epics are stored in the top-level `epics` array
 - IDs are globally unique and never reused (see `domain/rules.md` → Work Item Rules, Epic Rules)
