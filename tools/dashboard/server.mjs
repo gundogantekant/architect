@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createServer } from 'node:http';
-import { readFile, writeFile, readdir, stat, mkdir } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
+import { readFile, writeFile, rename, readdir, stat, mkdir } from 'node:fs/promises';
+import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { join, resolve, extname } from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import pty from 'node-pty';
@@ -76,32 +76,54 @@ function loadSessions() {
 }
 
 let _saveSessionsTimer = null;
+const SESSIONS_TMP = SESSIONS_FILE + '.tmp';
+
+function serializeSessions() {
+  const data = { dispatches: {}, terminals: {} };
+  for (const [id, d] of dispatches) {
+    data.dispatches[id] = {
+      id, work_item_id: d.work_item_id, epic_id: d.epic_id,
+      project_key: d.project_key, project_path: d.project_path,
+      title: d.title || d.work_item_id, status: d.status,
+      started_at: d.started_at, completed_at: d.completed_at,
+      session_id: d.session_id || null, cost_usd: d.cost_usd || null,
+      skip_permissions: d.skip_permissions || false,
+    };
+  }
+  for (const [id, t] of terminals) {
+    data.terminals[id] = {
+      id, type: t.type || 'claude', work_item_id: t.work_item_id, epic_id: t.epic_id,
+      project_key: t.project_key, project_path: t.project_path,
+      title: t.title, status: t.status,
+      started_at: t.started_at, exited_at: t.exited_at,
+      skip_permissions: t.skip_permissions || false,
+    };
+  }
+  return JSON.stringify(data, null, 2) + '\n';
+}
+
 function saveSessions() {
-  if (_saveSessionsTimer) return;
-  _saveSessionsTimer = setTimeout(() => {
+  clearTimeout(_saveSessionsTimer);
+  _saveSessionsTimer = setTimeout(async () => {
     _saveSessionsTimer = null;
-    const data = { dispatches: {}, terminals: {} };
-    for (const [id, d] of dispatches) {
-      data.dispatches[id] = {
-        id, work_item_id: d.work_item_id, epic_id: d.epic_id,
-        project_key: d.project_key, project_path: d.project_path,
-        title: d.title || d.work_item_id, status: d.status,
-        started_at: d.started_at, completed_at: d.completed_at,
-        session_id: d.session_id || null, cost_usd: d.cost_usd || null,
-        skip_permissions: d.skip_permissions || false,
-      };
+    try {
+      const content = serializeSessions();
+      await writeFile(SESSIONS_TMP, content);
+      await rename(SESSIONS_TMP, SESSIONS_FILE);
+    } catch (err) {
+      console.error('Failed to persist sessions:', err.message);
     }
-    for (const [id, t] of terminals) {
-      data.terminals[id] = {
-        id, type: t.type || 'claude', work_item_id: t.work_item_id, epic_id: t.epic_id,
-        project_key: t.project_key, project_path: t.project_path,
-        title: t.title, status: t.status,
-        started_at: t.started_at, exited_at: t.exited_at,
-        skip_permissions: t.skip_permissions || false,
-      };
-    }
-    writeFile(SESSIONS_FILE, JSON.stringify(data, null, 2) + '\n').catch(() => {});
   }, 500);
+}
+
+function saveSessionsSync() {
+  try {
+    const content = serializeSessions();
+    writeFileSync(SESSIONS_TMP, content);
+    renameSync(SESSIONS_TMP, SESSIONS_FILE);
+  } catch (err) {
+    console.error('Failed to persist sessions on shutdown:', err.message);
+  }
 }
 
 // --- Dispatch registry ---
@@ -1627,6 +1649,13 @@ setInterval(() => {
   }
   if (changed) saveSessions();
 }, 60 * 1000);
+
+function shutdownFlush() {
+  clearTimeout(_saveSessionsTimer);
+  saveSessionsSync();
+}
+process.on('SIGTERM', () => { shutdownFlush(); process.exit(0); });
+process.on('SIGINT', () => { shutdownFlush(); process.exit(0); });
 
 server.listen(port, '127.0.0.1', () => {
   console.log(`Dashboard: http://127.0.0.1:${port}`);
