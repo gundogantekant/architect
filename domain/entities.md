@@ -322,6 +322,24 @@ Record for an interactive PTY terminal session spawned from the dashboard. Persi
 }
 ```
 
+## CliSession
+
+Record for a CLI session registered externally via the dashboard API. Read-only from the dashboard's perspective — no kill, no output streaming. PID liveness is checked periodically to detect exit.
+
+```json
+{
+  "id": "string (C-<timestamp>)",
+  "project_key": "string (org/project/component)",
+  "work_item_id": "string (W-XXX or null)",
+  "epic_id": "string (E-XXX or null)",
+  "title": "string",
+  "pid": "number (OS process ID)",
+  "status": "running|exited",
+  "registered_at": "string (ISO 8601)",
+  "exited_at": "string (ISO 8601, null while running)"
+}
+```
+
 ## SessionsFile
 
 Persisted session state at `work/sessions.json`. Written by the dashboard server on every state change (debounced 500ms). On startup, any `running` sessions are re-marked as `interrupted`.
@@ -333,6 +351,9 @@ Persisted session state at `work/sessions.json`. Written by the dashboard server
   },
   "terminals": {
     "T-xxx": { "$ref": "TerminalSession (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, exited_at, skip_permissions)" }
+  },
+  "cli_sessions": {
+    "C-xxx": { "$ref": "CliSession" }
   }
 }
 ```
