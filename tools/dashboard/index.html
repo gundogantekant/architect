@@ -852,6 +852,7 @@ async function connectTerminalWs(terminalInfo) {
       const msg = JSON.parse(e.data);
       if (msg.type === 'data') {
         term.write(msg.data);
+        term.scrollToBottom();
       } else if (msg.type === 'exit') {
         terminalInfo.status = msg.code === 0 ? 'completed' : 'failed';
         const dot = document.querySelector(`#terminal-${terminalInfo.id} .status-dot`);
