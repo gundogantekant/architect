@@ -1,5 +1,9 @@
 # Architect: SDLC Agent System
 
+## Terminology
+
+When the user says "architect" in conversation, it primarily refers to **this project** — the SDLC Agent System at `~/Documents/architect`. This is the default meaning. However, "architect" can also carry its standard meanings (technical architect, database architect, security architect, etc.) when the surrounding context clearly indicates one of those. The project name does not override those meanings — it simply takes priority as the default interpretation.
+
 ## Overview
 
 This project provides 22 specialized Claude Code subagents and 16 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack.
