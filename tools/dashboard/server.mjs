@@ -73,7 +73,6 @@ async function parseBody(req) {
 
 // --- Database initialization ---
 const MIGRATIONS_DIR = join(import.meta.dirname, 'migrations');
-await db.initDatabaseAsync(WORK, MIGRATIONS_DIR);
 
 // Session persistence helpers — write to SQLite per mutation
 function saveDispatchToDb(d) {
@@ -124,7 +123,7 @@ const SCROLLBACK_LIMIT = 100 * 1024; // 100KB ring buffer
 const cliSessions = new Map();
 
 // Restore persisted sessions from SQLite (mark running as interrupted)
-{
+function restoreSessions() {
   db.markRunningAsInterrupted();
   let interruptedDispatches = 0;
   let interruptedTerminals = 0;
@@ -1755,6 +1754,26 @@ function shutdownFlush() {
 process.on('SIGTERM', () => { shutdownFlush(); process.exit(0); });
 process.on('SIGINT', () => { shutdownFlush(); process.exit(0); });
 
-server.listen(port, '127.0.0.1', () => {
-  console.log(`Dashboard: http://127.0.0.1:${port}`);
+async function main() {
+  // Phase 1: Database
+  try {
+    await db.initDatabaseAsync(WORK, MIGRATIONS_DIR);
+    console.log('Database ready:', join(WORK, 'architect.db'));
+  } catch (e) {
+    console.error('Database initialization failed:', e.message);
+    process.exit(1);
+  }
+
+  // Phase 2: Restore sessions
+  restoreSessions();
+
+  // Phase 3: Start server
+  server.listen(port, '127.0.0.1', () => {
+    console.log(`Dashboard: http://127.0.0.1:${port}`);
+  });
+}
+
+main().catch(e => {
+  console.error('Server startup failed:', e);
+  process.exit(1);
 });
