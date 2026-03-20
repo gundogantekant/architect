@@ -13,6 +13,16 @@ Business rules, heuristics, and decision logic for the architect system. Agents 
 - When the user says "project files" or "project knowledge base", they mean the architect portfolio entries, not target repo source files.
 - When loading context, prioritize architect-level portfolio data over target project introspection.
 
+## Terminology: Work Items
+
+| Term | Meaning |
+|------|---------|
+| "task" | A work item — used in the dashboard UI and casual conversation |
+| "ticket" | Synonym for task/work item — used interchangeably |
+| "work item" | The formal entity name (W-XXX) — used in domain schemas and API |
+
+All three terms refer to the same entity. The dashboard UI uses "task" for brevity. Internal code and API paths use "work-items". The ID prefix remains `W-XXX`.
+
 ## Complexity Heuristics
 
 | Level | Criteria |
@@ -53,10 +63,24 @@ Business rules, heuristics, and decision logic for the architect system. Agents 
 | Interactive | browser | No | No | Yes | No |
 | Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer | Yes | No | No | Yes (worktree) |
 | Onboarding | profiler | No (writes only CLAUDE.md to target project) | No | No | No |
-| Data-write | tracker | No | Yes (`work/backlog.json`, `work/epics/E-XXX/*.md`, `work/items/W-XXX/*.md`) | No | No |
+| Data-write | tracker | No | Yes (dashboard API for work items/epics; `work/epics/E-XXX/*.md`, `work/items/W-XXX/*.md` for artifacts) | No | No |
 
 **Exception**: strategist can write decision docs to `docs/`.
 **Exception**: profiler writes only `CLAUDE.md` to the target project during onboarding.
+
+## Workable Item Rules
+
+A work item's "workable" state is computed at render time — it is never stored.
+
+| Condition | State | Visual |
+|-----------|-------|--------|
+| No dependencies, or all deps have status `done` | Workable | Normal row |
+| Any dependency has status other than `done` | Blocked by deps | Orange left border, tinted background |
+
+Rules:
+- Workable state is purely visual — it does not affect dispatching or status changes
+- When a dependency's status changes, all dependents re-evaluate on next render
+- The dispatch button remains available regardless of workable state
 
 ## Model Affinity Rules
 

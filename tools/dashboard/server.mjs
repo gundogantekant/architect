@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { spawn, execFileSync } from 'node:child_process';
 import pty from 'node-pty';
 import { WebSocketServer } from 'ws';
+import * as db from './db.mjs';
 
 const CLAUDE_BIN = (() => {
   try {
@@ -70,75 +71,36 @@ async function parseBody(req) {
   return JSON.parse(Buffer.concat(chunks).toString());
 }
 
-// --- Session persistence ---
-const SESSIONS_FILE = join(WORK, 'sessions.json');
+// --- Database initialization ---
+const MIGRATIONS_DIR = join(import.meta.dirname, 'migrations');
+await db.initDatabaseAsync(WORK, MIGRATIONS_DIR);
 
-function loadSessions() {
-  try {
-    const data = JSON.parse(readFileSync(SESSIONS_FILE, 'utf8'));
-    return { dispatches: data.dispatches || {}, terminals: data.terminals || {}, cli_sessions: data.cli_sessions || {} };
-  } catch {
-    return { dispatches: {}, terminals: {}, cli_sessions: {} };
-  }
+// Session persistence helpers — write to SQLite per mutation
+function saveDispatchToDb(d) {
+  db.saveDispatch({
+    id: d.id, work_item_id: d.work_item_id, epic_id: d.epic_id,
+    project_key: d.project_key, project_path: d.project_path,
+    title: d.title || d.work_item_id, permission_mode: d.permission_mode || 'acceptEdits',
+    status: d.status, started_at: d.started_at, completed_at: d.completed_at,
+    session_id: d.session_id || null, cost_usd: d.cost_usd || null,
+  });
 }
 
-let _saveSessionsTimer = null;
-const SESSIONS_TMP = SESSIONS_FILE + '.tmp';
-
-function serializeSessions() {
-  const data = { dispatches: {}, terminals: {}, cli_sessions: {} };
-  for (const [id, d] of dispatches) {
-    data.dispatches[id] = {
-      id, work_item_id: d.work_item_id, epic_id: d.epic_id,
-      project_key: d.project_key, project_path: d.project_path,
-      title: d.title || d.work_item_id, status: d.status,
-      started_at: d.started_at, completed_at: d.completed_at,
-      session_id: d.session_id || null, cost_usd: d.cost_usd || null,
-      skip_permissions: d.skip_permissions || false,
-    };
-  }
-  for (const [id, t] of terminals) {
-    data.terminals[id] = {
-      id, type: t.type || 'claude', work_item_id: t.work_item_id, epic_id: t.epic_id,
-      project_key: t.project_key, project_path: t.project_path,
-      title: t.title, status: t.status,
-      started_at: t.started_at, exited_at: t.exited_at,
-      skip_permissions: t.skip_permissions || false,
-    };
-  }
-  for (const [id, c] of cliSessions) {
-    data.cli_sessions[id] = {
-      id, project_key: c.project_key, work_item_id: c.work_item_id,
-      epic_id: c.epic_id, title: c.title, pid: c.pid,
-      status: c.status, registered_at: c.registered_at,
-      exited_at: c.exited_at,
-    };
-  }
-  return JSON.stringify(data, null, 2) + '\n';
+function saveTerminalToDb(t) {
+  db.saveTerminal({
+    id: t.id, type: t.type || 'claude', work_item_id: t.work_item_id, epic_id: t.epic_id,
+    project_key: t.project_key, project_path: t.project_path,
+    title: t.title, permission_mode: t.permission_mode || 'acceptEdits',
+    status: t.status, started_at: t.started_at, exited_at: t.exited_at,
+  });
 }
 
-function saveSessions() {
-  clearTimeout(_saveSessionsTimer);
-  _saveSessionsTimer = setTimeout(async () => {
-    _saveSessionsTimer = null;
-    try {
-      const content = serializeSessions();
-      await writeFile(SESSIONS_TMP, content);
-      await rename(SESSIONS_TMP, SESSIONS_FILE);
-    } catch (err) {
-      console.error('Failed to persist sessions:', err.message);
-    }
-  }, 500);
-}
-
-function saveSessionsSync() {
-  try {
-    const content = serializeSessions();
-    writeFileSync(SESSIONS_TMP, content);
-    renameSync(SESSIONS_TMP, SESSIONS_FILE);
-  } catch (err) {
-    console.error('Failed to persist sessions on shutdown:', err.message);
-  }
+function saveCliSessionToDb(c) {
+  db.saveCliSession({
+    id: c.id, project_key: c.project_key, work_item_id: c.work_item_id,
+    epic_id: c.epic_id, title: c.title, pid: c.pid,
+    status: c.status, registered_at: c.registered_at, exited_at: c.exited_at,
+  });
 }
 
 // --- PID liveness check ---
@@ -161,18 +123,14 @@ const SCROLLBACK_LIMIT = 100 * 1024; // 100KB ring buffer
 // --- CLI session registry ---
 const cliSessions = new Map();
 
-// Restore persisted sessions on startup (mark running sessions as interrupted)
+// Restore persisted sessions from SQLite (mark running as interrupted)
 {
-  const persisted = loadSessions();
+  db.markRunningAsInterrupted();
   let interruptedDispatches = 0;
   let interruptedTerminals = 0;
-  for (const [id, d] of Object.entries(persisted.dispatches)) {
-    if (d.status === 'running') {
-      d.status = 'interrupted';
-      d.completed_at = new Date().toISOString();
-      interruptedDispatches++;
-    }
-    dispatches.set(id, {
+  for (const d of db.getPersistedDispatches()) {
+    if (d.status === 'interrupted') interruptedDispatches++;
+    dispatches.set(d.id, {
       ...d,
       output: [],
       lastLines: [],
@@ -180,29 +138,25 @@ const cliSessions = new Map();
       process: null,
     });
   }
-  for (const [id, t] of Object.entries(persisted.terminals)) {
-    if (t.status === 'running') {
-      t.status = 'interrupted';
-      t.exited_at = new Date().toISOString();
-      interruptedTerminals++;
-    }
-    terminals.set(id, {
+  for (const t of db.getPersistedTerminals()) {
+    if (t.status === 'interrupted') interruptedTerminals++;
+    terminals.set(t.id, {
       ...t,
       ptyProcess: null,
       scrollback: '',
       wsClients: new Set(),
     });
   }
-  for (const [id, c] of Object.entries(persisted.cli_sessions)) {
+  for (const c of db.getPersistedCliSessions()) {
     if (c.status === 'running' && !isPidAlive(c.pid)) {
       c.status = 'exited';
       c.exited_at = new Date().toISOString();
+      db.saveCliSession(c);
     }
-    cliSessions.set(id, { ...c });
+    cliSessions.set(c.id, { ...c });
   }
   if (dispatches.size || terminals.size || cliSessions.size) {
-    saveSessions();
-    console.log(`Restored ${dispatches.size} dispatches (${interruptedDispatches} interrupted), ${terminals.size} terminals (${interruptedTerminals} interrupted), ${cliSessions.size} CLI sessions from sessions.json`);
+    console.log(`Restored ${dispatches.size} dispatches (${interruptedDispatches} interrupted), ${terminals.size} terminals (${interruptedTerminals} interrupted), ${cliSessions.size} CLI sessions from SQLite`);
   }
 }
 
@@ -247,62 +201,10 @@ async function loadPortfolioContext(projectKey) {
   return (entry || orgData) ? { entry, org: orgData } : null;
 }
 
-async function loadWorkItem(workItemId, projectKey) {
-  try {
-    const bl = await readJson(join(WORK, 'backlog.json'));
-    const group = bl.projects[projectKey];
-    if (!group || !group.items) return null;
-    return group.items.find(i => i.id === workItemId) || null;
-  } catch {
-    return null;
-  }
+function loadWorkItem(workItemId) {
+  return db.getWorkItemFull(workItemId);
 }
 
-async function migrateBacklog(bl, blPath) {
-  let changed = false;
-  if (bl.version < 3) {
-    bl.version = 3;
-    if (!bl.next_epic_id) bl.next_epic_id = 1;
-    if (!bl.epics) bl.epics = [];
-    changed = true;
-  }
-  if (bl.version < 4) {
-    for (const group of Object.values(bl.projects || {})) {
-      if (!group.items) continue;
-      for (const item of group.items) {
-        if ('blocked_by' in item) {
-          item.depends_on = item.blocked_by ? [item.blocked_by] : [];
-          delete item.blocked_by;
-        } else if (!item.depends_on) {
-          item.depends_on = [];
-        }
-      }
-    }
-    bl.version = 4;
-    changed = true;
-  }
-  if (changed) await writeFile(blPath, JSON.stringify(bl, null, 2) + '\n');
-  return bl;
-}
-
-function detectCycle(itemId, targetId, projects) {
-  const visited = new Set();
-  const stack = [targetId];
-  while (stack.length) {
-    const current = stack.pop();
-    if (current === itemId) return true;
-    if (visited.has(current)) continue;
-    visited.add(current);
-    for (const group of Object.values(projects)) {
-      if (!group.items) continue;
-      const item = group.items.find(i => i.id === current);
-      if (item && item.depends_on) {
-        for (const dep of item.depends_on) stack.push(dep);
-      }
-    }
-  }
-  return false;
-}
 
 function topoSort(items) {
   const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -333,34 +235,6 @@ function topoSort(items) {
   return [...sorted, ...remaining];
 }
 
-function resolveEpicItems(epic, backlog) {
-  const resolved = [];
-  for (const wid of epic.work_item_ids) {
-    for (const [key, group] of Object.entries(backlog.projects)) {
-      if (!group.items) continue;
-      const item = group.items.find(i => i.id === wid);
-      if (item) {
-        resolved.push({ ...item, project_key: key });
-        break;
-      }
-    }
-  }
-  return resolved;
-}
-
-function recomputeProjectKeys(epic, backlog) {
-  const keys = new Set();
-  for (const wid of epic.work_item_ids) {
-    for (const [key, group] of Object.entries(backlog.projects)) {
-      if (!group.items) continue;
-      if (group.items.some(i => i.id === wid)) {
-        keys.add(key);
-        break;
-      }
-    }
-  }
-  epic.project_keys = [...keys].sort();
-}
 
 async function loadEpicPlanSnippet(epicId) {
   try {
@@ -619,7 +493,7 @@ function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInst
     const envLines = ['# Environment', ''];
     envLines.push(`You are running in the target project directory: ${projectPath || '(unknown)'}`);
     envLines.push(`The architect project (portfolio, backlog, domain rules) is at: ${ROOT}`);
-    envLines.push(`- Backlog: ${ROOT}/work/backlog.json`);
+    envLines.push(`- Backlog: SQLite at ${ROOT}/work/architect.db (use dashboard API)`);
     envLines.push(`- Portfolio: ${ROOT}/portfolio/`);
     envLines.push(`- Dashboard API: http://127.0.0.1:${port}`);
     envLines.push(`- Domain rules: ${ROOT}/domain/rules.md`);
@@ -708,134 +582,57 @@ const routes = [
   [/^\/api\/backlog$/, 'GET', async (_m, req, res) => {
     const reqUrl = new URL(req.url, 'http://localhost');
     const orgFilter = reqUrl.searchParams.get('org');
-    const bl = await readJson(join(WORK, 'backlog.json'));
-    if (orgFilter) {
-      const prefix = orgFilter.toLowerCase() + '/';
-      const filtered = {};
-      for (const [key, group] of Object.entries(bl.projects)) {
-        if (key.toLowerCase().startsWith(prefix)) filtered[key] = group;
-      }
-      bl.projects = filtered;
-    }
-    json(res, bl);
+    json(res, db.getBacklog(orgFilter || null));
   }],
 
   // --- Work item endpoints ---
 
+  // Get single work item
+  [/^\/api\/work-items\/([A-Za-z0-9_-]+)$/, 'GET', async (m, _req, res) => {
+    const item = db.getWorkItemFull(m[1]);
+    if (!item) return err(res, 'work item not found', 404);
+    json(res, item);
+  }],
+
   // Create work item
   [/^\/api\/work-items$/, 'POST', async (_m, req, res) => {
     const body = await parseBody(req);
-    const { project_key, title, status, priority, description, tags } = body;
+    const { project_key, title, status, priority, description, tags, epic_id } = body;
     if (!project_key || !title) {
       return err(res, 'project_key and title are required', 400);
     }
-
-    const blPath = join(WORK, 'backlog.json');
-    const bl = await readJson(blPath);
-
-    const id = `W-${String(bl.next_id).padStart(3, '0')}`;
-    bl.next_id++;
-
-    const today = new Date().toISOString().slice(0, 10);
-    const item = {
-      id,
-      title,
-      status: status || 'open',
-      priority: priority || 'medium',
-      description: description || '',
-      tags: tags || [],
-      depends_on: [],
-      created: today,
-      updated: today,
-      session_log: [],
-    };
-
-    if (!bl.projects[project_key]) {
-      bl.projects[project_key] = { items: [] };
-    }
-    bl.projects[project_key].items.push(item);
-
-    await writeFile(blPath, JSON.stringify(bl, null, 2) + '\n');
+    const item = db.createWorkItem({ project_key, title, status, priority, description, tags, epic_id });
     json(res, item, 201);
   }],
 
   // Update work item
   [/^\/api\/work-items\/([A-Za-z0-9_-]+)$/, 'PATCH', async (m, req, res) => {
     const itemId = m[1];
+    const existing = db.getWorkItem(itemId);
+    if (!existing) return err(res, 'work item not found', 404);
     const body = await parseBody(req);
-    const allowed = ['title', 'status', 'priority', 'description', 'tags', 'depends_on'];
-
-    const blPath = join(WORK, 'backlog.json');
-    const bl = await readJson(blPath);
-
-    let found = null;
-    for (const group of Object.values(bl.projects)) {
-      if (!group.items) continue;
-      found = group.items.find(i => i.id === itemId);
-      if (found) break;
-    }
-
-    if (!found) return err(res, 'work item not found', 404);
-
-    const today = new Date().toISOString().slice(0, 10);
-    for (const key of allowed) {
-      if (key in body) found[key] = body[key];
-    }
-    found.updated = today;
-
-    await writeFile(blPath, JSON.stringify(bl, null, 2) + '\n');
-    json(res, found);
+    const updated = db.updateWorkItem(itemId, body);
+    json(res, updated);
   }],
 
   // Delete work item
   [/^\/api\/work-items\/([A-Za-z0-9_-]+)$/, 'DELETE', async (m, _req, res) => {
-    const itemId = m[1];
-    const blPath = join(WORK, 'backlog.json');
-    const bl = await readJson(blPath);
-
-    let found = false;
-    for (const group of Object.values(bl.projects)) {
-      if (!group.items) continue;
-      const idx = group.items.findIndex(i => i.id === itemId);
-      if (idx !== -1) {
-        group.items.splice(idx, 1);
-        found = true;
-        break;
-      }
-    }
-
-    if (!found) return err(res, 'work item not found', 404);
-
-    await writeFile(blPath, JSON.stringify(bl, null, 2) + '\n');
-    json(res, { deleted: itemId });
+    const deleted = db.deleteWorkItem(m[1]);
+    if (!deleted) return err(res, 'work item not found', 404);
+    json(res, { deleted: m[1] });
   }],
 
   // Add session log entry to work item
   [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/log$/, 'POST', async (m, req, res) => {
     const itemId = m[1];
     const body = await parseBody(req);
-    const { message } = body;
-    if (!message) return err(res, 'message is required', 400);
-
-    const blPath = join(WORK, 'backlog.json');
-    const bl = await readJson(blPath);
-
-    let found = null;
-    for (const group of Object.values(bl.projects)) {
-      if (!group.items) continue;
-      found = group.items.find(i => i.id === itemId);
-      if (found) break;
-    }
-
-    if (!found) return err(res, 'work item not found', 404);
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (!found.session_log) found.session_log = [];
-    found.session_log.push({ date: today, summary: message });
-    found.updated = today;
-
-    await writeFile(blPath, JSON.stringify(bl, null, 2) + '\n');
-    json(res, found);
+    const { message, summary } = body;
+    const logMsg = message || summary;
+    if (!logMsg) return err(res, 'message is required', 400);
+    const existing = db.getWorkItem(itemId);
+    if (!existing) return err(res, 'work item not found', 404);
+    db.addWorkItemLog(itemId, logMsg);
+    json(res, db.getWorkItemFull(itemId));
   }],
 
   // Add dependencies to work item
@@ -845,41 +642,17 @@ const routes = [
     const { targets } = body;
     if (!targets || !targets.length) return err(res, 'targets array is required', 400);
 
-    const blPath = join(WORK, 'backlog.json');
-    const bl = await migrateBacklog(await readJson(blPath), blPath);
-
-    let found = null;
-    for (const group of Object.values(bl.projects)) {
-      if (!group.items) continue;
-      found = group.items.find(i => i.id === itemId);
-      if (found) break;
-    }
-    if (!found) return err(res, 'work item not found', 404);
-
-    if (!found.depends_on) found.depends_on = [];
     const added = [];
     for (const tid of targets) {
-      let targetExists = false;
-      for (const group of Object.values(bl.projects)) {
-        if (!group.items) continue;
-        if (group.items.some(i => i.id === tid)) { targetExists = true; break; }
+      try {
+        db.addDependency(itemId, tid);
+        added.push(tid);
+      } catch (e) {
+        return err(res, e.message, 400);
       }
-      if (!targetExists) return err(res, `Target ${tid} not found`, 404);
-      if (found.depends_on.includes(tid)) continue;
-      if (detectCycle(itemId, tid, bl.projects)) {
-        return err(res, `Circular dependency: ${itemId} → ${tid} would create a cycle`, 400);
-      }
-      found.depends_on.push(tid);
-      added.push(tid);
     }
-
-    const today = new Date().toISOString().slice(0, 10);
-    found.updated = today;
-    if (!found.session_log) found.session_log = [];
-    if (added.length) found.session_log.push({ date: today, summary: `Added dependencies: ${added.join(', ')}` });
-
-    await writeFile(blPath, JSON.stringify(bl, null, 2) + '\n');
-    json(res, found);
+    if (added.length) db.addWorkItemLog(itemId, `Added dependencies: ${added.join(', ')}`);
+    json(res, db.getWorkItemFull(itemId));
   }],
 
   // Remove dependencies from work item
@@ -889,53 +662,40 @@ const routes = [
     const { targets } = body;
     if (!targets || !targets.length) return err(res, 'targets array is required', 400);
 
-    const blPath = join(WORK, 'backlog.json');
-    const bl = await migrateBacklog(await readJson(blPath), blPath);
+    const existing = db.getWorkItem(itemId);
+    if (!existing) return err(res, 'work item not found', 404);
 
-    let found = null;
-    for (const group of Object.values(bl.projects)) {
-      if (!group.items) continue;
-      found = group.items.find(i => i.id === itemId);
-      if (found) break;
+    const removed = targets.filter(t => existing.depends_on.includes(t));
+    for (const tid of removed) {
+      db.removeDependency(itemId, tid);
     }
-    if (!found) return err(res, 'work item not found', 404);
-
-    if (!found.depends_on) found.depends_on = [];
-    const removed = targets.filter(t => found.depends_on.includes(t));
-    found.depends_on = found.depends_on.filter(d => !targets.includes(d));
-
-    const today = new Date().toISOString().slice(0, 10);
-    found.updated = today;
-    if (!found.session_log) found.session_log = [];
-    if (removed.length) found.session_log.push({ date: today, summary: `Removed dependencies: ${removed.join(', ')}` });
-
-    await writeFile(blPath, JSON.stringify(bl, null, 2) + '\n');
-    json(res, found);
+    if (removed.length) db.addWorkItemLog(itemId, `Removed dependencies: ${removed.join(', ')}`);
+    json(res, db.getWorkItemFull(itemId));
   }],
 
   // --- Epic endpoints ---
 
   // List epics
   [/^\/api\/epics$/, 'GET', async (_m, _req, res) => {
-    const blPath = join(WORK, 'backlog.json');
-    const bl = await migrateBacklog(await readJson(blPath), blPath);
-    const epics = (bl.epics || []).map(epic => {
-      const items = resolveEpicItems(epic, bl);
+    const epics = db.listEpics().map(epic => {
+      const items = db.getWorkItemsByEpic(epic.id);
       const done = items.filter(i => i.status === 'done').length;
-      return { ...epic, progress: { done, total: items.length } };
+      return {
+        ...epic,
+        work_item_ids: items.map(i => i.id),
+        project_keys: db.getEpicProjectKeys(epic.id),
+        session_log: db.getEpicLogs(epic.id).map(l => ({ date: l.logged_at, summary: l.summary })),
+        progress: { done, total: items.length },
+      };
     });
     json(res, epics);
   }],
 
   // Get epic detail
   [/^\/api\/epics\/(E-\d+)$/, 'GET', async (m, _req, res) => {
-    const blPath = join(WORK, 'backlog.json');
-    const bl = await migrateBacklog(await readJson(blPath), blPath);
-    const epic = (bl.epics || []).find(e => e.id === m[1]);
+    const epic = db.getEpicFull(m[1]);
     if (!epic) return err(res, 'epic not found', 404);
-    const items = resolveEpicItems(epic, bl);
-    const done = items.filter(i => i.status === 'done').length;
-    json(res, { ...epic, resolved_items: items, progress: { done, total: items.length } });
+    json(res, epic);
   }],
 
   // Create epic
@@ -943,78 +703,30 @@ const routes = [
     const body = await parseBody(req);
     const { title, priority, description, acceptance_criteria, target_date, tags } = body;
     if (!title) return err(res, 'title is required', 400);
-
-    const blPath = join(WORK, 'backlog.json');
-    const bl = await migrateBacklog(await readJson(blPath), blPath);
-
-    const id = `E-${String(bl.next_epic_id).padStart(3, '0')}`;
-    bl.next_epic_id++;
-
-    const today = new Date().toISOString().slice(0, 10);
-    const epic = {
-      id,
-      title,
-      status: 'draft',
-      priority: priority || 'medium',
-      description: description || '',
-      acceptance_criteria: acceptance_criteria || '',
-      target_date: target_date || '',
-      project_keys: Array.isArray(body.project_keys) ? body.project_keys : [],
-      work_item_ids: [],
-      tags: tags || [],
-      created: today,
-      updated: today,
-      session_log: [{ date: today, summary: 'Created' }],
-    };
-
-    bl.epics.push(epic);
-    await writeFile(blPath, JSON.stringify(bl, null, 2) + '\n');
+    const epic = db.createEpic({ title, priority, description, acceptance_criteria, target_date, tags });
+    // Return with derived fields
+    epic.work_item_ids = [];
+    epic.project_keys = [];
+    epic.session_log = db.getEpicLogs(epic.id).map(l => ({ date: l.logged_at, summary: l.summary }));
     json(res, epic, 201);
   }],
 
   // Update epic
   [/^\/api\/epics\/(E-\d+)$/, 'PATCH', async (m, req, res) => {
+    const existing = db.getEpic(m[1]);
+    if (!existing) return err(res, 'epic not found', 404);
     const body = await parseBody(req);
-    const allowed = ['title', 'status', 'priority', 'description', 'acceptance_criteria', 'target_date', 'tags', 'project_keys'];
-
-    const blPath = join(WORK, 'backlog.json');
-    const bl = await migrateBacklog(await readJson(blPath), blPath);
-
-    const epic = (bl.epics || []).find(e => e.id === m[1]);
-    if (!epic) return err(res, 'epic not found', 404);
-
-    const today = new Date().toISOString().slice(0, 10);
-    for (const key of allowed) {
-      if (key in body) epic[key] = body[key];
-    }
-    epic.updated = today;
-
-    await writeFile(blPath, JSON.stringify(bl, null, 2) + '\n');
-    json(res, epic);
+    const updated = db.updateEpic(m[1], body);
+    updated.work_item_ids = db.getEpicWorkItemIds(m[1]);
+    updated.project_keys = db.getEpicProjectKeys(m[1]);
+    updated.session_log = db.getEpicLogs(m[1]).map(l => ({ date: l.logged_at, summary: l.summary }));
+    json(res, updated);
   }],
 
   // Delete epic
   [/^\/api\/epics\/(E-\d+)$/, 'DELETE', async (m, _req, res) => {
-    const blPath = join(WORK, 'backlog.json');
-    const bl = await migrateBacklog(await readJson(blPath), blPath);
-
-    const idx = (bl.epics || []).findIndex(e => e.id === m[1]);
-    if (idx === -1) return err(res, 'epic not found', 404);
-
-    const epic = bl.epics[idx];
-    for (const wid of epic.work_item_ids) {
-      for (const group of Object.values(bl.projects)) {
-        if (!group.items) continue;
-        const item = group.items.find(i => i.id === wid);
-        if (item && item.epic_id === epic.id) {
-          item.epic_id = '';
-          break;
-        }
-      }
-    }
-
-    bl.epics.splice(idx, 1);
-    await writeFile(blPath, JSON.stringify(bl, null, 2) + '\n');
+    const deleted = db.deleteEpic(m[1]);
+    if (!deleted) return err(res, 'epic not found', 404);
     json(res, { deleted: m[1] });
   }],
 
@@ -1023,33 +735,12 @@ const routes = [
     const body = await parseBody(req);
     const { work_item_ids } = body;
     if (!work_item_ids || !work_item_ids.length) return err(res, 'work_item_ids required', 400);
-
-    const blPath = join(WORK, 'backlog.json');
-    const bl = await migrateBacklog(await readJson(blPath), blPath);
-
-    const epic = (bl.epics || []).find(e => e.id === m[1]);
-    if (!epic) return err(res, 'epic not found', 404);
-
-    const today = new Date().toISOString().slice(0, 10);
-    let linked = 0;
-    for (const wid of work_item_ids) {
-      let found = null;
-      for (const group of Object.values(bl.projects)) {
-        if (!group.items) continue;
-        found = group.items.find(i => i.id === wid);
-        if (found) break;
-      }
-      if (!found) continue;
-      if (found.epic_id && found.epic_id !== epic.id) continue;
-      found.epic_id = epic.id;
-      if (!epic.work_item_ids.includes(wid)) epic.work_item_ids.push(wid);
-      linked++;
+    try {
+      const linked = db.linkItemsToEpic(m[1], work_item_ids);
+      json(res, { linked, epic_id: m[1] });
+    } catch (e) {
+      return err(res, e.message, 404);
     }
-
-    recomputeProjectKeys(epic, bl);
-    epic.updated = today;
-    await writeFile(blPath, JSON.stringify(bl, null, 2) + '\n');
-    json(res, { linked, epic_id: epic.id });
   }],
 
   // Unlink work item from epic
@@ -1057,29 +748,10 @@ const routes = [
     const body = await parseBody(req);
     const { work_item_id } = body;
     if (!work_item_id) return err(res, 'work_item_id required', 400);
-
-    const blPath = join(WORK, 'backlog.json');
-    const bl = await migrateBacklog(await readJson(blPath), blPath);
-
-    const epic = (bl.epics || []).find(e => e.id === m[1]);
-    if (!epic) return err(res, 'epic not found', 404);
-
-    const today = new Date().toISOString().slice(0, 10);
-    epic.work_item_ids = epic.work_item_ids.filter(id => id !== work_item_id);
-
-    for (const group of Object.values(bl.projects)) {
-      if (!group.items) continue;
-      const item = group.items.find(i => i.id === work_item_id);
-      if (item && item.epic_id === epic.id) {
-        item.epic_id = '';
-        break;
-      }
-    }
-
-    recomputeProjectKeys(epic, bl);
-    epic.updated = today;
-    await writeFile(blPath, JSON.stringify(bl, null, 2) + '\n');
-    json(res, { unlinked: work_item_id, epic_id: epic.id });
+    const existing = db.getEpic(m[1]);
+    if (!existing) return err(res, 'epic not found', 404);
+    db.unlinkItemFromEpic(m[1], work_item_id);
+    json(res, { unlinked: work_item_id, epic_id: m[1] });
   }],
 
   // Read epic plan
@@ -1222,7 +894,7 @@ const routes = [
       exited_at: null,
     };
     cliSessions.set(id, session);
-    saveSessions();
+    saveCliSessionToDb(session);
     json(res, { id, status: session.status, registered_at: session.registered_at }, 201);
   }],
 
@@ -1241,7 +913,7 @@ const routes = [
     if (!session) return err(res, 'CLI session not found', 404);
     session.status = 'exited';
     session.exited_at = new Date().toISOString();
-    saveSessions();
+    saveCliSessionToDb(session);
     json(res, { status: 'exited', id: m[1] });
   }],
 
@@ -1262,7 +934,7 @@ const routes = [
       project_key: 'onboard',
       project_path: projectPath,
       title: `Onboard: ${projectPath.split('/').pop()}`,
-      skip_permissions: false,
+      permission_mode: 'acceptEdits',
       status: 'running',
       output: [],
       lastLines: [],
@@ -1298,11 +970,11 @@ const routes = [
           const evt = JSON.parse(line);
           if (evt.type === 'system' && evt.subtype === 'init' && evt.session_id) {
             dispatch.session_id = evt.session_id;
-            saveSessions();
+            saveDispatchToDb(dispatch);
           }
           if (evt.type === 'result' && evt.total_cost_usd != null) {
             dispatch.cost_usd = evt.total_cost_usd;
-            saveSessions();
+            saveDispatchToDb(dispatch);
           }
         } catch {}
         dispatch.output.push(line);
@@ -1323,11 +995,11 @@ const routes = [
       for (const listener of dispatch.listeners) listener(null);
       dispatch.listeners.clear();
       dispatches.delete(id);
-      saveSessions();
+      saveDispatchToDb(dispatch);
     });
 
     dispatches.set(id, dispatch);
-    saveSessions();
+    saveDispatchToDb(dispatch);
     json(res, { dispatch_id: id, status: 'running' });
   }],
 
@@ -1336,7 +1008,7 @@ const routes = [
   // Create dispatch
   [/^\/api\/dispatch$/, 'POST', async (_m, req, res) => {
     const body = await parseBody(req);
-    const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions } = body;
+    const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode } = body;
 
     if (!project_key) {
       return err(res, 'project_key is required', 400);
@@ -1354,25 +1026,22 @@ const routes = [
 
     const [portfolio, workItem] = await Promise.all([
       loadPortfolioContext(project_key),
-      work_item_id ? loadWorkItem(work_item_id, project_key) : null,
+      work_item_id ? loadWorkItem(work_item_id) : null,
     ]);
 
     let epicContext = null;
     if (epic_id) {
       try {
-        const bl = await readJson(join(WORK, 'backlog.json'));
-        const epic = (bl.epics || []).find(e => e.id === epic_id);
-        if (epic) {
-          const items = resolveEpicItems(epic, bl);
-          const done = items.filter(i => i.status === 'done').length;
+        const epicFull = db.getEpicFull(epic_id);
+        if (epicFull) {
           const planSnippet = await loadEpicPlanSnippet(epic_id);
           epicContext = {
-            id: epic.id,
-            title: epic.title,
-            status: epic.status,
-            progress: `${done}/${items.length}`,
-            acceptance_criteria: epic.acceptance_criteria,
-            items,
+            id: epicFull.id,
+            title: epicFull.title,
+            status: epicFull.status,
+            progress: `${epicFull.progress.done}/${epicFull.progress.total}`,
+            acceptance_criteria: epicFull.acceptance_criteria,
+            items: epicFull.resolved_items,
             plan_snippet: planSnippet,
           };
         }
@@ -1408,6 +1077,9 @@ const routes = [
     // Select sub-agents based on work item and portfolio context
     const agentDefs = await selectAgentsForDispatch({ workItem: effectiveWorkItem, portfolio });
 
+    // Resolve permission mode: support both new permission_mode field and legacy skip_permissions boolean
+    const resolvedPermMode = permission_mode || (skip_permissions ? 'dangerouslySkipPermissions' : 'acceptEdits');
+
     const dispatch = {
       id,
       work_item_id,
@@ -1415,7 +1087,7 @@ const routes = [
       project_key,
       project_path: projectPath,
       title: title || work_item_id || '',
-      skip_permissions: !!skip_permissions,
+      permission_mode: resolvedPermMode,
       status: 'running',
       output: [],
       lastLines: [],
@@ -1427,10 +1099,10 @@ const routes = [
     let proc;
     try {
       const args = ['-p', '--output-format', 'stream-json', '--verbose'];
-      if (skip_permissions) {
+      if (resolvedPermMode === 'dangerouslySkipPermissions') {
         args.push('--dangerously-skip-permissions');
       } else {
-        args.push('--permission-mode', 'acceptEdits');
+        args.push('--permission-mode', resolvedPermMode === 'plan' ? 'plan' : 'acceptEdits');
       }
       // Give the agent access to the architect project directory
       args.push('--add-dir', ROOT);
@@ -1464,11 +1136,11 @@ const routes = [
           const evt = JSON.parse(line);
           if (evt.type === 'system' && evt.subtype === 'init' && evt.session_id) {
             dispatch.session_id = evt.session_id;
-            saveSessions();
+            saveDispatchToDb(dispatch);
           }
           if (evt.type === 'result' && evt.total_cost_usd != null) {
             dispatch.cost_usd = evt.total_cost_usd;
-            saveSessions();
+            saveDispatchToDb(dispatch);
           }
           // Extract text for lastLines preview
           const text = extractStreamText(evt);
@@ -1501,11 +1173,11 @@ const routes = [
       }
       dispatch.listeners.clear();
       dispatches.delete(id);
-      saveSessions();
+      saveDispatchToDb(dispatch);
     });
 
     dispatches.set(id, dispatch);
-    saveSessions();
+    saveDispatchToDb(dispatch);
     json(res, { dispatch_id: id, status: 'running' });
   }],
 
@@ -1564,7 +1236,7 @@ const routes = [
         started_at: d.started_at,
         completed_at: d.completed_at,
         last_output: d.lastLines || [],
-        skip_permissions: d.skip_permissions || false,
+        permission_mode: d.permission_mode || 'acceptEdits',
       });
     }
     json(res, list);
@@ -1583,9 +1255,9 @@ const routes = [
       dispatch.completed_at = new Date().toISOString();
       for (const listener of dispatch.listeners) listener(null);
       dispatch.listeners.clear();
+      saveDispatchToDb(dispatch);
       killed++;
     }
-    saveSessions();
     json(res, { killed });
   }],
 
@@ -1601,7 +1273,7 @@ const routes = [
     dispatch.completed_at = new Date().toISOString();
     for (const listener of dispatch.listeners) listener(null);
     dispatch.listeners.clear();
-    saveSessions();
+    saveDispatchToDb(dispatch);
     json(res, { status: 'killed', id: m[1] });
   }],
 
@@ -1610,7 +1282,7 @@ const routes = [
   // Create terminal session
   [/^\/api\/terminal$/, 'POST', async (_m, req, res) => {
     const body = await parseBody(req);
-    const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions } = body;
+    const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode } = body;
 
     if (!project_key) return err(res, 'project_key is required', 400);
 
@@ -1622,22 +1294,19 @@ const routes = [
     // Build prompt same as dispatch
     const [portfolio, workItem] = await Promise.all([
       loadPortfolioContext(project_key),
-      work_item_id ? loadWorkItem(work_item_id, project_key) : null,
+      work_item_id ? loadWorkItem(work_item_id) : null,
     ]);
 
     let epicContext = null;
     if (epic_id) {
       try {
-        const bl = await readJson(join(WORK, 'backlog.json'));
-        const epic = (bl.epics || []).find(e => e.id === epic_id);
-        if (epic) {
-          const items = resolveEpicItems(epic, bl);
-          const done = items.filter(i => i.status === 'done').length;
+        const epicFull = db.getEpicFull(epic_id);
+        if (epicFull) {
           const planSnippet = await loadEpicPlanSnippet(epic_id);
           epicContext = {
-            id: epic.id, title: epic.title, status: epic.status,
-            progress: `${done}/${items.length}`,
-            acceptance_criteria: epic.acceptance_criteria, items, plan_snippet: planSnippet,
+            id: epicFull.id, title: epicFull.title, status: epicFull.status,
+            progress: `${epicFull.progress.done}/${epicFull.progress.total}`,
+            acceptance_criteria: epicFull.acceptance_criteria, items: epicFull.resolved_items, plan_snippet: planSnippet,
           };
         }
       } catch {}
@@ -1657,10 +1326,13 @@ const routes = [
     // Select sub-agents for terminal session
     const termAgentDefs = await selectAgentsForDispatch({ workItem: effectiveTermWorkItem, portfolio });
 
+    // Resolve permission mode
+    const resolvedTermPermMode = permission_mode || (skip_permissions ? 'dangerouslySkipPermissions' : 'acceptEdits');
+
     // Spawn interactive PTY with claude (use absolute path to avoid posix_spawnp PATH issues)
     let ptyProcess;
     try {
-      const ptyArgs = skip_permissions ? ['--dangerously-skip-permissions'] : [];
+      const ptyArgs = resolvedTermPermMode === 'dangerouslySkipPermissions' ? ['--dangerously-skip-permissions'] : [];
       // Give the agent access to the architect project directory
       ptyArgs.push('--add-dir', ROOT);
       // Attach curated sub-agents
@@ -1686,7 +1358,7 @@ const routes = [
       project_key,
       project_path: projectPath,
       title: title || additional_instructions?.slice(0, 60) || 'Interactive session',
-      skip_permissions: !!skip_permissions,
+      permission_mode: resolvedTermPermMode,
       status: 'running',
       ptyProcess,
       scrollback: '',
@@ -1696,12 +1368,10 @@ const routes = [
     };
 
     ptyProcess.onData((data) => {
-      // Append to scrollback ring buffer
       terminal.scrollback += data;
       if (terminal.scrollback.length > SCROLLBACK_LIMIT) {
         terminal.scrollback = terminal.scrollback.slice(-SCROLLBACK_LIMIT);
       }
-      // Send to all connected WebSocket clients
       for (const ws of terminal.wsClients) {
         try { ws.send(JSON.stringify({ type: 'data', data })); } catch {}
       }
@@ -1716,7 +1386,7 @@ const routes = [
       }
       terminal.wsClients.clear();
       terminals.delete(id);
-      saveSessions();
+      saveTerminalToDb(terminal);
     });
 
     // After PTY is ready, write the prompt as first input
@@ -1727,7 +1397,7 @@ const routes = [
     }, 500);
 
     terminals.set(id, terminal);
-    saveSessions();
+    saveTerminalToDb(terminal);
     json(res, { terminal_id: id, status: 'running' });
   }],
 
@@ -1764,7 +1434,7 @@ const routes = [
       project_key,
       project_path: projectPath,
       title: title || 'Shell',
-      skip_permissions: false,
+      permission_mode: 'acceptEdits',
       status: 'running',
       ptyProcess,
       scrollback: '',
@@ -1792,11 +1462,11 @@ const routes = [
       }
       terminal.wsClients.clear();
       terminals.delete(id);
-      saveSessions();
+      saveTerminalToDb(terminal);
     });
 
     terminals.set(id, terminal);
-    saveSessions();
+    saveTerminalToDb(terminal);
     json(res, { terminal_id: id, status: 'running' });
   }],
 
@@ -1817,7 +1487,7 @@ const routes = [
         started_at: t.started_at,
         exited_at: t.exited_at,
         last_output: scrollLines,
-        skip_permissions: t.skip_permissions || false,
+        permission_mode: t.permission_mode || 'acceptEdits',
       });
     }
     json(res, list);
@@ -1837,9 +1507,9 @@ const routes = [
         try { ws.send(JSON.stringify({ type: 'exit', code: -1 })); ws.close(); } catch {}
       }
       terminal.wsClients.clear();
+      saveTerminalToDb(terminal);
       killed++;
     }
-    saveSessions();
     json(res, { killed });
   }],
 
@@ -1856,7 +1526,7 @@ const routes = [
       try { ws.send(JSON.stringify({ type: 'exit', code: -1 })); ws.close(); } catch {}
     }
     terminal.wsClients.clear();
-    saveSessions();
+    saveTerminalToDb(terminal);
     json(res, { status: 'killed', id: m[1] });
   }],
 
@@ -1902,8 +1572,21 @@ const routes = [
       auto_start: autoStart,
       log_file: LOG_FILE,
       pid_file: PID_FILE,
-      sessions_file: SESSIONS_FILE,
+      database_file: join(WORK, 'architect.db'),
     });
+  }],
+
+  // --- Preferences endpoints ---
+  [/^\/api\/settings\/preferences$/, 'GET', async (_m, _req, res) => {
+    json(res, db.getAllPreferences());
+  }],
+
+  [/^\/api\/settings\/preferences$/, 'PUT', async (_m, req, res) => {
+    const body = await parseBody(req);
+    for (const [key, value] of Object.entries(body)) {
+      db.setPreference(key, String(value));
+    }
+    json(res, db.getAllPreferences());
   }],
 
   // Server action (restart, stop, fresh, install, uninstall)
@@ -2033,12 +1716,11 @@ server.on('upgrade', (req, socket, head) => {
 // --- Auto-cleanup stale sessions ---
 setInterval(() => {
   const now = Date.now();
-  let changed = false;
   for (const [id, terminal] of terminals) {
     if (terminal.status !== 'running' && terminal.exited_at) {
       if (now - new Date(terminal.exited_at).getTime() > 10 * 60 * 1000) {
         terminals.delete(id);
-        changed = true;
+        db.deleteTerminal(id);
       }
     }
   }
@@ -2046,7 +1728,7 @@ setInterval(() => {
     if (dispatch.status !== 'running' && dispatch.completed_at) {
       if (now - new Date(dispatch.completed_at).getTime() > 30 * 60 * 1000) {
         dispatches.delete(id);
-        changed = true;
+        db.deleteDispatch(id);
       }
     }
   }
@@ -2055,28 +1737,20 @@ setInterval(() => {
     if (cli.status === 'running' && !isPidAlive(cli.pid)) {
       cli.status = 'exited';
       cli.exited_at = new Date().toISOString();
-      changed = true;
+      saveCliSessionToDb(cli);
     }
     if (cli.status === 'exited' && cli.exited_at) {
       if (now - new Date(cli.exited_at).getTime() > 10 * 60 * 1000) {
         cliSessions.delete(id);
-        changed = true;
+        db.deleteCliSession(id);
       }
     }
   }
-  if (changed) saveSessions();
 }, 60 * 1000);
 
 function shutdownFlush() {
-  clearTimeout(_saveSessionsTimer);
-  const now = new Date().toISOString();
-  for (const [, d] of dispatches) {
-    if (d.status === 'running') { d.status = 'interrupted'; d.completed_at = now; }
-  }
-  for (const [, t] of terminals) {
-    if (t.status === 'running') { t.status = 'interrupted'; t.exited_at = now; }
-  }
-  saveSessionsSync();
+  db.markRunningAsInterrupted();
+  db.closeDatabase();
 }
 process.on('SIGTERM', () => { shutdownFlush(); process.exit(0); });
 process.on('SIGINT', () => { shutdownFlush(); process.exit(0); });

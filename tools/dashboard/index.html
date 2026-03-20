@@ -174,6 +174,7 @@
 
   /* Auto badge */
   .auto-badge { display: inline-block; font-size: 10px; color: #f59e0b; border: 1px solid #f59e0b; padding: 1px 6px; border-radius: 3px; margin-left: 4px; font-weight: 600; }
+  .plan-badge { display: inline-block; font-size: 10px; color: var(--blue); border: 1px solid var(--blue); padding: 1px 6px; border-radius: 3px; margin-left: 4px; font-weight: 600; }
 
   /* Epic sidebar */
   .sidebar-section-label { padding: 10px 16px 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #6c7086; cursor: pointer; }
@@ -300,10 +301,19 @@
   .agent-tile-badges { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 14px 8px; }
   .agent-tile-preview { background: #f8f8f8; color: var(--text); font-family: monospace; font-size: 11px; line-height: 1.5; padding: 8px 12px; max-height: 60px; overflow: hidden; white-space: pre-wrap; word-break: break-word; margin: 0 14px 8px; border-radius: 4px; }
   .agent-tile-footer { display: flex; gap: 6px; padding: 8px 14px 12px; border-top: 1px solid #f0f0f0; }
-  .agents-filter-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
-  .agents-filter-bar .filter-tab { padding: 5px 14px; border-radius: 16px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: #fff; color: var(--text); }
-  .agents-filter-bar .filter-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .agents-filter-bar select { padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border); font-size: 12px; }
+  .agents-filter-bar, .wi-filter-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+  .agents-filter-bar .filter-tab, .wi-filter-bar .filter-tab { padding: 5px 14px; border-radius: 16px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: #fff; color: var(--text); }
+  .agents-filter-bar .filter-tab.active, .wi-filter-bar .filter-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .agents-filter-bar select, .wi-filter-bar select { padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border); font-size: 12px; }
+  .wi-filter-bar .filter-count { font-size: 12px; color: var(--text-light); margin-left: auto; }
+  .wi-filter-bar .filter-clear { font-size: 11px; color: var(--accent); cursor: pointer; border: none; background: none; text-decoration: underline; }
+
+  /* Dependency visual states */
+  tr.blocked-by-deps { border-left: 3px solid var(--orange); background: #fffbf0; }
+  tr.blocked-by-deps td:first-child { padding-left: 7px; }
+  .dep-badge { display: inline-block; padding: 1px 6px; border-radius: 8px; font-size: 10px; font-family: monospace; margin: 1px; }
+  .dep-badge.dep-done { background: #dcfce7; color: #16a34a; }
+  .dep-badge.dep-pending { background: #fef3c7; color: #b45309; }
   .agents-badge { background: var(--accent); color: #fff; font-size: 10px; padding: 1px 7px; border-radius: 10px; font-weight: 700; margin-left: 4px; }
   .agents-badge.empty { display: none; }
 
@@ -413,6 +423,11 @@ function renderMd(text) {
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
+function fmtDate(s) {
+  if (!s) return '—';
+  try { return new Date(s).toLocaleDateString(); } catch { return s; }
+}
+
 function topoSort(items) {
   const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
   const cmp = (a, b) => (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2) || a.id.localeCompare(b.id);
@@ -434,6 +449,37 @@ function topoSort(items) {
     queue.push(...ready.sort(cmp));
   }
   return [...sorted, ...items.filter(i => !done.has(i.id))];
+}
+
+// --- Global preferences ---
+window._prefs = { default_permission_mode: 'acceptEdits' };
+async function loadPreferences() {
+  try { window._prefs = await api('settings/preferences'); } catch {}
+}
+loadPreferences();
+
+function permissionModeSelect(id, defaultMode) {
+  const mode = defaultMode || window._prefs.default_permission_mode || 'acceptEdits';
+  return `<div class="field"><label>Permission Mode</label><select id="${id}">
+    <option value="plan"${mode === 'plan' ? ' selected' : ''}>Plan only</option>
+    <option value="acceptEdits"${mode === 'acceptEdits' ? ' selected' : ''}>Accept edits</option>
+    <option value="dangerouslySkipPermissions"${mode === 'dangerouslySkipPermissions' ? ' selected' : ''}>Full auto (skip permissions)</option>
+  </select></div>`;
+}
+
+function getPermissionMode(overlay, selectId) {
+  return overlay.querySelector('#' + selectId).value;
+}
+
+// Helper: check if work item is blocked by incomplete dependencies
+function isBlockedByDeps(item, allItems) {
+  if (!item.depends_on || !item.depends_on.length) return { blocked: false, pending: [] };
+  const itemMap = new Map(allItems.map(i => [i.id, i]));
+  const pending = item.depends_on.filter(depId => {
+    const dep = itemMap.get(depId);
+    return dep && dep.status !== 'done';
+  });
+  return { blocked: pending.length > 0, pending };
 }
 
 // --- Data cache ---
@@ -571,7 +617,7 @@ function createDispatchPanel(dispatch) {
     ? `Continue ${dispatch.work_item_id}: ${dispatch.title || ''}`
     : dispatch.title || '';
   const isRunning = dispatch.status === 'running';
-  const autoBadge = dispatch.skip_permissions ? '<span class="auto-badge">[auto]</span>' : '';
+  const autoBadge = dispatch.permission_mode === 'dangerouslySkipPermissions' ? '<span class="auto-badge">[auto]</span>' : dispatch.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
   panel.innerHTML = `
     <div class="dispatch-header">
       <span class="status-dot ${isRunning ? 'running' : dispatch.status}"></span>
@@ -833,7 +879,7 @@ function createTerminalPanel(terminalInfo) {
   panel.id = `terminal-${terminalInfo.id}`;
   const isRunning = terminalInfo.status === 'running';
   const shellBadge = terminalInfo.type === 'shell' ? '<span class="auto-badge" style="background:#2d7d46">[shell]</span>' : '';
-  const autoBadge = terminalInfo.skip_permissions ? '<span class="auto-badge">[auto]</span>' : '';
+  const autoBadge = terminalInfo.permission_mode === 'dangerouslySkipPermissions' ? '<span class="auto-badge">[auto]</span>' : terminalInfo.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
   panel.innerHTML = `
     <div class="terminal-header">
       <span class="status-dot ${isRunning ? 'running' : (terminalInfo.status === 'interrupted' ? 'interrupted' : 'failed')}"></span>
@@ -1071,10 +1117,7 @@ async function dispatchWorkItem(workItem, projectKey) {
           <input type="checkbox" id="dispatch-interactive" checked />
           <label for="dispatch-interactive">Interactive terminal (xterm.js)</label>
         </div>
-        <div class="interactive-toggle">
-          <input type="checkbox" id="dispatch-skip-permissions" checked />
-          <label for="dispatch-skip-permissions">Skip permissions (autonomous)</label>
-        </div>
+        ${permissionModeSelect('dispatch-perm-mode')}
         <div class="modal-actions">
           <button class="btn btn-cancel" id="modal-cancel">Cancel</button>
           <button class="btn btn-dispatch" id="modal-dispatch">Dispatch</button>
@@ -1094,14 +1137,14 @@ async function dispatchWorkItem(workItem, projectKey) {
     overlay.querySelector('#dispatch-claude-agent').onchange = () => {
       const agent = overlay.querySelector('#dispatch-claude-agent').checked;
       overlay.querySelector('#dispatch-interactive').disabled = !agent;
-      overlay.querySelector('#dispatch-skip-permissions').disabled = !agent;
+      overlay.querySelector('#dispatch-perm-mode').disabled = !agent;
     };
 
     overlay.querySelector('#modal-dispatch').onclick = async () => {
       const instructions = overlay.querySelector('#dispatch-instructions').value.trim();
       const plainTerminal = !overlay.querySelector('#dispatch-claude-agent').checked;
       const interactive = overlay.querySelector('#dispatch-interactive').checked;
-      const skipPermissions = overlay.querySelector('#dispatch-skip-permissions').checked;
+      const permMode = getPermissionMode(overlay, 'dispatch-perm-mode');
       const btn = overlay.querySelector('#modal-dispatch');
       btn.disabled = true;
       btn.textContent = 'Dispatching...';
@@ -1116,7 +1159,7 @@ async function dispatchWorkItem(workItem, projectKey) {
               title: workItem.title,
               description: workItem.description || '',
               additional_instructions: instructions,
-              skip_permissions: skipPermissions,
+              permission_mode: permMode,
             };
         const resp = await fetch(endpoint, {
           method: 'POST',
@@ -1150,7 +1193,7 @@ async function dispatchWorkItem(workItem, projectKey) {
             project_key: projectKey,
             project_path: projectPath,
             title: workItem.title,
-            skip_permissions: plainTerminal ? false : skipPermissions,
+            permission_mode: plainTerminal ? 'acceptEdits' : permMode,
             status: 'running',
             started_at: new Date().toISOString(),
           };
@@ -1168,7 +1211,7 @@ async function dispatchWorkItem(workItem, projectKey) {
             project_key: projectKey,
             project_path: projectPath,
             title: workItem.title,
-            skip_permissions: skipPermissions,
+            permission_mode: permMode,
             status: 'running',
             started_at: new Date().toISOString(),
           };
@@ -1379,7 +1422,7 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
   currentWorkItems = workItems;
   currentProjectKey = `${org}/${proj}/${comp}`;
 
-  const tabs = ['Work Items', 'Overview', 'Docs'];
+  const tabs = ['Tasks', 'Overview', 'Docs'];
   let html = `<div class="card"><h2>${esc(data.name || `${proj}/${comp}`)}</h2>`;
   html += `<span class="badge badge-role">${esc(data.role || 'unknown')}</span>`;
   html += `<div class="tabs" id="comp-tabs">`;
@@ -1388,23 +1431,61 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
   });
   html += `</div>`;
 
-  // Tab 0: Work Items
+  // Tab 0: Tasks
   html += `<div class="tab-content active" data-panel="0">`;
-  html += `<button class="btn-add-wi" id="add-work-item">+ Add Work Item</button>`;
+  html += `<button class="btn-add-wi" id="add-work-item">+ Add Task</button>`;
   html += `<button class="btn-add-wi" id="discuss-agent" style="background:var(--teal);margin-left:8px">Discuss with Agent</button>`;
   html += `<a href="#agents?project=${esc(currentProjectKey)}" style="margin-left:8px;font-size:12px;color:var(--accent)">View agents</a>`;
   if (workItems.length) {
     const sortedItems = topoSort(workItems);
-    html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Depends On</th><th>Epic</th><th>Tags</th><th></th></tr></thead><tbody>`;
+
+    // Collect filter values
+    const allStatuses = [...new Set(workItems.map(w => w.status))].sort();
+    const allPriorities = [...new Set(workItems.map(w => w.priority || 'medium'))];
+    const allEpics = [...new Set(workItems.map(w => w.epic_id).filter(Boolean))].sort();
+    const allTags = [...new Set(workItems.flatMap(w => w.tags || []))].sort();
+
+    // Filter bar
+    html += `<div class="wi-filter-bar" id="wi-filter-bar">`;
+    html += `<span style="font-size:12px;font-weight:600;color:var(--text-light)">Status:</span>`;
+    for (const s of allStatuses) {
+      html += `<span class="filter-tab" data-wi-status="${esc(s)}">${esc(s)}</span>`;
+    }
+    if (allPriorities.length > 1) {
+      html += `<span style="font-size:12px;font-weight:600;color:var(--text-light);margin-left:8px">Priority:</span>`;
+      for (const p of ['critical','high','medium','low']) {
+        if (allPriorities.includes(p)) html += `<span class="filter-tab" data-wi-priority="${esc(p)}">${esc(p)}</span>`;
+      }
+    }
+    if (allEpics.length) {
+      html += `<select id="wi-filter-epic" style="margin-left:8px"><option value="">All epics</option>`;
+      for (const e of allEpics) html += `<option value="${esc(e)}">${esc(e)}</option>`;
+      html += `</select>`;
+    }
+    if (allTags.length) {
+      html += `<input type="text" id="wi-filter-tags" placeholder="Filter by tag..." style="width:120px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;margin-left:8px" />`;
+    }
+    html += `<span class="filter-count" id="wi-filter-count">${workItems.length} tasks</span>`;
+    html += `<button class="filter-clear" id="wi-filter-clear" style="display:none">Clear filters</button>`;
+    html += `</div>`;
+
+    html += `<table id="wi-table"><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Depends On</th><th>Epic</th><th>Tags</th><th></th></tr></thead><tbody>`;
     sortedItems.forEach((w) => {
       const idx = workItems.indexOf(w);
       const sc = {'done':'done','blocked':'blocked','in-progress':'in-progress','cancelled':'cancelled'}[w.status] || 'open';
       const canDispatch = w.status === 'open' || w.status === 'in-progress';
-      const deps = (w.depends_on || []).length ? `← ${w.depends_on.map(d => esc(d)).join(', ')}` : '';
-      html += `<tr><td><code>${esc(w.id)}</code></td><td>${esc(w.title)}</td>`;
+      const depState = isBlockedByDeps(w, workItems);
+      const rowClass = depState.blocked ? ' class="blocked-by-deps"' : '';
+      const depHtml = (w.depends_on || []).length ? w.depends_on.map(d => {
+        const dep = workItems.find(i => i.id === d);
+        const cls = dep && dep.status === 'done' ? 'dep-done' : 'dep-pending';
+        return `<span class="dep-badge ${cls}">${esc(d)}</span>`;
+      }).join('') : '';
+      const depTooltip = depState.blocked ? ` title="Dependencies not yet complete: ${depState.pending.join(', ')}"` : '';
+      html += `<tr${rowClass}${depTooltip} data-wi-row="${idx}" data-wi-status-val="${esc(w.status)}" data-wi-priority-val="${esc(w.priority || 'medium')}" data-wi-epic-val="${esc(w.epic_id || '')}" data-wi-tags-val="${esc((w.tags||[]).join(','))}"><td><code>${esc(w.id)}</code></td><td>${esc(w.title)}</td>`;
       html += `<td><span class="badge badge-${sc}" data-status-click="${esc(w.id)}" data-current-status="${esc(w.status)}" style="cursor:pointer">${esc(w.status)}</span></td>`;
       html += `<td><span class="badge badge-${w.priority || 'medium'}">${esc(w.priority || '—')}</span></td>`;
-      html += `<td><code style="font-size:11px">${deps}</code></td>`;
+      html += `<td>${depHtml}</td>`;
       html += `<td>${w.epic_id ? `<span class="badge badge-epic" data-epic-nav="${esc(w.epic_id)}">${esc(w.epic_id)}</span>` : ''}</td>`;
       html += `<td>${(w.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
       html += `<td><button class="expand-btn" data-wi="${idx}">details</button>`;
@@ -1417,7 +1498,7 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
       if (w.description) html += `<div style="margin-bottom:8px">${esc(w.description)}</div>`;
       if (w.session_log?.length) {
         html += `<div class="session-log">`;
-        for (const e of w.session_log) html += `<div class="entry"><span class="date">${esc(e.date)}</span>${esc(e.summary)}</div>`;
+        for (const e of w.session_log) html += `<div class="entry"><span class="date">${fmtDate(e.date)}</span>${esc(e.summary)}</div>`;
         html += `</div>`;
       }
       html += `<div style="margin-top:8px;display:flex;gap:6px;align-items:center">`;
@@ -1436,7 +1517,7 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
     });
     html += `</tbody></table>`;
   } else {
-    html += `<p class="empty">No work items for this project.</p>`;
+    html += `<p class="empty">No tasks for this project.</p>`;
   }
   // Project-level session slot (sessions with project_key but no matching work item slot)
   html += `<div class="context-sessions-section hidden" style="margin-top:16px"><h3>Project Agents</h3><div data-session-slot-project="${esc(currentProjectKey)}"></div></div>`;
@@ -1567,7 +1648,7 @@ function bindTabs() {
       const idx = parseInt(btn.dataset.wiDel);
       const wi = currentWorkItems[idx];
       if (!wi) return;
-      if (!confirm(`Delete work item ${wi.id}: "${wi.title}"?`)) return;
+      if (!confirm(`Delete task ${wi.id}: "${wi.title}"?`)) return;
       try {
         const resp = await fetch(`/api/work-items/${wi.id}`, { method: 'DELETE' });
         const result = await resp.json();
@@ -1649,6 +1730,9 @@ function bindTabs() {
   const discussBtn = document.getElementById('discuss-agent');
   if (discussBtn) discussBtn.onclick = () => showDiscussModal();
 
+  // Filter bar
+  bindFilterBar();
+
   // Doc links
   document.querySelectorAll('.file-link').forEach(link => {
     link.onclick = async () => {
@@ -1715,6 +1799,124 @@ function showStatusDropdown(badge, itemId, currentStatus) {
   setTimeout(() => document.addEventListener('click', close), 0);
 }
 
+// --- Filter bar logic ---
+function bindFilterBar() {
+  const bar = document.getElementById('wi-filter-bar');
+  if (!bar) return;
+
+  const activeFilters = { status: new Set(), priority: new Set(), epic: '', tags: '' };
+  const storageKey = `wi-filters:${currentProjectKey}`;
+
+  // Restore from sessionStorage
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(storageKey));
+    if (saved) {
+      if (saved.status) saved.status.forEach(s => activeFilters.status.add(s));
+      if (saved.priority) saved.priority.forEach(p => activeFilters.priority.add(p));
+      activeFilters.epic = saved.epic || '';
+      activeFilters.tags = saved.tags || '';
+      // Apply to UI
+      bar.querySelectorAll('[data-wi-status]').forEach(el => {
+        if (activeFilters.status.has(el.dataset.wiStatus)) el.classList.add('active');
+      });
+      bar.querySelectorAll('[data-wi-priority]').forEach(el => {
+        if (activeFilters.priority.has(el.dataset.wiPriority)) el.classList.add('active');
+      });
+      const epicSel = document.getElementById('wi-filter-epic');
+      if (epicSel && activeFilters.epic) epicSel.value = activeFilters.epic;
+      const tagsInput = document.getElementById('wi-filter-tags');
+      if (tagsInput && activeFilters.tags) tagsInput.value = activeFilters.tags;
+    }
+  } catch {}
+
+  function saveFilters() {
+    sessionStorage.setItem(storageKey, JSON.stringify({
+      status: [...activeFilters.status],
+      priority: [...activeFilters.priority],
+      epic: activeFilters.epic,
+      tags: activeFilters.tags,
+    }));
+  }
+
+  function applyFilters() {
+    const rows = document.querySelectorAll('[data-wi-row]');
+    let visible = 0;
+    const total = rows.length;
+    const hasFilters = activeFilters.status.size || activeFilters.priority.size || activeFilters.epic || activeFilters.tags;
+
+    rows.forEach(row => {
+      let show = true;
+      if (activeFilters.status.size && !activeFilters.status.has(row.dataset.wiStatusVal)) show = false;
+      if (activeFilters.priority.size && !activeFilters.priority.has(row.dataset.wiPriorityVal)) show = false;
+      if (activeFilters.epic && row.dataset.wiEpicVal !== activeFilters.epic) show = false;
+      if (activeFilters.tags) {
+        const rowTags = (row.dataset.wiTagsVal || '').toLowerCase();
+        if (!rowTags.includes(activeFilters.tags.toLowerCase())) show = false;
+      }
+      row.style.display = show ? '' : 'none';
+      // Also hide/show detail and session rows
+      const idx = row.dataset.wiRow;
+      const detail = document.querySelector(`[data-wi-detail="${idx}"]`);
+      const sessions = document.querySelector(`[data-wi-sessions="${row.querySelector('code')?.textContent}"]`);
+      if (detail && !show) detail.style.display = 'none';
+      if (sessions && !show) sessions.style.display = 'none';
+      if (show) visible++;
+    });
+
+    const countEl = document.getElementById('wi-filter-count');
+    if (countEl) countEl.textContent = hasFilters ? `${visible} of ${total} tasks` : `${total} tasks`;
+    const clearBtn = document.getElementById('wi-filter-clear');
+    if (clearBtn) clearBtn.style.display = hasFilters ? '' : 'none';
+    saveFilters();
+  }
+
+  // Status chips
+  bar.querySelectorAll('[data-wi-status]').forEach(el => {
+    el.onclick = () => {
+      const val = el.dataset.wiStatus;
+      if (activeFilters.status.has(val)) { activeFilters.status.delete(val); el.classList.remove('active'); }
+      else { activeFilters.status.add(val); el.classList.add('active'); }
+      applyFilters();
+    };
+  });
+
+  // Priority chips
+  bar.querySelectorAll('[data-wi-priority]').forEach(el => {
+    el.onclick = () => {
+      const val = el.dataset.wiPriority;
+      if (activeFilters.priority.has(val)) { activeFilters.priority.delete(val); el.classList.remove('active'); }
+      else { activeFilters.priority.add(val); el.classList.add('active'); }
+      applyFilters();
+    };
+  });
+
+  // Epic dropdown
+  const epicSel = document.getElementById('wi-filter-epic');
+  if (epicSel) epicSel.onchange = () => { activeFilters.epic = epicSel.value; applyFilters(); };
+
+  // Tags input
+  const tagsInput = document.getElementById('wi-filter-tags');
+  if (tagsInput) tagsInput.oninput = () => { activeFilters.tags = tagsInput.value; applyFilters(); };
+
+  // Clear button
+  const clearBtn = document.getElementById('wi-filter-clear');
+  if (clearBtn) clearBtn.onclick = () => {
+    activeFilters.status.clear();
+    activeFilters.priority.clear();
+    activeFilters.epic = '';
+    activeFilters.tags = '';
+    bar.querySelectorAll('.filter-tab').forEach(el => el.classList.remove('active'));
+    if (epicSel) epicSel.value = '';
+    if (tagsInput) tagsInput.value = '';
+    applyFilters();
+  };
+
+  // Apply on load (for restored filters)
+  if (activeFilters.status.size || activeFilters.priority.size || activeFilters.epic || activeFilters.tags) {
+    applyFilters();
+  }
+}
+
 // --- Work Item Modal ---
 function showWorkItemModal(existingItem = null) {
   const isEdit = !!existingItem;
@@ -1722,7 +1924,7 @@ function showWorkItemModal(existingItem = null) {
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal">
-      <h3>${isEdit ? `Edit ${esc(existingItem.id)}` : 'New Work Item'}</h3>
+      <h3>${isEdit ? `Edit ${esc(existingItem.id)}` : 'New Task'}</h3>
       <div class="field">
         <label>Title *</label>
         <input type="text" id="wi-title" value="${isEdit ? esc(existingItem.title) : ''}" />
@@ -1823,10 +2025,7 @@ function showDiscussModal() {
         <input type="checkbox" id="discuss-interactive" />
         <label for="discuss-interactive">Interactive terminal (xterm.js)</label>
       </div>
-      <div class="interactive-toggle">
-        <input type="checkbox" id="discuss-skip-permissions" checked />
-        <label for="discuss-skip-permissions">Skip permissions (autonomous)</label>
-      </div>
+      ${permissionModeSelect('discuss-perm-mode')}
       <div class="modal-actions">
         <button class="btn btn-cancel" id="discuss-cancel">Cancel</button>
         <button class="btn btn-dispatch" id="discuss-submit">Dispatch</button>
@@ -1842,7 +2041,7 @@ function showDiscussModal() {
     const instructions = overlay.querySelector('#discuss-instructions').value.trim();
     if (!instructions) { alert('Instructions are required'); return; }
     const interactive = overlay.querySelector('#discuss-interactive').checked;
-    const skipPermissions = overlay.querySelector('#discuss-skip-permissions').checked;
+    const permMode = getPermissionMode(overlay, 'discuss-perm-mode');
 
     const btn = overlay.querySelector('#discuss-submit');
     btn.disabled = true;
@@ -1853,9 +2052,8 @@ function showDiscussModal() {
       const body = {
         project_key: currentProjectKey,
         additional_instructions: instructions,
+        permission_mode: permMode,
       };
-      if (!interactive) body.skip_permissions = skipPermissions;
-      if (interactive && skipPermissions) body.skip_permissions = true;
       const resp = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1963,8 +2161,7 @@ async function showEpicDiscussModal(epicId) {
         <label for="epic-discuss-interactive">Interactive terminal (xterm.js)</label>
       </div>
       <div class="interactive-toggle">
-        <input type="checkbox" id="epic-discuss-skip-permissions" />
-        <label for="epic-discuss-skip-permissions">Skip permissions (autonomous)</label>
+      ${permissionModeSelect('epic-discuss-perm-mode')}
       </div>
       <div class="modal-actions">
         <button class="btn btn-cancel" id="epic-discuss-cancel">Cancel</button>
@@ -1981,7 +2178,7 @@ async function showEpicDiscussModal(epicId) {
     const instructions = overlay.querySelector('#epic-discuss-instructions').value.trim();
     if (!instructions) { alert('Instructions are required'); return; }
     const interactive = overlay.querySelector('#epic-discuss-interactive').checked;
-    const skipPermissions = overlay.querySelector('#epic-discuss-skip-permissions').checked;
+    const permMode = getPermissionMode(overlay, 'epic-discuss-perm-mode');
     const pk = overlay.querySelector('#epic-discuss-project').value || projectKeys[0];
 
     if (!pk) {
@@ -1999,9 +2196,8 @@ async function showEpicDiscussModal(epicId) {
         epic_id: epicId,
         project_key: pk,
         additional_instructions: instructions,
+        permission_mode: permMode,
       };
-      if (!interactive) body.skip_permissions = skipPermissions;
-      if (interactive && skipPermissions) body.skip_permissions = true;
 
       const resp = await fetch(endpoint, {
         method: 'POST',
@@ -2140,13 +2336,20 @@ async function renderEpicDetailView(epicId) {
     for (const item of sortedEpicItems) {
       const sc = {'done':'done','blocked':'blocked','in-progress':'in-progress','cancelled':'cancelled'}[item.status] || 'open';
       const canDispatch = item.status === 'open' || item.status === 'in-progress';
-      const deps = (item.depends_on || []).length ? `← ${item.depends_on.map(d => esc(d)).join(', ')}` : '';
-      html += `<tr>`;
+      const depState = isBlockedByDeps(item, items);
+      const rowClass = depState.blocked ? ' class="blocked-by-deps"' : '';
+      const depHtml = (item.depends_on || []).length ? item.depends_on.map(d => {
+        const dep = items.find(i => i.id === d);
+        const cls = dep && dep.status === 'done' ? 'dep-done' : 'dep-pending';
+        return `<span class="dep-badge ${cls}">${esc(d)}</span>`;
+      }).join('') : '';
+      const depTooltip = depState.blocked ? ` title="Dependencies not yet complete: ${depState.pending.join(', ')}"` : '';
+      html += `<tr${rowClass}${depTooltip}>`;
       html += `<td><code>${esc(item.id)}</code></td>`;
       html += `<td>${esc(item.title)}</td>`;
       html += `<td><span class="badge badge-${sc}" data-status-click="${esc(item.id)}" data-current-status="${esc(item.status)}" style="cursor:pointer">${esc(item.status)}</span></td>`;
       html += `<td><span class="badge badge-${item.priority || 'medium'}">${esc(item.priority || 'medium')}</span></td>`;
-      html += `<td><code style="font-size:11px">${deps}</code></td>`;
+      html += `<td>${depHtml}</td>`;
       html += `<td><span class="tag">${esc(item.project_key)}</span></td>`;
       html += `<td>${(item.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
       html += `<td>`;
@@ -2161,7 +2364,7 @@ async function renderEpicDetailView(epicId) {
       if (item.description) html += `<div style="margin-bottom:8px">${esc(item.description)}</div>`;
       if (item.session_log?.length) {
         html += `<div class="session-log">`;
-        for (const e of item.session_log) html += `<div class="entry"><span class="date">${esc(e.date)}</span>${esc(e.summary)}</div>`;
+        for (const e of item.session_log) html += `<div class="entry"><span class="date">${fmtDate(e.date)}</span>${esc(e.summary)}</div>`;
         html += `</div>`;
       }
       html += `<div style="margin-top:8px;display:flex;gap:6px">`;
@@ -2205,8 +2408,8 @@ async function renderEpicDetailView(epicId) {
   html += `<dt>Target Date</dt><dd>${epic.target_date || '—'}</dd>`;
   html += `<dt>Tags</dt><dd>${(epic.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('') || '—'}</dd>`;
   html += `<dt>Projects</dt><dd>${(epic.project_keys || []).map(k => `<span class="tag">${esc(k)}</span>`).join('') || '—'}</dd>`;
-  html += `<dt>Created</dt><dd>${esc(epic.created || '—')}</dd>`;
-  html += `<dt>Updated</dt><dd>${esc(epic.updated || '—')}</dd>`;
+  html += `<dt>Created</dt><dd>${epic.created_at ? new Date(epic.created_at).toLocaleDateString() : (epic.created || '—')}</dd>`;
+  html += `<dt>Updated</dt><dd>${epic.updated_at ? new Date(epic.updated_at).toLocaleDateString() : (epic.updated || '—')}</dd>`;
   html += `</dl>`;
   if (epic.description) {
     html += `<h3>Description</h3><p style="font-size:13px">${esc(epic.description)}</p>`;
@@ -2216,7 +2419,7 @@ async function renderEpicDetailView(epicId) {
   }
   if (epic.session_log?.length) {
     html += `<h3>Session Log</h3><div class="session-log">`;
-    for (const e of epic.session_log) html += `<div class="entry"><span class="date">${esc(e.date)}</span>${esc(e.summary)}</div>`;
+    for (const e of epic.session_log) html += `<div class="entry"><span class="date">${fmtDate(e.date)}</span>${esc(e.summary)}</div>`;
     html += `</div>`;
   }
   html += `</div>`;
@@ -2353,7 +2556,7 @@ function bindEpicDetailEvents(epicId) {
         if (wi) break;
       }
       if (!wi) return;
-      if (!confirm(`Delete work item ${wi.id}: "${wi.title}"?`)) return;
+      if (!confirm(`Delete task ${wi.id}: "${wi.title}"?`)) return;
       try {
         const resp = await fetch(`/api/work-items/${wi.id}`, { method: 'DELETE' });
         const result = await resp.json();
@@ -2917,10 +3120,7 @@ async function showEpicDispatchModal(epicId) {
         <label>Additional Instructions</label>
         <textarea id="epic-dispatch-instructions" placeholder="Optional context..."></textarea>
       </div>
-      <div class="interactive-toggle">
-        <input type="checkbox" id="epic-dispatch-skip-permissions" />
-        <label for="epic-dispatch-skip-permissions">Skip permissions (autonomous)</label>
-      </div>
+      ${permissionModeSelect('epic-dispatch-perm-mode')}
       <div class="modal-actions">
         <button class="btn btn-cancel" id="epic-dispatch-cancel">Cancel</button>
         <button class="btn btn-dispatch" id="epic-dispatch-go">Dispatch</button>
@@ -2948,7 +3148,7 @@ async function showEpicDispatchModal(epicId) {
   overlay.querySelector('#epic-dispatch-go').onclick = async () => {
     const mode = modeSelect.value;
     const instructions = overlay.querySelector('#epic-dispatch-instructions').value.trim();
-    const skipPermissions = overlay.querySelector('#epic-dispatch-skip-permissions').checked;
+    const permMode = getPermissionMode(overlay, 'epic-dispatch-perm-mode');
     const btn = overlay.querySelector('#epic-dispatch-go');
     btn.disabled = true; btn.textContent = 'Dispatching...';
 
@@ -2978,7 +3178,7 @@ async function showEpicDispatchModal(epicId) {
           project_key: pk,
           title: wid ? `${wid} (${epic.title})` : epic.title,
           additional_instructions: instructions,
-          skip_permissions: skipPermissions,
+          permission_mode: permMode,
         }),
       });
       const result = await resp.json();
@@ -3002,6 +3202,7 @@ async function showEpicDispatchModal(epicId) {
         project_key: pk,
         project_path: projectPath,
         title: wid ? `${wid} (${epic.title})` : epic.title,
+        permission_mode: permMode,
         status: 'running',
         started_at: new Date().toISOString(),
       };
@@ -3722,10 +3923,7 @@ async function showQuickDispatchModal() {
         <input type="checkbox" id="qd-interactive" checked />
         <label for="qd-interactive">Interactive terminal (xterm.js)</label>
       </div>
-      <div class="interactive-toggle">
-        <input type="checkbox" id="qd-skip-permissions" checked />
-        <label for="qd-skip-permissions">Skip permissions (autonomous)</label>
-      </div>
+      ${permissionModeSelect('qd-perm-mode')}
       <div class="modal-actions">
         <button class="btn btn-cancel" id="qd-cancel">Cancel</button>
         <button class="btn btn-dispatch" id="qd-go">Dispatch</button>
@@ -3740,7 +3938,7 @@ async function showQuickDispatchModal() {
   overlay.querySelector('#qd-claude-agent').onchange = () => {
     const agent = overlay.querySelector('#qd-claude-agent').checked;
     overlay.querySelector('#qd-interactive').disabled = !agent;
-    overlay.querySelector('#qd-skip-permissions').disabled = !agent;
+    overlay.querySelector('#qd-perm-mode').disabled = !agent;
   };
 
   overlay.querySelector('#qd-go').onclick = async () => {
@@ -3750,7 +3948,7 @@ async function showQuickDispatchModal() {
     const instructions = overlay.querySelector('#qd-instructions').value.trim();
     const plainTerminal = !overlay.querySelector('#qd-claude-agent').checked;
     const interactive = overlay.querySelector('#qd-interactive').checked;
-    const skipPermissions = overlay.querySelector('#qd-skip-permissions').checked;
+    const permMode = getPermissionMode(overlay, 'qd-perm-mode');
     const btn = overlay.querySelector('#qd-go');
 
     if (!pk) { alert('Project is required'); return; }
@@ -3769,7 +3967,7 @@ async function showQuickDispatchModal() {
             project_key: pk,
             title: titleText,
             additional_instructions: instructions,
-            skip_permissions: skipPermissions,
+            permission_mode: permMode,
           };
       const resp = await fetch(endpoint, {
         method: 'POST',
@@ -3797,7 +3995,7 @@ async function showQuickDispatchModal() {
           work_item_id: wid, epic_id: epicId,
           project_key: pk, project_path: projectPath,
           title: titleText,
-          skip_permissions: plainTerminal ? false : skipPermissions,
+          permission_mode: plainTerminal ? 'acceptEdits' : permMode,
           status: 'running', started_at: new Date().toISOString(),
         };
         activeTerminals.push(terminalInfo);
@@ -3810,7 +4008,7 @@ async function showQuickDispatchModal() {
           id: result.dispatch_id, work_item_id: wid, epic_id: epicId,
           project_key: pk, project_path: projectPath,
           title: wid || instructions?.slice(0, 60) || 'Quick dispatch',
-          skip_permissions: skipPermissions,
+          permission_mode: permMode,
           status: 'running', started_at: new Date().toISOString(),
         };
         activeDispatches.push(dispatch);
@@ -3897,7 +4095,20 @@ function renderSettingsView(status, config) {
   html += '<div class="settings-output" id="settings-service-output"></div>';
   html += '</div>';
 
-  // Card 4: Recent Logs
+  // Card 4: Preferences
+  html += '<div class="settings-card">';
+  html += '<h3>Preferences</h3>';
+  const curPerm = window._prefs.default_permission_mode || 'acceptEdits';
+  html += '<div class="settings-kv">';
+  html += '<div><span class="key">Default Permission Mode</span>';
+  html += '<select id="settings-perm-mode" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px">';
+  html += '<option value="plan"' + (curPerm === 'plan' ? ' selected' : '') + '>Plan only</option>';
+  html += '<option value="acceptEdits"' + (curPerm === 'acceptEdits' ? ' selected' : '') + '>Accept edits</option>';
+  html += '<option value="dangerouslySkipPermissions"' + (curPerm === 'dangerouslySkipPermissions' ? ' selected' : '') + '>Full auto (skip permissions)</option>';
+  html += '</select></div>';
+  html += '</div></div>';
+
+  // Card 5: Recent Logs
   html += '<div class="settings-card">';
   html += '<h3>Recent Logs <button class="settings-btn" id="settings-refresh-logs" style="float:right;padding:4px 12px;font-size:12px">Refresh</button></h3>';
   html += '<div class="settings-log-box" id="settings-log-box">(loading...)</div>';
@@ -3987,6 +4198,20 @@ function bindSettingsEvents(status, config) {
   });
 
   document.getElementById('settings-refresh-logs')?.addEventListener('click', loadSettingsLogs);
+
+  // Preferences
+  document.getElementById('settings-perm-mode')?.addEventListener('change', async (e) => {
+    try {
+      await fetch('/api/settings/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ default_permission_mode: e.target.value }),
+      });
+      window._prefs.default_permission_mode = e.target.value;
+    } catch (err) {
+      alert('Failed to save preference: ' + err.message);
+    }
+  });
 }
 
 async function loadSettingsLogs() {

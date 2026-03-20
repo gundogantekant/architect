@@ -18,7 +18,7 @@ Canonical schemas for all structured data in the architect system. Agents and sk
 **Interactive agents**: browser (interacts with web via Playwright, no code/data writes)
 **Implementation agents**: coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer
 **Onboarding agents**: profiler (writes only CLAUDE.md to the target project)
-**Data-write agents**: tracker (writes only `work/backlog.json`, `work/epics/E-XXX/*.md`, and `work/items/W-XXX/*.md`)
+**Data-write agents**: tracker (uses dashboard API (http://127.0.0.1:3777/api/...) for work item and epic CRUD; writes work/epics/E-XXX/*.md and work/items/W-XXX/*.md for artifacts)
 
 ## RequestClassification
 
@@ -203,12 +203,13 @@ Stored in `work/backlog.json` under `projects[key].items`. The project key (`org
   "priority": "low|medium|high|critical",
   "description": "string",
   "epic_id": "string (E-XXX or empty, optional)",
-  "created": "YYYY-MM-DD",
-  "updated": "YYYY-MM-DD",
+  "project_key": "string (org/project/component) — derived from storage location, included in API responses",
+  "created_at": "string (ISO 8601)",
+  "updated_at": "string (ISO 8601)",
   "depends_on": ["string (W-XXX)"],
   "tags": ["string"],
   "session_log": [
-    { "date": "YYYY-MM-DD", "summary": "string" }
+    { "date": "string (ISO 8601)", "summary": "string" }
   ]
 }
 ```
@@ -234,13 +235,13 @@ Top-level entity in `work/backlog.json` under the `epics` array. Epics group wor
   "description": "string",
   "acceptance_criteria": "string (markdown, optional)",
   "target_date": "YYYY-MM-DD (optional, empty string if unset)",
-  "project_keys": ["string (org/project/component) — auto-derived from linked items"],
-  "work_item_ids": ["string (W-XXX)"],
+  "project_keys": ["string (org/project/component) — derived via SQL query from linked items, not stored as array"],
+  "work_item_ids": ["string (W-XXX) — derived via SQL query, not stored as array"],
   "tags": ["string"],
-  "created": "YYYY-MM-DD",
-  "updated": "YYYY-MM-DD",
+  "created_at": "string (ISO 8601)",
+  "updated_at": "string (ISO 8601)",
   "session_log": [
-    { "date": "YYYY-MM-DD", "summary": "string" }
+    { "date": "string (ISO 8601)", "summary": "string" }
   ]
 }
 ```
@@ -253,11 +254,10 @@ Status semantics:
 
 ## WorkBacklog
 
-Top-level structure of `work/backlog.json`. Items are grouped under project keys. Epics are top-level (cross-project).
+Backed by SQLite at `work/architect.db`. Migrations handle versioning. The API still returns this shape for backward compatibility.
 
 ```json
 {
-  "version": 5,
   "next_id": "number",
   "next_epic_id": "number",
   "epics": [{ "$ref": "Epic" }],
@@ -294,7 +294,7 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "project_key": "string (org/project/component)",
   "project_path": "string (absolute path)",
   "additional_instructions": "string (optional)",
-  "skip_permissions": "boolean (true if dispatched with --dangerously-skip-permissions)",
+  "permission_mode": "string (plan|acceptEdits|dangerouslySkipPermissions)",
   "status": "running|completed|failed|killed|interrupted",
   "started_at": "string (ISO 8601)",
   "completed_at": "string (ISO 8601, optional)",
@@ -315,7 +315,7 @@ Record for an interactive PTY terminal session spawned from the dashboard. Persi
   "project_key": "string (org/project/component)",
   "project_path": "string (absolute path)",
   "title": "string",
-  "skip_permissions": "boolean (true if dispatched with --dangerously-skip-permissions)",
+  "permission_mode": "string (plan|acceptEdits|dangerouslySkipPermissions)",
   "status": "running|completed|failed|killed|interrupted",
   "started_at": "string (ISO 8601)",
   "exited_at": "string (ISO 8601, null while running)"
@@ -342,21 +342,33 @@ Record for a CLI session registered externally via the dashboard API. Read-only 
 
 ## SessionsFile
 
-Persisted session state at `work/sessions.json`. Written by the dashboard server on every state change (debounced 500ms). On startup, any `running` sessions are re-marked as `interrupted`.
+Sessions are now persisted in SQLite tables (`dispatches`, `terminals`, `cli_sessions`) in `work/architect.db` instead of `work/sessions.json`. On startup, any `running` sessions are re-marked as `interrupted`. The API returns this shape for backward compatibility:
 
 ```json
 {
   "dispatches": {
-    "D-xxx": { "$ref": "DispatchRequest (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, completed_at, session_id, cost_usd, skip_permissions)" }
+    "D-xxx": { "$ref": "DispatchRequest (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, completed_at, session_id, cost_usd, permission_mode)" }
   },
   "terminals": {
-    "T-xxx": { "$ref": "TerminalSession (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, exited_at, skip_permissions)" }
+    "T-xxx": { "$ref": "TerminalSession (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, exited_at, permission_mode)" }
   },
   "cli_sessions": {
     "C-xxx": { "$ref": "CliSession" }
   }
 }
 ```
+
+## DashboardPreferences
+
+Key-value pairs stored in the `preferences` table in SQLite. Used for dashboard-wide settings.
+
+```json
+{
+  "default_permission_mode": "plan|acceptEdits|dangerouslySkipPermissions"
+}
+```
+
+Accessed via `GET/PUT /api/settings/preferences`.
 
 ## RegistryEntry
 
