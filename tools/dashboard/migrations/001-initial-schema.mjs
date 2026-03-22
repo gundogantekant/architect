@@ -247,7 +247,7 @@ export function up(db, workDir) {
   }
 
   // Default preferences
-  db.prepare('INSERT OR IGNORE INTO preferences (key, value) VALUES (?, ?)').run('default_permission_mode', 'acceptEdits');
+  db.prepare('INSERT OR IGNORE INTO preferences (key, value) VALUES (?, ?)').run('default_permission_mode', 'dangerouslySkipPermissions');
 }
 
 function toISO(dateStr) {
