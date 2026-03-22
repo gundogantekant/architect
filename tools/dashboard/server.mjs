@@ -80,6 +80,7 @@ function saveDispatchToDb(d) {
     id: d.id, work_item_id: d.work_item_id, epic_id: d.epic_id,
     project_key: d.project_key, project_path: d.project_path,
     title: d.title || d.work_item_id, permission_mode: d.permission_mode || 'acceptEdits',
+    skip_permissions: d.skip_permissions || false,
     status: d.status, started_at: d.started_at, completed_at: d.completed_at,
     session_id: d.session_id || null, cost_usd: d.cost_usd || null,
   });
@@ -90,6 +91,7 @@ function saveTerminalToDb(t) {
     id: t.id, type: t.type || 'claude', work_item_id: t.work_item_id, epic_id: t.epic_id,
     project_key: t.project_key, project_path: t.project_path,
     title: t.title, permission_mode: t.permission_mode || 'acceptEdits',
+    skip_permissions: t.skip_permissions || false,
     status: t.status, started_at: t.started_at, exited_at: t.exited_at,
   });
 }
@@ -1076,8 +1078,9 @@ const routes = [
     // Select sub-agents based on work item and portfolio context
     const agentDefs = await selectAgentsForDispatch({ workItem: effectiveWorkItem, portfolio });
 
-    // Resolve permission mode: support both new permission_mode field and legacy skip_permissions boolean
-    const resolvedPermMode = permission_mode || (skip_permissions ? 'dangerouslySkipPermissions' : 'acceptEdits');
+    // Resolve permission mode and skip_permissions independently
+    const resolvedPermMode = permission_mode || 'acceptEdits';
+    const resolvedSkipPerms = skip_permissions === true || skip_permissions === 'true';
 
     const dispatch = {
       id,
@@ -1087,6 +1090,7 @@ const routes = [
       project_path: projectPath,
       title: title || work_item_id || '',
       permission_mode: resolvedPermMode,
+      skip_permissions: resolvedSkipPerms,
       status: 'running',
       output: [],
       lastLines: [],
@@ -1098,10 +1102,9 @@ const routes = [
     let proc;
     try {
       const args = ['-p', '--output-format', 'stream-json', '--verbose'];
-      if (resolvedPermMode === 'dangerouslySkipPermissions') {
+      args.push('--permission-mode', resolvedPermMode === 'plan' ? 'plan' : 'acceptEdits');
+      if (resolvedSkipPerms) {
         args.push('--dangerously-skip-permissions');
-      } else {
-        args.push('--permission-mode', resolvedPermMode === 'plan' ? 'plan' : 'acceptEdits');
       }
       // Give the agent access to the architect project directory
       args.push('--add-dir', ROOT);
@@ -1236,6 +1239,7 @@ const routes = [
         completed_at: d.completed_at,
         last_output: d.lastLines || [],
         permission_mode: d.permission_mode || 'acceptEdits',
+        skip_permissions: d.skip_permissions || false,
       });
     }
     json(res, list);
@@ -1325,13 +1329,17 @@ const routes = [
     // Select sub-agents for terminal session
     const termAgentDefs = await selectAgentsForDispatch({ workItem: effectiveTermWorkItem, portfolio });
 
-    // Resolve permission mode
-    const resolvedTermPermMode = permission_mode || (skip_permissions ? 'dangerouslySkipPermissions' : 'acceptEdits');
+    // Resolve permission mode and skip_permissions independently
+    const resolvedTermPermMode = permission_mode || 'acceptEdits';
+    const resolvedTermSkipPerms = skip_permissions === true || skip_permissions === 'true';
 
     // Spawn interactive PTY with claude (use absolute path to avoid posix_spawnp PATH issues)
     let ptyProcess;
     try {
-      const ptyArgs = resolvedTermPermMode === 'dangerouslySkipPermissions' ? ['--dangerously-skip-permissions'] : [];
+      const ptyArgs = [];
+      if (resolvedTermSkipPerms) {
+        ptyArgs.push('--dangerously-skip-permissions');
+      }
       // Give the agent access to the architect project directory
       ptyArgs.push('--add-dir', ROOT);
       // Attach curated sub-agents
@@ -1358,6 +1366,7 @@ const routes = [
       project_path: projectPath,
       title: title || additional_instructions?.slice(0, 60) || 'Interactive session',
       permission_mode: resolvedTermPermMode,
+      skip_permissions: resolvedTermSkipPerms,
       status: 'running',
       ptyProcess,
       scrollback: '',
@@ -1487,6 +1496,7 @@ const routes = [
         exited_at: t.exited_at,
         last_output: scrollLines,
         permission_mode: t.permission_mode || 'acceptEdits',
+        skip_permissions: t.skip_permissions || false,
       });
     }
     json(res, list);

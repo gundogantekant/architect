@@ -452,7 +452,7 @@ function topoSort(items) {
 }
 
 // --- Global preferences ---
-window._prefs = { default_permission_mode: 'acceptEdits' };
+window._prefs = { default_permission_mode: 'acceptEdits', default_skip_permissions: 'false' };
 async function loadPreferences() {
   try { window._prefs = await api('settings/preferences'); } catch {}
 }
@@ -463,8 +463,15 @@ function permissionModeSelect(id, defaultMode) {
   return `<div class="field"><label>Permission Mode</label><select id="${id}">
     <option value="plan"${mode === 'plan' ? ' selected' : ''}>Plan only</option>
     <option value="acceptEdits"${mode === 'acceptEdits' ? ' selected' : ''}>Accept edits</option>
-    <option value="dangerouslySkipPermissions"${mode === 'dangerouslySkipPermissions' ? ' selected' : ''}>Full auto (skip permissions)</option>
   </select></div>`;
+}
+
+function skipPermissionsCheckbox(id) {
+  const checked = window._prefs.default_skip_permissions === 'true' || window._prefs.default_skip_permissions === true;
+  return `<div class="interactive-toggle">
+    <input type="checkbox" id="${id}"${checked ? ' checked' : ''} />
+    <label for="${id}">Skip permissions (--dangerously-skip-permissions)</label>
+  </div>`;
 }
 
 function getPermissionMode(overlay, selectId) {
@@ -617,11 +624,12 @@ function createDispatchPanel(dispatch) {
     ? `Continue ${dispatch.work_item_id}: ${dispatch.title || ''}`
     : dispatch.title || '';
   const isRunning = dispatch.status === 'running';
-  const autoBadge = dispatch.permission_mode === 'dangerouslySkipPermissions' ? '<span class="auto-badge">[auto]</span>' : dispatch.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
+  const skipBadge = dispatch.skip_permissions ? '<span class="auto-badge">[skip-perms]</span>' : '';
+  const planBadge = dispatch.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
   panel.innerHTML = `
     <div class="dispatch-header">
       <span class="status-dot ${isRunning ? 'running' : dispatch.status}"></span>
-      <span class="dispatch-title">${esc(titleParts.join(' — '))}${autoBadge}</span>
+      <span class="dispatch-title">${esc(titleParts.join(' — '))}${planBadge}${skipBadge}</span>
       <span class="dispatch-meta">${new Date(dispatch.started_at).toLocaleTimeString()}</span>
       <button class="focus-btn" data-focus-dispatch="${esc(dispatch.id)}">Focus</button>
       <button class="minimize-btn" data-minimize-dispatch="${esc(dispatch.id)}">▼</button>
@@ -879,11 +887,12 @@ function createTerminalPanel(terminalInfo) {
   panel.id = `terminal-${terminalInfo.id}`;
   const isRunning = terminalInfo.status === 'running';
   const shellBadge = terminalInfo.type === 'shell' ? '<span class="auto-badge" style="background:#2d7d46">[shell]</span>' : '';
-  const autoBadge = terminalInfo.permission_mode === 'dangerouslySkipPermissions' ? '<span class="auto-badge">[auto]</span>' : terminalInfo.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
+  const skipBadge = terminalInfo.skip_permissions ? '<span class="auto-badge">[skip-perms]</span>' : '';
+  const planBadge = terminalInfo.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
   panel.innerHTML = `
     <div class="terminal-header">
       <span class="status-dot ${isRunning ? 'running' : (terminalInfo.status === 'interrupted' ? 'interrupted' : 'failed')}"></span>
-      <span class="terminal-title">${esc(terminalInfo.id)} — ${esc(terminalInfo.title || 'Terminal')}${shellBadge}${autoBadge}</span>
+      <span class="terminal-title">${esc(terminalInfo.id)} — ${esc(terminalInfo.title || 'Terminal')}${shellBadge}${planBadge}${skipBadge}</span>
       <span class="terminal-meta">${new Date(terminalInfo.started_at).toLocaleTimeString()}</span>
       <button class="focus-btn" data-focus-terminal="${esc(terminalInfo.id)}">Focus</button>
       <button class="minimize-btn" data-minimize-terminal="${esc(terminalInfo.id)}">▼</button>
@@ -1118,6 +1127,7 @@ async function dispatchWorkItem(workItem, projectKey) {
           <label for="dispatch-interactive">Interactive terminal (xterm.js)</label>
         </div>
         ${permissionModeSelect('dispatch-perm-mode')}
+        ${skipPermissionsCheckbox('dispatch-skip-perms')}
         <div class="modal-actions">
           <button class="btn btn-cancel" id="modal-cancel">Cancel</button>
           <button class="btn btn-dispatch" id="modal-dispatch">Dispatch</button>
@@ -1138,6 +1148,7 @@ async function dispatchWorkItem(workItem, projectKey) {
       const agent = overlay.querySelector('#dispatch-claude-agent').checked;
       overlay.querySelector('#dispatch-interactive').disabled = !agent;
       overlay.querySelector('#dispatch-perm-mode').disabled = !agent;
+      overlay.querySelector('#dispatch-skip-perms').disabled = !agent;
     };
 
     overlay.querySelector('#modal-dispatch').onclick = async () => {
@@ -1145,6 +1156,7 @@ async function dispatchWorkItem(workItem, projectKey) {
       const plainTerminal = !overlay.querySelector('#dispatch-claude-agent').checked;
       const interactive = overlay.querySelector('#dispatch-interactive').checked;
       const permMode = getPermissionMode(overlay, 'dispatch-perm-mode');
+      const skipPerms = overlay.querySelector('#dispatch-skip-perms').checked;
       const btn = overlay.querySelector('#modal-dispatch');
       btn.disabled = true;
       btn.textContent = 'Dispatching...';
@@ -1160,6 +1172,7 @@ async function dispatchWorkItem(workItem, projectKey) {
               description: workItem.description || '',
               additional_instructions: instructions,
               permission_mode: permMode,
+              skip_permissions: skipPerms,
             };
         const resp = await fetch(endpoint, {
           method: 'POST',
@@ -3924,6 +3937,7 @@ async function showQuickDispatchModal() {
         <label for="qd-interactive">Interactive terminal (xterm.js)</label>
       </div>
       ${permissionModeSelect('qd-perm-mode')}
+      ${skipPermissionsCheckbox('qd-skip-perms')}
       <div class="modal-actions">
         <button class="btn btn-cancel" id="qd-cancel">Cancel</button>
         <button class="btn btn-dispatch" id="qd-go">Dispatch</button>
@@ -3939,6 +3953,7 @@ async function showQuickDispatchModal() {
     const agent = overlay.querySelector('#qd-claude-agent').checked;
     overlay.querySelector('#qd-interactive').disabled = !agent;
     overlay.querySelector('#qd-perm-mode').disabled = !agent;
+    overlay.querySelector('#qd-skip-perms').disabled = !agent;
   };
 
   overlay.querySelector('#qd-go').onclick = async () => {
@@ -3949,6 +3964,7 @@ async function showQuickDispatchModal() {
     const plainTerminal = !overlay.querySelector('#qd-claude-agent').checked;
     const interactive = overlay.querySelector('#qd-interactive').checked;
     const permMode = getPermissionMode(overlay, 'qd-perm-mode');
+    const skipPerms = overlay.querySelector('#qd-skip-perms').checked;
     const btn = overlay.querySelector('#qd-go');
 
     if (!pk) { alert('Project is required'); return; }
@@ -3968,6 +3984,7 @@ async function showQuickDispatchModal() {
             title: titleText,
             additional_instructions: instructions,
             permission_mode: permMode,
+            skip_permissions: skipPerms,
           };
       const resp = await fetch(endpoint, {
         method: 'POST',
@@ -4099,13 +4116,18 @@ function renderSettingsView(status, config) {
   html += '<div class="settings-card">';
   html += '<h3>Preferences</h3>';
   const curPerm = window._prefs.default_permission_mode || 'acceptEdits';
+  const curSkip = window._prefs.default_skip_permissions === 'true' || window._prefs.default_skip_permissions === true;
   html += '<div class="settings-kv">';
   html += '<div><span class="key">Default Permission Mode</span>';
   html += '<select id="settings-perm-mode" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px">';
   html += '<option value="plan"' + (curPerm === 'plan' ? ' selected' : '') + '>Plan only</option>';
   html += '<option value="acceptEdits"' + (curPerm === 'acceptEdits' ? ' selected' : '') + '>Accept edits</option>';
-  html += '<option value="dangerouslySkipPermissions"' + (curPerm === 'dangerouslySkipPermissions' ? ' selected' : '') + '>Full auto (skip permissions)</option>';
   html += '</select></div>';
+  html += '<div style="margin-top:8px"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">';
+  html += '<input type="checkbox" id="settings-skip-perms"' + (curSkip ? ' checked' : '') + ' />';
+  html += '<span class="key">Skip permissions by default</span>';
+  html += '<span style="font-size:11px;color:var(--text-light)">(--dangerously-skip-permissions)</span>';
+  html += '</label></div>';
   html += '</div></div>';
 
   // Card 5: Recent Logs
@@ -4208,6 +4230,19 @@ function bindSettingsEvents(status, config) {
         body: JSON.stringify({ default_permission_mode: e.target.value }),
       });
       window._prefs.default_permission_mode = e.target.value;
+    } catch (err) {
+      alert('Failed to save preference: ' + err.message);
+    }
+  });
+
+  document.getElementById('settings-skip-perms')?.addEventListener('change', async (e) => {
+    try {
+      await fetch('/api/settings/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ default_skip_permissions: String(e.target.checked) }),
+      });
+      window._prefs.default_skip_permissions = String(e.target.checked);
     } catch (err) {
       alert('Failed to save preference: ' + err.message);
     }

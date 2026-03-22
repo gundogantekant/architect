@@ -304,9 +304,9 @@ export function getEpicProjectKeys(epicId) {
 
 export function saveDispatch(d) {
   db.prepare(`
-    INSERT OR REPLACE INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, status, started_at, completed_at, session_id, cost_usd)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(d.id, d.work_item_id || null, d.epic_id || null, d.project_key, d.project_path || '', d.title || '', d.permission_mode || 'acceptEdits', d.status, d.started_at, d.completed_at || null, d.session_id || null, d.cost_usd || null);
+    INSERT OR REPLACE INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, session_id, cost_usd)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(d.id, d.work_item_id || null, d.epic_id || null, d.project_key, d.project_path || '', d.title || '', d.permission_mode || 'acceptEdits', d.skip_permissions ? 1 : 0, d.status, d.started_at, d.completed_at || null, d.session_id || null, d.cost_usd || null);
 }
 
 export function deleteDispatch(id) {
@@ -321,9 +321,9 @@ export function getPersistedDispatches() {
 
 export function saveTerminal(t) {
   db.prepare(`
-    INSERT OR REPLACE INTO terminals (id, type, work_item_id, epic_id, project_key, project_path, title, permission_mode, status, started_at, exited_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(t.id, t.type || 'claude', t.work_item_id || null, t.epic_id || null, t.project_key, t.project_path || '', t.title || '', t.permission_mode || 'acceptEdits', t.status, t.started_at, t.exited_at || null);
+    INSERT OR REPLACE INTO terminals (id, type, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, exited_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(t.id, t.type || 'claude', t.work_item_id || null, t.epic_id || null, t.project_key, t.project_path || '', t.title || '', t.permission_mode || 'acceptEdits', t.skip_permissions ? 1 : 0, t.status, t.started_at, t.exited_at || null);
 }
 
 export function deleteTerminal(id) {

@@ -294,7 +294,8 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "project_key": "string (org/project/component)",
   "project_path": "string (absolute path)",
   "additional_instructions": "string (optional)",
-  "permission_mode": "string (plan|acceptEdits|dangerouslySkipPermissions)",
+  "permission_mode": "string (plan|acceptEdits)",
+  "skip_permissions": "boolean (default false, adds --dangerously-skip-permissions flag)",
   "status": "running|completed|failed|killed|interrupted",
   "started_at": "string (ISO 8601)",
   "completed_at": "string (ISO 8601, optional)",
@@ -315,7 +316,8 @@ Record for an interactive PTY terminal session spawned from the dashboard. Persi
   "project_key": "string (org/project/component)",
   "project_path": "string (absolute path)",
   "title": "string",
-  "permission_mode": "string (plan|acceptEdits|dangerouslySkipPermissions)",
+  "permission_mode": "string (plan|acceptEdits)",
+  "skip_permissions": "boolean (default false, adds --dangerously-skip-permissions flag)",
   "status": "running|completed|failed|killed|interrupted",
   "started_at": "string (ISO 8601)",
   "exited_at": "string (ISO 8601, null while running)"
@@ -347,10 +349,10 @@ Sessions are now persisted in SQLite tables (`dispatches`, `terminals`, `cli_ses
 ```json
 {
   "dispatches": {
-    "D-xxx": { "$ref": "DispatchRequest (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, completed_at, session_id, cost_usd, permission_mode)" }
+    "D-xxx": { "$ref": "DispatchRequest (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, completed_at, session_id, cost_usd, permission_mode, skip_permissions)" }
   },
   "terminals": {
-    "T-xxx": { "$ref": "TerminalSession (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, exited_at, permission_mode)" }
+    "T-xxx": { "$ref": "TerminalSession (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, exited_at, permission_mode, skip_permissions)" }
   },
   "cli_sessions": {
     "C-xxx": { "$ref": "CliSession" }
@@ -364,7 +366,8 @@ Key-value pairs stored in the `preferences` table in SQLite. Used for dashboard-
 
 ```json
 {
-  "default_permission_mode": "plan|acceptEdits|dangerouslySkipPermissions"
+  "default_permission_mode": "plan|acceptEdits",
+  "default_skip_permissions": "true|false"
 }
 ```
 
