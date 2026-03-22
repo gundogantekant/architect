@@ -170,7 +170,7 @@ near the top of the plan (immediately after any Context/summary section). Plans 
 omit the target project section are incomplete and must not proceed to execution.
 
 For architect self-changes, use the standard self-reference:
-Organization=–, Project=architect, Component=–.
+Organization=ticari, Project=architect, Component=main.
 
 ### Organization Awareness
 

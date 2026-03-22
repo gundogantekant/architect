@@ -119,7 +119,7 @@ Use `/work list --org <name>` to scope work items to a specific organization. Se
 
 ## Rules
 
-- Before any work (plans, agent dispatch, skill invocation), the orchestrator must resolve the target project with all five fields: Organization, Project, Component, Path, and Branch. If the target is ambiguous, ask the user. See `domain/rules.md` → Target Project Identification. For architect self-changes, use Organization=–, Project=architect, Component=–.
+- Before any work (plans, agent dispatch, skill invocation), the orchestrator must resolve the target project with all five fields: Organization, Project, Component, Path, and Branch. If the target is ambiguous, ask the user. See `domain/rules.md` → Target Project Identification. For architect self-changes, use Organization=ticari, Project=architect, Component=main.
 - Plan files must include a **Target Project** section (Organization, Project, Component, Path, Branch) immediately after the Context section when the work targets a specific project. For architect self-changes, include the architect target. See `domain/rules.md` → Target Project Identification for field definitions and detection steps.
 - Run scout (or load portfolio) before dispatching implementation agents on any new project
 - Pass the portfolio context or detection report to every subsequent agent invocation
