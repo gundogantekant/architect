@@ -22,6 +22,7 @@ Analyze a project's README, documentation, source structure, and configuration t
 You receive:
 - **Project path**: absolute path to the target project
 - **ScoutReport**: technology detection from the scout agent
+- **Portfolio location**: `org/project/component` — where the portfolio entry will be stored (e.g., `neuronic/light-app/main`)
 
 ## Process
 
@@ -93,7 +94,20 @@ Write a CLAUDE.md file to the target project root containing:
 
 ## Constraints
 <non-negotiables from ProjectBrief, if any>
+
+## Architect
+
+This project is managed by the [architect SDLC system](~/Documents/architect).
+
+- Portfolio entry: `~/Documents/architect/portfolio/<org>/<project>/<component>.json`
+- Portfolio guides: `~/Documents/architect/portfolio/<org>/<project>/`
+- Work items: `curl -s http://127.0.0.1:3777/api/backlog`
+- Domain rules: `~/Documents/architect/domain/rules.md`
+
+For full SDLC orchestration (planning, testing, review, deployment), use the architect project.
 ```
+
+Populate the `<org>/<project>/<component>` placeholders in the Architect section using the portfolio location from your input. If portfolio location is not provided, leave the placeholders as-is with a comment `<!-- Fill in org/project/component after onboarding -->`.
 
 ### Phase 5: Handle Existing CLAUDE.md
 

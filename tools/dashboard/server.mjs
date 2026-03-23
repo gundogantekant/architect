@@ -199,7 +199,24 @@ async function loadPortfolioContext(projectKey) {
     readJson(join(PORTFOLIO, org, project, component + '.json')).catch(() => null),
     readJson(join(PORTFOLIO, org, 'organization.json')).catch(() => null),
   ]);
-  return (entry || orgData) ? { entry, org: orgData } : null;
+  if (!entry && !orgData) return null;
+
+  // Load portfolio guide markdown files from disk
+  let guides = null;
+  if (entry?.portfolio_guides?.length) {
+    const guideDir = join(PORTFOLIO, org, project);
+    guides = (await Promise.all(
+      entry.portfolio_guides.map(async filename => {
+        try {
+          const content = await readFile(join(guideDir, filename), 'utf8');
+          return { filename, content };
+        } catch { return null; }
+      })
+    )).filter(Boolean);
+    if (!guides.length) guides = null;
+  }
+
+  return { entry, org: orgData, guides };
 }
 
 function loadWorkItem(workItemId) {
@@ -395,6 +412,26 @@ function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInst
   if (epicContext) scopeLines.push(`- **Epic**: ${epicContext.id}`);
   sections.push(scopeLines.join('\n'));
 
+  // --- Architect System (awareness section) ---
+  {
+    const awareLines = ['# Architect System', ''];
+    awareLines.push('You are managed by the **architect SDLC system**. Your project has a knowledge base in the architect portfolio.');
+    awareLines.push('');
+    const [pOrg, pProject, pComponent] = (projectKey || '').split('/');
+    if (pOrg && pProject && pComponent) {
+      awareLines.push(`- **Portfolio entry**: \`$ARCHITECT_ROOT/portfolio/${pOrg}/${pProject}/${pComponent}.json\``);
+      if (portfolio?.guides?.length) {
+        awareLines.push(`- **Portfolio guides**: ${portfolio.guides.map(g => g.filename).join(', ')} (in \`$ARCHITECT_ROOT/portfolio/${pOrg}/${pProject}/\`)`);
+      }
+    }
+    awareLines.push(`- **Domain rules**: \`$ARCHITECT_ROOT/domain/rules.md\` — business rules and constraints`);
+    awareLines.push(`- **Entity schemas**: \`$ARCHITECT_ROOT/domain/entities.md\``);
+    awareLines.push(`- **Use-case workflows**: \`$ARCHITECT_ROOT/usecases/\``);
+    awareLines.push('');
+    awareLines.push('When you need deeper context about the project, read from the portfolio entry or guides. For cross-project context, query the dashboard API.');
+    sections.push(awareLines.join('\n'));
+  }
+
   // --- Layer 1: Project Context (first — stack, structure, conventions, org rules) ---
   if (portfolio && portfolio.entry) {
     const e = portfolio.entry;
@@ -417,6 +454,37 @@ function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInst
     if (e.brief?.purpose) lines.push(`\n**Purpose**: ${e.brief.purpose}`);
     if (e.brief?.domain) lines.push(`**Domain**: ${e.brief.domain}`);
     if (e.brief?.users) lines.push(`**Users**: ${e.brief.users}`);
+    if (e.brief?.key_entities?.length) lines.push(`**Key Entities**: ${e.brief.key_entities.join(', ')}`);
+    if (e.brief?.data_flow) lines.push(`**Data Flow**: ${e.brief.data_flow}`);
+    if (e.brief?.architecture_rationale) lines.push(`**Architecture Rationale**: ${e.brief.architecture_rationale}`);
+    if (e.brief?.constraints?.length) {
+      lines.push('', '**Constraints**:');
+      for (const c of e.brief.constraints) lines.push(`- ${c}`);
+    }
+    if (e.brief?.environments?.length) {
+      lines.push('', '**Environments**:');
+      for (const env of e.brief.environments) lines.push(`- ${env}`);
+    }
+    if (e.brief?.external_dependencies?.length) {
+      lines.push('', '**External Dependencies**:');
+      for (const dep of e.brief.external_dependencies) lines.push(`- ${dep}`);
+    }
+    if (e.guidance?.ci_cd?.length) {
+      lines.push('', '**CI/CD**:');
+      for (const c of e.guidance.ci_cd) lines.push(`- ${c}`);
+    }
+    if (e.guidance?.testing?.length) {
+      lines.push('', '**Testing**:');
+      for (const t of e.guidance.testing) lines.push(`- ${t}`);
+    }
+    if (e.custom_rules?.length) {
+      lines.push('', '**Project Rules**:');
+      for (const r of e.custom_rules) lines.push(`- ${r}`);
+    }
+    if (e.doc_paths?.length) {
+      lines.push('', '**Documentation** (files in target project):');
+      for (const d of e.doc_paths) lines.push(`- ${d}`);
+    }
     sections.push(lines.join('\n'));
   }
 
@@ -442,6 +510,26 @@ function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInst
       lines.push('');
     }
     sections.push(lines.join('\n'));
+  }
+
+  // --- Portfolio Guides (deep project knowledge from markdown files) ---
+  if (portfolio?.guides?.length) {
+    const guideLines = ['# Portfolio Guides', '',
+      'Deep project knowledge from the architect portfolio. Follow these when relevant to your task.', ''];
+    let totalLen = 0;
+    const MAX_GUIDE_CHARS = 20000;
+    const [pOrg, pProject] = (projectKey || '').split('/');
+    for (const g of portfolio.guides) {
+      if (totalLen + g.content.length > MAX_GUIDE_CHARS) {
+        guideLines.push(`## ${g.filename}`, '',
+          `(truncated — read full file at \`$ARCHITECT_ROOT/portfolio/${pOrg}/${pProject}/${g.filename}\`)`, '',
+          g.content.slice(0, MAX_GUIDE_CHARS - totalLen), '');
+        break;
+      }
+      guideLines.push(`## ${g.filename}`, '', g.content, '');
+      totalLen += g.content.length;
+    }
+    sections.push(guideLines.join('\n'));
   }
 
   // --- Layer 2: Task Context (second — work item details, description, session log) ---
@@ -495,12 +583,7 @@ function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInst
     envLines.push(`You are running in the target project directory: ${projectPath || '(unknown)'}`);
     envLines.push(`The architect project (portfolio, backlog, domain rules) is at: ${ROOT}`);
     envLines.push(`- Backlog: SQLite at ${ROOT}/work/architect.db (use dashboard API)`);
-    envLines.push(`- Portfolio: ${ROOT}/portfolio/`);
     envLines.push(`- Dashboard API: http://127.0.0.1:${port}`);
-    envLines.push(`- Domain rules: ${ROOT}/domain/rules.md`);
-    envLines.push(`- Domain entities: ${ROOT}/domain/entities.md`);
-    envLines.push(`- Agent prompts: ${ROOT}/.claude/agents/`);
-    envLines.push(`- Use-case workflows: ${ROOT}/usecases/`);
     envLines.push('');
     envLines.push('Use the architect project to look up cross-project context, related tasks, domain rules, or use-case workflows when needed. Your primary work should happen in the current directory (the target project).');
     sections.push(envLines.join('\n'));

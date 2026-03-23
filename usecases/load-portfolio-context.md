@@ -82,6 +82,10 @@ When a WorktreeContext is active (see `domain/entities.md` → WorktreeContext):
 - If a task spans multiple project keys, verify they belong to the same org unless explicitly cross-org (e.g., an epic)
 - Agents receiving org context must apply org-level rules as baseline constraints
 
+## Dashboard Dispatch
+
+The dashboard (`tools/dashboard/server.mjs` → `buildDispatchPrompt()`) follows the **full-tier** protocol for all dispatched agents. It loads the complete portfolio entry including brief, custom_rules, ci_cd, testing, doc_paths, and portfolio guide contents. Agents dispatched from the dashboard also receive an explicit Architect System section declaring their portfolio location and knowledge base pointers.
+
 ## Post-conditions
 - All subsequent agents receive context filtered to the requested depth
 - Context includes: stack info, conventions, recommended agents, dispatch notes (based on tier)
