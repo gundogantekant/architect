@@ -127,7 +127,7 @@ Use `/work list --org <name>` to scope work items to a specific organization. Se
 - Use sequential pipeline when output feeds into the next step
 - Read-only agents do not modify code (see `domain/rules.md` → Agent Permission Model)
 - Implementation agents (coder-*) use acceptEdits permission mode
-- All work on portfolio projects uses a git worktree by default — create one before making any code changes. Skip only when the user explicitly opts out. See `domain/rules.md` → Worktree Rules.
+- All work on portfolio projects uses a git worktree by default — create one before making any code changes. Exception: projects with `worktree_mode: "explicit"` in their portfolio entry work in-place; worktrees are created only on explicit request. Skip only when the user explicitly opts out. See `domain/rules.md` → Worktree Rules.
 - Follow git standards defined in `domain/rules.md`
 - Before using Playwright MCP tools directly in the main session, follow Model Affinity Rules in `domain/rules.md` to prompt model switching
 

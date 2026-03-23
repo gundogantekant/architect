@@ -278,7 +278,7 @@ Shared git rules enforced by all implementation agents.
 
 ## Worktree Rules
 
-- **All work on portfolio projects MUST use a worktree by default.** This applies to implementation agents, direct orchestrator edits, and any skill that modifies code in a portfolio project. The only exception is when the user explicitly requests working without a worktree (e.g., "edit in place", "no worktree", "work on main").
+- **All work on portfolio projects MUST use a worktree by default, unless the PortfolioEntry sets `worktree_mode: "explicit"`.** This applies to implementation agents, direct orchestrator edits, and any skill that modifies code in a portfolio project. When `worktree_mode` is `"explicit"`, agents work in-place on the current branch and only create a worktree when the user explicitly requests one. When `worktree_mode` is `"auto"` (the default), the only exception is when the user explicitly requests working without a worktree (e.g., "edit in place", "no worktree", "work on main").
 - Read-only operations (review, audit, diagnosis, scouting) do not require a worktree.
 - Worktrees are sibling directories of the project folder, not inside it
 - Path: `<parent-of-project-dir>/<project-dir-name>-<branch-name>/`
