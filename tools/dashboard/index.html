@@ -2308,14 +2308,19 @@ async function showEpicDiscussModal(epicId) {
 // --- Epic Views ---
 
 function renderEpicListView(epics) {
+  const hasDone = epics.some(e => e.status === 'done');
   let html = `<div class="card"><h2>Epics</h2>`;
   html += `<button class="btn-add-wi" id="create-epic">+ New Epic</button>`;
+  if (hasDone) {
+    html += `<label class="filter-checkbox" style="margin-left:12px"><input type="checkbox" id="epic-show-done" />Show completed</label>`;
+  }
   if (epics.length) {
     html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Progress</th><th>Projects</th><th>Target</th><th></th></tr></thead><tbody>`;
     for (const epic of epics) {
       const p = epic.progress || { done: 0, total: 0 };
       const pct = p.total ? Math.round(p.done / p.total * 100) : 0;
-      html += `<tr>`;
+      const hideDone = epic.status === 'done' ? ' style="display:none"' : '';
+      html += `<tr data-epic-list-status="${esc(epic.status)}"${hideDone}>`;
       html += `<td><code style="cursor:pointer" data-epic-nav="${esc(epic.id)}">${esc(epic.id)}</code></td>`;
       html += `<td>${esc(epic.title)}</td>`;
       html += `<td><span class="badge badge-${epic.status === 'active' ? 'open' : epic.status === 'done' ? 'done' : 'medium'}">${esc(epic.status)}</span></td>`;
@@ -2340,6 +2345,12 @@ function bindEpicListEvents() {
   });
   const createBtn = document.getElementById('create-epic');
   if (createBtn) createBtn.onclick = () => showEpicModal(null);
+  const showDone = document.getElementById('epic-show-done');
+  if (showDone) showDone.onchange = () => {
+    document.querySelectorAll('[data-epic-list-status="done"]').forEach(row => {
+      row.style.display = showDone.checked ? '' : 'none';
+    });
+  };
   document.querySelectorAll('[data-epic-dispatch]').forEach(btn => {
     btn.onclick = () => showEpicDispatchModal(btn.dataset.epicDispatch);
   });
@@ -2375,19 +2386,30 @@ async function renderEpicDetailView(epicId) {
   html += `<button class="dispatch-btn" id="epic-discuss-btn-tasks" style="background:var(--teal);margin-left:8px">Discuss with Agent</button>`;
   if (items.length) {
     const sortedEpicItems = topoSort(items);
+    // Filter bar for epic tasks
+    const epicStatuses = [...new Set(items.map(w => w.status))].sort();
+    html += `<div class="wi-filter-bar" id="epic-filter-bar">`;
+    html += `<span style="font-size:12px;font-weight:600;color:var(--text-light)">Status:</span>`;
+    for (const s of epicStatuses) {
+      const checked = (s !== 'done' && s !== 'cancelled') ? 'checked' : '';
+      html += `<label class="filter-checkbox"><input type="checkbox" data-ef-status="${esc(s)}" ${checked} />${esc(s)}</label>`;
+    }
+    html += `<span class="filter-count" id="epic-filter-count">${items.length} tasks</span>`;
+    html += `<button class="filter-clear" id="epic-filter-clear" style="display:none">Clear filters</button>`;
+    html += `</div>`;
     html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Depends On</th><th>Project</th><th>Tags</th><th></th></tr></thead><tbody>`;
     for (const item of sortedEpicItems) {
       const sc = {'done':'done','blocked':'blocked','in-progress':'in-progress','cancelled':'cancelled'}[item.status] || 'open';
       const canDispatch = item.status === 'open' || item.status === 'in-progress';
       const depState = isBlockedByDeps(item, items);
-      const rowClass = depState.blocked ? ' class="blocked-by-deps"' : '';
+      const rowClass = depState.blocked ? ' blocked-by-deps' : '';
       const depHtml = (item.depends_on || []).length ? item.depends_on.map(d => {
         const dep = items.find(i => i.id === d);
         const cls = dep && dep.status === 'done' ? 'dep-done' : 'dep-pending';
         return `<span class="dep-badge ${cls}">${esc(d)}</span>`;
       }).join('') : '';
       const depTooltip = depState.blocked ? ` title="Dependencies not yet complete: ${depState.pending.join(', ')}"` : '';
-      html += `<tr${rowClass}${depTooltip}>`;
+      html += `<tr class="epic-task-row${rowClass}" data-ef-row data-ef-status-val="${esc(item.status)}"${depTooltip}>`;
       html += `<td><code>${esc(item.id)}</code></td>`;
       html += `<td>${esc(item.title)}</td>`;
       html += `<td><span class="badge badge-${sc}" data-status-click="${esc(item.id)}" data-current-status="${esc(item.status)}" style="cursor:pointer">${esc(item.status)}</span></td>`;
@@ -2484,6 +2506,48 @@ function bindEpicDetailEvents(epicId) {
       if (tab.dataset.tab === '2') loadEpicDoc(epicId);
     };
   });
+
+  // Epic task filter bar
+  const efBar = document.getElementById('epic-filter-bar');
+  if (efBar) {
+    const excludedStatus = new Set(['done', 'cancelled']);
+    function applyEpicFilters() {
+      const rows = document.querySelectorAll('[data-ef-row]');
+      let visible = 0;
+      rows.forEach(row => {
+        const show = !excludedStatus.has(row.dataset.efStatusVal);
+        row.style.display = show ? '' : 'none';
+        // Hide associated detail and session rows
+        const id = row.querySelector('code')?.textContent;
+        if (id) {
+          const detail = document.querySelector(`[data-epic-wi-detail="${id}"]`);
+          const sessions = document.querySelector(`[data-wi-sessions="${id}"]`);
+          if (detail && !show) detail.style.display = 'none';
+          if (sessions && !show) sessions.style.display = 'none';
+        }
+        if (show) visible++;
+      });
+      const total = rows.length;
+      const countEl = document.getElementById('epic-filter-count');
+      if (countEl) countEl.textContent = excludedStatus.size ? `${visible} of ${total} tasks` : `${total} tasks`;
+      const clearBtn = document.getElementById('epic-filter-clear');
+      if (clearBtn) clearBtn.style.display = excludedStatus.size ? '' : 'none';
+    }
+    efBar.querySelectorAll('input[data-ef-status]').forEach(cb => {
+      cb.onchange = () => {
+        if (cb.checked) excludedStatus.delete(cb.dataset.efStatus);
+        else excludedStatus.add(cb.dataset.efStatus);
+        applyEpicFilters();
+      };
+    });
+    const efClear = document.getElementById('epic-filter-clear');
+    if (efClear) efClear.onclick = () => {
+      excludedStatus.clear();
+      efBar.querySelectorAll('input[data-ef-status]').forEach(cb => { cb.checked = true; });
+      applyEpicFilters();
+    };
+    applyEpicFilters(); // apply defaults (hide done+cancelled)
+  }
 
   // Unlink buttons
   document.querySelectorAll('[data-unlink-item]').forEach(btn => {
