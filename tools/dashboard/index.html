@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Architect Portfolio Dashboard</title>
+<title>Architect</title>
 <style>
   :root {
     --sidebar-w: 260px;
@@ -431,6 +431,23 @@ function renderMd(text) {
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function getRouteTitle() {
+  const hash = location.hash.slice(1);
+  if (!hash) return null;
+  const parts = hash.split('/');
+  if (parts[0] === 'epics') return 'Epics';
+  if (parts[0] === 'agents' || hash.startsWith('agents?')) return 'Agents';
+  if (parts[0] === 'settings') return 'Settings';
+  if (parts[0] === 'epic' && parts[1]) return `E-${parts[1]}`;
+  if (parts[0] === 'org' && parts[1]) return parts[1];
+  if (parts[0] === 'component' && parts.length >= 4) return `${parts[2]}/${parts[3]}`;
+  return null;
+}
+
+function updateTitle(subtitle) {
+  document.title = subtitle ? `Architect \u2014 ${subtitle}` : 'Architect';
+}
 
 function fmtDate(s) {
   if (!s) return '—';
@@ -3578,6 +3595,8 @@ function openFocusPopup(type, id) {
 
   if (!sourceEl) return;
 
+  updateTitle(title);
+
   // Header
   const header = document.createElement('div');
   header.className = 'focus-popup-header';
@@ -3698,6 +3717,9 @@ function closeFocusPopup() {
   if (headerInterval) clearInterval(headerInterval);
   overlay.remove();
   activeFocusPopup = null;
+
+  // Restore route-based title
+  updateTitle(getRouteTitle());
 
   // Re-place panels to ensure correct slot after route changes while popup was open
   placeSessionPanels();
@@ -4396,6 +4418,7 @@ async function route() {
 
   // Close any focus popup before navigation
   closeFocusPopup();
+  updateTitle(getRouteTitle());
   stopAgentsTileRefresh();
   if (settingsRefreshTimer) { clearInterval(settingsRefreshTimer); settingsRefreshTimer = null; }
 
