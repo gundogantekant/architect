@@ -222,10 +222,8 @@ function wireTerminalHandlers(terminal) {
     }
     terminal.wsClients.clear();
     archiveSession(terminal, 'terminal');
-    terminals.delete(terminal.id);
     saveTerminalToDb(terminal);
-    // Clean up log file
-    unlinkFile(join(LOGS_DIR, `${terminal.id}.raw`)).catch(() => {});
+    // Keep terminal in memory for frontend display; auto-cleanup timer handles removal after 10min
   });
 }
 
@@ -505,8 +503,8 @@ function wireDispatchHandlers(dispatch, proc) {
     for (const listener of dispatch.listeners) listener(null);
     dispatch.listeners.clear();
     archiveSession(dispatch, 'dispatch');
-    dispatches.delete(dispatch.id);
     saveDispatchToDb(dispatch);
+    // Keep dispatch in memory for frontend display; auto-cleanup timer handles removal after 30min
   });
 }
 

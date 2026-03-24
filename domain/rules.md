@@ -409,3 +409,7 @@ Additional inclusion conditions beyond the base Agent Inclusion Rules table.
 | dependency-manager | Package manifest changes (package.json, pubspec.yaml, requirements.txt, etc.) |
 | performance | Changes to hot paths, database queries, or render-heavy components |
 | ci-cd | Workflow file changes (.github/workflows/, .forgejo/workflows/) |
+
+## External Action Rules
+
+- **Never post comments, reviews, or any content to GitHub pull requests unless the user explicitly requests it.** This applies to all agents, skills, and orchestrator actions. Read-only operations (fetching PR diffs, viewing comments, reading PR metadata) are always allowed. The restriction covers `gh pr comment`, `gh pr review`, and any GitHub API call that writes to a PR.
