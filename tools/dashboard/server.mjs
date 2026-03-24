@@ -149,7 +149,7 @@ function tmuxSessionExists(name) {
 
 function captureTmuxScrollback(name) {
   try {
-    return execFileSync('tmux', ['capture-pane', '-t', name, '-p', '-S', '-1000'], { encoding: 'utf8' });
+    return execFileSync('tmux', ['capture-pane', '-t', name, '-p', '-e', '-S', '-1000'], { encoding: 'utf8' });
   } catch { return ''; }
 }
 
@@ -158,7 +158,13 @@ function wireTerminalHandlers(terminal) {
   terminal.ptyProcess.onData((data) => {
     terminal.scrollback += data;
     if (terminal.scrollback.length > SCROLLBACK_LIMIT) {
-      terminal.scrollback = terminal.scrollback.slice(-SCROLLBACK_LIMIT);
+      const sliced = terminal.scrollback.slice(-SCROLLBACK_LIMIT);
+      const firstNewline = sliced.indexOf('\n');
+      terminal.scrollback = firstNewline > 0 ? sliced.slice(firstNewline + 1) : sliced;
+    }
+    // Persist to disk for restart recovery
+    if (terminal.logStream) {
+      try { terminal.logStream.write(data); } catch {}
     }
     for (const ws of terminal.wsClients) {
       try { ws.send(JSON.stringify({ type: 'data', data })); } catch {}
@@ -169,6 +175,7 @@ function wireTerminalHandlers(terminal) {
     terminal.status = exitCode === 0 ? 'completed' : 'failed';
     terminal.exited_at = new Date().toISOString();
     terminal.ptyProcess = null;
+    if (terminal.logStream) { terminal.logStream.end(); terminal.logStream = null; }
     if (terminal.tmux_session) {
       try { execFileSync('tmux', ['kill-session', '-t', terminal.tmux_session], { stdio: 'ignore' }); } catch {}
     }
@@ -178,6 +185,8 @@ function wireTerminalHandlers(terminal) {
     terminal.wsClients.clear();
     terminals.delete(terminal.id);
     saveTerminalToDb(terminal);
+    // Clean up log file
+    unlinkFile(join(LOGS_DIR, `${terminal.id}.raw`)).catch(() => {});
   });
 }
 
@@ -303,10 +312,24 @@ function restoreSessions() {
             name: 'xterm-256color', cols: 80, rows: 24,
             env: { ...process.env, TERM: 'xterm-256color' },
           });
+          // Prefer persisted log file over tmux capture (more complete, preserves escape sequences)
+          const logPath = join(LOGS_DIR, `${t.id}.raw`);
+          let scrollback = '';
+          try {
+            scrollback = readFileSync(logPath, 'utf8');
+            if (scrollback.length > SCROLLBACK_LIMIT) {
+              const sliced = scrollback.slice(-SCROLLBACK_LIMIT);
+              const firstNewline = sliced.indexOf('\n');
+              scrollback = firstNewline > 0 ? sliced.slice(firstNewline + 1) : sliced;
+            }
+          } catch {
+            scrollback = captureTmuxScrollback(t.tmux_session);
+          }
           const terminal = {
             ...t,
             ptyProcess,
-            scrollback: captureTmuxScrollback(t.tmux_session),
+            scrollback,
+            logStream: createWriteStream(logPath, { flags: 'a' }),
             wsClients: new Set(),
           };
           wireTerminalHandlers(terminal);
@@ -339,6 +362,7 @@ function restoreSessions() {
     } else {
       // Non-running terminal (completed/killed/interrupted) — clean up from DB, don't load into memory
       db.deleteTerminal(t.id);
+      unlinkFile(join(LOGS_DIR, `${t.id}.raw`)).catch(() => {});
     }
   }
 
@@ -1752,6 +1776,7 @@ const routes = [
       tmux_session: tmuxName,
       agents_file: agentsFile,
       scrollback: '',
+      logStream: createWriteStream(join(LOGS_DIR, `${id}.raw`), { flags: 'a' }),
       wsClients: new Set(),
       started_at: new Date().toISOString(),
       exited_at: null,
@@ -1826,6 +1851,7 @@ const routes = [
         : ptyProcess.pid,
       tmux_session: tmuxName,
       scrollback: '',
+      logStream: createWriteStream(join(LOGS_DIR, `${id}.raw`), { flags: 'a' }),
       wsClients: new Set(),
       started_at: new Date().toISOString(),
       exited_at: null,
@@ -1876,11 +1902,13 @@ const routes = [
       }
       terminal.status = 'killed';
       terminal.exited_at = new Date().toISOString();
+      if (terminal.logStream) { terminal.logStream.end(); terminal.logStream = null; }
       for (const ws of terminal.wsClients) {
         try { ws.send(JSON.stringify({ type: 'exit', code: -1 })); ws.close(); } catch {}
       }
       terminal.wsClients.clear();
       saveTerminalToDb(terminal);
+      unlinkFile(join(LOGS_DIR, `${terminal.id}.raw`)).catch(() => {});
       killed++;
     }
     json(res, { killed });
@@ -1899,6 +1927,7 @@ const routes = [
     }
     terminal.status = 'killed';
     terminal.exited_at = new Date().toISOString();
+    if (terminal.logStream) { terminal.logStream.end(); terminal.logStream = null; }
     for (const ws of terminal.wsClients) {
       try { ws.send(JSON.stringify({ type: 'exit', code: -1 })); ws.close(); } catch {}
     }
@@ -1906,6 +1935,7 @@ const routes = [
     if (terminal.agents_file) unlinkFile(terminal.agents_file).catch(() => {});
     terminals.delete(m[1]);
     db.deleteTerminal(m[1]);
+    unlinkFile(join(LOGS_DIR, `${m[1]}.raw`)).catch(() => {});
     json(res, { status: 'killed', id: m[1] });
   }],
 
@@ -2104,6 +2134,7 @@ setInterval(() => {
       if (!tmuxAlive && !pidAlive) {
         terminal.status = 'interrupted';
         terminal.exited_at = new Date().toISOString();
+        if (terminal.logStream) { terminal.logStream.end(); terminal.logStream = null; }
         saveTerminalToDb(terminal);
         for (const ws of terminal.wsClients) {
           try { ws.send(JSON.stringify({ type: 'exit', code: -1 })); ws.close(); } catch {}
@@ -2142,6 +2173,7 @@ setInterval(() => {
     if (terminal.status !== 'running' && terminal.exited_at) {
       if (now - new Date(terminal.exited_at).getTime() > 10 * 60 * 1000) {
         if (terminal.agents_file) unlinkFile(terminal.agents_file).catch(() => {});
+        unlinkFile(join(LOGS_DIR, `${id}.raw`)).catch(() => {});
         terminals.delete(id);
         db.deleteTerminal(id);
       }

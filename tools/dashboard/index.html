@@ -252,7 +252,7 @@
   .terminal-header .status-dot.failed, .terminal-header .status-dot.killed { background: var(--red); }
   .terminal-header .terminal-title { font-size: 13px; font-weight: 600; flex: 1; color: var(--text); }
   .terminal-header .terminal-meta { font-size: 11px; color: var(--text-light); }
-  .terminal-container { height: 400px; background: #1e1e2e; }
+  .terminal-container { height: 400px; background: #1e1e2e; overscroll-behavior: contain; }
   .terminal-container.terminal-light { background: #f8f8f8; }
 
   /* Interactive checkbox in modals */
@@ -1122,6 +1122,7 @@ async function connectTerminalWs(terminalInfo) {
     fontSize: 13,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     theme: activeTheme,
+    scrollback: 50000,
   });
   containerEl.classList.toggle('terminal-light', (window._prefs?.terminal_theme === 'light'));
 
@@ -1130,6 +1131,10 @@ async function connectTerminalWs(terminalInfo) {
   term.loadAddon(new WebLinksAddon());
   term.open(containerEl);
   fitAddon.fit();
+
+  // Contain scroll events within the xterm viewport to prevent page scroll leaking
+  const xtermViewport = containerEl.querySelector('.xterm-viewport');
+  if (xtermViewport) xtermViewport.style.overscrollBehavior = 'contain';
 
   terminalInfo._term = term;
   terminalInfo._fitAddon = fitAddon;
