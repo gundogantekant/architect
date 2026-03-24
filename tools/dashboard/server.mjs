@@ -2110,6 +2110,38 @@ setInterval(() => {
       saveCliSessionToDb(cli);
     }
   }
+
+  // Auto-cleanup: remove exited terminals after 10 minutes
+  for (const [id, terminal] of terminals) {
+    if (terminal.status !== 'running' && terminal.exited_at) {
+      if (now - new Date(terminal.exited_at).getTime() > 10 * 60 * 1000) {
+        if (terminal.agents_file) unlinkFile(terminal.agents_file).catch(() => {});
+        terminals.delete(id);
+        db.deleteTerminal(id);
+      }
+    }
+  }
+
+  // Auto-cleanup: remove non-running dispatches after 30 minutes
+  for (const [id, dispatch] of dispatches) {
+    if (dispatch.status !== 'running' && dispatch.completed_at) {
+      if (now - new Date(dispatch.completed_at).getTime() > 30 * 60 * 1000) {
+        dispatches.delete(id);
+        db.deleteDispatch(id);
+        unlinkFile(join(LOGS_DIR, `${id}.jsonl`)).catch(() => {});
+      }
+    }
+  }
+
+  // Auto-cleanup: remove exited CLI sessions after 10 minutes
+  for (const [id, cli] of cliSessions) {
+    if (cli.status !== 'running' && cli.exited_at) {
+      if (now - new Date(cli.exited_at).getTime() > 10 * 60 * 1000) {
+        cliSessions.delete(id);
+        db.deleteCliSession(id);
+      }
+    }
+  }
 }, 60 * 1000);
 
 function shutdownFlush() {
