@@ -1093,9 +1093,9 @@ const routes = [
 
   // Delete epic
   [/^\/api\/epics\/(E-\d+)$/, 'DELETE', async (m, _req, res) => {
-    const deleted = db.deleteEpic(m[1]);
-    if (!deleted) return err(res, 'epic not found', 404);
-    json(res, { deleted: m[1] });
+    const archived = db.deleteEpic(m[1]);
+    if (!archived) return err(res, 'epic not found', 404);
+    json(res, { archived: m[1], status: 'cancelled' });
   }],
 
   // Link work items to epic

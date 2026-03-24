@@ -128,15 +128,15 @@
   .delete-btn:hover { background: #fee2e2; }
 
   /* Dispatch panels */
-  .dispatch-panel { background: var(--bg-card); border: 1px solid var(--border); border-left: 3px solid var(--green); border-radius: 8px; margin-bottom: 16px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06); transition: border-color 0.2s, box-shadow 0.2s; }
+  .dispatch-panel { background: var(--bg-card); border: 1px solid var(--border); border-left: 3px solid var(--orange); border-radius: 8px; margin-bottom: 16px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06); transition: border-color 0.2s, box-shadow 0.2s; }
   .dispatch-panel:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-  .dispatch-panel.status-completed { border-left-color: var(--green); }
+  .dispatch-panel.status-completed { border-left-color: var(--blue); }
   .dispatch-panel.status-failed, .dispatch-panel.status-killed { border-left-color: var(--red); }
   .dispatch-panel.status-interrupted { border-left-color: #94a3b8; }
   .dispatch-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: linear-gradient(135deg, #fafafa 0%, #f5f0ff 100%); }
   .dispatch-header .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-  .dispatch-header .status-dot.running { background: var(--green); animation: pulse 1.5s infinite; }
-  .dispatch-header .status-dot.completed { background: var(--green); }
+  .dispatch-header .status-dot.running { background: var(--orange); animation: pulse 1.5s infinite; }
+  .dispatch-header .status-dot.completed { background: var(--blue); }
   .dispatch-header .status-dot.failed { background: var(--red); }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
   .dispatch-header .dispatch-title { font-size: 13px; font-weight: 600; flex: 1; }
@@ -181,8 +181,8 @@
   .plan-badge { display: inline-block; font-size: 10px; color: var(--blue); border: 1px solid var(--blue); padding: 1px 6px; border-radius: 3px; margin-left: 4px; font-weight: 600; }
 
   /* Epic sidebar */
-  .sidebar-section-label { padding: 10px 16px 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #6c7086; cursor: pointer; }
-  .sidebar-section-label:hover { color: #cdd6f4; }
+  .sidebar-section-label { padding: 10px 16px 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #6c7086; cursor: pointer; transition: color 0.15s; }
+  .sidebar-section-label:hover { color: #cdd6f4; text-decoration: underline; }
   .epic-item { padding: 4px 16px; font-size: 12px; cursor: pointer; border-radius: 4px; margin: 1px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; }
   .epic-item:hover { background: #313244; }
   .epic-item.active { background: var(--accent); color: #fff; }
@@ -241,11 +241,13 @@
   .terminal-panel:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
   .terminal-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: linear-gradient(135deg, #fafafa 0%, #f5f0ff 100%); }
   .terminal-header .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-  .terminal-header .status-dot.running { background: var(--green); animation: pulse 1.5s infinite; }
-  .terminal-header .status-dot.completed, .terminal-header .status-dot.failed, .terminal-header .status-dot.killed { background: var(--red); }
+  .terminal-header .status-dot.running { background: var(--orange); animation: pulse 1.5s infinite; }
+  .terminal-header .status-dot.completed { background: var(--blue); }
+  .terminal-header .status-dot.failed, .terminal-header .status-dot.killed { background: var(--red); }
   .terminal-header .terminal-title { font-size: 13px; font-weight: 600; flex: 1; color: var(--text); }
   .terminal-header .terminal-meta { font-size: 11px; color: var(--text-light); }
   .terminal-container { height: 400px; background: #1e1e2e; }
+  .terminal-container.terminal-light { background: #f8f8f8; }
 
   /* Interactive checkbox in modals */
   .interactive-toggle { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
@@ -264,8 +266,8 @@
   .focus-popup { background: #fff; border-radius: 12px; width: 90vw; height: 85vh; display: flex; flex-direction: column; box-shadow: 0 12px 48px rgba(0,0,0,0.25); overflow: hidden; }
   .focus-popup-header { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--border); background: #fafafa; flex-shrink: 0; }
   .focus-popup-header .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-  .focus-popup-header .status-dot.running { background: var(--green); animation: pulse 1.5s infinite; }
-  .focus-popup-header .status-dot.completed { background: var(--green); }
+  .focus-popup-header .status-dot.running { background: var(--orange); animation: pulse 1.5s infinite; }
+  .focus-popup-header .status-dot.completed { background: var(--blue); }
   .focus-popup-header .status-dot.failed, .focus-popup-header .status-dot.killed { background: var(--red); }
   .focus-popup-header .focus-title { font-size: 14px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .focus-popup-header .focus-meta { font-size: 11px; color: var(--text-light); flex-shrink: 0; }
@@ -283,11 +285,12 @@
   .focus-popup-footer .btn-copy:hover { opacity: 0.85; }
 
   /* Terminal focus popup — light chrome, dark terminal content inside */
-  .focus-popup.terminal-focus { background: #fff; }
+  .focus-popup.terminal-focus { background: #fff; box-shadow: 0 0 0 3px var(--accent), 0 12px 48px rgba(0,0,0,0.25); }
   .focus-popup.terminal-focus .focus-popup-header { background: #fafafa; border-color: var(--border); }
   .focus-popup.terminal-focus .focus-popup-header .focus-title { color: var(--text); }
   .focus-popup.terminal-focus .focus-popup-header .focus-meta { color: var(--text-light); }
   .focus-popup.terminal-focus .focus-popup-footer { background: #fafafa; border-color: var(--border); }
+  .focus-lock-badge { display: inline-block; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent); border: 1px solid var(--accent); padding: 1px 6px; border-radius: 3px; margin-left: 8px; }
 
   /* Focus button on inline panels */
   .focus-btn { cursor: pointer; color: var(--accent); font-size: 11px; border: 1px solid var(--accent); background: none; padding: 3px 10px; border-radius: 4px; }
@@ -299,8 +302,8 @@
   .agent-tile:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); border-color: var(--accent); }
   .agent-tile-header { display: flex; align-items: center; gap: 8px; padding: 12px 14px 8px; }
   .agent-tile-header .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-  .agent-tile-header .status-dot.running { background: var(--green); animation: pulse 1.5s infinite; }
-  .agent-tile-header .status-dot.completed { background: var(--green); }
+  .agent-tile-header .status-dot.running { background: var(--orange); animation: pulse 1.5s infinite; }
+  .agent-tile-header .status-dot.completed { background: var(--blue); }
   .agent-tile-header .status-dot.failed, .agent-tile-header .status-dot.killed { background: var(--red); }
   .agent-tile-title { font-size: 13px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .agent-tile-elapsed { font-size: 11px; color: var(--text-light); flex-shrink: 0; }
@@ -553,16 +556,33 @@ async function buildEpicTree() {
 
   try {
     const epics = await getEpics();
+    const showCompleted = sessionStorage.getItem('sidebar-show-completed-epics') === 'true';
+    const hasCompleted = epics.some(e => e.status === 'done' || e.status === 'cancelled');
 
     for (const epic of epics) {
+      const isCompleted = epic.status === 'done' || epic.status === 'cancelled';
       const item = document.createElement('div');
       item.className = 'epic-item';
       item.dataset.epicId = epic.id;
+      if (isCompleted && !showCompleted) item.style.display = 'none';
+      item.dataset.epicStatus = epic.status;
       const color = epicSignalColor(epic, epic.progress);
       const p = epic.progress || { done: 0, total: 0 };
       item.innerHTML = `<span class="signal-dot ${color}"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis">${esc(epic.id)} ${esc(epic.title)}</span><span class="epic-progress">(${p.done}/${p.total})</span>`;
       item.onclick = () => { location.hash = `#epic/${epic.id}`; };
       epicTree.appendChild(item);
+    }
+
+    if (hasCompleted) {
+      const toggle = document.createElement('div');
+      toggle.style.cssText = 'padding:4px 16px;font-size:10px;color:#6c7086;cursor:pointer;user-select:none;';
+      toggle.textContent = showCompleted ? '▾ Hide completed' : '▸ Show completed';
+      toggle.onclick = () => {
+        const next = sessionStorage.getItem('sidebar-show-completed-epics') !== 'true';
+        sessionStorage.setItem('sidebar-show-completed-epics', next ? 'true' : 'false');
+        buildEpicTree();
+      };
+      epicTree.appendChild(toggle);
     }
   } catch {}
 
@@ -668,21 +688,30 @@ function createDispatchPanel(dispatch) {
         ? `cd ${esc(dispatch.project_path)} && claude --resume ${esc(dispatch.session_id)}`
         : `cd ${esc(dispatch.project_path)} && claude "${esc(guidancePrompt)}"`}</code>
     </div>
+    <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
+      <button class="focus-btn" data-focus-dispatch-bottom="${esc(dispatch.id)}">Focus</button>
+      ${dispatch.project_key ? `<span class="tag" style="margin-left:auto;font-size:10px">${esc(dispatch.project_key.split('/').pop())}</span>` : ''}
+      ${dispatch.epic_id ? `<span class="tag" style="font-size:10px">${esc(dispatch.epic_id)}</span>` : ''}
+    </div>
   `;
   // Register in sessionPanels
   const panelKey = `dispatch:${dispatch.id}`;
   sessionPanels.set(panelKey, panel);
-  // Apply persisted collapse state
-  if (sessionCollapseState.get(panelKey)) {
+  // Apply persisted collapse state or default preference
+  const dispatchCollapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : (window._prefs?.default_panel_state === 'minimized');
+  if (dispatchCollapsed) {
     panel.classList.add('collapsed');
     panel.querySelector(`[data-minimize-dispatch="${dispatch.id}"]`).textContent = '▶';
+    sessionCollapseState.set(panelKey, true);
   }
   // Bind minimize button
   panel.querySelector(`[data-minimize-dispatch="${dispatch.id}"]`).onclick = () => {
     togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-dispatch="${dispatch.id}"]`));
   };
-  // Bind focus button
+  // Bind focus buttons (top + bottom)
   panel.querySelector(`[data-focus-dispatch="${dispatch.id}"]`).onclick = () => openFocusPopup('dispatch', dispatch.id);
+  const bottomFocusD = panel.querySelector(`[data-focus-dispatch-bottom="${dispatch.id}"]`);
+  if (bottomFocusD) bottomFocusD.onclick = () => openFocusPopup('dispatch', dispatch.id);
   // Bind kill button
   panel.querySelector(`[data-kill-dispatch="${dispatch.id}"]`).onclick = async (e) => {
     const btn = e.target;
@@ -845,7 +874,27 @@ function placeSessionPanels() {
     main.insertBefore(globalContainer, main.firstChild);
   }
 
-  // 5. Fit visible, non-collapsed terminals
+  // 5. Cross-project minimization: force-collapse panels from other projects
+  const hash = location.hash || '';
+  let viewProjectKey = '';
+  const compMatch = hash.match(/^#component\/(.+)$/);
+  if (compMatch) viewProjectKey = compMatch[1];
+  // For epic views, we don't force-collapse since epics are cross-project
+
+  if (viewProjectKey) {
+    for (const session of allSessions) {
+      if (session.project_key && session.project_key !== viewProjectKey) {
+        const panel = sessionPanels.get(session.key);
+        if (panel && !panel.classList.contains('collapsed')) {
+          panel.classList.add('collapsed');
+          const minBtn = panel.querySelector('[data-minimize-dispatch], [data-minimize-terminal]');
+          if (minBtn) minBtn.textContent = '▶';
+        }
+      }
+    }
+  }
+
+  // 6. Fit visible, non-collapsed terminals
   for (const t of activeTerminals) {
     const panelKey = `terminal:${t.id}`;
     const panel = sessionPanels.get(panelKey);
@@ -928,21 +977,30 @@ function createTerminalPanel(terminalInfo) {
       <button class="kill-btn" data-kill-terminal="${esc(terminalInfo.id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
     </div>
     <div class="terminal-container" id="term-container-${terminalInfo.id}"></div>
+    <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
+      <button class="focus-btn" data-focus-terminal-bottom="${esc(terminalInfo.id)}">Focus</button>
+      ${terminalInfo.project_key ? `<span class="tag" style="margin-left:auto;font-size:10px">${esc(terminalInfo.project_key.split('/').pop())}</span>` : ''}
+      ${terminalInfo.epic_id ? `<span class="tag" style="font-size:10px">${esc(terminalInfo.epic_id)}</span>` : ''}
+    </div>
   `;
   // Register in sessionPanels
   const panelKey = `terminal:${terminalInfo.id}`;
   sessionPanels.set(panelKey, panel);
-  // Apply persisted collapse state
-  if (sessionCollapseState.get(panelKey)) {
+  // Apply persisted collapse state or default preference
+  const termCollapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : (window._prefs?.default_panel_state === 'minimized');
+  if (termCollapsed) {
     panel.classList.add('collapsed');
     panel.querySelector(`[data-minimize-terminal="${terminalInfo.id}"]`).textContent = '▶';
+    sessionCollapseState.set(panelKey, true);
   }
   // Bind minimize button
   panel.querySelector(`[data-minimize-terminal="${terminalInfo.id}"]`).onclick = () => {
     togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-terminal="${terminalInfo.id}"]`));
   };
-  // Bind focus button
+  // Bind focus buttons (top + bottom)
   panel.querySelector(`[data-focus-terminal="${terminalInfo.id}"]`).onclick = () => openFocusPopup('terminal', terminalInfo.id);
+  const bottomFocusT = panel.querySelector(`[data-focus-terminal-bottom="${terminalInfo.id}"]`);
+  if (bottomFocusT) bottomFocusT.onclick = () => openFocusPopup('terminal', terminalInfo.id);
   // Bind kill button
   panel.querySelector(`[data-kill-terminal="${terminalInfo.id}"]`).onclick = async (e) => {
     const btn = e.target;
@@ -968,12 +1026,20 @@ async function connectTerminalWs(terminalInfo) {
 
   const { Terminal, FitAddon, WebLinksAddon } = mods;
 
+  const termThemes = {
+    dark: { background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#f5e0dc', selectionBackground: '#45475a' },
+    light: { background: '#f8f8f8', foreground: '#1e1e2e', cursor: '#333', selectionBackground: '#d0d0d0',
+      black: '#1e1e2e', red: '#d32f2f', green: '#388e3c', yellow: '#f9a825', blue: '#1976d2', magenta: '#7b1fa2', cyan: '#0097a7', white: '#f5f5f5',
+      brightBlack: '#616161', brightRed: '#ef5350', brightGreen: '#66bb6a', brightYellow: '#ffee58', brightBlue: '#42a5f5', brightMagenta: '#ab47bc', brightCyan: '#26c6da', brightWhite: '#fafafa' },
+  };
+  const activeTheme = termThemes[window._prefs?.terminal_theme] || termThemes.dark;
   const term = new Terminal({
     cursorBlink: true,
     fontSize: 13,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-    theme: { background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#f5e0dc' },
+    theme: activeTheme,
   });
+  containerEl.classList.toggle('terminal-light', (window._prefs?.terminal_theme === 'light'));
 
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
@@ -994,7 +1060,14 @@ async function connectTerminalWs(terminalInfo) {
       const msg = JSON.parse(e.data);
       if (msg.type === 'data') {
         term.write(msg.data);
-        term.scrollToBottom();
+        // Smart scroll: only auto-scroll if already at bottom (avoids disrupting user scroll position)
+        // Also skip scroll if another terminal is focused in the focus popup (prevents cursor stealing)
+        const buf = term.buffer?.active;
+        const isAtBottom = !buf || (buf.viewportY >= buf.baseY - 1);
+        const isFocusedElsewhere = activeFocusPopup && activeFocusPopup.type === 'terminal' && activeFocusPopup.id !== terminalInfo.id;
+        if (isAtBottom && !isFocusedElsewhere) {
+          term.scrollToBottom();
+        }
       } else if (msg.type === 'exit') {
         terminalInfo.status = msg.code === 0 ? 'completed' : 'failed';
         // Dispose xterm instance
@@ -1510,7 +1583,7 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
     html += `<button class="filter-clear" id="wi-filter-clear" style="display:none">Clear filters</button>`;
     html += `</div>`;
 
-    html += `<table id="wi-table"><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Depends On</th><th>Epic</th><th>Tags</th><th></th></tr></thead><tbody>`;
+    html += `<table id="wi-table"><thead><tr><th data-wi-sort="id" style="cursor:pointer">ID ⇅</th><th>Title</th><th data-wi-sort="status" style="cursor:pointer">Status ⇅</th><th data-wi-sort="priority" style="cursor:pointer">Priority ⇅</th><th>Depends On</th><th>Epic</th><th>Tags</th><th></th></tr></thead><tbody>`;
     sortedItems.forEach((w) => {
       const idx = workItems.indexOf(w);
       const sc = {'done':'done','blocked':'blocked','in-progress':'in-progress','cancelled':'cancelled'}[w.status] || 'open';
@@ -1902,6 +1975,11 @@ function bindFilterBar() {
     const total = rows.length;
     const hasFilters = excludedStatus.size || excludedPriority.size || activeFilters.epic || activeFilters.tags;
 
+    // Build set of work item IDs that have active sessions
+    const wiIdsWithActiveSessions = new Set();
+    for (const d of activeDispatches) { if (d.status === 'running' && d.work_item_id) wiIdsWithActiveSessions.add(d.work_item_id); }
+    for (const t of activeTerminals) { if (t.status === 'running' && t.work_item_id) wiIdsWithActiveSessions.add(t.work_item_id); }
+
     rows.forEach(row => {
       let show = true;
       if (excludedStatus.has(row.dataset.wiStatusVal)) show = false;
@@ -1911,12 +1989,25 @@ function bindFilterBar() {
         const rowTags = (row.dataset.wiTagsVal || '').toLowerCase();
         if (!rowTags.includes(activeFilters.tags.toLowerCase())) show = false;
       }
+      // Force-show rows with active sessions even if filtered out
+      const wiId = row.querySelector('code')?.textContent;
+      const hasActiveSessions = wiId && wiIdsWithActiveSessions.has(wiId);
+      if (!show && hasActiveSessions) {
+        show = true;
+        row.style.opacity = '0.7';
+        row.style.borderLeft = '3px solid var(--orange)';
+        row.title = 'Hidden by filters but has active sessions';
+      } else {
+        row.style.opacity = '';
+        row.style.borderLeft = '';
+        row.title = '';
+      }
       row.style.display = show ? '' : 'none';
       const idx = row.dataset.wiRow;
       const detail = document.querySelector(`[data-wi-detail="${idx}"]`);
-      const sessions = document.querySelector(`[data-wi-sessions="${row.querySelector('code')?.textContent}"]`);
+      const sessions = document.querySelector(`[data-wi-sessions="${wiId}"]`);
       if (detail && !show) detail.style.display = 'none';
-      if (sessions && !show) sessions.style.display = 'none';
+      if (sessions) sessions.style.display = show ? '' : 'none';
       if (show) visible++;
     });
 
@@ -1967,6 +2058,53 @@ function bindFilterBar() {
     if (tagsInput) tagsInput.value = '';
     applyFilters();
   };
+
+  // Column sorting
+  const wiTable = document.getElementById('wi-table');
+  if (wiTable) {
+    const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+    const statusOrder = { 'open': 0, 'in-progress': 1, 'blocked': 2, 'done': 3, 'cancelled': 4 };
+    let sortCol = null, sortAsc = true;
+
+    wiTable.querySelectorAll('th[data-wi-sort]').forEach(th => {
+      th.onclick = () => {
+        const col = th.dataset.wiSort;
+        if (sortCol === col) sortAsc = !sortAsc;
+        else { sortCol = col; sortAsc = true; }
+        // Update header indicators
+        wiTable.querySelectorAll('th[data-wi-sort]').forEach(h => {
+          h.textContent = h.textContent.replace(/ [↑↓⇅]$/, '') + (h.dataset.wiSort === sortCol ? (sortAsc ? ' ↑' : ' ↓') : ' ⇅');
+        });
+        // Sort visible rows
+        const tbody = wiTable.querySelector('tbody');
+        const rows = [...tbody.querySelectorAll('[data-wi-row]')];
+        rows.sort((a, b) => {
+          let va, vb;
+          if (col === 'id') {
+            va = parseInt((a.querySelector('code')?.textContent || '').replace(/\D/g, '')) || 0;
+            vb = parseInt((b.querySelector('code')?.textContent || '').replace(/\D/g, '')) || 0;
+          } else if (col === 'status') {
+            va = statusOrder[a.dataset.wiStatusVal] ?? 99;
+            vb = statusOrder[b.dataset.wiStatusVal] ?? 99;
+          } else if (col === 'priority') {
+            va = priorityOrder[a.dataset.wiPriorityVal] ?? 99;
+            vb = priorityOrder[b.dataset.wiPriorityVal] ?? 99;
+          }
+          return sortAsc ? va - vb : vb - va;
+        });
+        // Re-append rows in sorted order (detail + session rows follow their parent)
+        rows.forEach(row => {
+          const idx = row.dataset.wiRow;
+          tbody.appendChild(row);
+          const detail = tbody.querySelector(`[data-wi-detail="${idx}"]`);
+          if (detail) tbody.appendChild(detail);
+          const wiId = row.querySelector('code')?.textContent;
+          const sessions = tbody.querySelector(`[data-wi-sessions="${wiId}"]`);
+          if (sessions) tbody.appendChild(sessions);
+        });
+      };
+    });
+  }
 }
 
 // --- Work Item Modal ---
@@ -2323,10 +2461,10 @@ async function showEpicDiscussModal(epicId) {
 // --- Epic Views ---
 
 function renderEpicListView(epics) {
-  const hasDone = epics.some(e => e.status === 'done');
+  const hasCompleted = epics.some(e => e.status === 'done' || e.status === 'cancelled');
   let html = `<div class="card"><h2>Epics</h2>`;
   html += `<button class="btn-add-wi" id="create-epic">+ New Epic</button>`;
-  if (hasDone) {
+  if (hasCompleted) {
     html += `<label class="filter-checkbox" style="margin-left:12px"><input type="checkbox" id="epic-show-done" />Show completed</label>`;
   }
   if (epics.length) {
@@ -2334,8 +2472,8 @@ function renderEpicListView(epics) {
     for (const epic of epics) {
       const p = epic.progress || { done: 0, total: 0 };
       const pct = p.total ? Math.round(p.done / p.total * 100) : 0;
-      const hideDone = epic.status === 'done' ? ' style="display:none"' : '';
-      html += `<tr data-epic-list-status="${esc(epic.status)}"${hideDone}>`;
+      const hideCompleted = (epic.status === 'done' || epic.status === 'cancelled') ? ' style="display:none"' : '';
+      html += `<tr data-epic-list-status="${esc(epic.status)}"${hideCompleted}>`;
       html += `<td><code style="cursor:pointer" data-epic-nav="${esc(epic.id)}">${esc(epic.id)}</code></td>`;
       html += `<td>${esc(epic.title)}</td>`;
       html += `<td><span class="badge badge-${epic.status === 'active' ? 'open' : epic.status === 'done' ? 'done' : 'medium'}">${esc(epic.status)}</span></td>`;
@@ -2362,7 +2500,7 @@ function bindEpicListEvents() {
   if (createBtn) createBtn.onclick = () => showEpicModal(null);
   const showDone = document.getElementById('epic-show-done');
   if (showDone) showDone.onchange = () => {
-    document.querySelectorAll('[data-epic-list-status="done"]').forEach(row => {
+    document.querySelectorAll('[data-epic-list-status="done"], [data-epic-list-status="cancelled"]').forEach(row => {
       row.style.display = showDone.checked ? '' : 'none';
     });
   };
@@ -2591,7 +2729,7 @@ function bindEpicDetailEvents(epicId) {
   // Delete epic button
   const deleteBtn = document.getElementById('epic-delete-btn');
   if (deleteBtn) deleteBtn.onclick = async () => {
-    if (!confirm(`Delete epic ${epicId}? Linked items will be unlinked.`)) return;
+    if (!confirm(`Archive epic ${epicId}? It will be marked as cancelled and linked items will be unlinked.`)) return;
     try {
       const resp = await fetch(`/api/epics/${epicId}`, { method: 'DELETE' });
       if (!resp.ok) throw new Error('Delete failed');
@@ -3601,7 +3739,8 @@ function openFocusPopup(type, id) {
   const dotClass = status === 'running' ? 'running' : (status === 'completed' ? 'completed' : 'failed');
   let metaHtml = formatElapsed(startedAt);
   if (type === 'dispatch' && sessionId) metaHtml += ` | ${sessionId}`;
-  header.innerHTML = `<span class="status-dot ${dotClass}"></span><span class="focus-title">${esc(title)}</span><span class="focus-meta">${metaHtml}</span>`;
+  const focusBadge = type === 'terminal' ? '<span class="focus-lock-badge">FOCUSED</span>' : '';
+  header.innerHTML = `<span class="status-dot ${dotClass}"></span><span class="focus-title">${esc(title)}${focusBadge}</span><span class="focus-meta">${metaHtml}</span>`;
 
   // Body — relocate DOM element
   const body = document.createElement('div');
@@ -3609,9 +3748,13 @@ function openFocusPopup(type, id) {
   sourceEl.remove();
   body.appendChild(sourceEl);
 
-  // For terminals, fit to new size
+  // For terminals, fit to new size and scroll to bottom
   if (type === 'terminal' && terminalInfo?._fitAddon) {
     requestAnimationFrame(() => { terminalInfo._fitAddon.fit(); if (terminalInfo._term) terminalInfo._term.scrollToBottom(); });
+  }
+  // For dispatch logs, scroll to bottom on focus
+  if (type === 'dispatch' && sourceEl) {
+    requestAnimationFrame(() => { sourceEl.scrollTop = sourceEl.scrollHeight; });
   }
 
   // Footer
@@ -3649,6 +3792,23 @@ function openFocusPopup(type, id) {
     } catch {}
   };
   footer.appendChild(killBtn);
+
+  // /exit button for terminal sessions
+  if (type === 'terminal' && terminalInfo && isRunning) {
+    const exitBtn = document.createElement('button');
+    exitBtn.className = 'btn';
+    exitBtn.style.cssText = 'background:var(--orange);color:#fff;';
+    exitBtn.textContent = '/exit';
+    exitBtn.onclick = () => {
+      const t = activeTerminals.find(x => x.id === id);
+      if (t?._ws && t._ws.readyState === WebSocket.OPEN) {
+        t._ws.send(JSON.stringify({ type: 'input', data: '/exit\n' }));
+        exitBtn.disabled = true;
+        exitBtn.textContent = 'Sent /exit';
+      }
+    };
+    footer.appendChild(exitBtn);
+  }
 
   if (type === 'dispatch' && dispatch) {
     const copyBtn = document.createElement('button');
@@ -4246,6 +4406,20 @@ function renderSettingsView(status, config) {
   html += '<span class="key">Skip permissions by default</span>';
   html += '<span style="font-size:11px;color:var(--text-light)">(--dangerously-skip-permissions)</span>';
   html += '</label></div>';
+  // Terminal theme
+  const curTheme = window._prefs.terminal_theme || 'dark';
+  html += '<div style="margin-top:12px"><span class="key">Terminal Theme</span> ';
+  html += '<select id="settings-terminal-theme" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px">';
+  html += '<option value="dark"' + (curTheme === 'dark' ? ' selected' : '') + '>Dark</option>';
+  html += '<option value="light"' + (curTheme === 'light' ? ' selected' : '') + '>Light</option>';
+  html += '</select></div>';
+  // Default panel state
+  const curPanel = window._prefs.default_panel_state || 'expanded';
+  html += '<div style="margin-top:8px"><span class="key">Default Panel State</span> ';
+  html += '<select id="settings-panel-state" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px">';
+  html += '<option value="expanded"' + (curPanel === 'expanded' ? ' selected' : '') + '>Expanded</option>';
+  html += '<option value="minimized"' + (curPanel === 'minimized' ? ' selected' : '') + '>Minimized</option>';
+  html += '</select></div>';
   html += '</div></div>';
 
   // Card 5: Recent Logs
@@ -4361,6 +4535,32 @@ function bindSettingsEvents(status, config) {
         body: JSON.stringify({ default_skip_permissions: String(e.target.checked) }),
       });
       window._prefs.default_skip_permissions = String(e.target.checked);
+    } catch (err) {
+      alert('Failed to save preference: ' + err.message);
+    }
+  });
+
+  document.getElementById('settings-terminal-theme')?.addEventListener('change', async (e) => {
+    try {
+      await fetch('/api/settings/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ terminal_theme: e.target.value }),
+      });
+      window._prefs.terminal_theme = e.target.value;
+    } catch (err) {
+      alert('Failed to save preference: ' + err.message);
+    }
+  });
+
+  document.getElementById('settings-panel-state')?.addEventListener('change', async (e) => {
+    try {
+      await fetch('/api/settings/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ default_panel_state: e.target.value }),
+      });
+      window._prefs.default_panel_state = e.target.value;
     } catch (err) {
       alert('Failed to save preference: ' + err.message);
     }

@@ -249,10 +249,11 @@ export function updateEpic(id, fields) {
 export function deleteEpic(id) {
   const epic = getEpic(id);
   if (!epic) return null;
-  // Unlink all items
+  // Unlink all items and soft-delete (set status to cancelled)
   db.prepare('UPDATE work_items SET epic_id = NULL WHERE epic_id = ?').run(id);
-  db.prepare('DELETE FROM epics WHERE id = ?').run(id);
-  return epic;
+  const now = new Date().toISOString();
+  db.prepare("UPDATE epics SET status = 'cancelled', updated_at = ? WHERE id = ?").run(now, id);
+  return getEpic(id);
 }
 
 export function addEpicLog(epicId, summary) {
