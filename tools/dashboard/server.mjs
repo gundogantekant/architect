@@ -1038,6 +1038,11 @@ const routes = [
     json(res, db.getBacklog(orgFilter || null));
   }],
 
+  // Next available IDs (peek without incrementing)
+  [/^\/api\/sequences\/next$/, 'GET', async (_m, _req, res) => {
+    json(res, db.peekNextIds());
+  }],
+
   // --- Work item endpoints ---
 
   // Get single work item
@@ -2195,9 +2200,12 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
   wss.handleUpgrade(req, socket, head, (ws) => {
-    // Replay scrollback buffer
+    // Replay scrollback buffer with PTY dimensions for client-side reflow awareness
     if (terminal.scrollback) {
-      ws.send(JSON.stringify({ type: 'data', data: terminal.scrollback }));
+      const dims = terminal.ptyProcess
+        ? { cols: terminal.ptyProcess.cols, rows: terminal.ptyProcess.rows }
+        : { cols: 80, rows: 24 };
+      ws.send(JSON.stringify({ type: 'scrollback', data: terminal.scrollback, cols: dims.cols, rows: dims.rows }));
     }
     // If already exited, send exit event
     if (terminal.status !== 'running') {

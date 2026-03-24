@@ -257,7 +257,7 @@
   .terminal-header .status-dot.failed, .terminal-header .status-dot.killed { background: var(--red); }
   .terminal-header .terminal-title { font-size: 13px; font-weight: 600; flex: 1; color: var(--text); }
   .terminal-header .terminal-meta { font-size: 11px; color: var(--text-light); }
-  .terminal-container { height: 400px; background: #1e1e2e; overscroll-behavior: contain; }
+  .terminal-container { height: 400px; background: #1e1e2e; overscroll-behavior: contain; overflow: hidden; }
   .terminal-container.terminal-light { background: #f8f8f8; }
 
   /* Interactive checkbox in modals */
@@ -1066,7 +1066,16 @@ function togglePanelCollapse(key, panel, btn) {
   if (!collapsed && key.startsWith('terminal:')) {
     const tid = key.split(':')[1];
     const t = activeTerminals.find(x => x.id === tid);
-    if (t?._fitAddon && t._term) requestAnimationFrame(() => fitPreservingScroll(t._term, t._fitAddon));
+    if (t?._fitAddon && t._term) {
+      requestAnimationFrame(() => {
+        if (t._needsInitialFit) {
+          t._fitAddon.fit();
+          t._needsInitialFit = false;
+        } else {
+          fitPreservingScroll(t._term, t._fitAddon);
+        }
+      });
+    }
   }
 }
 
@@ -1188,11 +1197,29 @@ async function connectTerminalWs(terminalInfo) {
   term.loadAddon(fitAddon);
   term.loadAddon(new WebLinksAddon());
   term.open(containerEl);
-  fitAddon.fit();
+
+  // Defer fit until container has layout dimensions (may be collapsed or not yet laid out)
+  const initRect = containerEl.getBoundingClientRect();
+  if (initRect.width > 0 && initRect.height > 0) {
+    fitAddon.fit();
+  } else {
+    terminalInfo._needsInitialFit = true;
+  }
 
   // Contain scroll events within the xterm viewport to prevent page scroll leaking
   const xtermViewport = containerEl.querySelector('.xterm-viewport');
   if (xtermViewport) xtermViewport.style.overscrollBehavior = 'contain';
+
+  // Trap wheel events inside terminal — prevent leaking to parent dashboard scroll
+  containerEl.addEventListener('wheel', (e) => {
+    e.stopPropagation();
+    const buf = term.buffer.active;
+    const atTop = buf.viewportY === 0;
+    const atBottom = buf.viewportY >= buf.baseY;
+    if ((e.deltaY < 0 && atTop) || (e.deltaY > 0 && atBottom)) {
+      e.preventDefault();
+    }
+  }, { passive: false });
 
   terminalInfo._term = term;
   terminalInfo._fitAddon = fitAddon;
@@ -1211,10 +1238,31 @@ async function connectTerminalWs(terminalInfo) {
   const ws = new WebSocket(`${proto}//${location.host}/api/terminal/${terminalInfo.id}/ws`);
   terminalInfo._ws = ws;
 
+  // Local scrollback mirror — used to replay on column-change resize (avoids xterm reflow bugs)
+  const LOCAL_SCROLLBACK_LIMIT = 100 * 1024;
+  let localScrollback = '';
+
   ws.onmessage = (e) => {
     try {
       const msg = JSON.parse(e.data);
-      if (msg.type === 'data') {
+      if (msg.type === 'scrollback') {
+        localScrollback = msg.data;
+        term.reset();
+        term.write(msg.data, () => {
+          fitAddon.fit();
+          lastCols = term.cols;
+          lastRows = term.rows;
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+          }
+        });
+      } else if (msg.type === 'data') {
+        localScrollback += msg.data;
+        if (localScrollback.length > LOCAL_SCROLLBACK_LIMIT) {
+          const sliced = localScrollback.slice(-LOCAL_SCROLLBACK_LIMIT);
+          const nl = sliced.indexOf('\n');
+          localScrollback = nl > 0 ? sliced.slice(nl + 1) : sliced;
+        }
         term.write(msg.data);
       } else if (msg.type === 'exit') {
         terminalInfo.status = msg.code === 0 ? 'completed' : 'failed';
@@ -1253,20 +1301,53 @@ async function connectTerminalWs(terminalInfo) {
     }
   });
 
-  // Handle resize — skip when container is detached or zero-sized to preserve scroll position
+  // Handle resize — debounced to prevent rapid reflows during drag; skip zero-sized containers
   let lastCols = term.cols, lastRows = term.rows;
+  let resizeTimer = null;
   const resizeObserver = new ResizeObserver(() => {
     if (!containerEl.isConnected) return;
     const rect = containerEl.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
-    fitPreservingScroll(term, fitAddon);
-    if (term.cols !== lastCols || term.rows !== lastRows) {
+    if (terminalInfo._needsInitialFit) {
+      // First time container becomes visible — replay if content exists to avoid reflow
+      terminalInfo._needsInitialFit = false;
+      if (localScrollback) {
+        term.reset();
+        fitAddon.fit();
+        term.write(localScrollback);
+      } else {
+        fitAddon.fit();
+      }
       lastCols = term.cols;
       lastRows = term.rows;
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
       }
+      return;
     }
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      resizeTimer = null;
+      // Check if columns would change — if so, replay instead of reflow
+      const proposedDims = fitAddon.proposeDimensions();
+      const newCols = proposedDims?.cols ?? term.cols;
+      if (newCols !== lastCols && localScrollback) {
+        // Column change — reset and replay scrollback to avoid xterm reflow artifacts
+        term.reset();
+        fitAddon.fit();
+        term.write(localScrollback);
+      } else {
+        // Row-only change — safe to use normal fit (no reflow triggered)
+        fitPreservingScroll(term, fitAddon);
+      }
+      if (term.cols !== lastCols || term.rows !== lastRows) {
+        lastCols = term.cols;
+        lastRows = term.rows;
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+        }
+      }
+    }, 100);
   });
   resizeObserver.observe(containerEl);
   terminalInfo._resizeObserver = resizeObserver;
@@ -5254,7 +5335,9 @@ Promise.all([buildTree(), buildEpicTree()]).then(async () => {
   await restoreTerminals();
   await restoreCliSessions();
   refreshSessionsSidebar();
-  // Periodic CLI session refresh (every 10s)
+  // Periodic session refresh (every 10s) — sync with server-side auto-cleanup
+  setInterval(restoreDispatches, 10000);
+  setInterval(restoreTerminals, 10000);
   setInterval(restoreCliSessions, 10000);
 });
 </script>

@@ -74,6 +74,15 @@ export function nextEpicId() {
   return `E-${String(val).padStart(3, '0')}`;
 }
 
+export function peekNextIds() {
+  const wi = db.prepare('SELECT next_val FROM sequences WHERE name = ?').get('work_item');
+  const ep = db.prepare('SELECT next_val FROM sequences WHERE name = ?').get('epic');
+  return {
+    next_work_item_id: `W-${String(wi ? wi.next_val : 1).padStart(3, '0')}`,
+    next_epic_id: `E-${String(ep ? ep.next_val : 1).padStart(3, '0')}`,
+  };
+}
+
 // --- Work Items ---
 
 export function getWorkItem(id) {
@@ -433,7 +442,9 @@ export function getBacklog(orgFilter) {
     return epic;
   });
 
-  return { projects, epics };
+  const wiSeq = db.prepare('SELECT next_val FROM sequences WHERE name = ?').get('work_item');
+  const epSeq = db.prepare('SELECT next_val FROM sequences WHERE name = ?').get('epic');
+  return { next_id: wiSeq?.next_val || 1, next_epic_id: epSeq?.next_val || 1, projects, epics };
 }
 
 // --- Single work item with full details ---
