@@ -146,7 +146,8 @@ The dashboard supports dispatching Claude Code agents directly from work items:
 - Add optional instructions, then dispatch — spawns `claude -p --output-format stream-json` as a child process
 - Live output streams to the browser via SSE; multiple dispatches run concurrently
 - Each dispatch panel shows a terminal guidance command for taking over from CLI
-- Session state persisted to `work/sessions.json` — survives server restarts. Previously-running sessions marked as `interrupted`. See `domain/entities.md` → DispatchRequest, TerminalSession, SessionsFile for schemas.
+- Session state persisted to SQLite (`dispatches`, `terminals`, `cli_sessions` tables). See `domain/entities.md` → DispatchRequest, TerminalSession, SessionsFile for schemas.
+- **Session restart survival**: Dispatch sessions store PID and stream output to `work/logs/D-xxx.jsonl`; on restart, live PIDs are reconnected with log replay via SSE. Terminal sessions use tmux (when available) for full PTY re-attachment; otherwise PID liveness is tracked. Log files are cleaned up when dispatches are deleted or auto-expire.
 - Interactive terminals use xterm.js + WebSocket for bidirectional PTY I/O (node-pty). See `domain/entities.md` → TerminalSession for schema.
 - Kill buttons on dispatch/terminal panels; "Kill All Sessions" button for bulk cleanup.
 - Auto-cleanup: exited terminals removed after 10min, completed dispatches after 30min.

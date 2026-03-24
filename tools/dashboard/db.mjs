@@ -304,9 +304,9 @@ export function getEpicProjectKeys(epicId) {
 
 export function saveDispatch(d) {
   db.prepare(`
-    INSERT OR REPLACE INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, session_id, cost_usd)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(d.id, d.work_item_id || null, d.epic_id || null, d.project_key, d.project_path || '', d.title || '', d.permission_mode || 'acceptEdits', d.skip_permissions ? 1 : 0, d.status, d.started_at, d.completed_at || null, d.session_id || null, d.cost_usd || null);
+    INSERT OR REPLACE INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, session_id, cost_usd, pid)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(d.id, d.work_item_id || null, d.epic_id || null, d.project_key, d.project_path || '', d.title || '', d.permission_mode || 'acceptEdits', d.skip_permissions ? 1 : 0, d.status, d.started_at, d.completed_at || null, d.session_id || null, d.cost_usd || null, d.pid || null);
 }
 
 export function deleteDispatch(id) {
@@ -321,9 +321,9 @@ export function getPersistedDispatches() {
 
 export function saveTerminal(t) {
   db.prepare(`
-    INSERT OR REPLACE INTO terminals (id, type, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, exited_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(t.id, t.type || 'claude', t.work_item_id || null, t.epic_id || null, t.project_key, t.project_path || '', t.title || '', t.permission_mode || 'acceptEdits', t.skip_permissions ? 1 : 0, t.status, t.started_at, t.exited_at || null);
+    INSERT OR REPLACE INTO terminals (id, type, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, exited_at, pid, tmux_session)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(t.id, t.type || 'claude', t.work_item_id || null, t.epic_id || null, t.project_key, t.project_path || '', t.title || '', t.permission_mode || 'acceptEdits', t.skip_permissions ? 1 : 0, t.status, t.started_at, t.exited_at || null, t.pid || null, t.tmux_session || null);
 }
 
 export function deleteTerminal(id) {
@@ -351,12 +351,23 @@ export function getPersistedCliSessions() {
   return db.prepare('SELECT * FROM cli_sessions').all();
 }
 
-// --- Mark running sessions as interrupted on shutdown ---
+// --- Session status updates ---
 
+export function updateDispatchStatus(id, status, completed_at) {
+  db.prepare('UPDATE dispatches SET status = ?, completed_at = ? WHERE id = ?')
+    .run(status, completed_at || null, id);
+}
+
+export function updateTerminalStatus(id, status, exited_at) {
+  db.prepare('UPDATE terminals SET status = ?, exited_at = ? WHERE id = ?')
+    .run(status, exited_at || null, id);
+}
+
+// Fallback for legacy rows without PIDs
 export function markRunningAsInterrupted() {
   const now = new Date().toISOString();
-  db.prepare("UPDATE dispatches SET status = 'interrupted', completed_at = ? WHERE status = 'running'").run(now);
-  db.prepare("UPDATE terminals SET status = 'interrupted', exited_at = ? WHERE status = 'running'").run(now);
+  db.prepare("UPDATE dispatches SET status = 'interrupted', completed_at = ? WHERE status = 'running' AND pid IS NULL").run(now);
+  db.prepare("UPDATE terminals SET status = 'interrupted', exited_at = ? WHERE status = 'running' AND pid IS NULL").run(now);
 }
 
 // --- Preferences ---

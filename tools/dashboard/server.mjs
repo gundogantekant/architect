@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createServer } from 'node:http';
 import { readFile, writeFile, rename, readdir, stat, mkdir, unlink as unlinkFile } from 'node:fs/promises';
-import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
+import { createWriteStream, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { join, resolve, extname, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { spawn, execFileSync } from 'node:child_process';
@@ -21,6 +21,7 @@ const CLAUDE_BIN = (() => {
 const ROOT = resolve(import.meta.dirname, '..', '..');
 const PORTFOLIO = join(ROOT, 'portfolio');
 const WORK = join(ROOT, 'work');
+const LOGS_DIR = join(WORK, 'logs');
 const ARCHITECT_KEY = '\u2013/architect/\u2013';
 
 const port = (() => {
@@ -29,6 +30,11 @@ const port = (() => {
   if (process.env.PORT) return Number(process.env.PORT);
   return 3777;
 })();
+
+// Valid status values — canonical source: domain/entities.md
+const VALID_WORK_ITEM_STATUSES = new Set(['open', 'in-progress', 'blocked', 'done', 'cancelled']);
+const VALID_EPIC_STATUSES = new Set(['draft', 'active', 'done', 'cancelled']);
+const VALID_PRIORITIES = new Set(['low', 'medium', 'high', 'critical']);
 
 const SERVER_START_TIME = Date.now();
 const DASHCTL_PATH = join(import.meta.dirname, 'dashctl.sh');
@@ -83,6 +89,7 @@ function saveDispatchToDb(d) {
     skip_permissions: d.skip_permissions || false,
     status: d.status, started_at: d.started_at, completed_at: d.completed_at,
     session_id: d.session_id || null, cost_usd: d.cost_usd || null,
+    pid: d.pid || null,
   });
 }
 
@@ -93,6 +100,7 @@ function saveTerminalToDb(t) {
     title: t.title, permission_mode: t.permission_mode || 'acceptEdits',
     skip_permissions: t.skip_permissions || false,
     status: t.status, started_at: t.started_at, exited_at: t.exited_at,
+    pid: t.pid || null, tmux_session: t.tmux_session || null,
   });
 }
 
@@ -124,40 +132,231 @@ const SCROLLBACK_LIMIT = 100 * 1024; // 100KB ring buffer
 // --- CLI session registry ---
 const cliSessions = new Map();
 
-// Restore persisted sessions from SQLite (mark running as interrupted)
+// tmux helpers
+const TMUX_AVAILABLE = (() => {
+  try {
+    execFileSync('which', ['tmux'], { encoding: 'utf8' });
+    return true;
+  } catch { return false; }
+})();
+
+function tmuxSessionExists(name) {
+  try {
+    execFileSync('tmux', ['has-session', '-t', name], { stdio: 'ignore' });
+    return true;
+  } catch { return false; }
+}
+
+function captureTmuxScrollback(name) {
+  try {
+    return execFileSync('tmux', ['capture-pane', '-t', name, '-p', '-S', '-1000'], { encoding: 'utf8' });
+  } catch { return ''; }
+}
+
+// Shared terminal handler wiring (used for fresh spawn and restore)
+function wireTerminalHandlers(terminal) {
+  terminal.ptyProcess.onData((data) => {
+    terminal.scrollback += data;
+    if (terminal.scrollback.length > SCROLLBACK_LIMIT) {
+      terminal.scrollback = terminal.scrollback.slice(-SCROLLBACK_LIMIT);
+    }
+    for (const ws of terminal.wsClients) {
+      try { ws.send(JSON.stringify({ type: 'data', data })); } catch {}
+    }
+  });
+
+  terminal.ptyProcess.onExit(({ exitCode }) => {
+    terminal.status = exitCode === 0 ? 'completed' : 'failed';
+    terminal.exited_at = new Date().toISOString();
+    terminal.ptyProcess = null;
+    if (terminal.tmux_session) {
+      try { execFileSync('tmux', ['kill-session', '-t', terminal.tmux_session], { stdio: 'ignore' }); } catch {}
+    }
+    for (const ws of terminal.wsClients) {
+      try { ws.send(JSON.stringify({ type: 'exit', code: exitCode })); ws.close(); } catch {}
+    }
+    terminal.wsClients.clear();
+    terminals.delete(terminal.id);
+    saveTerminalToDb(terminal);
+  });
+}
+
+// Tail a log file for a reconnected dispatch (PID alive but no process handle)
+function tailLogFile(dispatch) {
+  let offset = 0;
+  // Read existing lines for initial offset
+  try {
+    const content = readFileSync(dispatch.logPath, 'utf8');
+    const lines = content.split('\n').filter(l => l.trim());
+    offset = lines.length;
+    // Populate output buffer from existing log
+    dispatch.output = lines;
+    // Populate lastLines preview
+    for (const line of lines) {
+      try {
+        const evt = JSON.parse(line);
+        const text = extractStreamText(evt);
+        if (text) {
+          dispatch.lastLines.push(text);
+          if (dispatch.lastLines.length > 5) dispatch.lastLines.shift();
+        }
+      } catch {}
+    }
+  } catch {}
+
+  // Re-open log stream for any new output written by the orphaned process
+  try {
+    dispatch.logStream = createWriteStream(dispatch.logPath, { flags: 'a' });
+  } catch {}
+
+  const interval = setInterval(() => {
+    if (!dispatch.pid || !isPidAlive(dispatch.pid)) {
+      clearInterval(interval);
+      dispatch._tailInterval = null;
+      dispatch.status = 'interrupted';
+      dispatch.completed_at = new Date().toISOString();
+      if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
+      saveDispatchToDb(dispatch);
+      for (const listener of dispatch.listeners) listener(null);
+      dispatch.listeners.clear();
+      return;
+    }
+    try {
+      const content = readFileSync(dispatch.logPath, 'utf8');
+      const lines = content.split('\n').filter(l => l.trim());
+      const newLines = lines.slice(offset);
+      offset = lines.length;
+      for (const line of newLines) {
+        dispatch.output.push(line);
+        try {
+          const evt = JSON.parse(line);
+          const text = extractStreamText(evt);
+          if (text) {
+            dispatch.lastLines.push(text);
+            if (dispatch.lastLines.length > 5) dispatch.lastLines.shift();
+          }
+          if (evt.type === 'result' && evt.total_cost_usd != null) {
+            dispatch.cost_usd = evt.total_cost_usd;
+            saveDispatchToDb(dispatch);
+          }
+        } catch {}
+        for (const listener of dispatch.listeners) listener(line);
+      }
+    } catch {}
+  }, 2000);
+  dispatch._tailInterval = interval;
+}
+
+// Restore persisted sessions from SQLite with PID liveness checks
 function restoreSessions() {
+  // Mark legacy rows (no PID) as interrupted
   db.markRunningAsInterrupted();
+
+  const now = new Date().toISOString();
+  let reconnectedDispatches = 0;
   let interruptedDispatches = 0;
+  let reconnectedTerminals = 0;
   let interruptedTerminals = 0;
+
   for (const d of db.getPersistedDispatches()) {
-    if (d.status === 'interrupted') interruptedDispatches++;
-    dispatches.set(d.id, {
-      ...d,
-      output: [],
-      lastLines: [],
-      listeners: new Set(),
-      process: null,
-    });
+    if (d.status === 'running' && d.pid) {
+      if (isPidAlive(d.pid)) {
+        // Process survived restart — reconnect via log file tailing
+        reconnectedDispatches++;
+        const logPath = join(LOGS_DIR, `${d.id}.jsonl`);
+        const dispatch = {
+          ...d,
+          output: [],
+          lastLines: [],
+          listeners: new Set(),
+          process: null,
+          logPath,
+          logStream: null,
+        };
+        dispatches.set(d.id, dispatch);
+        tailLogFile(dispatch);
+        console.log(`Dispatch ${d.id}: PID ${d.pid} still alive, reconnecting via log tail`);
+      } else {
+        // PID dead — mark interrupted
+        interruptedDispatches++;
+        d.status = 'interrupted';
+        d.completed_at = now;
+        db.updateDispatchStatus(d.id, 'interrupted', now);
+        dispatches.set(d.id, {
+          ...d, output: [], lastLines: [], listeners: new Set(), process: null,
+        });
+      }
+    } else {
+      if (d.status === 'interrupted') interruptedDispatches++;
+      dispatches.set(d.id, {
+        ...d, output: [], lastLines: [], listeners: new Set(), process: null,
+      });
+    }
   }
+
   for (const t of db.getPersistedTerminals()) {
-    if (t.status === 'interrupted') interruptedTerminals++;
-    terminals.set(t.id, {
-      ...t,
-      ptyProcess: null,
-      scrollback: '',
-      wsClients: new Set(),
-    });
+    if (t.status === 'running') {
+      if (t.tmux_session && TMUX_AVAILABLE && tmuxSessionExists(t.tmux_session)) {
+        // Re-attach to tmux session
+        reconnectedTerminals++;
+        try {
+          const ptyProcess = pty.spawn('tmux', ['attach-session', '-t', t.tmux_session], {
+            name: 'xterm-256color', cols: 80, rows: 24,
+            env: { ...process.env, TERM: 'xterm-256color' },
+          });
+          const terminal = {
+            ...t,
+            ptyProcess,
+            scrollback: captureTmuxScrollback(t.tmux_session),
+            wsClients: new Set(),
+          };
+          wireTerminalHandlers(terminal);
+          terminals.set(t.id, terminal);
+          console.log(`Terminal ${t.id}: tmux session ${t.tmux_session} re-attached`);
+        } catch (e) {
+          // tmux attach failed — mark interrupted
+          interruptedTerminals++;
+          t.status = 'interrupted';
+          t.exited_at = now;
+          db.updateTerminalStatus(t.id, 'interrupted', now);
+          terminals.set(t.id, { ...t, ptyProcess: null, scrollback: '', wsClients: new Set() });
+        }
+      } else if (t.pid && isPidAlive(t.pid)) {
+        // PID alive but no tmux — alive but detached
+        reconnectedTerminals++;
+        terminals.set(t.id, {
+          ...t, ptyProcess: null, scrollback: '', wsClients: new Set(),
+          alive_but_detached: true,
+        });
+        console.log(`Terminal ${t.id}: PID ${t.pid} alive but no tmux — marked as detached`);
+      } else {
+        // Dead
+        interruptedTerminals++;
+        t.status = 'interrupted';
+        t.exited_at = now;
+        db.updateTerminalStatus(t.id, 'interrupted', now);
+        terminals.set(t.id, { ...t, ptyProcess: null, scrollback: '', wsClients: new Set() });
+      }
+    } else {
+      if (t.status === 'interrupted') interruptedTerminals++;
+      terminals.set(t.id, { ...t, ptyProcess: null, scrollback: '', wsClients: new Set() });
+    }
   }
+
   for (const c of db.getPersistedCliSessions()) {
     if (c.status === 'running' && !isPidAlive(c.pid)) {
       c.status = 'exited';
-      c.exited_at = new Date().toISOString();
+      c.exited_at = now;
       db.saveCliSession(c);
     }
     cliSessions.set(c.id, { ...c });
   }
+
   if (dispatches.size || terminals.size || cliSessions.size) {
-    console.log(`Restored ${dispatches.size} dispatches (${interruptedDispatches} interrupted), ${terminals.size} terminals (${interruptedTerminals} interrupted), ${cliSessions.size} CLI sessions from SQLite`);
+    console.log(`Restored: ${dispatches.size} dispatches (${reconnectedDispatches} reconnected, ${interruptedDispatches} interrupted), ${terminals.size} terminals (${reconnectedTerminals} reconnected, ${interruptedTerminals} interrupted), ${cliSessions.size} CLI sessions`);
+  }
+  if (!TMUX_AVAILABLE) {
+    console.log('Note: tmux not found — terminal sessions will not survive restarts. Install with: brew install tmux');
   }
 }
 
@@ -180,6 +379,57 @@ function killProcessGraceful(proc) {
   return setTimeout(() => {
     try { proc.kill('SIGKILL'); } catch {}
   }, 5000);
+}
+
+// Shared dispatch process wiring: stdout/stderr parsing, log file writing, close handler
+function wireDispatchHandlers(dispatch, proc) {
+  let buffer = '';
+  proc.stdout.on('data', (chunk) => {
+    buffer += chunk.toString();
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const evt = JSON.parse(line);
+        if (evt.type === 'system' && evt.subtype === 'init' && evt.session_id) {
+          dispatch.session_id = evt.session_id;
+          saveDispatchToDb(dispatch);
+        }
+        if (evt.type === 'result' && evt.total_cost_usd != null) {
+          dispatch.cost_usd = evt.total_cost_usd;
+          saveDispatchToDb(dispatch);
+        }
+        const text = extractStreamText(evt);
+        if (text) {
+          dispatch.lastLines.push(text);
+          if (dispatch.lastLines.length > 5) dispatch.lastLines.shift();
+        }
+      } catch {}
+      dispatch.output.push(line);
+      if (dispatch.logStream) dispatch.logStream.write(line + '\n');
+      for (const listener of dispatch.listeners) listener(line);
+    }
+  });
+
+  proc.stderr.on('data', (chunk) => {
+    const line = JSON.stringify({ type: 'stderr', content: chunk.toString() });
+    dispatch.output.push(line);
+    if (dispatch.logStream) dispatch.logStream.write(line + '\n');
+    for (const listener of dispatch.listeners) listener(line);
+  });
+
+  proc.on('close', (code) => {
+    dispatch.status = code === 0 ? 'completed' : 'failed';
+    dispatch.completed_at = new Date().toISOString();
+    dispatch.process = null;
+    if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
+    if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
+    for (const listener of dispatch.listeners) listener(null);
+    dispatch.listeners.clear();
+    dispatches.delete(dispatch.id);
+    saveDispatchToDb(dispatch);
+  });
 }
 
 async function resolveProjectPath(projectKey) {
@@ -577,6 +827,17 @@ function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInst
     sections.push(`# Constraints\n\n${additionalInstructions}`);
   }
 
+  // --- Coding Standards (concise reference) ---
+  sections.push([
+    '# Coding Standards',
+    '',
+    'Read `domain/rules.md` → Coding Standards for full details. Key principles:',
+    '- **Domain-First**: Before defining types, enums, or state values, check the domain layer for existing canonical definitions. Import, do not redefine.',
+    '- **DRY**: Three occurrences = extract. Single source of truth for all shared definitions.',
+    '- **Clean Architecture**: Dependencies point inward. Separate business logic from I/O and frameworks.',
+    '- **Clean Code**: Short single-purpose functions. Self-explanatory names. No commented-out code.',
+  ].join('\n'));
+
   // --- Environment (always included) ---
   {
     const envLines = ['# Environment', ''];
@@ -685,6 +946,12 @@ const routes = [
     if (!project_key || !title) {
       return err(res, 'project_key and title are required', 400);
     }
+    if (status && !VALID_WORK_ITEM_STATUSES.has(status)) {
+      return err(res, `invalid status '${status}', must be one of: ${[...VALID_WORK_ITEM_STATUSES].join(', ')}`, 400);
+    }
+    if (priority && !VALID_PRIORITIES.has(priority)) {
+      return err(res, `invalid priority '${priority}', must be one of: ${[...VALID_PRIORITIES].join(', ')}`, 400);
+    }
     const item = db.createWorkItem({ project_key, title, status, priority, description, tags, epic_id });
     json(res, item, 201);
   }],
@@ -695,6 +962,12 @@ const routes = [
     const existing = db.getWorkItem(itemId);
     if (!existing) return err(res, 'work item not found', 404);
     const body = await parseBody(req);
+    if (body.status && !VALID_WORK_ITEM_STATUSES.has(body.status)) {
+      return err(res, `invalid status '${body.status}', must be one of: ${[...VALID_WORK_ITEM_STATUSES].join(', ')}`, 400);
+    }
+    if (body.priority && !VALID_PRIORITIES.has(body.priority)) {
+      return err(res, `invalid priority '${body.priority}', must be one of: ${[...VALID_PRIORITIES].join(', ')}`, 400);
+    }
     const updated = db.updateWorkItem(itemId, body);
     json(res, updated);
   }],
@@ -785,9 +1058,15 @@ const routes = [
   // Create epic
   [/^\/api\/epics$/, 'POST', async (_m, req, res) => {
     const body = await parseBody(req);
-    const { title, priority, description, acceptance_criteria, target_date, tags } = body;
+    const { title, status, priority, description, acceptance_criteria, target_date, tags } = body;
     if (!title) return err(res, 'title is required', 400);
-    const epic = db.createEpic({ title, priority, description, acceptance_criteria, target_date, tags });
+    if (status && !VALID_EPIC_STATUSES.has(status)) {
+      return err(res, `invalid status '${status}', must be one of: ${[...VALID_EPIC_STATUSES].join(', ')}`, 400);
+    }
+    if (priority && !VALID_PRIORITIES.has(priority)) {
+      return err(res, `invalid priority '${priority}', must be one of: ${[...VALID_PRIORITIES].join(', ')}`, 400);
+    }
+    const epic = db.createEpic({ title, status, priority, description, acceptance_criteria, target_date, tags });
     // Return with derived fields
     epic.work_item_ids = [];
     epic.project_keys = [];
@@ -800,6 +1079,12 @@ const routes = [
     const existing = db.getEpic(m[1]);
     if (!existing) return err(res, 'epic not found', 404);
     const body = await parseBody(req);
+    if (body.status && !VALID_EPIC_STATUSES.has(body.status)) {
+      return err(res, `invalid status '${body.status}', must be one of: ${[...VALID_EPIC_STATUSES].join(', ')}`, 400);
+    }
+    if (body.priority && !VALID_PRIORITIES.has(body.priority)) {
+      return err(res, `invalid priority '${body.priority}', must be one of: ${[...VALID_PRIORITIES].join(', ')}`, 400);
+    }
     const updated = db.updateEpic(m[1], body);
     updated.work_item_ids = db.getEpicWorkItemIds(m[1]);
     updated.project_keys = db.getEpicProjectKeys(m[1]);
@@ -1042,45 +1327,11 @@ const routes = [
     proc.stdin.end();
 
     dispatch.process = proc;
+    dispatch.pid = proc.pid;
+    dispatch.logPath = join(LOGS_DIR, `${id}.jsonl`);
+    dispatch.logStream = createWriteStream(dispatch.logPath, { flags: 'a' });
 
-    let buffer = '';
-    proc.stdout.on('data', (chunk) => {
-      buffer += chunk.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const evt = JSON.parse(line);
-          if (evt.type === 'system' && evt.subtype === 'init' && evt.session_id) {
-            dispatch.session_id = evt.session_id;
-            saveDispatchToDb(dispatch);
-          }
-          if (evt.type === 'result' && evt.total_cost_usd != null) {
-            dispatch.cost_usd = evt.total_cost_usd;
-            saveDispatchToDb(dispatch);
-          }
-        } catch {}
-        dispatch.output.push(line);
-        for (const listener of dispatch.listeners) listener(line);
-      }
-    });
-
-    proc.stderr.on('data', (chunk) => {
-      const line = JSON.stringify({ type: 'stderr', content: chunk.toString() });
-      dispatch.output.push(line);
-      for (const listener of dispatch.listeners) listener(line);
-    });
-
-    proc.on('close', (code) => {
-      dispatch.status = code === 0 ? 'completed' : 'failed';
-      dispatch.completed_at = new Date().toISOString();
-      dispatch.process = null;
-      for (const listener of dispatch.listeners) listener(null);
-      dispatch.listeners.clear();
-      dispatches.delete(id);
-      saveDispatchToDb(dispatch);
-    });
+    wireDispatchHandlers(dispatch, proc);
 
     dispatches.set(id, dispatch);
     saveDispatchToDb(dispatch);
@@ -1208,58 +1459,11 @@ const routes = [
     proc.stdin.end();
 
     dispatch.process = proc;
+    dispatch.pid = proc.pid;
+    dispatch.logPath = join(LOGS_DIR, `${id}.jsonl`);
+    dispatch.logStream = createWriteStream(dispatch.logPath, { flags: 'a' });
 
-    let buffer = '';
-    proc.stdout.on('data', (chunk) => {
-      buffer += chunk.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        // Extract session_id and cost from stream events
-        try {
-          const evt = JSON.parse(line);
-          if (evt.type === 'system' && evt.subtype === 'init' && evt.session_id) {
-            dispatch.session_id = evt.session_id;
-            saveDispatchToDb(dispatch);
-          }
-          if (evt.type === 'result' && evt.total_cost_usd != null) {
-            dispatch.cost_usd = evt.total_cost_usd;
-            saveDispatchToDb(dispatch);
-          }
-          // Extract text for lastLines preview
-          const text = extractStreamText(evt);
-          if (text) {
-            dispatch.lastLines.push(text);
-            if (dispatch.lastLines.length > 5) dispatch.lastLines.shift();
-          }
-        } catch {}
-        dispatch.output.push(line);
-        for (const listener of dispatch.listeners) {
-          listener(line);
-        }
-      }
-    });
-
-    proc.stderr.on('data', (chunk) => {
-      const line = JSON.stringify({ type: 'stderr', content: chunk.toString() });
-      dispatch.output.push(line);
-      for (const listener of dispatch.listeners) {
-        listener(line);
-      }
-    });
-
-    proc.on('close', (code) => {
-      dispatch.status = code === 0 ? 'completed' : 'failed';
-      dispatch.completed_at = new Date().toISOString();
-      dispatch.process = null;
-      for (const listener of dispatch.listeners) {
-        listener(null); // signal done
-      }
-      dispatch.listeners.clear();
-      dispatches.delete(id);
-      saveDispatchToDb(dispatch);
-    });
+    wireDispatchHandlers(dispatch, proc);
 
     dispatches.set(id, dispatch);
     saveDispatchToDb(dispatch);
@@ -1277,9 +1481,17 @@ const routes = [
       'Connection': 'keep-alive',
     });
 
-    // Replay buffered output
-    for (const line of dispatch.output) {
-      res.write(`data: ${line}\n\n`);
+    // Replay from log file (source of truth) or fall back to in-memory buffer
+    const logPath = join(LOGS_DIR, `${dispatch.id}.jsonl`);
+    try {
+      const content = readFileSync(logPath, 'utf8');
+      for (const line of content.split('\n')) {
+        if (line.trim()) res.write(`data: ${line}\n\n`);
+      }
+    } catch {
+      for (const line of dispatch.output) {
+        res.write(`data: ${line}\n\n`);
+      }
     }
 
     if (dispatch.status !== 'running') {
@@ -1336,9 +1548,13 @@ const routes = [
       if (dispatch.process) {
         const timer = killProcessGraceful(dispatch.process);
         dispatch.process.on('close', () => clearTimeout(timer));
+      } else if (dispatch.pid && isPidAlive(dispatch.pid)) {
+        try { process.kill(dispatch.pid, 'SIGTERM'); } catch {}
       }
       dispatch.status = 'killed';
       dispatch.completed_at = new Date().toISOString();
+      if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
+      if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
       for (const listener of dispatch.listeners) listener(null);
       dispatch.listeners.clear();
       saveDispatchToDb(dispatch);
@@ -1354,12 +1570,17 @@ const routes = [
     if (dispatch.process) {
       const timer = killProcessGraceful(dispatch.process);
       dispatch.process.on('close', () => clearTimeout(timer));
+    } else if (dispatch.pid && isPidAlive(dispatch.pid)) {
+      try { process.kill(dispatch.pid, 'SIGTERM'); } catch {}
     }
     dispatch.status = 'killed';
     dispatch.completed_at = new Date().toISOString();
+    if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
+    if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
     for (const listener of dispatch.listeners) listener(null);
     dispatch.listeners.clear();
     saveDispatchToDb(dispatch);
+    unlinkFile(join(LOGS_DIR, `${m[1]}.jsonl`)).catch(() => {});
     json(res, { status: 'killed', id: m[1] });
   }],
 
@@ -1416,27 +1637,42 @@ const routes = [
     const resolvedTermPermMode = permission_mode || 'acceptEdits';
     const resolvedTermSkipPerms = skip_permissions === true || skip_permissions === 'true';
 
-    // Spawn interactive PTY with claude (use absolute path to avoid posix_spawnp PATH issues)
+    // Spawn interactive PTY with claude, optionally wrapped in tmux for restart survival
     let ptyProcess;
+    let tmuxName = null;
     try {
       const ptyArgs = [];
       if (resolvedTermSkipPerms) {
         ptyArgs.push('--dangerously-skip-permissions');
       }
-      // Give the agent access to the architect project directory
       ptyArgs.push('--add-dir', ROOT);
-      // Attach curated sub-agents
       if (termAgentDefs.length) {
         ptyArgs.push('--agents', JSON.stringify(termAgentDefs));
       }
-      ptyProcess = pty.spawn(CLAUDE_BIN, ptyArgs, {
-        name: 'xterm-256color',
-        cols: 80,
-        rows: 24,
-        cwd: projectPath,
-        env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT },
-      });
+
+      if (TMUX_AVAILABLE) {
+        tmuxName = `architect-${id}`;
+        // Create detached tmux session running claude
+        execFileSync('tmux', [
+          'new-session', '-d', '-s', tmuxName, '-x', '80', '-y', '24',
+          CLAUDE_BIN, ...ptyArgs,
+        ], { cwd: projectPath, env: { ...process.env, ARCHITECT_ROOT: ROOT } });
+        // Attach node-pty to the tmux session for WebSocket streaming
+        ptyProcess = pty.spawn('tmux', ['attach-session', '-t', tmuxName], {
+          name: 'xterm-256color', cols: 80, rows: 24,
+          cwd: projectPath,
+          env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT },
+        });
+      } else {
+        ptyProcess = pty.spawn(CLAUDE_BIN, ptyArgs, {
+          name: 'xterm-256color', cols: 80, rows: 24,
+          cwd: projectPath,
+          env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT },
+        });
+      }
     } catch (err) {
+      // Clean up tmux session on failure
+      if (tmuxName) { try { execFileSync('tmux', ['kill-session', '-t', tmuxName], { stdio: 'ignore' }); } catch {} }
       return json(res, { error: `Failed to spawn terminal: ${err.message}` }, 500);
     }
 
@@ -1452,40 +1688,26 @@ const routes = [
       skip_permissions: resolvedTermSkipPerms,
       status: 'running',
       ptyProcess,
+      pid: tmuxName
+        ? parseInt(execFileSync('tmux', ['display-message', '-t', tmuxName, '-p', '#{pane_pid}'], { encoding: 'utf8' }).trim(), 10)
+        : ptyProcess.pid,
+      tmux_session: tmuxName,
       scrollback: '',
       wsClients: new Set(),
       started_at: new Date().toISOString(),
       exited_at: null,
     };
 
-    ptyProcess.onData((data) => {
-      terminal.scrollback += data;
-      if (terminal.scrollback.length > SCROLLBACK_LIMIT) {
-        terminal.scrollback = terminal.scrollback.slice(-SCROLLBACK_LIMIT);
-      }
-      for (const ws of terminal.wsClients) {
-        try { ws.send(JSON.stringify({ type: 'data', data })); } catch {}
-      }
-    });
+    wireTerminalHandlers(terminal);
 
-    ptyProcess.onExit(({ exitCode }) => {
-      terminal.status = exitCode === 0 ? 'completed' : 'failed';
-      terminal.exited_at = new Date().toISOString();
-      terminal.ptyProcess = null;
-      for (const ws of terminal.wsClients) {
-        try { ws.send(JSON.stringify({ type: 'exit', code: exitCode })); ws.close(); } catch {}
-      }
-      terminal.wsClients.clear();
-      terminals.delete(id);
-      saveTerminalToDb(terminal);
-    });
-
-    // After PTY is ready, write the prompt as first input
-    setTimeout(() => {
-      if (terminal.ptyProcess) {
-        terminal.ptyProcess.write(prompt + '\r');
-      }
-    }, 500);
+    // After PTY is ready, write the prompt as first input (only for non-tmux; tmux sessions receive args directly)
+    if (!tmuxName) {
+      setTimeout(() => {
+        if (terminal.ptyProcess) {
+          terminal.ptyProcess.write(prompt + '\r');
+        }
+      }, 500);
+    }
 
     terminals.set(id, terminal);
     saveTerminalToDb(terminal);
@@ -1503,17 +1725,30 @@ const routes = [
     if (!projectPath) return err(res, `Could not resolve path for project: ${project_key}`, 400);
 
     const id = `T-${Date.now()}`;
+    const shellBin = process.env.SHELL || '/bin/zsh';
 
     let ptyProcess;
+    let tmuxName = null;
     try {
-      ptyProcess = pty.spawn(process.env.SHELL || '/bin/zsh', [], {
-        name: 'xterm-256color',
-        cols: 80,
-        rows: 24,
-        cwd: projectPath,
-        env: { ...process.env, TERM: 'xterm-256color' },
-      });
+      if (TMUX_AVAILABLE) {
+        tmuxName = `architect-${id}`;
+        execFileSync('tmux', [
+          'new-session', '-d', '-s', tmuxName, '-x', '80', '-y', '24', shellBin,
+        ], { cwd: projectPath });
+        ptyProcess = pty.spawn('tmux', ['attach-session', '-t', tmuxName], {
+          name: 'xterm-256color', cols: 80, rows: 24,
+          cwd: projectPath,
+          env: { ...process.env, TERM: 'xterm-256color' },
+        });
+      } else {
+        ptyProcess = pty.spawn(shellBin, [], {
+          name: 'xterm-256color', cols: 80, rows: 24,
+          cwd: projectPath,
+          env: { ...process.env, TERM: 'xterm-256color' },
+        });
+      }
     } catch (e) {
+      if (tmuxName) { try { execFileSync('tmux', ['kill-session', '-t', tmuxName], { stdio: 'ignore' }); } catch {} }
       return json(res, { error: `Failed to spawn shell: ${e.message}` }, 500);
     }
 
@@ -1528,33 +1763,17 @@ const routes = [
       permission_mode: 'acceptEdits',
       status: 'running',
       ptyProcess,
+      pid: tmuxName
+        ? parseInt(execFileSync('tmux', ['display-message', '-t', tmuxName, '-p', '#{pane_pid}'], { encoding: 'utf8' }).trim(), 10)
+        : ptyProcess.pid,
+      tmux_session: tmuxName,
       scrollback: '',
       wsClients: new Set(),
       started_at: new Date().toISOString(),
       exited_at: null,
     };
 
-    ptyProcess.onData((data) => {
-      terminal.scrollback += data;
-      if (terminal.scrollback.length > SCROLLBACK_LIMIT) {
-        terminal.scrollback = terminal.scrollback.slice(-SCROLLBACK_LIMIT);
-      }
-      for (const ws of terminal.wsClients) {
-        try { ws.send(JSON.stringify({ type: 'data', data })); } catch {}
-      }
-    });
-
-    ptyProcess.onExit(({ exitCode }) => {
-      terminal.status = exitCode === 0 ? 'completed' : 'failed';
-      terminal.exited_at = new Date().toISOString();
-      terminal.ptyProcess = null;
-      for (const ws of terminal.wsClients) {
-        try { ws.send(JSON.stringify({ type: 'exit', code: exitCode })); ws.close(); } catch {}
-      }
-      terminal.wsClients.clear();
-      terminals.delete(id);
-      saveTerminalToDb(terminal);
-    });
+    wireTerminalHandlers(terminal);
 
     terminals.set(id, terminal);
     saveTerminalToDb(terminal);
@@ -1592,6 +1811,10 @@ const routes = [
       if (terminal.status !== 'running') continue;
       if (terminal.ptyProcess) {
         try { terminal.ptyProcess.kill('SIGHUP'); } catch {}
+      } else if (terminal.tmux_session && TMUX_AVAILABLE) {
+        try { execFileSync('tmux', ['kill-session', '-t', terminal.tmux_session], { stdio: 'ignore' }); } catch {}
+      } else if (terminal.pid && isPidAlive(terminal.pid)) {
+        try { process.kill(terminal.pid, 'SIGTERM'); } catch {}
       }
       terminal.status = 'killed';
       terminal.exited_at = new Date().toISOString();
@@ -1611,6 +1834,10 @@ const routes = [
     if (!terminal) return err(res, 'terminal not found');
     if (terminal.ptyProcess) {
       try { terminal.ptyProcess.kill('SIGHUP'); } catch {}
+    } else if (terminal.tmux_session && TMUX_AVAILABLE) {
+      try { execFileSync('tmux', ['kill-session', '-t', terminal.tmux_session], { stdio: 'ignore' }); } catch {}
+    } else if (terminal.pid && isPidAlive(terminal.pid)) {
+      try { process.kill(terminal.pid, 'SIGTERM'); } catch {}
     }
     terminal.status = 'killed';
     terminal.exited_at = new Date().toISOString();
@@ -1808,7 +2035,22 @@ server.on('upgrade', (req, socket, head) => {
 // --- Auto-cleanup stale sessions ---
 setInterval(() => {
   const now = Date.now();
+
+  // Terminals: check PID/tmux liveness for running without ptyProcess, remove exited after 10min
   for (const [id, terminal] of terminals) {
+    if (terminal.status === 'running' && !terminal.ptyProcess) {
+      const tmuxAlive = terminal.tmux_session && TMUX_AVAILABLE && tmuxSessionExists(terminal.tmux_session);
+      const pidAlive = terminal.pid && isPidAlive(terminal.pid);
+      if (!tmuxAlive && !pidAlive) {
+        terminal.status = 'interrupted';
+        terminal.exited_at = new Date().toISOString();
+        saveTerminalToDb(terminal);
+        for (const ws of terminal.wsClients) {
+          try { ws.send(JSON.stringify({ type: 'exit', code: -1 })); ws.close(); } catch {}
+        }
+        terminal.wsClients.clear();
+      }
+    }
     if (terminal.status !== 'running' && terminal.exited_at) {
       if (now - new Date(terminal.exited_at).getTime() > 10 * 60 * 1000) {
         terminals.delete(id);
@@ -1816,14 +2058,30 @@ setInterval(() => {
       }
     }
   }
+
+  // Dispatches: check PID liveness for running without process handle, remove completed after 30min
   for (const [id, dispatch] of dispatches) {
+    if (dispatch.status === 'running' && !dispatch.process && dispatch.pid) {
+      if (!isPidAlive(dispatch.pid)) {
+        dispatch.status = 'interrupted';
+        dispatch.completed_at = new Date().toISOString();
+        if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
+        if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
+        saveDispatchToDb(dispatch);
+        for (const listener of dispatch.listeners) listener(null);
+        dispatch.listeners.clear();
+      }
+    }
     if (dispatch.status !== 'running' && dispatch.completed_at) {
       if (now - new Date(dispatch.completed_at).getTime() > 30 * 60 * 1000) {
         dispatches.delete(id);
         db.deleteDispatch(id);
+        // Clean up log file
+        unlinkFile(join(LOGS_DIR, `${id}.jsonl`)).catch(() => {});
       }
     }
   }
+
   // CLI sessions: check PID liveness for running, remove exited after 10min
   for (const [id, cli] of cliSessions) {
     if (cli.status === 'running' && !isPidAlive(cli.pid)) {
@@ -1841,7 +2099,36 @@ setInterval(() => {
 }, 60 * 1000);
 
 function shutdownFlush() {
-  db.markRunningAsInterrupted();
+  const now = new Date().toISOString();
+
+  // Dispatches: leave alive processes as running, mark dead ones as interrupted
+  for (const [, d] of dispatches) {
+    if (d.status !== 'running') continue;
+    if (d.pid && isPidAlive(d.pid)) {
+      // Process survives — close our handles but leave DB status as running
+      if (d.logStream) { d.logStream.end(); d.logStream = null; }
+      if (d._tailInterval) { clearInterval(d._tailInterval); d._tailInterval = null; }
+    } else {
+      d.status = 'interrupted';
+      d.completed_at = now;
+      saveDispatchToDb(d);
+    }
+  }
+
+  // Terminals: leave alive tmux/PID sessions as running
+  for (const [, t] of terminals) {
+    if (t.status !== 'running') continue;
+    const tmuxAlive = t.tmux_session && TMUX_AVAILABLE && tmuxSessionExists(t.tmux_session);
+    const pidAlive = t.pid && isPidAlive(t.pid);
+    if (tmuxAlive || pidAlive) {
+      // Will be reconnected on restart
+    } else {
+      t.status = 'interrupted';
+      t.exited_at = now;
+      saveTerminalToDb(t);
+    }
+  }
+
   db.closeDatabase();
 }
 process.on('SIGTERM', () => { shutdownFlush(); process.exit(0); });
@@ -1857,10 +2144,13 @@ async function main() {
     process.exit(1);
   }
 
-  // Phase 2: Restore sessions
+  // Phase 2: Ensure logs directory
+  await mkdir(LOGS_DIR, { recursive: true });
+
+  // Phase 3: Restore sessions
   restoreSessions();
 
-  // Phase 3: Start server
+  // Phase 4: Start server
   server.listen(port, '127.0.0.1', () => {
     console.log(`Dashboard: http://127.0.0.1:${port}`);
   });

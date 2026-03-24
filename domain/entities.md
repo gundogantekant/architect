@@ -285,7 +285,7 @@ Tracks an active worktree created for implementation isolation.
 
 ## DispatchRequest
 
-Record created when the dashboard dispatches a Claude agent for a work item. Persisted to `work/sessions.json` (excluding process handles and listeners). Previously-running sessions are marked `interrupted` on server restart.
+Record created when the dashboard dispatches a Claude agent for a work item. Persisted to SQLite `dispatches` table (excluding process handles and listeners). Output streamed to `work/logs/D-xxx.jsonl`. On restart, sessions with live PIDs are reconnected via log file tailing; others are marked `interrupted`.
 
 ```json
 {
@@ -301,13 +301,14 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "started_at": "string (ISO 8601)",
   "completed_at": "string (ISO 8601, optional)",
   "session_id": "string (Claude session ID, optional)",
-  "cost_usd": "number (total cost, optional)"
+  "cost_usd": "number (total cost, optional)",
+  "pid": "number (OS process ID, optional — stored for restart survival)"
 }
 ```
 
 ## TerminalSession
 
-Record for an interactive PTY terminal session spawned from the dashboard. Persisted to `work/sessions.json` (excluding ptyProcess, scrollback, wsClients). Previously-running sessions are marked `interrupted` on server restart.
+Record for an interactive PTY terminal session spawned from the dashboard. Persisted to SQLite `terminals` table (excluding ptyProcess, scrollback, wsClients). When tmux is available, terminals are wrapped in tmux sessions for restart survival. On restart, tmux sessions are re-attached; PID-only sessions are marked as detached; dead sessions are marked `interrupted`.
 
 ```json
 {
@@ -321,7 +322,9 @@ Record for an interactive PTY terminal session spawned from the dashboard. Persi
   "skip_permissions": "boolean (default false, adds --dangerously-skip-permissions flag)",
   "status": "running|completed|failed|killed|interrupted",
   "started_at": "string (ISO 8601)",
-  "exited_at": "string (ISO 8601, null while running)"
+  "exited_at": "string (ISO 8601, null while running)",
+  "pid": "number (OS process ID, optional — stored for restart survival)",
+  "tmux_session": "string (tmux session name, optional — e.g. architect-T-xxx)"
 }
 ```
 
@@ -345,7 +348,7 @@ Record for a CLI session registered externally via the dashboard API. Read-only 
 
 ## SessionsFile
 
-Sessions are now persisted in SQLite tables (`dispatches`, `terminals`, `cli_sessions`) in `work/architect.db` instead of `work/sessions.json`. On startup, any `running` sessions are re-marked as `interrupted`. The API returns this shape for backward compatibility:
+Sessions are persisted in SQLite tables (`dispatches`, `terminals`, `cli_sessions`) in `work/architect.db`. Dispatch output is logged to `work/logs/D-xxx.jsonl` files. On startup, sessions with live PIDs (or tmux sessions) are reconnected; legacy sessions without PIDs are marked `interrupted`. The API returns this shape for backward compatibility:
 
 ```json
 {
