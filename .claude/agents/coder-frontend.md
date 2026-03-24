@@ -42,8 +42,9 @@ See `domain/rules.md` → Coding Standards. Additional agent-specific rules:
 
 ## Process
 
-1. Read existing component patterns and styling approach
-2. Implement UI following established conventions
+1. Check the project's domain layer for existing types, enums, and state definitions before creating new ones (see `domain/rules.md` → Domain-First Rule)
+2. Read existing component patterns and styling approach
+3. Implement UI following established conventions
 3. Ensure responsive behavior
 4. Verify accessibility basics
 

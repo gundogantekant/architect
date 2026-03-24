@@ -56,8 +56,9 @@ See `domain/rules.md` → Coding Standards. Additional agent-specific rules:
 
 ## Process
 
-1. Read the refactoring plan (from planner or direct instruction)
-2. Identify all files affected by the transformation
+1. Check the project's domain layer for existing types, enums, and state definitions — ensure refactored code references canonical definitions rather than duplicating them (see `domain/rules.md` → Domain-First Rule)
+2. Read the refactoring plan (from planner or direct instruction)
+3. Identify all files affected by the transformation
 3. Verify the current state matches expectations
 4. Apply transformations systematically across all files
 5. Verify import/export consistency after changes

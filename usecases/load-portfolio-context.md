@@ -15,10 +15,8 @@ Shared precondition for all skills that need project context. Eliminates duplica
 | Tier | Fields from PortfolioEntry | Used by |
 |------|---------------------------|---------|
 | minimal | `guidance.stack_summary` + `scout_report.language` + `scout_report.framework` | dependency-manager, tracker, work, portfolio |
-| standard | minimal + `guidance.structure` + `guidance.conventions` + `agents.dispatch_notes` + `brief.purpose` + `brief.domain` + `brief.users` + `doc_paths` + `portfolio_guides` | coders, planner, debugger, documenter, onboard |
-| full | standard + `guidance.ci_cd` + `guidance.testing` + `custom_rules` + complete `brief` object + `doc_paths` | tester, ci-cd, reviewer, security-auditor, deploy, migrate, status, secure |
-
-**Debug context augmentation**: When loading `standard` tier for the **debugger** agent, also include `custom_rules` from the portfolio entry. This is a targeted augmentation — other `standard`-tier agents do not receive `custom_rules`. Rationale: `custom_rules` frequently contains debugging conventions (preferred debug functions, required flags, tool-specific instructions) that the debugger needs. See `domain/rules.md` → Debug Artifact Rules.
+| standard | minimal + `guidance.structure` + `guidance.conventions` + `custom_rules` + `agents.dispatch_notes` + `brief.purpose` + `brief.domain` + `brief.users` + `doc_paths` + `portfolio_guides` | coders, planner, debugger, documenter, onboard |
+| full | standard + `guidance.ci_cd` + `guidance.testing` + complete `brief` object + `doc_paths` | tester, ci-cd, reviewer, security-auditor, deploy, migrate, status, secure |
 
 Organization conventions (`organization.json`) are always loaded regardless of tier.
 

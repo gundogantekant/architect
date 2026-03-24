@@ -29,8 +29,9 @@ See `domain/rules.md` → Coding Standards.
 
 ## Process
 
-1. Read relevant existing code to understand patterns and conventions
-2. Implement changes following the project's established patterns
+1. Check the project's domain layer for existing types, enums, and state definitions before creating new ones (see `domain/rules.md` → Domain-First Rule)
+2. Read relevant existing code to understand patterns and conventions
+3. Implement changes following the project's established patterns
 3. Ensure new code integrates cleanly with existing codebase
 4. Run linters or formatters if configured in the project
 

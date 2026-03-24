@@ -49,8 +49,9 @@ See `domain/rules.md` → Coding Standards. Additional agent-specific rules:
 
 ## Process
 
-1. Read existing infrastructure configuration
-2. Understand the service architecture
+1. Check the project's domain layer for existing types, enums, and state definitions before creating new ones (see `domain/rules.md` → Domain-First Rule)
+2. Read existing infrastructure configuration
+3. Understand the service architecture
 3. Implement infrastructure following best practices
 4. Ensure Linux compatibility
 5. Test configuration validity

@@ -42,8 +42,9 @@ See `domain/rules.md` → Coding Standards. Additional agent-specific rules:
 
 ## Process
 
-1. Read existing mobile project structure and patterns
-2. Check platform-specific requirements
+1. Check the project's domain layer for existing types, enums, and state definitions before creating new ones (see `domain/rules.md` → Domain-First Rule)
+2. Read existing mobile project structure and patterns
+3. Check platform-specific requirements
 3. Implement with proper platform abstractions
 4. Handle permissions and error states
 

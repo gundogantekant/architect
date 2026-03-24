@@ -287,10 +287,9 @@ function restoreSessions() {
         });
       }
     } else {
-      if (d.status === 'interrupted') interruptedDispatches++;
-      dispatches.set(d.id, {
-        ...d, output: [], lastLines: [], listeners: new Set(), process: null,
-      });
+      // Non-running dispatch (completed/failed/killed/interrupted) — clean up from DB, don't load into memory
+      db.deleteDispatch(d.id);
+      unlinkFile(join(LOGS_DIR, `${d.id}.jsonl`)).catch(() => {});
     }
   }
 
@@ -338,18 +337,18 @@ function restoreSessions() {
         terminals.set(t.id, { ...t, ptyProcess: null, scrollback: '', wsClients: new Set() });
       }
     } else {
-      if (t.status === 'interrupted') interruptedTerminals++;
-      terminals.set(t.id, { ...t, ptyProcess: null, scrollback: '', wsClients: new Set() });
+      // Non-running terminal (completed/killed/interrupted) — clean up from DB, don't load into memory
+      db.deleteTerminal(t.id);
     }
   }
 
   for (const c of db.getPersistedCliSessions()) {
-    if (c.status === 'running' && !isPidAlive(c.pid)) {
-      c.status = 'exited';
-      c.exited_at = now;
-      db.saveCliSession(c);
+    if (c.status === 'running' && isPidAlive(c.pid)) {
+      cliSessions.set(c.id, { ...c });
+    } else {
+      // Dead or exited CLI session — clean up from DB
+      db.deleteCliSession(c.id);
     }
-    cliSessions.set(c.id, { ...c });
   }
 
   if (dispatches.size || terminals.size || cliSessions.size) {
@@ -1579,7 +1578,8 @@ const routes = [
     if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
     for (const listener of dispatch.listeners) listener(null);
     dispatch.listeners.clear();
-    saveDispatchToDb(dispatch);
+    dispatches.delete(m[1]);
+    db.deleteDispatch(m[1]);
     unlinkFile(join(LOGS_DIR, `${m[1]}.jsonl`)).catch(() => {});
     json(res, { status: 'killed', id: m[1] });
   }],
@@ -1640,6 +1640,7 @@ const routes = [
     // Spawn interactive PTY with claude, optionally wrapped in tmux for restart survival
     let ptyProcess;
     let tmuxName = null;
+    let agentsFile = null;
     try {
       const ptyArgs = [];
       if (resolvedTermSkipPerms) {
@@ -1647,15 +1648,29 @@ const routes = [
       }
       ptyArgs.push('--add-dir', ROOT);
       if (termAgentDefs.length) {
-        ptyArgs.push('--agents', JSON.stringify(termAgentDefs));
+        if (TMUX_AVAILABLE) {
+          // Write agents JSON to temp file to avoid ARG_MAX overflow in tmux
+          const tmpDir = join(ROOT, 'tmp');
+          try { await mkdir(tmpDir, { recursive: true }); } catch {}
+          agentsFile = join(tmpDir, `agents-${id}.json`);
+          writeFileSync(agentsFile, JSON.stringify(termAgentDefs));
+        } else {
+          ptyArgs.push('--agents', JSON.stringify(termAgentDefs));
+        }
       }
 
       if (TMUX_AVAILABLE) {
         tmuxName = `architect-${id}`;
-        // Create detached tmux session running claude
+        // Build shell command that reads agents from temp file to stay within ARG_MAX
+        const cliParts = [CLAUDE_BIN, ...ptyArgs.map(a => `'${a.replace(/'/g, "'\\''")}'`)];
+        if (agentsFile) {
+          cliParts.push('--agents', `"$(cat '${agentsFile}')"`);
+        }
+        const shellCmd = cliParts.join(' ');
+        // Create detached tmux session running claude via shell wrapper
         execFileSync('tmux', [
           'new-session', '-d', '-s', tmuxName, '-x', '80', '-y', '24',
-          CLAUDE_BIN, ...ptyArgs,
+          'sh', '-c', shellCmd,
         ], { cwd: projectPath, env: { ...process.env, ARCHITECT_ROOT: ROOT } });
         // Attach node-pty to the tmux session for WebSocket streaming
         ptyProcess = pty.spawn('tmux', ['attach-session', '-t', tmuxName], {
@@ -1692,6 +1707,7 @@ const routes = [
         ? parseInt(execFileSync('tmux', ['display-message', '-t', tmuxName, '-p', '#{pane_pid}'], { encoding: 'utf8' }).trim(), 10)
         : ptyProcess.pid,
       tmux_session: tmuxName,
+      agents_file: agentsFile,
       scrollback: '',
       wsClients: new Set(),
       started_at: new Date().toISOString(),
@@ -1700,14 +1716,13 @@ const routes = [
 
     wireTerminalHandlers(terminal);
 
-    // After PTY is ready, write the prompt as first input (only for non-tmux; tmux sessions receive args directly)
-    if (!tmuxName) {
-      setTimeout(() => {
-        if (terminal.ptyProcess) {
-          terminal.ptyProcess.write(prompt + '\r');
-        }
-      }, 500);
-    }
+    // After PTY is ready, write the prompt as first input
+    // Tmux needs longer delay: session creation → claude starts → node-pty attaches
+    setTimeout(() => {
+      if (terminal.ptyProcess) {
+        terminal.ptyProcess.write(prompt + '\r');
+      }
+    }, tmuxName ? 1500 : 500);
 
     terminals.set(id, terminal);
     saveTerminalToDb(terminal);
@@ -1845,7 +1860,9 @@ const routes = [
       try { ws.send(JSON.stringify({ type: 'exit', code: -1 })); ws.close(); } catch {}
     }
     terminal.wsClients.clear();
-    saveTerminalToDb(terminal);
+    if (terminal.agents_file) unlinkFile(terminal.agents_file).catch(() => {});
+    terminals.delete(m[1]);
+    db.deleteTerminal(m[1]);
     json(res, { status: 'killed', id: m[1] });
   }],
 
@@ -2036,8 +2053,8 @@ server.on('upgrade', (req, socket, head) => {
 setInterval(() => {
   const now = Date.now();
 
-  // Terminals: check PID/tmux liveness for running without ptyProcess, remove exited after 10min
-  for (const [id, terminal] of terminals) {
+  // Terminals: check PID/tmux liveness for running without ptyProcess
+  for (const [, terminal] of terminals) {
     if (terminal.status === 'running' && !terminal.ptyProcess) {
       const tmuxAlive = terminal.tmux_session && TMUX_AVAILABLE && tmuxSessionExists(terminal.tmux_session);
       const pidAlive = terminal.pid && isPidAlive(terminal.pid);
@@ -2051,16 +2068,10 @@ setInterval(() => {
         terminal.wsClients.clear();
       }
     }
-    if (terminal.status !== 'running' && terminal.exited_at) {
-      if (now - new Date(terminal.exited_at).getTime() > 10 * 60 * 1000) {
-        terminals.delete(id);
-        db.deleteTerminal(id);
-      }
-    }
   }
 
-  // Dispatches: check PID liveness for running without process handle, remove completed after 30min
-  for (const [id, dispatch] of dispatches) {
+  // Dispatches: check PID liveness for running without process handle
+  for (const [, dispatch] of dispatches) {
     if (dispatch.status === 'running' && !dispatch.process && dispatch.pid) {
       if (!isPidAlive(dispatch.pid)) {
         dispatch.status = 'interrupted';
@@ -2072,28 +2083,14 @@ setInterval(() => {
         dispatch.listeners.clear();
       }
     }
-    if (dispatch.status !== 'running' && dispatch.completed_at) {
-      if (now - new Date(dispatch.completed_at).getTime() > 30 * 60 * 1000) {
-        dispatches.delete(id);
-        db.deleteDispatch(id);
-        // Clean up log file
-        unlinkFile(join(LOGS_DIR, `${id}.jsonl`)).catch(() => {});
-      }
-    }
   }
 
-  // CLI sessions: check PID liveness for running, remove exited after 10min
-  for (const [id, cli] of cliSessions) {
+  // CLI sessions: check PID liveness for running
+  for (const [, cli] of cliSessions) {
     if (cli.status === 'running' && !isPidAlive(cli.pid)) {
       cli.status = 'exited';
       cli.exited_at = new Date().toISOString();
       saveCliSessionToDb(cli);
-    }
-    if (cli.status === 'exited' && cli.exited_at) {
-      if (now - new Date(cli.exited_at).getTime() > 10 * 60 * 1000) {
-        cliSessions.delete(id);
-        db.deleteCliSession(id);
-      }
     }
   }
 }, 60 * 1000);

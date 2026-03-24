@@ -44,11 +44,20 @@ Perform thorough code reviews identifying bugs, security issues, performance pro
 - Dependency direction (inner layers should not depend on outer)
 - Interface boundaries
 - Testability
-- **Clean Architecture boundaries** (when reviewing the architect project itself):
+- **Clean Architecture violations** (all projects):
+  - Types, enums, or state values defined inline that duplicate a domain-layer definition
+  - Business logic mixed into I/O, controller, or UI layers
+  - Layer boundary violations (inner layer importing from outer layer)
+- **Architect-specific checks** (when reviewing the architect project):
   - Agent prompts reference `domain/` instead of embedding schemas inline
   - Skills delegate to use case definitions in `usecases/`
   - No entity schemas duplicated across agent prompts
   - `domain/` files do not reference infrastructure paths (`portfolio/`, `work/`, `.claude/`)
+
+### DRY
+- Duplicated type, enum, or constant definitions across files
+- Repeated logic blocks that should be extracted to shared utilities
+- State values or magic strings that should reference a canonical source
 
 ## Output Format
 

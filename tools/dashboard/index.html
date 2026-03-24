@@ -1040,12 +1040,11 @@ async function restoreTerminals() {
     const list = await api('terminal/active');
     const toConnect = [];
     for (const t of list) {
-      if (t.status !== 'running') continue; // skip exited sessions
       if (activeTerminals.some(a => a.id === t.id)) continue;
       const terminalInfo = { ...t };
       activeTerminals.push(terminalInfo);
       createTerminalPanel(terminalInfo);
-      toConnect.push(terminalInfo);
+      if (t.status === 'running') toConnect.push(terminalInfo);
     }
     // Cleanup stale panels for sessions that no longer exist
     const activeIds = new Set(list.map(t => `terminal:${t.id}`));
@@ -1279,12 +1278,11 @@ async function restoreDispatches() {
   try {
     const list = await api('dispatch/active');
     for (const d of list) {
-      if (d.status !== 'running') continue; // skip exited sessions
       if (activeDispatches.some(a => a.id === d.id)) continue;
       const dispatch = { ...d, title: d.work_item_id, session_id: d.session_id || null };
       activeDispatches.push(dispatch);
       createDispatchPanel(dispatch);
-      connectDispatchStream(dispatch);
+      if (d.status === 'running') connectDispatchStream(dispatch);
     }
     // Cleanup stale panels for sessions that no longer exist
     const activeIds = new Set(list.map(d => `dispatch:${d.id}`));
