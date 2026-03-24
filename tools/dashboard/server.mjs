@@ -364,6 +364,7 @@ function extractStreamText(evt) {
     return evt.message.content.filter(b => b.type === 'text').map(b => b.text).join('');
   }
   if (evt.type === 'content_block_delta' && evt.delta?.text) return evt.delta.text;
+  if (evt.type === 'content_block_start' && evt.content_block?.type === 'tool_use') return `▸ ${evt.content_block.name || 'tool'}`;
   if (evt.type === 'content_block_start' && evt.content_block?.text) return evt.content_block.text;
   if (evt.type === 'result') return `--- Agent finished ---`;
   return null;

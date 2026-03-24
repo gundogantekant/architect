@@ -636,13 +636,14 @@ function extractStreamText(line) {
   try {
     const evt = JSON.parse(line);
     if (evt.type === 'assistant' && evt.message?.content) {
-      return evt.message.content
-        .filter(b => b.type === 'text')
-        .map(b => b.text)
-        .join('');
+      const text = evt.message.content.filter(b => b.type === 'text').map(b => b.text).join('');
+      return text ? '\n━━━\n' + text : null;
     }
     if (evt.type === 'content_block_delta' && evt.delta?.text) {
       return evt.delta.text;
+    }
+    if (evt.type === 'content_block_start' && evt.content_block?.type === 'tool_use') {
+      return `\n▸ ${evt.content_block.name || 'tool'}\n`;
     }
     if (evt.type === 'content_block_start' && evt.content_block?.text) {
       return evt.content_block.text;
@@ -1088,6 +1089,13 @@ function createTerminalPanel(terminalInfo) {
     updateDispatchBadge();
     refreshSessionsSidebar();
   };
+  // Focus xterm when clicking anywhere on the terminal container
+  const termContainer = panel.querySelector(`#term-container-${terminalInfo.id}`);
+  if (termContainer) {
+    termContainer.addEventListener('click', () => {
+      if (terminalInfo._term) terminalInfo._term.focus();
+    });
+  }
   return panel;
 }
 
@@ -3834,7 +3842,7 @@ function openFocusPopup(type, id) {
 
   // For terminals, fit to new size and scroll to bottom
   if (type === 'terminal' && terminalInfo?._fitAddon) {
-    requestAnimationFrame(() => { terminalInfo._fitAddon.fit(); if (terminalInfo._term) terminalInfo._term.scrollToBottom(); });
+    requestAnimationFrame(() => { terminalInfo._fitAddon.fit(); if (terminalInfo._term) { terminalInfo._term.scrollToBottom(); terminalInfo._term.focus(); } });
   }
   // For dispatch logs, scroll to bottom on focus
   if (type === 'dispatch' && sourceEl) {
@@ -3953,6 +3961,14 @@ function closeFocusPopup() {
   if (sourceEl && parentEl && parentEl.isConnected) {
     sourceEl.remove();
     parentEl.appendChild(sourceEl);
+  }
+
+  // Re-fit terminal after moving back to inline panel
+  if (type === 'terminal') {
+    const terminalInfo = activeTerminals.find(t => t.id === id);
+    if (terminalInfo?._fitAddon) {
+      requestAnimationFrame(() => { terminalInfo._fitAddon.fit(); });
+    }
   }
 
   if (escHandler) document.removeEventListener('keydown', escHandler);
