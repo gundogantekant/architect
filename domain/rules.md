@@ -293,30 +293,52 @@ When PM's classification confidence is below **0.6**, always include clarificati
 
 ## Coding Standards
 
-Shared standards enforced by all implementation agents.
+Shared standards enforced by all implementation agents. These rules apply to every line of code written by the system.
 
 ### Clean Code
-- Use definitive variable names
-- Write self-explanatory code — no comments except TODO and DECISION tags
-- Do not write commented-out code
-- Keep functions short and single-purpose
-- Prefer editing existing files over creating new ones
-- Do not over-engineer or add unnecessary abstractions
+- **Names reveal intent**: `userCount` not `n`, `isAuthenticated` not `flag`, `fetchOrderHistory()` not `getData()`, `filteredActiveUsers` not `rows`
+- **Self-explanatory code**: No comments except `TODO` and `DECISION` tags. If code needs a comment to be understood, rename or restructure it.
+- **No dead code**: Never commit commented-out code, unused imports, or unreachable branches. Delete rather than comment.
+- **Short, single-purpose functions**: One function does one thing. If a function description has "and", split it. ~20 lines max as a guideline.
+- **Prefer editing existing files**: Add to existing modules before creating new files. New files are justified only for genuinely new concepts.
+- **No over-engineering**: No abstractions without two concrete use cases. No factory-of-factory patterns. No premature generalization.
 
 ### Clean Architecture
-- Respect layer boundaries — dependencies point inward (domain → usecases → adapters → infrastructure)
-- Separate business logic from I/O, frameworks, and UI
-- Define types, enums, and state values in the domain layer; reference them everywhere else
-- New code must integrate through existing interfaces — do not bypass layers
+- **Dependencies point inward**: domain ← usecases ← adapters ← infrastructure. Never import from an outer layer into an inner one.
+  - Do: `usecases/createOrder.ts` imports `domain/Order.ts`
+  - Don't: `domain/Order.ts` imports `infrastructure/database.ts`
+- **Separate business logic from I/O**: Business rules must not contain HTTP calls, file reads, database queries, or UI rendering. Inject dependencies or use ports/adapters.
+- **Domain owns types**: Define types, enums, state values, and schemas in the domain layer. All other layers import from domain — never redefine.
+- **Integrate through existing interfaces**: New code connects via existing APIs, hooks, or extension points. Do not bypass layers or create parallel paths.
 
 ### DRY
-- Before defining a type, enum, constant, or state set, check if one already exists in the project's domain layer or shared definitions
-- Extract repeated logic into shared utilities — three occurrences is the threshold
-- Single source of truth: if a value is defined in one place, import or reference it; never redefine it
+- **Check before defining**: Before creating a type, enum, constant, or utility, search the project's domain layer and shared definitions. Import if it exists.
+- **Three occurrences = extract**: The first duplication is noted, the second triggers extraction into a shared utility.
+- **Single source of truth**: If a value is defined in one place, every consumer imports it. Never redefine, copy-paste, or hardcode the same value elsewhere.
 
 ### General
-- Avoid introducing security vulnerabilities (OWASP Top 10)
-- Consider Linux compatibility
+- Avoid OWASP Top 10 vulnerabilities (injection, XSS, broken auth, etc.)
+- Consider Linux compatibility for all file paths and shell commands
+
+### Coding Standards Brief
+
+The following block is the compact form of the above standards. It is embedded directly in agent prompts and dispatch contexts so that sub-agents receive actionable standards without needing to read this file.
+
+```
+CODING STANDARDS — apply to all code you write:
+- Names reveal intent: `userCount` not `n`, `isAuthenticated` not `flag`, `fetchOrderHistory()` not `getData()`
+- No comments except TODO/DECISION tags — if code needs a comment, rename or restructure
+- No dead code: no commented-out code, no unused imports, no unreachable branches
+- Functions: single-purpose, ~20 lines max. If description has "and", split it
+- Dependencies point inward: domain ← usecases ← adapters ← infrastructure. Never import outward.
+- Business logic must not contain I/O (HTTP, DB, file, UI). Use dependency injection or ports/adapters.
+- Domain layer owns all types, enums, state values. Other layers import — never redefine.
+- Before creating any type/enum/constant, search the domain layer first. Import if it exists.
+- Three occurrences = extract to shared utility. Single source of truth — never redefine values.
+- No over-engineering: no abstractions without two concrete use cases.
+- Integrate through existing interfaces — do not bypass layers or create parallel paths.
+- Avoid OWASP Top 10 vulnerabilities. Consider Linux compatibility.
+```
 
 ## Domain-First Rule
 
@@ -326,6 +348,15 @@ Before implementing any type, enum, state value, or schema:
 3. If none exists and the concept is shared across layers, define it in the domain layer first, then reference it from implementation code
 
 This applies to all implementation agents and the planner.
+
+## Agent Dispatch Standards
+
+When dispatching any implementation agent via the Agent tool, the orchestrator MUST include the Coding Standards Brief (see above) in the prompt parameter. This applies to:
+- Main session dispatching sub-agents
+- Dashboard-dispatched orchestrators dispatching their own sub-agents
+- Any agent that has the ability to spawn sub-agents
+
+Sub-agents receive their context exclusively from (a) their agent `.md` file and (b) the prompt parameter. File read instructions ("See domain/rules.md") are unreliable because agents may not follow through under turn pressure. The inline brief ensures standards are present regardless.
 
 ## Git Standards
 

@@ -613,6 +613,7 @@ function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInst
     '- Implementation agents (coder, coder-frontend, coder-backend, coder-infra, coder-mobile) modify code.',
     '- Run scout or load portfolio context before dispatching implementation agents on a new project.',
     '- Use parallel fan-out when tasks are independent; sequential pipeline when output feeds the next step.',
+    '- When dispatching sub-agents, include the Coding Standards block from this prompt in the Agent tool\'s prompt parameter. Sub-agents do not inherit it automatically.',
     '',
     '## Process for Any Work Item',
     '',
@@ -826,7 +827,7 @@ function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInst
     sections.push(`# Constraints\n\n${additionalInstructions}`);
   }
 
-  // --- Coding Standards (concise reference) ---
+  // --- Coding Standards (inline brief — self-contained, no file read required) ---
   sections.push([
     '# Coding Standards',
     '',
@@ -835,6 +836,22 @@ function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInst
     '- **DRY**: Three occurrences = extract. Single source of truth for all shared definitions.',
     '- **Clean Architecture**: Dependencies point inward. Separate business logic from I/O and frameworks.',
     '- **Clean Code**: Short single-purpose functions. Self-explanatory names. No commented-out code.',
+    '',
+    'CODING STANDARDS — apply to all code you write:',
+    '- Names reveal intent: `userCount` not `n`, `isAuthenticated` not `flag`, `fetchOrderHistory()` not `getData()`',
+    '- No comments except TODO/DECISION tags — if code needs a comment, rename or restructure',
+    '- No dead code: no commented-out code, no unused imports, no unreachable branches',
+    '- Functions: single-purpose, ~20 lines max. If description has "and", split it',
+    '- Dependencies point inward: domain ← usecases ← adapters ← infrastructure. Never import outward.',
+    '- Business logic must not contain I/O (HTTP, DB, file, UI). Use dependency injection or ports/adapters.',
+    '- Domain layer owns all types, enums, state values. Other layers import — never redefine.',
+    '- Before creating any type/enum/constant, search the domain layer first. Import if it exists.',
+    '- Three occurrences = extract to shared utility. Single source of truth — never redefine values.',
+    '- No over-engineering: no abstractions without two concrete use cases.',
+    '- Integrate through existing interfaces — do not bypass layers or create parallel paths.',
+    '- Avoid OWASP Top 10 vulnerabilities. Consider Linux compatibility.',
+    '',
+    '**Sub-agent propagation**: When you dispatch sub-agents via the Agent tool, include the above coding standards block in the prompt parameter. Sub-agents do not automatically inherit these standards.',
   ].join('\n'));
 
   // --- Environment (always included) ---

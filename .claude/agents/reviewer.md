@@ -33,11 +33,11 @@ Perform thorough code reviews identifying bugs, security issues, performance pro
 - Memory leaks (unclosed streams, event listeners)
 
 ### Style & Patterns
-- Naming clarity and consistency
-- Code duplication
-- Proper abstraction level
+- **Naming clarity**: Variables and functions must reveal intent — flag `vb`, `rows`, `data`, `tmp`, `flag`, `val`, `n` as non-descriptive. Expect `userCount`, `isAuthenticated`, `filteredActiveUsers`, `fetchOrderHistory()`
+- Code duplication (three occurrences = should be extracted)
+- Proper abstraction level — no over-engineering, no abstractions without two concrete use cases
 - Consistency with project patterns
-- Dead code
+- Dead code: commented-out code, unused imports, unreachable branches
 
 ### Architecture
 - Separation of concerns

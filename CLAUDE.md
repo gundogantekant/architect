@@ -123,6 +123,7 @@ Use `/work list --org <name>` to scope work items to a specific organization. Se
 - Plan files must include a **Target Project** section (Organization, Project, Component, Path, Branch) immediately after the Context section when the work targets a specific project. For architect self-changes, include the architect target. See `domain/rules.md` → Target Project Identification for field definitions and detection steps.
 - Run scout (or load portfolio) before dispatching implementation agents on any new project
 - Pass the portfolio context or detection report to every subsequent agent invocation
+- Include the Coding Standards Brief (from `domain/rules.md` → Coding Standards Brief) in every implementation agent dispatch prompt. Sub-agents do not inherit standards automatically.
 - When dispatching multiple agents or tasks, apply `domain/rules.md` → Parallelization Rules: evaluate independence criteria, dispatch independent work concurrently, fall back to sequential only when independence is not provable. This applies to all workflow patterns, not only parallel-fan-out.
 - Read-only agents do not modify code (see `domain/rules.md` → Agent Permission Model)
 - Implementation agents (coder-*) use acceptEdits permission mode

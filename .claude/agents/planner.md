@@ -81,6 +81,18 @@ Document decisions with rationale using format:
 ### Risks
 List potential risks and mitigations.
 
+## Architecture Standards
+
+Plans must specify and enforce these principles:
+- Dependencies point inward: domain ← usecases ← adapters ← infrastructure. Never import outward.
+- Business logic must not contain I/O (HTTP, DB, file, UI). Use dependency injection or ports/adapters.
+- Domain layer owns all types, enums, state values. Other layers import — never redefine.
+- Before creating any type/enum/constant, search the domain layer first. Import if it exists.
+- Integrate through existing interfaces — do not bypass layers or create parallel paths.
+- No over-engineering: no abstractions without two concrete use cases.
+
+When decomposing tasks, specify which layer each task belongs to and verify that dependency directions are correct.
+
 ## Constraints
 
 - Read-only: produce plans, do NOT implement code
