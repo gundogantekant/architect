@@ -43,6 +43,44 @@ All three terms refer to the same entity. The dashboard UI uses "task" for brevi
 | Bugfixes | investigate-then-fix — debugger/scout → coder → tester |
 | Vague scope, large initiatives, build-vs-buy | strategic-evaluation — strategist evaluates first |
 
+## Parallelization Rules
+
+Two tasks are **independent** when ALL of the following hold:
+
+| Criterion | Check |
+|-----------|-------|
+| No file overlap | Tasks do not create or modify any of the same files |
+| No data dependency | Neither task's output is an input to the other |
+| No shared state | Tasks do not mutate the same database table, API endpoint schema, or shared configuration |
+| No ordering constraint | The correctness of either task does not depend on the other completing first |
+| Separate work scope | Tasks target different modules, packages, or directories — or touch the same directory but provably disjoint files |
+
+### Enforcement
+
+| Actor | Obligation |
+|-------|------------|
+| PM | Populate `parallel_with` on every DispatchPlan step that shares no dependencies with another step. An empty `parallel_with` array means "evaluated, has dependencies" — not "not considered". When the workflow is `plan-then-execute`, note that the planner will refine parallelization at the task level. |
+| Planner | Group tasks into **parallel batches** — sets of tasks that satisfy all independence criteria. Include a `### Parallel Batches` section in every plan with more than one task. Tasks within a batch run concurrently; batches execute sequentially. |
+| Orchestrator | When dispatching from a PM plan: launch all steps that share the same `parallel_with` group concurrently. When dispatching from a planner plan: launch all tasks within the same parallel batch concurrently. Wait for a batch to complete before starting the next. If the orchestrator identifies additional parallelization not marked by PM or planner, it should exploit it using the independence criteria above. |
+
+### Required vs Optional
+
+| Situation | Rule |
+|-----------|------|
+| Two or more implementation agents (coder-*) with no file or data overlap | **Required** — dispatch in parallel |
+| Read-only agent alongside an implementation agent on a different task | **Required** — read-only agents never conflict |
+| Two implementation agents touching the same module but different files | **Optional** — orchestrator may parallelize if confident in file-level isolation |
+| Any uncertainty about shared state or file overlap | **Sequential** — default to sequential when independence is not provable |
+
+### Scope
+
+These rules apply to ALL workflow patterns, not only `parallel-fan-out`:
+- **sequential**: Check whether any adjacent steps are actually independent and could overlap
+- **plan-then-execute**: Planner must group tasks into parallel batches
+- **parallel-fan-out**: Already parallel by design; rules ensure convergence steps (tester, reviewer) wait for all parallel work
+- **investigate-then-fix**: Investigation is always sequential; fix + test may parallelize if targeting separate components
+- **PM-guided dispatch**: PM applies rules to the execution plan; orchestrator enforces them
+
 ## Agent Inclusion Rules
 
 | Agent | Include when |
@@ -257,14 +295,37 @@ When PM's classification confidence is below **0.6**, always include clarificati
 
 Shared standards enforced by all implementation agents.
 
+### Clean Code
 - Use definitive variable names
+- Write self-explanatory code — no comments except TODO and DECISION tags
 - Do not write commented-out code
-- Do not write comments in code files (keep TODO and DECISION tags only)
-- Write self-explanatory code
+- Keep functions short and single-purpose
 - Prefer editing existing files over creating new ones
 - Do not over-engineer or add unnecessary abstractions
+
+### Clean Architecture
+- Respect layer boundaries — dependencies point inward (domain → usecases → adapters → infrastructure)
+- Separate business logic from I/O, frameworks, and UI
+- Define types, enums, and state values in the domain layer; reference them everywhere else
+- New code must integrate through existing interfaces — do not bypass layers
+
+### DRY
+- Before defining a type, enum, constant, or state set, check if one already exists in the project's domain layer or shared definitions
+- Extract repeated logic into shared utilities — three occurrences is the threshold
+- Single source of truth: if a value is defined in one place, import or reference it; never redefine it
+
+### General
 - Avoid introducing security vulnerabilities (OWASP Top 10)
 - Consider Linux compatibility
+
+## Domain-First Rule
+
+Before implementing any type, enum, state value, or schema:
+1. Check `domain/entities.md` (for architect itself) or the target project's domain layer for an existing canonical definition
+2. If one exists, import or reference it — do not redefine
+3. If none exists and the concept is shared across layers, define it in the domain layer first, then reference it from implementation code
+
+This applies to all implementation agents and the planner.
 
 ## Git Standards
 

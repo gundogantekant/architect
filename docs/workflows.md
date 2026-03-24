@@ -32,7 +32,7 @@ Dispatch implementation agents in parallel when their work doesn't conflict. Con
 planner -> [task list] -> dispatch coders per task
 ```
 
-Planner produces a numbered task list. Main conversation dispatches appropriate coder agents for each task, parallelizing where possible.
+Planner produces a numbered task list with parallel batch groupings (see `domain/rules.md` → Parallelization Rules). Main conversation dispatches all tasks within a batch concurrently, then proceeds to the next batch after all tasks in the current batch complete.
 
 ## 4. Investigate-Then-Fix
 
@@ -98,7 +98,7 @@ Planner decomposes the refactoring into atomic steps. Refactorer executes transf
 - The main Claude conversation acts as orchestrator
 - Subagents cannot spawn other subagents
 - Pass scout's detection report to all subsequent agents
-- Use parallel dispatch for independent work
+- Use parallel dispatch for independent work — see `domain/rules.md` → Parallelization Rules for independence criteria and enforcement obligations. When dispatching from a planner's task list, follow the Parallel Batches grouping. When dispatching from PM's execution plan, follow the `parallel_with` fields. When neither provides grouping, apply the independence criteria directly.
 - Use sequential dispatch when output feeds the next step
 - For non-trivial work requests, invoke PM first to get a dispatch plan
 - Skip PM for slash commands, direct questions, trivial tasks, and explicit agent invocations

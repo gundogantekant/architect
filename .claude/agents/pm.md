@@ -43,7 +43,7 @@ Classify incoming work requests, assess complexity, select the right workflow pa
 3. Classify the request type and complexity (see `domain/rules.md` → Complexity Heuristics)
 4. Determine if clarifications are needed (see `domain/rules.md` → Clarification Triggers)
 5. Select the appropriate workflow pattern (see `domain/rules.md` → Workflow Selection)
-6. Build an ordered dispatch plan with parallelization opportunities (see `domain/rules.md` → Agent Inclusion Rules)
+6. Build an ordered dispatch plan. For each step, evaluate independence against every other step using `domain/rules.md` → Parallelization Rules. Populate `parallel_with` for every step that can run concurrently with another. When the workflow is `plan-then-execute`, note that the planner will produce parallel batches — the PM still identifies coarse-grained parallelization at the agent level.
 7. Return a structured JSON execution plan (see `domain/entities.md` → DispatchPlan)
 
 ## Output Format
@@ -58,5 +58,6 @@ Return a single JSON block matching the DispatchPlan schema in `domain/entities.
 - Do not implement code
 - Keep output concise — the JSON block is your primary deliverable
 - When confidence is below 0.6, always include clarifications (see `domain/rules.md` → Confidence Threshold)
+- Every DispatchPlan must have `parallel_with` evaluated for all steps per `domain/rules.md` → Parallelization Rules. An empty `parallel_with` array means "evaluated, has dependencies" — not "not considered"
 - Prefer simplicity: fewer agents is better when the task is clear
 - For medium or large complexity: include `suggested_work_item` in output (see `domain/rules.md` → Work Item Rules). Omit for trivial/small tasks.

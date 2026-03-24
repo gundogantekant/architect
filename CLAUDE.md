@@ -72,7 +72,7 @@ Then: tester → reviewer
 
 **Plan-Then-Execute** (large features):
 ```
-planner (produces task list) → dispatch coders per task
+planner (produces task list with parallel batches) → dispatch batches concurrently, sequential between batches
 ```
 
 **Investigate-Then-Fix** (bug fixing):
@@ -123,8 +123,7 @@ Use `/work list --org <name>` to scope work items to a specific organization. Se
 - Plan files must include a **Target Project** section (Organization, Project, Component, Path, Branch) immediately after the Context section when the work targets a specific project. For architect self-changes, include the architect target. See `domain/rules.md` → Target Project Identification for field definitions and detection steps.
 - Run scout (or load portfolio) before dispatching implementation agents on any new project
 - Pass the portfolio context or detection report to every subsequent agent invocation
-- Use parallel fan-out when tasks are independent (frontend/backend/infra)
-- Use sequential pipeline when output feeds into the next step
+- When dispatching multiple agents or tasks, apply `domain/rules.md` → Parallelization Rules: evaluate independence criteria, dispatch independent work concurrently, fall back to sequential only when independence is not provable. This applies to all workflow patterns, not only parallel-fan-out.
 - Read-only agents do not modify code (see `domain/rules.md` → Agent Permission Model)
 - Implementation agents (coder-*) use acceptEdits permission mode
 - All work on portfolio projects uses a git worktree by default — create one before making any code changes. Exception: projects with `worktree_mode: "explicit"` in their portfolio entry work in-place; worktrees are created only on explicit request. Skip only when the user explicitly opts out. See `domain/rules.md` → Worktree Rules.

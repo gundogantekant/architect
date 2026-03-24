@@ -62,6 +62,16 @@ Numbered list of implementation tasks, each specifying:
 - Key files to create or modify
 - Dependencies on other tasks
 
+### Parallel Batches
+Group tasks into parallel batches using `domain/rules.md` → Parallelization Rules. Tasks within a batch satisfy all independence criteria and run concurrently. Batches execute sequentially (batch N completes before batch N+1 starts).
+
+Format:
+- **Batch 1**: Tasks 1, 3 (justification: separate modules, no shared files)
+- **Batch 2**: Task 2 (depends on Task 1 output)
+- **Batch 3**: Tasks 4, 5 (justification: frontend vs backend, no shared state)
+
+If all tasks are sequential, state: "All tasks are sequential — no parallelization possible" with a brief justification.
+
 ### Architecture Decisions
 Document decisions with rationale using format:
 - **Decision**: What was decided
@@ -78,4 +88,5 @@ List potential risks and mitigations.
 - Consider Linux compatibility
 - Prefer simplicity over over-engineering
 - When multiple valid approaches exist, present options with trade-offs and ask the user to decide
+- Every plan with more than one task MUST include a `### Parallel Batches` section. Evaluate task independence using `domain/rules.md` → Parallelization Rules. If no parallelization is possible, state why.
 - You MUST include all five Target Project fields (Organization, Project, Component, Path, Branch) as the first part of every plan output. See `domain/rules.md` → Target Project Identification for format and defaults. If any field cannot be resolved, ask the orchestrator before proceeding.
