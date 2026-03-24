@@ -405,6 +405,7 @@
   <div id="epic-tree"></div>
   <div id="sessions-sidebar" class="sessions-section"></div>
   <div id="tree"></div>
+  <div class="sidebar-settings" onclick="location.hash='#time-report'">&#9202; Time Report</div>
   <div class="sidebar-settings" onclick="location.hash='#settings'">&#9881; Settings</div>
 </nav>
 
@@ -449,6 +450,7 @@ function getRouteTitle() {
   if (parts[0] === 'epics') return 'Epics';
   if (parts[0] === 'agents' || hash.startsWith('agents?')) return 'Agents';
   if (parts[0] === 'settings') return 'Settings';
+  if (parts[0] === 'time-report') return 'Time Report';
   if (parts[0] === 'epic' && parts[1]) return `E-${parts[1]}`;
   if (parts[0] === 'org' && parts[1]) return parts[1];
   if (parts[0] === 'component' && parts.length >= 4) return `${parts[2]}/${parts[3]}`;
@@ -4660,6 +4662,63 @@ async function showQuickDispatchModal() {
     }
   };
 }
+// --- Time Report view ---
+
+function formatDuration(seconds) {
+  if (!seconds || seconds < 0) return '0m';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function formatCost(usd) {
+  if (!usd) return '-';
+  return `$${usd.toFixed(2)}`;
+}
+
+function renderTimeReport(report) {
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+  function renderTable(rows, totals) {
+    if (!rows.length) return '<p style="color:var(--text-light);font-size:13px">No sessions recorded yet.</p>';
+    let html = `<table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="border-bottom:2px solid var(--border);text-align:left">
+        <th style="padding:8px 12px">Project</th>
+        <th style="padding:8px 12px;text-align:right">Sessions</th>
+        <th style="padding:8px 12px;text-align:right">Time</th>
+        <th style="padding:8px 12px;text-align:right">Cost</th>
+      </tr></thead><tbody>`;
+    for (const r of rows) {
+      const label = r.component ? `${r.project} / ${r.component}` : r.project_key;
+      html += `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:8px 12px"><span style="color:var(--text-light);font-size:11px">${esc(r.org || '')}</span> ${esc(label)}</td>
+        <td style="padding:8px 12px;text-align:right">${r.sessions}</td>
+        <td style="padding:8px 12px;text-align:right;font-weight:600">${formatDuration(r.time_seconds)}</td>
+        <td style="padding:8px 12px;text-align:right">${formatCost(r.cost_usd)}</td>
+      </tr>`;
+    }
+    html += `<tr style="border-top:2px solid var(--border);font-weight:700">
+      <td style="padding:8px 12px">Total</td>
+      <td style="padding:8px 12px;text-align:right">${totals.sessions}</td>
+      <td style="padding:8px 12px;text-align:right">${formatDuration(totals.time_seconds)}</td>
+      <td style="padding:8px 12px;text-align:right">${formatCost(totals.cost_usd)}</td>
+    </tr></tbody></table>`;
+    return html;
+  }
+
+  return `<div class="card">
+    <h2 style="margin-bottom:4px">Time Report</h2>
+    <p style="color:var(--text-light);font-size:13px;margin-bottom:24px">${today}</p>
+
+    <h3 style="font-size:15px;margin-bottom:12px;color:var(--accent)">Today</h3>
+    ${renderTable(report.today, report.today_total)}
+
+    <h3 style="font-size:15px;margin:24px 0 12px;color:var(--accent)">All Time</h3>
+    ${renderTable(report.overall, report.overall_total)}
+  </div>`;
+}
+
 // --- Settings view ---
 
 function formatUptime(seconds) {
@@ -4993,6 +5052,17 @@ async function route() {
     }
     setActive('');
     placeSessionPanels();
+    return;
+  }
+
+  if (parts[0] === 'time-report') {
+    try {
+      const report = await api('time-report');
+      main.innerHTML = renderTimeReport(report);
+    } catch (e) {
+      main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading time report: ${esc(String(e))}</p></div>`;
+    }
+    setActive('');
     return;
   }
 

@@ -122,6 +122,44 @@ function isPidAlive(pid) {
   }
 }
 
+// --- Project sync from portfolio registry ---
+function syncProjectsFromRegistry() {
+  const registryPath = join(PORTFOLIO, 'registry.json');
+  if (!existsSync(registryPath)) return 0;
+  const registry = JSON.parse(readFileSync(registryPath, 'utf8'));
+  let count = 0;
+  for (const [path, entry] of Object.entries(registry.entries || {})) {
+    const key = `${entry.org}/${entry.project}/${entry.component}`;
+    let role = '';
+    try {
+      const comp = JSON.parse(readFileSync(join(PORTFOLIO, entry.org, entry.project, `${entry.component}.json`), 'utf8'));
+      role = comp.role || '';
+    } catch {}
+    db.upsertProject({ key, org: entry.org, project: entry.project, component: entry.component, path, role });
+    count++;
+  }
+  if (count) console.log(`Synced ${count} projects from portfolio registry`);
+  return count;
+}
+
+// --- Archive session to permanent history ---
+function archiveSession(session, type) {
+  const endedAt = type === 'cli' ? session.exited_at : (type === 'dispatch' ? session.completed_at : session.exited_at);
+  const startedAt = type === 'cli' ? session.registered_at : session.started_at;
+  if (!endedAt || !startedAt || !session.project_key) return;
+  try {
+    db.recordSessionHistory({
+      id: session.id, type, project_key: session.project_key,
+      work_item_id: session.work_item_id, epic_id: session.epic_id,
+      title: session.title || '', status: session.status,
+      permission_mode: session.permission_mode,
+      started_at: startedAt, ended_at: endedAt, cost_usd: session.cost_usd || null,
+    });
+  } catch (e) {
+    console.error(`Failed to archive ${type} ${session.id}:`, e.message);
+  }
+}
+
 // --- Dispatch registry ---
 const dispatches = new Map();
 
@@ -183,6 +221,7 @@ function wireTerminalHandlers(terminal) {
       try { ws.send(JSON.stringify({ type: 'exit', code: exitCode })); ws.close(); } catch {}
     }
     terminal.wsClients.clear();
+    archiveSession(terminal, 'terminal');
     terminals.delete(terminal.id);
     saveTerminalToDb(terminal);
     // Clean up log file
@@ -291,12 +330,14 @@ function restoreSessions() {
         d.status = 'interrupted';
         d.completed_at = now;
         db.updateDispatchStatus(d.id, 'interrupted', now);
+        archiveSession(d, 'dispatch');
         dispatches.set(d.id, {
           ...d, output: [], lastLines: [], listeners: new Set(), process: null,
         });
       }
     } else {
-      // Non-running dispatch (completed/failed/killed/interrupted) — clean up from DB, don't load into memory
+      // Non-running dispatch (completed/failed/killed/interrupted) — archive then clean up
+      archiveSession(d, 'dispatch');
       db.deleteDispatch(d.id);
       unlinkFile(join(LOGS_DIR, `${d.id}.jsonl`)).catch(() => {});
     }
@@ -341,6 +382,7 @@ function restoreSessions() {
           t.status = 'interrupted';
           t.exited_at = now;
           db.updateTerminalStatus(t.id, 'interrupted', now);
+          archiveSession(t, 'terminal');
           terminals.set(t.id, { ...t, ptyProcess: null, scrollback: '', wsClients: new Set() });
         }
       } else if (t.pid && isPidAlive(t.pid)) {
@@ -357,10 +399,12 @@ function restoreSessions() {
         t.status = 'interrupted';
         t.exited_at = now;
         db.updateTerminalStatus(t.id, 'interrupted', now);
+        archiveSession(t, 'terminal');
         terminals.set(t.id, { ...t, ptyProcess: null, scrollback: '', wsClients: new Set() });
       }
     } else {
-      // Non-running terminal (completed/killed/interrupted) — clean up from DB, don't load into memory
+      // Non-running terminal — archive then clean up
+      archiveSession(t, 'terminal');
       db.deleteTerminal(t.id);
       unlinkFile(join(LOGS_DIR, `${t.id}.raw`)).catch(() => {});
     }
@@ -370,7 +414,9 @@ function restoreSessions() {
     if (c.status === 'running' && isPidAlive(c.pid)) {
       cliSessions.set(c.id, { ...c });
     } else {
-      // Dead or exited CLI session — clean up from DB
+      // Dead or exited CLI session — archive then clean up
+      if (!c.exited_at) c.exited_at = now;
+      archiveSession(c, 'cli');
       db.deleteCliSession(c.id);
     }
   }
@@ -458,6 +504,7 @@ function wireDispatchHandlers(dispatch, proc) {
     if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
     for (const listener of dispatch.listeners) listener(null);
     dispatch.listeners.clear();
+    archiveSession(dispatch, 'dispatch');
     dispatches.delete(dispatch.id);
     saveDispatchToDb(dispatch);
   });
@@ -1634,6 +1681,7 @@ const routes = [
       if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
       for (const listener of dispatch.listeners) listener(null);
       dispatch.listeners.clear();
+      archiveSession(dispatch, 'dispatch');
       saveDispatchToDb(dispatch);
       killed++;
     }
@@ -1654,6 +1702,7 @@ const routes = [
     dispatch.completed_at = new Date().toISOString();
     if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
     if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
+    archiveSession(dispatch, 'dispatch');
     for (const listener of dispatch.listeners) listener(null);
     dispatch.listeners.clear();
     dispatches.delete(m[1]);
@@ -1918,6 +1967,7 @@ const routes = [
         try { ws.send(JSON.stringify({ type: 'exit', code: -1 })); ws.close(); } catch {}
       }
       terminal.wsClients.clear();
+      archiveSession(terminal, 'terminal');
       saveTerminalToDb(terminal);
       unlinkFile(join(LOGS_DIR, `${terminal.id}.raw`)).catch(() => {});
       killed++;
@@ -1943,11 +1993,53 @@ const routes = [
       try { ws.send(JSON.stringify({ type: 'exit', code: -1 })); ws.close(); } catch {}
     }
     terminal.wsClients.clear();
+    archiveSession(terminal, 'terminal');
     if (terminal.agents_file) unlinkFile(terminal.agents_file).catch(() => {});
     terminals.delete(m[1]);
     db.deleteTerminal(m[1]);
     unlinkFile(join(LOGS_DIR, `${m[1]}.raw`)).catch(() => {});
     json(res, { status: 'killed', id: m[1] });
+  }],
+
+  // --- Projects & Time Report endpoints ---
+
+  [/^\/api\/projects$/, 'GET', async (_m, _req, res) => {
+    json(res, db.getAllProjects());
+  }],
+
+  [/^\/api\/projects\/sync$/, 'POST', async (_m, _req, res) => {
+    const count = syncProjectsFromRegistry();
+    json(res, { synced: count });
+  }],
+
+  [/^\/api\/projects\/(.+)\/stats$/, 'GET', async (m, _req, res) => {
+    const key = decodeURIComponent(m[1]);
+    const project = db.getProject(key);
+    if (!project) return err(res, 'project not found');
+    const recentSessions = db.getSessionHistory({ project_key: key, limit: 20 });
+    json(res, { ...project, recent_sessions: recentSessions });
+  }],
+
+  [/^\/api\/session-history$/, 'GET', async (_m, req, res) => {
+    const url = new URL(req.url, 'http://localhost');
+    const filters = {};
+    for (const k of ['project_key', 'epic_id', 'work_item_id']) {
+      if (url.searchParams.get(k)) filters[k] = url.searchParams.get(k);
+    }
+    filters.limit = parseInt(url.searchParams.get('limit') || '50', 10);
+    filters.offset = parseInt(url.searchParams.get('offset') || '0', 10);
+    json(res, db.getSessionHistory(filters));
+  }],
+
+  [/^\/api\/time-report$/, 'GET', async (_m, _req, res) => {
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    const { today, overall } = db.getTimeReport(todayStart.toISOString());
+    const sum = (arr, k) => arr.reduce((s, r) => s + (r[k] || 0), 0);
+    json(res, {
+      today, overall,
+      today_total: { sessions: sum(today, 'sessions'), time_seconds: sum(today, 'time_seconds'), cost_usd: sum(today, 'cost_usd') },
+      overall_total: { sessions: sum(overall, 'sessions'), time_seconds: sum(overall, 'time_seconds'), cost_usd: sum(overall, 'cost_usd') },
+    });
   }],
 
   // --- Server management endpoints ---
@@ -2147,6 +2239,7 @@ setInterval(() => {
         terminal.exited_at = new Date().toISOString();
         if (terminal.logStream) { terminal.logStream.end(); terminal.logStream = null; }
         saveTerminalToDb(terminal);
+        archiveSession(terminal, 'terminal');
         for (const ws of terminal.wsClients) {
           try { ws.send(JSON.stringify({ type: 'exit', code: -1 })); ws.close(); } catch {}
         }
@@ -2164,6 +2257,7 @@ setInterval(() => {
         if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
         if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
         saveDispatchToDb(dispatch);
+        archiveSession(dispatch, 'dispatch');
         for (const listener of dispatch.listeners) listener(null);
         dispatch.listeners.clear();
       }
@@ -2176,6 +2270,7 @@ setInterval(() => {
       cli.status = 'exited';
       cli.exited_at = new Date().toISOString();
       saveCliSessionToDb(cli);
+      archiveSession(cli, 'cli');
     }
   }
 
@@ -2261,6 +2356,9 @@ async function main() {
 
   // Phase 2: Ensure logs directory
   await mkdir(LOGS_DIR, { recursive: true });
+
+  // Phase 2.5: Sync projects from portfolio registry
+  syncProjectsFromRegistry();
 
   // Phase 3: Restore sessions
   restoreSessions();

@@ -510,3 +510,91 @@ function hydrateEpic(row) {
     updated_at: row.updated_at,
   };
 }
+
+// --- Projects ---
+
+export function upsertProject({ key, org, project, component, path, role }) {
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO projects (key, org, project, component, path, role, synced_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET
+      org = excluded.org, project = excluded.project, component = excluded.component,
+      path = excluded.path, role = excluded.role, synced_at = excluded.synced_at
+  `).run(key, org, project, component, path || '', role || '', now);
+}
+
+export function ensureProject(key) {
+  const existing = db.prepare('SELECT key FROM projects WHERE key = ?').get(key);
+  if (existing) return;
+  const parts = key.split('/');
+  const now = new Date().toISOString();
+  db.prepare(`INSERT OR IGNORE INTO projects (key, org, project, component, path, role, synced_at) VALUES (?, ?, ?, ?, '', '', ?)`)
+    .run(key, parts[0] || key, parts[1] || '', parts[2] || '', now);
+}
+
+export function getAllProjects() {
+  return db.prepare('SELECT * FROM projects ORDER BY org, project, component').all();
+}
+
+export function getProject(key) {
+  return db.prepare('SELECT * FROM projects WHERE key = ?').get(key);
+}
+
+// --- Session History ---
+
+export function recordSessionHistory({ id, type, project_key, work_item_id, epic_id, title, status, permission_mode, started_at, ended_at, cost_usd }) {
+  const start = new Date(started_at).getTime();
+  const end = new Date(ended_at).getTime();
+  const duration_seconds = Math.max(0, (end - start) / 1000);
+
+  db.transaction(() => {
+    ensureProject(project_key);
+    const result = db.prepare(`
+      INSERT OR IGNORE INTO session_history (id, type, project_key, work_item_id, epic_id, title, status, permission_mode, started_at, ended_at, duration_seconds, cost_usd)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, type, project_key, work_item_id || null, epic_id || null, title || '', status, permission_mode || null, started_at, ended_at, duration_seconds, cost_usd || null);
+    if (result.changes > 0) {
+      db.prepare(`UPDATE projects SET session_count = session_count + 1, total_time_seconds = total_time_seconds + ?, total_cost_usd = total_cost_usd + ? WHERE key = ?`)
+        .run(duration_seconds, cost_usd || 0, project_key);
+    }
+  })();
+}
+
+export function getSessionHistory({ project_key, epic_id, work_item_id, limit, offset } = {}) {
+  let sql = 'SELECT * FROM session_history WHERE 1=1';
+  const params = [];
+  if (project_key) { sql += ' AND project_key = ?'; params.push(project_key); }
+  if (epic_id) { sql += ' AND epic_id = ?'; params.push(epic_id); }
+  if (work_item_id) { sql += ' AND work_item_id = ?'; params.push(work_item_id); }
+  sql += ' ORDER BY ended_at DESC';
+  if (limit) { sql += ' LIMIT ?'; params.push(limit); }
+  if (offset) { sql += ' OFFSET ?'; params.push(offset); }
+  return db.prepare(sql).all(...params);
+}
+
+export function getTimeReport(todayStart) {
+  const today = db.prepare(`
+    SELECT sh.project_key, p.org, p.project, p.component,
+      COUNT(*) AS sessions, COALESCE(SUM(sh.duration_seconds), 0) AS time_seconds, COALESCE(SUM(sh.cost_usd), 0) AS cost_usd
+    FROM session_history sh JOIN projects p ON sh.project_key = p.key
+    WHERE sh.ended_at >= ? GROUP BY sh.project_key ORDER BY time_seconds DESC
+  `).all(todayStart);
+  const overall = db.prepare(`
+    SELECT key AS project_key, org, project, component, session_count AS sessions, total_time_seconds AS time_seconds, total_cost_usd AS cost_usd
+    FROM projects WHERE session_count > 0 ORDER BY total_time_seconds DESC
+  `).all();
+  return { today, overall };
+}
+
+export function getProjectStats(key) {
+  return db.prepare('SELECT * FROM project_stats WHERE project_key = ?').get(key);
+}
+
+export function getEpicStats(epicId) {
+  return db.prepare('SELECT * FROM epic_stats WHERE epic_id = ?').get(epicId);
+}
+
+export function getWorkItemStats(workItemId) {
+  return db.prepare('SELECT * FROM work_item_stats WHERE work_item_id = ?').get(workItemId);
+}
