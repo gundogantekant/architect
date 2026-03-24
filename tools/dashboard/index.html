@@ -135,7 +135,7 @@
   .dispatch-panel.status-completed { border-left-color: var(--blue); }
   .dispatch-panel.status-failed, .dispatch-panel.status-killed { border-left-color: var(--red); }
   .dispatch-panel.status-interrupted { border-left-color: #94a3b8; }
-  .dispatch-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: linear-gradient(135deg, #fafafa 0%, #f5f0ff 100%); }
+  .dispatch-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: linear-gradient(135deg, #fafafa 0%, #f5f0ff 100%); cursor: pointer; }
   .dispatch-header .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
   .dispatch-header .status-dot.running { background: var(--orange); animation: pulse 1.5s infinite; }
   .dispatch-header .status-dot.completed { background: var(--blue); }
@@ -219,7 +219,7 @@
   /* CLI session panels */
   .cli-session-panel { background: var(--bg-card); border: 1px solid var(--border); border-left: 3px solid var(--teal); border-radius: 8px; margin-bottom: 16px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06); transition: box-shadow 0.2s; }
   .cli-session-panel:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-  .cli-session-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: linear-gradient(135deg, #fafafa 0%, #f0faf8 100%); }
+  .cli-session-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: linear-gradient(135deg, #fafafa 0%, #f0faf8 100%); cursor: pointer; }
   .cli-session-header .status-dot.running { background: var(--teal); animation: pulse 1.5s infinite; }
   .cli-session-header .status-dot.exited { background: #94a3b8; }
   .cli-session-header .cli-title { font-size: 13px; font-weight: 600; flex: 1; }
@@ -245,7 +245,7 @@
   /* Terminal panels */
   .terminal-panel { background: var(--bg-card); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; margin-bottom: 16px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06); transition: box-shadow 0.2s; }
   .terminal-panel:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-  .terminal-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: linear-gradient(135deg, #fafafa 0%, #f5f0ff 100%); }
+  .terminal-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: linear-gradient(135deg, #fafafa 0%, #f5f0ff 100%); cursor: pointer; }
   .terminal-header .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
   .terminal-header .status-dot.running { background: var(--orange); animation: pulse 1.5s infinite; }
   .terminal-header .status-dot.completed { background: var(--blue); }
@@ -712,10 +712,14 @@ function createDispatchPanel(dispatch) {
     panel.querySelector(`[data-minimize-dispatch="${dispatch.id}"]`).textContent = '▶';
     sessionCollapseState.set(panelKey, true);
   }
-  // Bind minimize button
+  // Bind minimize button + header click to toggle collapse
   panel.querySelector(`[data-minimize-dispatch="${dispatch.id}"]`).onclick = () => {
     togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-dispatch="${dispatch.id}"]`));
   };
+  panel.querySelector('.dispatch-header').addEventListener('click', (e) => {
+    if (e.target.closest('button')) return;
+    togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-dispatch="${dispatch.id}"]`));
+  });
   // Bind focus buttons (top + bottom)
   panel.querySelector(`[data-focus-dispatch="${dispatch.id}"]`).onclick = () => openFocusPopup('dispatch', dispatch.id);
   const bottomFocusD = panel.querySelector(`[data-focus-dispatch-bottom="${dispatch.id}"]`);
@@ -1056,10 +1060,14 @@ function createTerminalPanel(terminalInfo) {
     panel.querySelector(`[data-minimize-terminal="${terminalInfo.id}"]`).textContent = '▶';
     sessionCollapseState.set(panelKey, true);
   }
-  // Bind minimize button
+  // Bind minimize button + header click to toggle collapse
   panel.querySelector(`[data-minimize-terminal="${terminalInfo.id}"]`).onclick = () => {
     togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-terminal="${terminalInfo.id}"]`));
   };
+  panel.querySelector('.terminal-header').addEventListener('click', (e) => {
+    if (e.target.closest('button')) return;
+    togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-terminal="${terminalInfo.id}"]`));
+  });
   // Bind focus buttons (top + bottom)
   panel.querySelector(`[data-focus-terminal="${terminalInfo.id}"]`).onclick = () => openFocusPopup('terminal', terminalInfo.id);
   const bottomFocusT = panel.querySelector(`[data-focus-terminal-bottom="${terminalInfo.id}"]`);
@@ -1091,11 +1099,17 @@ function createTerminalPanel(terminalInfo) {
     updateDispatchBadge();
     refreshSessionsSidebar();
   };
-  // Focus xterm when clicking anywhere on the terminal container
+  // Focus xterm on click, but don't interfere with text selection or copy
   const termContainer = panel.querySelector(`#term-container-${terminalInfo.id}`);
   if (termContainer) {
-    termContainer.addEventListener('click', () => {
-      if (terminalInfo._term) terminalInfo._term.focus();
+    termContainer.addEventListener('mousedown', (e) => {
+      if (e.target.closest('button, a')) return;
+      const onUp = () => { termContainer.removeEventListener('mouseup', onUp); clearTimeout(tid); };
+      const tid = setTimeout(() => {
+        termContainer.removeEventListener('mouseup', onUp);
+        if (terminalInfo._term) terminalInfo._term.focus();
+      }, 200);
+      termContainer.addEventListener('mouseup', onUp, { once: true });
     });
   }
   return panel;
@@ -1136,6 +1150,13 @@ async function connectTerminalWs(terminalInfo) {
   const xtermViewport = containerEl.querySelector('.xterm-viewport');
   if (xtermViewport) xtermViewport.style.overscrollBehavior = 'contain';
 
+  // Track whether user has scrolled away from bottom — auto-scroll only when at bottom
+  let userScrolledUp = false;
+  term.onScroll(() => {
+    const buf = term.buffer?.active;
+    if (buf) userScrolledUp = buf.viewportY < buf.baseY;
+  });
+
   terminalInfo._term = term;
   terminalInfo._fitAddon = fitAddon;
 
@@ -1149,12 +1170,7 @@ async function connectTerminalWs(terminalInfo) {
       const msg = JSON.parse(e.data);
       if (msg.type === 'data') {
         term.write(msg.data);
-        // Smart scroll: only auto-scroll if already at bottom (avoids disrupting user scroll position)
-        // Also skip scroll if another terminal is focused in the focus popup (prevents cursor stealing)
-        const buf = term.buffer?.active;
-        const isAtBottom = !buf || (buf.viewportY >= buf.baseY - 1);
-        const isFocusedElsewhere = activeFocusPopup && activeFocusPopup.type === 'terminal' && activeFocusPopup.id !== terminalInfo.id;
-        if (isAtBottom && !isFocusedElsewhere) {
+        if (!userScrolledUp) {
           term.scrollToBottom();
         }
       } else if (msg.type === 'exit') {
@@ -1246,6 +1262,10 @@ function createCliSessionPanel(session) {
   panel.querySelector(`[data-minimize-cli="${session.id}"]`).onclick = () => {
     togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-cli="${session.id}"]`));
   };
+  panel.querySelector('.cli-session-header').addEventListener('click', (e) => {
+    if (e.target.closest('button')) return;
+    togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-cli="${session.id}"]`));
+  });
   return panel;
 }
 
@@ -4035,7 +4055,7 @@ function openFocusPopup(type, id) {
 
   // For terminals, fit to new size and scroll to bottom
   if (type === 'terminal' && terminalInfo?._fitAddon) {
-    requestAnimationFrame(() => { terminalInfo._fitAddon.fit(); if (terminalInfo._term) { terminalInfo._term.scrollToBottom(); terminalInfo._term.focus(); } });
+    requestAnimationFrame(() => { terminalInfo._fitAddon.fit(); if (terminalInfo._term) terminalInfo._term.focus(); });
   }
   // For dispatch logs, scroll to bottom on focus
   if (type === 'dispatch' && sourceEl) {
@@ -4156,11 +4176,11 @@ function closeFocusPopup() {
     parentEl.appendChild(sourceEl);
   }
 
-  // Re-fit terminal after moving back to inline panel
+  // Re-fit terminal after moving back to inline panel (delay to let DOM settle)
   if (type === 'terminal') {
     const terminalInfo = activeTerminals.find(t => t.id === id);
     if (terminalInfo?._fitAddon) {
-      requestAnimationFrame(() => { terminalInfo._fitAddon.fit(); });
+      setTimeout(() => { if (terminalInfo._fitAddon) terminalInfo._fitAddon.fit(); }, 50);
     }
   }
 
