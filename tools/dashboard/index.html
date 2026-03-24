@@ -1099,17 +1099,12 @@ function createTerminalPanel(terminalInfo) {
     updateDispatchBadge();
     refreshSessionsSidebar();
   };
-  // Focus xterm on click, but don't interfere with text selection or copy
+  // Focus xterm on click, but preserve text selection for copy
   const termContainer = panel.querySelector(`#term-container-${terminalInfo.id}`);
   if (termContainer) {
-    termContainer.addEventListener('mousedown', (e) => {
-      if (e.target.closest('button, a')) return;
-      const onUp = () => { termContainer.removeEventListener('mouseup', onUp); clearTimeout(tid); };
-      const tid = setTimeout(() => {
-        termContainer.removeEventListener('mouseup', onUp);
-        if (terminalInfo._term) terminalInfo._term.focus();
-      }, 200);
-      termContainer.addEventListener('mouseup', onUp, { once: true });
+    termContainer.addEventListener('click', () => {
+      if (terminalInfo._term?.hasSelection()) return;
+      if (terminalInfo._term) terminalInfo._term.focus();
     });
   }
   return panel;
@@ -1150,13 +1145,6 @@ async function connectTerminalWs(terminalInfo) {
   const xtermViewport = containerEl.querySelector('.xterm-viewport');
   if (xtermViewport) xtermViewport.style.overscrollBehavior = 'contain';
 
-  // Track whether user has scrolled away from bottom — auto-scroll only when at bottom
-  let userScrolledUp = false;
-  term.onScroll(() => {
-    const buf = term.buffer?.active;
-    if (buf) userScrolledUp = buf.viewportY < buf.baseY;
-  });
-
   terminalInfo._term = term;
   terminalInfo._fitAddon = fitAddon;
 
@@ -1170,9 +1158,6 @@ async function connectTerminalWs(terminalInfo) {
       const msg = JSON.parse(e.data);
       if (msg.type === 'data') {
         term.write(msg.data);
-        if (!userScrolledUp) {
-          term.scrollToBottom();
-        }
       } else if (msg.type === 'exit') {
         terminalInfo.status = msg.code === 0 ? 'completed' : 'failed';
         // Dispose xterm instance
