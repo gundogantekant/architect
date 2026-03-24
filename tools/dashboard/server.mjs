@@ -33,7 +33,7 @@ const port = (() => {
 
 // Valid status values — canonical source: domain/entities.md
 const VALID_WORK_ITEM_STATUSES = new Set(['open', 'in-progress', 'blocked', 'done', 'cancelled']);
-const VALID_EPIC_STATUSES = new Set(['draft', 'active', 'done', 'cancelled']);
+const VALID_EPIC_STATUSES = new Set(['draft', 'active', 'done', 'cancelled', 'archived']);
 const VALID_PRIORITIES = new Set(['low', 'medium', 'high', 'critical']);
 
 const SERVER_START_TIME = Date.now();
@@ -1160,6 +1160,17 @@ const routes = [
     const archived = db.deleteEpic(m[1]);
     if (!archived) return err(res, 'epic not found', 404);
     json(res, { archived: m[1], status: 'cancelled' });
+  }],
+
+  // Archive epic (non-destructive — preserves links)
+  [/^\/api\/epics\/(E-\d+)\/archive$/, 'POST', async (m, _req, res) => {
+    const result = db.archiveEpic(m[1]);
+    if (!result) {
+      const epic = db.getEpic(m[1]);
+      if (!epic) return err(res, 'epic not found', 404);
+      return err(res, 'only done or cancelled epics can be archived', 400);
+    }
+    json(res, result);
   }],
 
   // Link work items to epic

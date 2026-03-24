@@ -214,6 +214,7 @@
 
   /* Cancelled badge */
   .badge-cancelled { background: #f1f5f9; color: #64748b; }
+  .badge-archived { background: #f1f5f9; color: #94a3b8; font-style: italic; }
   .badge-in-progress { background: #fef3c7; color: #b45309; }
 
   /* CLI session panels */
@@ -543,6 +544,7 @@ function epicSignalColor(epic, progress) {
   if (epic.status === 'draft') return 'grey';
   if (epic.status === 'done') return 'green';
   if (epic.status === 'cancelled') return 'grey';
+  if (epic.status === 'archived') return 'grey';
   const items = progress || { done: 0, total: 0 };
   if (items.total === 0) return 'grey';
   if (items.done === items.total) return 'green';
@@ -563,10 +565,11 @@ async function buildEpicTree() {
   try {
     const epics = await getEpics();
     const showCompleted = sessionStorage.getItem('sidebar-show-completed-epics') === 'true';
-    const hasCompleted = epics.some(e => e.status === 'done' || e.status === 'cancelled');
+    const isInactive = s => s === 'done' || s === 'cancelled' || s === 'archived';
+    const hasCompleted = epics.some(e => isInactive(e.status));
 
     for (const epic of epics) {
-      const isCompleted = epic.status === 'done' || epic.status === 'cancelled';
+      const isCompleted = isInactive(epic.status);
       const item = document.createElement('div');
       item.className = 'epic-item';
       item.dataset.epicId = epic.id;
@@ -582,7 +585,7 @@ async function buildEpicTree() {
     if (hasCompleted) {
       const toggle = document.createElement('div');
       toggle.style.cssText = 'padding:4px 16px;font-size:10px;color:#6c7086;cursor:pointer;user-select:none;';
-      toggle.textContent = showCompleted ? '▾ Hide completed' : '▸ Show completed';
+      toggle.textContent = showCompleted ? '▾ Hide completed & archived' : '▸ Show completed & archived';
       toggle.onclick = () => {
         const next = sessionStorage.getItem('sidebar-show-completed-epics') !== 'true';
         sessionStorage.setItem('sidebar-show-completed-epics', next ? 'true' : 'false');
@@ -2740,27 +2743,30 @@ async function showEpicDiscussModal(epicId) {
 // --- Epic Views ---
 
 function renderEpicListView(epics) {
-  const hasCompleted = epics.some(e => e.status === 'done' || e.status === 'cancelled');
+  const isInactive = s => s === 'done' || s === 'cancelled' || s === 'archived';
+  const hasCompleted = epics.some(e => isInactive(e.status));
   let html = `<div class="card"><h2>Epics</h2>`;
   html += `<button class="btn-add-wi" id="create-epic">+ New Epic</button>`;
   if (hasCompleted) {
-    html += `<label class="filter-checkbox" style="margin-left:12px"><input type="checkbox" id="epic-show-done" />Show completed</label>`;
+    html += `<label class="filter-checkbox" style="margin-left:12px"><input type="checkbox" id="epic-show-done" />Show completed &amp; archived</label>`;
   }
   if (epics.length) {
     html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Progress</th><th>Projects</th><th>Target</th><th></th></tr></thead><tbody>`;
     for (const epic of epics) {
       const p = epic.progress || { done: 0, total: 0 };
       const pct = p.total ? Math.round(p.done / p.total * 100) : 0;
-      const hideCompleted = (epic.status === 'done' || epic.status === 'cancelled') ? ' style="display:none"' : '';
+      const hideCompleted = isInactive(epic.status) ? ' style="display:none"' : '';
+      const statusBadge = epic.status === 'active' ? 'open' : epic.status === 'done' ? 'done' : epic.status === 'archived' ? 'archived' : 'medium';
+      const canArchive = epic.status === 'done' || epic.status === 'cancelled';
       html += `<tr data-epic-list-status="${esc(epic.status)}"${hideCompleted}>`;
       html += `<td><code style="cursor:pointer" data-epic-nav="${esc(epic.id)}">${esc(epic.id)}</code></td>`;
       html += `<td>${esc(epic.title)}</td>`;
-      html += `<td><span class="badge badge-${epic.status === 'active' ? 'open' : epic.status === 'done' ? 'done' : 'medium'}">${esc(epic.status)}</span></td>`;
+      html += `<td><span class="badge badge-${statusBadge}">${esc(epic.status)}</span></td>`;
       html += `<td><span class="badge badge-${epic.priority || 'medium'}">${esc(epic.priority || 'medium')}</span></td>`;
       html += `<td>${p.done}/${p.total} (${pct}%)</td>`;
       html += `<td>${(epic.project_keys || []).map(k => `<span class="tag">${esc(k)}</span>`).join('')}</td>`;
       html += `<td>${epic.target_date || '—'}</td>`;
-      html += `<td><button class="dispatch-btn" data-epic-dispatch="${esc(epic.id)}">dispatch</button><button class="dispatch-btn" data-epic-discuss="${esc(epic.id)}" style="background:var(--teal);margin-left:4px">discuss</button></td>`;
+      html += `<td><button class="dispatch-btn" data-epic-dispatch="${esc(epic.id)}">dispatch</button><button class="dispatch-btn" data-epic-discuss="${esc(epic.id)}" style="background:var(--teal);margin-left:4px">discuss</button>${canArchive ? `<button class="dispatch-btn" data-epic-archive="${esc(epic.id)}" style="background:#94a3b8;margin-left:4px">archive</button>` : ''}</td>`;
       html += `</tr>`;
     }
     html += `</tbody></table>`;
@@ -2779,7 +2785,7 @@ function bindEpicListEvents() {
   if (createBtn) createBtn.onclick = () => showEpicModal(null);
   const showDone = document.getElementById('epic-show-done');
   if (showDone) showDone.onchange = () => {
-    document.querySelectorAll('[data-epic-list-status="done"], [data-epic-list-status="cancelled"]').forEach(row => {
+    document.querySelectorAll('[data-epic-list-status="done"], [data-epic-list-status="cancelled"], [data-epic-list-status="archived"]').forEach(row => {
       row.style.display = showDone.checked ? '' : 'none';
     });
   };
@@ -2788,6 +2794,21 @@ function bindEpicListEvents() {
   });
   document.querySelectorAll('[data-epic-discuss]').forEach(btn => {
     btn.onclick = () => showEpicDiscussModal(btn.dataset.epicDiscuss);
+  });
+  document.querySelectorAll('[data-epic-archive]').forEach(btn => {
+    btn.onclick = async () => {
+      const eid = btn.dataset.epicArchive;
+      if (!confirm(`Archive epic ${eid}? It will be hidden from the main view.`)) return;
+      try {
+        const resp = await fetch(`/api/epics/${eid}/archive`, { method: 'POST' });
+        if (!resp.ok) throw new Error('Archive failed');
+        backlog = null; epicCache = null;
+        await buildEpicTree();
+        route();
+      } catch (e) {
+        alert('Error: ' + e.message);
+      }
+    };
   });
 }
 
@@ -2799,8 +2820,10 @@ async function renderEpicDetailView(epicId) {
 
   const tabs = ['Tasks', 'Planning', 'Documentation', 'Details'];
   let html = `<div class="card"><h2>${esc(epic.id)}: ${esc(epic.title)}</h2>`;
-  html += `<span class="badge badge-${epic.status === 'active' ? 'open' : epic.status === 'done' ? 'done' : 'medium'}">${esc(epic.status)}</span> `;
+  const detailStatusBadge = epic.status === 'active' ? 'open' : epic.status === 'done' ? 'done' : epic.status === 'archived' ? 'archived' : 'medium';
+  html += `<span class="badge badge-${detailStatusBadge}">${esc(epic.status)}</span> `;
   html += `<span class="badge badge-${epic.priority || 'medium'}">${esc(epic.priority || 'medium')}</span>`;
+  if (epic.status === 'done' || epic.status === 'cancelled') html += ` <button class="dispatch-btn" id="epic-archive-btn" style="background:#94a3b8;margin-left:8px">Archive</button>`;
   if (epic.target_date) html += ` <span class="tag">Target: ${esc(epic.target_date)}</span>`;
   html += `<div class="tabs" id="epic-tabs" style="margin-top:16px">`;
   tabs.forEach((t, i) => {
@@ -2900,7 +2923,7 @@ async function renderEpicDetailView(epicId) {
   html += `<button class="delete-btn" id="epic-delete-btn" style="margin-bottom:12px;margin-left:8px">Delete</button>`;
   html += `<dl class="kv">`;
   html += `<dt>Title</dt><dd>${esc(epic.title)}</dd>`;
-  html += `<dt>Status</dt><dd><span class="badge badge-${epic.status === 'active' ? 'open' : epic.status === 'done' ? 'done' : 'medium'}">${esc(epic.status)}</span></dd>`;
+  html += `<dt>Status</dt><dd><span class="badge badge-${detailStatusBadge}">${esc(epic.status)}</span></dd>`;
   html += `<dt>Priority</dt><dd><span class="badge badge-${epic.priority || 'medium'}">${esc(epic.priority || 'medium')}</span></dd>`;
   html += `<dt>Target Date</dt><dd>${epic.target_date || '—'}</dd>`;
   html += `<dt>Tags</dt><dd>${(epic.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('') || '—'}</dd>`;
@@ -3005,10 +3028,26 @@ function bindEpicDetailEvents(epicId) {
   const createTaskBtn = document.getElementById('epic-create-task');
   if (createTaskBtn) createTaskBtn.onclick = () => showCreateEpicTaskModal(epicId);
 
+  // Archive epic button (header)
+  const archiveBtn = document.getElementById('epic-archive-btn');
+  if (archiveBtn) archiveBtn.onclick = async () => {
+    if (!confirm(`Archive epic ${epicId}? It will be hidden from the main view.`)) return;
+    try {
+      const resp = await fetch(`/api/epics/${epicId}/archive`, { method: 'POST' });
+      if (!resp.ok) throw new Error('Archive failed');
+      backlog = null; epicCache = null;
+      await buildEpicTree();
+      location.hash = '#epics';
+      route();
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  };
+
   // Delete epic button
   const deleteBtn = document.getElementById('epic-delete-btn');
   if (deleteBtn) deleteBtn.onclick = async () => {
-    if (!confirm(`Archive epic ${epicId}? It will be marked as cancelled and linked items will be unlinked.`)) return;
+    if (!confirm(`Delete epic ${epicId}? It will be marked as cancelled and all linked items will be unlinked.`)) return;
     try {
       const resp = await fetch(`/api/epics/${epicId}`, { method: 'DELETE' });
       if (!resp.ok) throw new Error('Delete failed');

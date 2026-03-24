@@ -256,6 +256,16 @@ export function deleteEpic(id) {
   return getEpic(id);
 }
 
+export function archiveEpic(id) {
+  const epic = getEpic(id);
+  if (!epic) return null;
+  if (epic.status !== 'done' && epic.status !== 'cancelled') return null;
+  const now = new Date().toISOString();
+  db.prepare("UPDATE epics SET status = 'archived', updated_at = ? WHERE id = ?").run(now, id);
+  addEpicLog(id, 'Archived');
+  return getEpic(id);
+}
+
 export function addEpicLog(epicId, summary) {
   const now = new Date().toISOString();
   db.prepare('INSERT INTO epic_logs (epic_id, logged_at, summary) VALUES (?, ?, ?)').run(epicId, now, summary);

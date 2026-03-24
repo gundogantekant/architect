@@ -265,7 +265,7 @@ When PM's classification confidence is below **0.6**, always include clarificati
 - Epics use `E-XXX` IDs (zero-padded, globally unique, never reused)
 - One epic per work item maximum
 - `project_keys` is auto-derived when items are linked/unlinked — never set manually
-- Status transitions: `draft → active → done` (or `cancelled` from any state)
+- Status transitions: `draft → active → done` (or `cancelled` from any state, `archived` from `done` or `cancelled`)
 - Tracker agent suggests status transitions but does not auto-change them
 - Epic docs stored at `work/epics/E-XXX/` (plan.md, docs.md) — created lazily
 - Work item artifacts stored at `work/items/W-XXX/` (plan.md, docs.md) — created lazily. The `notes` field on WorkItem is deprecated; use file artifacts instead

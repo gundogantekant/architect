@@ -231,7 +231,7 @@ Top-level entity in `work/backlog.json` under the `epics` array. Epics group wor
 {
   "id": "string (E-XXX format, zero-padded)",
   "title": "string",
-  "status": "draft|active|done|cancelled",
+  "status": "draft|active|done|cancelled|archived",
   "priority": "low|medium|high|critical",
   "description": "string",
   "acceptance_criteria": "string (markdown, optional)",
@@ -252,6 +252,7 @@ Status semantics:
 - `active` — at least one linked item is open/in-progress
 - `done` — all linked items done (or manually closed)
 - `cancelled` — abandoned
+- `archived` — completed or cancelled and hidden from active views; preserves all links
 
 ## WorkBacklog
 
