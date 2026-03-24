@@ -398,7 +398,14 @@ function wireDispatchHandlers(dispatch, proc) {
         }
         if (evt.type === 'result' && evt.total_cost_usd != null) {
           dispatch.cost_usd = evt.total_cost_usd;
+          dispatch.needs_input = false;
           saveDispatchToDb(dispatch);
+        }
+        // Track needs_input: agent asked a question (end_turn) vs using tools (tool_use)
+        if (evt.type === 'assistant' && evt.message?.stop_reason === 'end_turn') {
+          dispatch.needs_input = true;
+        } else if (evt.type === 'assistant' && evt.message?.stop_reason === 'tool_use') {
+          dispatch.needs_input = false;
         }
         const text = extractStreamText(evt);
         if (text) {
@@ -940,6 +947,21 @@ const routes = [
     text(res, content, 'text/plain');
   }],
 
+  // Open PRs for a project (runs gh CLI in the project directory)
+  [/^\/api\/project\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)\/prs$/, 'GET', async (m, _req, res) => {
+    const projectKey = `${m[1]}/${m[2]}/${m[3]}`;
+    const projectPath = await resolveProjectPath(projectKey);
+    if (!projectPath) return json(res, []);
+    try {
+      const result = execFileSync('gh', [
+        'pr', 'list', '--json', 'number,title,url,headRefName,author', '--state', 'open',
+      ], { cwd: projectPath, encoding: 'utf8', timeout: 15000 });
+      json(res, JSON.parse(result));
+    } catch {
+      json(res, []);
+    }
+  }],
+
   // Backlog
   [/^\/api\/backlog$/, 'GET', async (_m, req, res) => {
     const reqUrl = new URL(req.url, 'http://localhost');
@@ -1322,6 +1344,7 @@ const routes = [
       title: `Onboard: ${projectPath.split('/').pop()}`,
       permission_mode: 'acceptEdits',
       status: 'running',
+      needs_input: false,
       output: [],
       lastLines: [],
       listeners: new Set(),
@@ -1443,6 +1466,7 @@ const routes = [
       permission_mode: resolvedPermMode,
       skip_permissions: resolvedSkipPerms,
       status: 'running',
+      needs_input: false,
       output: [],
       lastLines: [],
       listeners: new Set(),
@@ -1550,6 +1574,7 @@ const routes = [
         started_at: d.started_at,
         completed_at: d.completed_at,
         last_output: d.lastLines || [],
+        needs_input: d.needs_input || false,
         permission_mode: d.permission_mode || 'acceptEdits',
         skip_permissions: d.skip_permissions || false,
       });

@@ -24,14 +24,16 @@
   .org-group { margin-top: 12px; }
   .org-name { padding: 6px 16px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; color: #f5c2e7; }
   .org-name:hover { background: #313244; }
-  .org-name .arrow { font-size: 10px; transition: transform .15s; }
-  .org-name .arrow.open { transform: rotate(90deg); }
+  .org-name .arrow, .sidebar-section-label .arrow { font-size: 10px; transition: transform .15s; display: inline-block; }
+  .org-name .arrow.open, .sidebar-section-label .arrow.open { transform: rotate(90deg); }
   .project-list { padding-left: 16px; }
   .project-item { padding: 4px 16px; font-size: 12.5px; cursor: pointer; border-radius: 4px; margin: 1px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; }
   .signal-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; flex-shrink: 0; }
   .signal-dot.red { background: var(--red); }
   .signal-dot.yellow { background: var(--orange); }
   .signal-dot.green { background: var(--green); }
+  .signal-dot.blue { background: var(--blue); }
+  .signal-dot.orange { background: var(--orange); }
   .project-item:hover { background: #313244; }
   .project-item.active { background: var(--accent); color: #fff; }
 
@@ -1435,8 +1437,14 @@ async function restoreDispatches() {
   try {
     const list = await api('dispatch/active');
     for (const d of list) {
-      if (activeDispatches.some(a => a.id === d.id)) continue;
-      const dispatch = { ...d, title: d.work_item_id, session_id: d.session_id || null };
+      const existing = activeDispatches.find(a => a.id === d.id);
+      if (existing) {
+        // Update needs_input from server
+        existing.needs_input = d.needs_input || false;
+        existing.status = d.status;
+        continue;
+      }
+      const dispatch = { ...d, title: d.work_item_id, session_id: d.session_id || null, needs_input: d.needs_input || false };
       activeDispatches.push(dispatch);
       createDispatchPanel(dispatch);
       if (d.status === 'running') connectDispatchStream(dispatch);
@@ -1462,17 +1470,54 @@ function countOpenItems(bl, key) {
   return items.filter(i => i.status === 'open' || i.status === 'in-progress' || i.status === 'blocked').length;
 }
 
-function signalColor(bl, key) {
+function buildSessionsByProjectMap() {
+  const map = new Map();
+  for (const d of activeDispatches) {
+    if (!d.project_key) continue;
+    if (!map.has(d.project_key)) map.set(d.project_key, []);
+    map.get(d.project_key).push(d);
+  }
+  for (const t of activeTerminals) {
+    if (!t.project_key) continue;
+    if (!map.has(t.project_key)) map.set(t.project_key, []);
+    map.get(t.project_key).push(t);
+  }
+  for (const c of activeCliSessions) {
+    if (!c.project_key) continue;
+    if (!map.has(c.project_key)) map.set(c.project_key, []);
+    map.get(c.project_key).push({ ...c, status: c.status === 'running' ? 'running' : 'completed' });
+  }
+  return map;
+}
+
+function signalColor(bl, key, sessionsByProject) {
+  const sessions = sessionsByProject?.get(key) || [];
+  // Green: agent needs user input
+  if (sessions.some(s => s.needs_input && s.status === 'running')) return 'green';
+  // Orange: running session
+  if (sessions.some(s => s.status === 'running')) return 'orange';
+  // Blue: has work items
   const items = bl?.projects?.[key]?.items;
-  if (!items) return 'green';
-  const open = items.filter(i => i.status === 'open' || i.status === 'in-progress' || i.status === 'blocked');
-  if (open.length === 0) return 'green';
-  if (open.some(i => i.priority === 'critical' || i.priority === 'high')) return 'red';
-  return 'yellow';
+  if (items && items.length > 0) return 'blue';
+  // Grey: no work items
+  return 'grey';
+}
+
+function updateProjectSignalDots() {
+  const sessionsByProject = buildSessionsByProjectMap();
+  document.querySelectorAll('.project-item[data-key]').forEach(item => {
+    const key = item.dataset.key;
+    const dot = item.querySelector('.signal-dot');
+    if (!dot) return;
+    const color = signalColor(window._backlogCache, key, sessionsByProject);
+    dot.className = `signal-dot ${color}`;
+  });
 }
 
 async function buildTree() {
   const [orgs, bl] = await Promise.all([api('orgs'), getBacklog()]);
+  window._backlogCache = bl;
+  const sessionsByProject = buildSessionsByProjectMap();
   const tree = $('#tree');
   tree.innerHTML = '';
   for (const org of orgs) {
@@ -1511,7 +1556,7 @@ async function buildTree() {
     componentEntries.sort((a, b) => countOpenItems(bl, b.key) - countOpenItems(bl, a.key));
 
     for (const { org: o, proj, comp, key } of componentEntries) {
-      const color = signalColor(bl, key);
+      const color = signalColor(bl, key, sessionsByProject);
       const item = document.createElement('div');
       item.className = 'project-item';
       item.dataset.key = key;
@@ -1632,6 +1677,7 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
   html += `<div class="tab-content active" data-panel="0">`;
   html += `<button class="btn-add-wi" id="add-work-item">+ Add Task</button>`;
   html += `<button class="btn-add-wi" id="discuss-agent" style="background:var(--teal);margin-left:8px">Discuss with Agent</button>`;
+  html += `<button class="btn-add-wi" id="review-prs" style="background:var(--blue);margin-left:8px">Review PRs</button>`;
   html += `<a href="#agents?project=${esc(currentProjectKey)}" style="margin-left:8px;font-size:12px;color:var(--accent)">View agents</a>`;
   if (workItems.length) {
     const sortedItems = topoSort(workItems);
@@ -1927,6 +1973,8 @@ function bindTabs() {
   // Discuss with Agent button
   const discussBtn = document.getElementById('discuss-agent');
   if (discussBtn) discussBtn.onclick = () => showDiscussModal();
+  const reviewBtn = document.getElementById('review-prs');
+  if (reviewBtn) reviewBtn.onclick = () => showReviewModal(currentProjectKey);
 
   // Filter bar
   bindFilterBar();
@@ -2394,6 +2442,135 @@ function showDiscussModal() {
     } catch (e) {
       btn.disabled = false;
       btn.textContent = 'Dispatch';
+      alert('Dispatch failed: ' + e.message);
+    }
+  };
+}
+
+async function showReviewModal(projectKey) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:560px">
+      <h3>Review Pull Requests</h3>
+      <div class="field">
+        <label>Project</label>
+        <div style="font-size:13px"><code>${esc(projectKey)}</code></div>
+      </div>
+      <div class="field">
+        <label>Open Pull Requests</label>
+        <div id="review-pr-list" style="min-height:40px;max-height:260px;overflow-y:auto">
+          <span style="color:var(--text-light);font-size:13px">Loading PRs...</span>
+        </div>
+      </div>
+      <div class="field">
+        <label>Additional Instructions</label>
+        <textarea id="review-instructions" placeholder="Optional: focus areas, specific concerns, review criteria..."></textarea>
+      </div>
+      ${permissionModeSelect('review-perm-mode')}
+      ${skipPermissionsCheckbox('review-skip-perms')}
+      <div class="modal-actions">
+        <button class="btn btn-cancel" id="review-cancel">Cancel</button>
+        <button class="btn btn-dispatch" id="review-submit">Review</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#review-cancel').onclick = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  // Async PR fetch
+  let prs = [];
+  const [org, proj, comp] = projectKey.split('/');
+  try {
+    prs = await api(`project/${org}/${proj}/${comp}/prs`);
+    const listEl = document.getElementById('review-pr-list');
+    if (!listEl) return;
+    if (!prs.length) {
+      listEl.innerHTML = '<span style="color:var(--text-light);font-size:13px">No open PRs found</span>';
+    } else {
+      listEl.innerHTML = prs.map((pr, i) => `
+        <label style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px">
+          <input type="checkbox" data-pr-idx="${i}" data-pr-number="${pr.number}" style="flex-shrink:0" />
+          <span style="font-weight:600;color:var(--accent);flex-shrink:0">#${pr.number}</span>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pr.title)}</span>
+          <span style="font-size:11px;color:var(--text-light);flex-shrink:0">${esc(pr.headRefName)}</span>
+        </label>
+      `).join('');
+    }
+  } catch (e) {
+    const listEl = document.getElementById('review-pr-list');
+    if (listEl) listEl.innerHTML = `<span style="color:var(--red);font-size:13px">Failed to fetch PRs</span>`;
+  }
+
+  overlay.querySelector('#review-submit').onclick = async () => {
+    const checked = overlay.querySelectorAll('[data-pr-number]:checked');
+    const instructions = overlay.querySelector('#review-instructions').value.trim();
+
+    if (!checked.length && !instructions) {
+      alert('Select at least one PR or provide instructions');
+      return;
+    }
+
+    const selectedPRs = [...checked].map(cb => prs[parseInt(cb.dataset.prIdx)]);
+    const permMode = getPermissionMode(overlay, 'review-perm-mode');
+    const skipPerms = overlay.querySelector('#review-skip-perms').checked;
+
+    let reviewPrompt = '';
+    if (selectedPRs.length) {
+      reviewPrompt += 'Review the following pull requests using /review:\n\n';
+      for (const pr of selectedPRs) {
+        reviewPrompt += `- PR #${pr.number}: "${pr.title}" (branch: ${pr.headRefName})\n`;
+      }
+    }
+    if (instructions) {
+      reviewPrompt += `\nAdditional instructions:\n${instructions}`;
+    }
+
+    const titleText = selectedPRs.length
+      ? `Review: ${selectedPRs.map(p => `#${p.number}`).join(', ')}`
+      : 'Review: custom';
+
+    const btn = overlay.querySelector('#review-submit');
+    btn.disabled = true;
+    btn.textContent = 'Dispatching...';
+
+    try {
+      const resp = await fetch('/api/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_key: projectKey,
+          additional_instructions: reviewPrompt,
+          permission_mode: permMode || 'plan',
+          skip_permissions: skipPerms,
+          title: titleText,
+        }),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
+
+      const dispatch = {
+        id: result.dispatch_id,
+        work_item_id: null,
+        project_key: projectKey,
+        title: titleText,
+        permission_mode: permMode || 'plan',
+        skip_permissions: skipPerms,
+        needs_input: false,
+        status: 'running',
+        started_at: new Date().toISOString(),
+      };
+      activeDispatches.push(dispatch);
+      updateDispatchBadge();
+      createDispatchPanel(dispatch);
+      placeSessionPanels();
+      connectDispatchStream(dispatch);
+      overlay.remove();
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = 'Review';
       alert('Dispatch failed: ' + e.message);
     }
   };
@@ -3644,14 +3821,23 @@ function showOnboardModal() {
 function buildSessionsSidebar() {
   const container = document.getElementById('sessions-sidebar');
   if (!container) return;
-  // Label
+  const collapsed = sessionStorage.getItem('sessions-sidebar-collapsed') === 'true';
+  // Label with toggle arrow
   const label = document.createElement('div');
   label.className = 'sidebar-section-label';
-  label.textContent = 'SESSIONS';
+  label.style.cursor = 'pointer';
+  label.innerHTML = `<span class="arrow ${collapsed ? '' : 'open'}">&#9654;</span> SESSIONS`;
   container.appendChild(label);
   const list = document.createElement('div');
   list.id = 'sessions-list';
+  list.style.display = collapsed ? 'none' : '';
   container.appendChild(list);
+  label.onclick = () => {
+    const arrow = label.querySelector('.arrow');
+    const open = arrow.classList.toggle('open');
+    list.style.display = open ? '' : 'none';
+    sessionStorage.setItem('sessions-sidebar-collapsed', !open);
+  };
   const divider = document.createElement('hr');
   divider.className = 'sidebar-divider';
   container.appendChild(divider);
@@ -3778,6 +3964,8 @@ function refreshSessionsSidebar() {
     list.appendChild(label);
   }
   for (const s of standalone) list.appendChild(renderEntry(s, false));
+  // Update sidebar project signal dots based on current session state
+  updateProjectSignalDots();
 }
 
 let sessionsSidebarInterval = null;
