@@ -2037,9 +2037,11 @@ const routes = [
   [/^\/api\/time-report$/, 'GET', async (_m, _req, res) => {
     const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
     const { today, overall } = db.getTimeReport(todayStart.toISOString());
+    const daily = db.getTimeReportDaily(14);
+    const monthly = db.getTimeReportMonthly(6);
     const sum = (arr, k) => arr.reduce((s, r) => s + (r[k] || 0), 0);
     json(res, {
-      today, overall,
+      today, overall, daily, monthly,
       today_total: { sessions: sum(today, 'sessions'), time_seconds: sum(today, 'time_seconds'), cost_usd: sum(today, 'cost_usd') },
       overall_total: { sessions: sum(overall, 'sessions'), time_seconds: sum(overall, 'time_seconds'), cost_usd: sum(overall, 'cost_usd') },
     });

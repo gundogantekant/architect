@@ -266,7 +266,7 @@
   .interactive-toggle input[type="checkbox"] { cursor: pointer; }
 
   /* Sessions sidebar section */
-  .sessions-section { margin-top: 4px; background: #252536; border-radius: 6px; padding: 4px 0; margin: 4px 4px 0; }
+  .sessions-section { margin-top: 4px; background: #313244; border-radius: 6px; padding: 4px 0; margin: 4px 4px 0; }
   .session-entry { padding: 5px 16px; font-size: 12px; cursor: pointer; border-radius: 4px; margin: 1px 8px; display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; }
   .session-entry:hover { background: #313244; }
   .session-entry .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
@@ -4846,8 +4846,148 @@ function formatCost(usd) {
   return `$${usd.toFixed(2)}`;
 }
 
+const CHART_COLORS = ['#7c3aed','#3b82f6','#22c55e','#f59e0b','#ec4899','#14b8a6','#f97316','#8b5cf6'];
+
+function assignProjectColors(rows) {
+  const seen = new Map();
+  let idx = 0;
+  for (const r of rows) {
+    if (!seen.has(r.project_key)) {
+      seen.set(r.project_key, { label: r.component ? `${r.project}/${r.component}` : r.project_key, color: CHART_COLORS[idx % CHART_COLORS.length] });
+      idx++;
+    }
+  }
+  return seen;
+}
+
+function renderBarChart(data) {
+  if (!data.length) return '<p style="color:var(--text-light);font-size:13px">No data.</p>';
+  const maxVal = Math.max(...data.map(d => d.value));
+  const barH = 26, gap = 4, labelW = 140, valW = 60, chartW = 500, barArea = chartW - labelW - valW;
+  const svgH = data.length * (barH + gap);
+  let svg = `<svg viewBox="0 0 ${chartW} ${svgH}" style="width:100%;max-width:${chartW}px;display:block">`;
+  data.forEach((d, i) => {
+    const y = i * (barH + gap);
+    const w = maxVal > 0 ? (d.value / maxVal) * barArea : 0;
+    const label = d.label.length > 20 ? d.label.slice(0, 18) + '..' : d.label;
+    svg += `<text x="0" y="${y + barH / 2 + 4}" font-size="12" fill="currentColor" style="font-family:inherit">${esc(label)}</text>`;
+    svg += `<rect x="${labelW}" y="${y + 2}" width="${Math.max(w, 1)}" height="${barH - 4}" rx="3" fill="${d.color}" opacity="0.85"/>`;
+    svg += `<text x="${labelW + w + 6}" y="${y + barH / 2 + 4}" font-size="11" fill="currentColor" style="font-family:inherit">${d.valLabel}</text>`;
+  });
+  svg += '</svg>';
+  return svg;
+}
+
+function renderDonutChart(data, totalLabel) {
+  if (!data.length) return '<p style="color:var(--text-light);font-size:13px">No data.</p>';
+  const size = 180, cx = size / 2, cy = size / 2, r = 70, inner = 45;
+  const total = data.reduce((s, d) => s + d.value, 0);
+  if (total <= 0) return '<p style="color:var(--text-light);font-size:13px">No data.</p>';
+  let svg = `<div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap">`;
+  svg += `<svg viewBox="0 0 ${size} ${size}" style="width:${size}px;height:${size}px;flex-shrink:0">`;
+  let angle = -Math.PI / 2;
+  for (const d of data) {
+    const sweep = (d.value / total) * Math.PI * 2;
+    if (sweep < 0.01) continue;
+    const x1 = cx + r * Math.cos(angle), y1 = cy + r * Math.sin(angle);
+    const x2 = cx + r * Math.cos(angle + sweep), y2 = cy + r * Math.sin(angle + sweep);
+    const ix1 = cx + inner * Math.cos(angle + sweep), iy1 = cy + inner * Math.sin(angle + sweep);
+    const ix2 = cx + inner * Math.cos(angle), iy2 = cy + inner * Math.sin(angle);
+    const large = sweep > Math.PI ? 1 : 0;
+    svg += `<path d="M${x1},${y1} A${r},${r} 0 ${large} 1 ${x2},${y2} L${ix1},${iy1} A${inner},${inner} 0 ${large} 0 ${ix2},${iy2} Z" fill="${d.color}" opacity="0.85"/>`;
+    angle += sweep;
+  }
+  svg += `<text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="16" font-weight="700" fill="currentColor" style="font-family:inherit">${totalLabel}</text>`;
+  svg += `<text x="${cx}" y="${cy + 12}" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.6" style="font-family:inherit">total</text>`;
+  svg += '</svg>';
+  svg += '<div style="font-size:12px;line-height:1.8">';
+  for (const d of data) {
+    const pct = ((d.value / total) * 100).toFixed(1);
+    svg += `<div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${d.color};margin-right:6px"></span>${esc(d.label)} <span style="color:var(--text-light)">${pct}%</span></div>`;
+  }
+  svg += '</div></div>';
+  return svg;
+}
+
+function renderStackedBarChart(columns, projects, matrix) {
+  if (!columns.length || !projects.length) return '<p style="color:var(--text-light);font-size:13px">No data.</p>';
+  const colTotals = columns.map((_, ci) => projects.reduce((s, _, pi) => s + (matrix[pi]?.[ci] || 0), 0));
+  const maxVal = Math.max(...colTotals, 0.001);
+  const pad = { l: 36, r: 10, t: 10, b: 50 }, chartH = 200;
+  const svgW = pad.l + columns.length * 44 + pad.r, svgH = chartH + pad.t + pad.b;
+  const barW = 30, barArea = chartH;
+  let svg = `<svg viewBox="0 0 ${svgW} ${svgH}" style="width:100%;max-width:${svgW}px;display:block">`;
+  // Y-axis labels
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + barArea - (i / 4) * barArea;
+    const val = ((maxVal / 3600) * (i / 4)).toFixed(1);
+    svg += `<text x="${pad.l - 4}" y="${y + 3}" text-anchor="end" font-size="9" fill="currentColor" opacity="0.5" style="font-family:inherit">${val}h</text>`;
+    svg += `<line x1="${pad.l}" y1="${y}" x2="${svgW - pad.r}" y2="${y}" stroke="currentColor" opacity="0.08"/>`;
+  }
+  columns.forEach((col, ci) => {
+    const x = pad.l + ci * 44 + 7;
+    let yBottom = pad.t + barArea;
+    projects.forEach((p, pi) => {
+      const val = matrix[pi]?.[ci] || 0;
+      if (val <= 0) return;
+      const h = (val / maxVal) * barArea;
+      yBottom -= h;
+      svg += `<rect x="${x}" y="${yBottom}" width="${barW}" height="${h}" rx="2" fill="${p.color}" opacity="0.85"/>`;
+    });
+    svg += `<text x="${x + barW / 2}" y="${pad.t + barArea + 14}" text-anchor="middle" font-size="9" fill="currentColor" opacity="0.6" transform="rotate(45,${x + barW / 2},${pad.t + barArea + 14})" style="font-family:inherit">${esc(col)}</text>`;
+  });
+  svg += '</svg>';
+  // Legend
+  svg += '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;font-size:11px">';
+  for (const p of projects) {
+    svg += `<div><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${p.color};margin-right:4px"></span>${esc(p.label)}</div>`;
+  }
+  svg += '</div>';
+  return svg;
+}
+
+function renderPivotTable(data, periodKey, labelFn) {
+  if (!data.length) return '<p style="color:var(--text-light);font-size:13px">No sessions in this period.</p>';
+  const periods = [...new Set(data.map(d => d[periodKey]))].sort();
+  const projectMap = new Map();
+  for (const d of data) {
+    if (!projectMap.has(d.project_key)) projectMap.set(d.project_key, { label: d.component ? `${d.project}/${d.component}` : d.project_key, org: d.org, totals: 0 });
+    projectMap.get(d.project_key).totals += d.time_seconds;
+  }
+  const projectKeys = [...projectMap.keys()].sort((a, b) => projectMap.get(b).totals - projectMap.get(a).totals);
+  const lookup = new Map();
+  for (const d of data) lookup.set(`${d.project_key}|${d[periodKey]}`, d.time_seconds);
+  const colTotals = periods.map(p => projectKeys.reduce((s, pk) => s + (lookup.get(`${pk}|${p}`) || 0), 0));
+  const maxCell = Math.max(...[...lookup.values()], 0.001);
+  const compact = periods.length > 7;
+  const cellPad = compact ? '4px 5px' : '6px 10px';
+  const fontSize = compact ? '11px' : '12px';
+  let html = `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:${fontSize}">`;
+  html += `<thead><tr style="border-bottom:2px solid var(--border)"><th style="padding:${cellPad};text-align:left">Project</th>`;
+  for (const p of periods) html += `<th style="padding:${cellPad};text-align:right;white-space:nowrap">${esc(labelFn(p))}</th>`;
+  html += `<th style="padding:${cellPad};text-align:right;font-weight:700">Total</th></tr></thead><tbody>`;
+  for (const pk of projectKeys) {
+    const info = projectMap.get(pk);
+    html += `<tr style="border-bottom:1px solid var(--border)">`;
+    html += `<td style="padding:${cellPad};white-space:nowrap"><span style="color:var(--text-light);font-size:10px">${esc(info.org || '')}</span> ${esc(info.label)}</td>`;
+    for (const p of periods) {
+      const val = lookup.get(`${pk}|${p}`) || 0;
+      const opacity = val > 0 ? (0.06 + 0.2 * (val / maxCell)).toFixed(2) : 0;
+      const bg = val > 0 ? `background:rgba(124,58,237,${opacity})` : '';
+      html += `<td style="padding:${cellPad};text-align:right;${bg}">${val > 0 ? formatDuration(val) : '<span style="color:var(--text-light)">–</span>'}</td>`;
+    }
+    html += `<td style="padding:${cellPad};text-align:right;font-weight:600">${formatDuration(info.totals)}</td></tr>`;
+  }
+  html += `<tr style="border-top:2px solid var(--border);font-weight:700"><td style="padding:${cellPad}">Total</td>`;
+  for (const t of colTotals) html += `<td style="padding:${cellPad};text-align:right">${formatDuration(t)}</td>`;
+  const grandTotal = colTotals.reduce((s, t) => s + t, 0);
+  html += `<td style="padding:${cellPad};text-align:right">${formatDuration(grandTotal)}</td></tr>`;
+  html += '</tbody></table></div>';
+  return html;
+}
+
 function renderTimeReport(report) {
-  const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const todayStr = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
   function renderTable(rows, totals) {
     if (!rows.length) return '<p style="color:var(--text-light);font-size:13px">No sessions recorded yet.</p>';
@@ -4876,16 +5016,100 @@ function renderTimeReport(report) {
     return html;
   }
 
+  // Color assignments from overall data (most time first)
+  const colorMap = assignProjectColors(report.overall);
+
+  // Today bar chart
+  const todayBarData = report.today.map(r => {
+    const info = colorMap.get(r.project_key) || { label: r.project_key, color: CHART_COLORS[0] };
+    return { label: info.label, value: r.time_seconds, valLabel: formatDuration(r.time_seconds), color: info.color };
+  });
+
+  // All Time donut + bar
+  const allTimeDonut = report.overall.map(r => {
+    const info = colorMap.get(r.project_key) || { label: r.project_key, color: CHART_COLORS[0] };
+    return { label: info.label, value: r.time_seconds, color: info.color };
+  });
+  const allTimeBar = report.overall.map(r => {
+    const info = colorMap.get(r.project_key) || { label: r.project_key, color: CHART_COLORS[0] };
+    return { label: info.label, value: r.time_seconds, valLabel: formatDuration(r.time_seconds), color: info.color };
+  });
+
+  // Daily stacked chart
+  const dailyCols = [...new Set((report.daily || []).map(d => d.day))].sort();
+  const dailyProjects = [];
+  const dailyPkSet = new Set();
+  for (const d of (report.daily || [])) {
+    if (!dailyPkSet.has(d.project_key)) {
+      dailyPkSet.add(d.project_key);
+      const info = colorMap.get(d.project_key) || { label: d.project_key, color: CHART_COLORS[dailyProjects.length % CHART_COLORS.length] };
+      dailyProjects.push({ key: d.project_key, label: info.label, color: info.color });
+    }
+  }
+  const dailyLookup = new Map();
+  for (const d of (report.daily || [])) dailyLookup.set(`${d.project_key}|${d.day}`, d.time_seconds);
+  const dailyMatrix = dailyProjects.map(p => dailyCols.map(c => dailyLookup.get(`${p.key}|${c}`) || 0));
+  const dailyColLabels = dailyCols.map(d => { const dt = new Date(d + 'T00:00:00'); return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); });
+
+  // Monthly stacked chart
+  const monthlyCols = [...new Set((report.monthly || []).map(d => d.month))].sort();
+  const monthlyProjects = [];
+  const monthlyPkSet = new Set();
+  for (const d of (report.monthly || [])) {
+    if (!monthlyPkSet.has(d.project_key)) {
+      monthlyPkSet.add(d.project_key);
+      const info = colorMap.get(d.project_key) || { label: d.project_key, color: CHART_COLORS[monthlyProjects.length % CHART_COLORS.length] };
+      monthlyProjects.push({ key: d.project_key, label: info.label, color: info.color });
+    }
+  }
+  const monthlyLookup = new Map();
+  for (const d of (report.monthly || [])) monthlyLookup.set(`${d.project_key}|${d.month}`, d.time_seconds);
+  const monthlyMatrix = monthlyProjects.map(p => monthlyCols.map(c => monthlyLookup.get(`${p.key}|${c}`) || 0));
+  const monthlyColLabels = monthlyCols.map(m => { const [y, mo] = m.split('-'); return new Date(+y, +mo - 1).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }); });
+
   return `<div class="card">
     <h2 style="margin-bottom:4px">Time Report</h2>
-    <p style="color:var(--text-light);font-size:13px;margin-bottom:24px">${today}</p>
-
-    <h3 style="font-size:15px;margin-bottom:12px;color:var(--accent)">Today</h3>
-    ${renderTable(report.today, report.today_total)}
-
-    <h3 style="font-size:15px;margin:24px 0 12px;color:var(--accent)">All Time</h3>
-    ${renderTable(report.overall, report.overall_total)}
+    <p style="color:var(--text-light);font-size:13px;margin-bottom:16px">${todayStr}</p>
+    <div class="tabs" id="tr-tabs">
+      <div class="tab active" data-tab="0">Today</div>
+      <div class="tab" data-tab="1">All Time</div>
+      <div class="tab" data-tab="2">Daily (14d)</div>
+      <div class="tab" data-tab="3">Monthly (6mo)</div>
+    </div>
+    <div class="tab-content active" data-panel="0">
+      <div style="margin-bottom:20px">${renderBarChart(todayBarData)}</div>
+      ${renderTable(report.today, report.today_total)}
+    </div>
+    <div class="tab-content" data-panel="1">
+      <div style="margin-bottom:20px">${renderDonutChart(allTimeDonut, formatDuration(report.overall_total.time_seconds))}</div>
+      <h3 style="font-size:14px;margin:20px 0 10px;color:var(--accent)">By Project</h3>
+      <div style="margin-bottom:20px">${renderBarChart(allTimeBar)}</div>
+      ${renderTable(report.overall, report.overall_total)}
+    </div>
+    <div class="tab-content" data-panel="2">
+      <div style="margin-bottom:20px">${renderStackedBarChart(dailyColLabels, dailyProjects, dailyMatrix)}</div>
+      <h3 style="font-size:14px;margin:20px 0 10px;color:var(--accent)">Daily Breakdown</h3>
+      ${renderPivotTable(report.daily || [], 'day', d => { const dt = new Date(d + 'T00:00:00'); return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' }); })}
+    </div>
+    <div class="tab-content" data-panel="3">
+      <div style="margin-bottom:20px">${renderStackedBarChart(monthlyColLabels, monthlyProjects, monthlyMatrix)}</div>
+      <h3 style="font-size:14px;margin:20px 0 10px;color:var(--accent)">Monthly Breakdown</h3>
+      ${renderPivotTable(report.monthly || [], 'month', m => { const [y, mo] = m.split('-'); return new Date(+y, +mo - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); })}
+    </div>
   </div>`;
+}
+
+function bindTimeReportTabs() {
+  const tabs = document.querySelectorAll('#tr-tabs .tab');
+  tabs.forEach(tab => {
+    tab.onclick = () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const card = document.querySelector('#tr-tabs').closest('.card');
+      card.querySelectorAll('.tab-content').forEach(p => p.classList.remove('active'));
+      card.querySelector(`.tab-content[data-panel="${tab.dataset.tab}"]`).classList.add('active');
+    };
+  });
 }
 
 // --- Settings view ---
@@ -5228,6 +5452,7 @@ async function route() {
     try {
       const report = await api('time-report');
       main.innerHTML = renderTimeReport(report);
+      bindTimeReportTabs();
     } catch (e) {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading time report: ${esc(String(e))}</p></div>`;
     }

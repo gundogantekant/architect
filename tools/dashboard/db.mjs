@@ -598,6 +598,36 @@ export function getTimeReport(todayStart) {
   return { today, overall };
 }
 
+export function getTimeReportDaily(days = 14) {
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  return db.prepare(`
+    SELECT sh.project_key, p.org, p.project, p.component,
+      date(sh.ended_at) AS day,
+      COALESCE(SUM(sh.duration_seconds), 0) AS time_seconds,
+      COALESCE(SUM(sh.cost_usd), 0) AS cost_usd
+    FROM session_history sh JOIN projects p ON sh.project_key = p.key
+    WHERE sh.ended_at >= ?
+    GROUP BY sh.project_key, day
+    ORDER BY day ASC, time_seconds DESC
+  `).all(since);
+}
+
+export function getTimeReportMonthly(months = 6) {
+  const d = new Date();
+  d.setMonth(d.getMonth() - months);
+  d.setDate(1); d.setHours(0, 0, 0, 0);
+  return db.prepare(`
+    SELECT sh.project_key, p.org, p.project, p.component,
+      strftime('%Y-%m', sh.ended_at) AS month,
+      COALESCE(SUM(sh.duration_seconds), 0) AS time_seconds,
+      COALESCE(SUM(sh.cost_usd), 0) AS cost_usd
+    FROM session_history sh JOIN projects p ON sh.project_key = p.key
+    WHERE sh.ended_at >= ?
+    GROUP BY sh.project_key, month
+    ORDER BY month ASC, time_seconds DESC
+  `).all(d.toISOString());
+}
+
 export function getProjectStats(key) {
   return db.prepare('SELECT * FROM project_stats WHERE project_key = ?').get(key);
 }
