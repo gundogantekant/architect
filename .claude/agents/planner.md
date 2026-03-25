@@ -34,7 +34,8 @@ Make architecture decisions, design systems, select technology stacks, decompose
 1. Understand the current project state (read scout report if available)
 2. Analyze existing code structure and patterns
 3. Research relevant technologies or approaches when needed (WebSearch/WebFetch)
-4. Produce a structured plan with clear task boundaries
+4. **Fetch next IDs**: Query `GET http://127.0.0.1:3777/api/sequences/next` to learn the next available work item and epic IDs. Use these to pre-assign real IDs (e.g. `W-042`, `E-005`) to tasks in the plan so the orchestrator can create them in order.
+5. Produce a structured plan with clear task boundaries
 
 ## Output Format
 
@@ -57,10 +58,11 @@ List which entities from `domain/entities.md` this plan creates, modifies, or de
 
 ### Tasks
 Numbered list of implementation tasks, each specifying:
+- **Pre-assigned ID** from the sequence query (e.g. `W-042`). Assign IDs sequentially starting from the next available ID.
 - What to implement
 - Which agent should handle it (coder, coder-frontend, coder-backend, coder-mobile, coder-infra)
 - Key files to create or modify
-- Dependencies on other tasks
+- Dependencies on other tasks (reference by ID)
 
 ### Parallel Batches
 Group tasks into parallel batches using `domain/rules.md` → Parallelization Rules. Tasks within a batch satisfy all independence criteria and run concurrently. Batches execute sequentially (batch N completes before batch N+1 starts).

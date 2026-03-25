@@ -298,10 +298,11 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "additional_instructions": "string (optional)",
   "permission_mode": "string (plan|acceptEdits)",
   "skip_permissions": "boolean (default false, adds --dangerously-skip-permissions flag)",
-  "status": "running|completed|failed|killed|interrupted",
+  "status": "running|completed|failed|killed|interrupted|suspended",
   "started_at": "string (ISO 8601)",
   "completed_at": "string (ISO 8601, optional)",
-  "session_id": "string (Claude session ID, optional)",
+  "session_id": "string (Claude session ID, optional — legacy field)",
+  "claude_session_id": "string (Claude CLI session UUID, optional — captured from stream-json init event, used for resume)",
   "cost_usd": "number (total cost, optional)",
   "pid": "number (OS process ID, optional — stored for restart survival)"
 }
@@ -321,11 +322,12 @@ Record for an interactive PTY terminal session spawned from the dashboard. Persi
   "title": "string",
   "permission_mode": "string (plan|acceptEdits)",
   "skip_permissions": "boolean (default false, adds --dangerously-skip-permissions flag)",
-  "status": "running|completed|failed|killed|interrupted",
+  "status": "running|completed|failed|killed|interrupted|suspended",
   "started_at": "string (ISO 8601)",
   "exited_at": "string (ISO 8601, null while running)",
   "pid": "number (OS process ID, optional — stored for restart survival)",
-  "tmux_session": "string (tmux session name, optional — e.g. architect-T-xxx)"
+  "tmux_session": "string (tmux session name, optional — e.g. architect-T-xxx)",
+  "claude_session_id": "string (Claude CLI session UUID, optional — pre-assigned via --session-id at spawn, used for resume)"
 }
 ```
 

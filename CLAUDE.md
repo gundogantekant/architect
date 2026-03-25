@@ -6,7 +6,7 @@ When the user says "architect" in conversation, it primarily refers to **this pr
 
 ## Overview
 
-This project provides 22 specialized Claude Code subagents and 16 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack.
+This project provides 22 specialized Claude Code subagents and 17 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack.
 
 ## Architecture
 
@@ -15,7 +15,7 @@ Clean Architecture with four layers. Dependencies point inward only.
 | Layer | Location | Contents |
 |-------|----------|----------|
 | Domain | `domain/` | Entity schemas (`entities.md`), business rules (`rules.md`) |
-| Use Cases | `usecases/` | Workflow definitions (17 files, one per skill workflow) |
+| Use Cases | `usecases/` | Workflow definitions (18 files, one per skill workflow) |
 | Adapters | `.claude/agents/`, `.claude/skills/` | Agent prompts, skill entry points |
 | Infrastructure | `portfolio/`, `work/`, `templates/` | Instance data (gitignored), project templates |
 
@@ -176,6 +176,7 @@ Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/stream` (SSE), `G
 | /secure | Security audit |
 | /status | Project health check |
 | /work [subcommand] [args] | Track work items across sessions |
+| /implement [W-XXX] | Implement a tracked work item end-to-end |
 | /migrate [from] [to] | Technology migration |
 | /explain [path] [--focus area] | Codebase walkthrough |
 | /release [version] [--publish github] | Version bump, changelog, git tag |

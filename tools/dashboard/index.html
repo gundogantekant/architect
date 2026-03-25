@@ -135,6 +135,15 @@
   .dispatch-panel.status-completed { border-left-color: var(--blue); }
   .dispatch-panel.status-failed, .dispatch-panel.status-killed { border-left-color: var(--red); }
   .dispatch-panel.status-interrupted { border-left-color: #94a3b8; }
+  .dispatch-panel.status-suspended, .terminal-panel.status-suspended { border-left-color: #f59e0b; }
+  .dispatch-header .status-dot.suspended { background: #f59e0b; }
+  .suspended-badge { background: #fef3c7; color: #b45309; font-size: 10px; padding: 1px 6px; border-radius: 3px; margin-left: 4px; }
+  .suspend-btn { cursor: pointer; color: #fff; font-size: 11px; border: none; background: #f59e0b; padding: 3px 10px; border-radius: 4px; }
+  .suspend-btn:hover { background: #d97706; }
+  .suspend-btn:disabled { opacity: 0.4; cursor: default; }
+  .resume-btn { cursor: pointer; color: #fff; font-size: 11px; border: none; background: #10b981; padding: 3px 10px; border-radius: 4px; }
+  .resume-btn:hover { background: #059669; }
+  .resume-btn:disabled { opacity: 0.4; cursor: default; }
   .dispatch-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: linear-gradient(135deg, #fafafa 0%, #f5f0ff 100%); cursor: pointer; }
   .dispatch-header .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
   .dispatch-header .status-dot.running { background: var(--orange); animation: pulse 1.5s infinite; }
@@ -144,18 +153,10 @@
   .dispatch-header .dispatch-title { font-size: 13px; font-weight: 600; flex: 1; }
   .dispatch-header .dispatch-meta { font-size: 11px; color: var(--text-light); }
   .dispatch-log { max-height: 350px; overflow-y: auto; padding: 12px 16px; background: #1e1e2e; color: #bac2de; font-family: monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; border-top: 1px solid #313244; }
-  .dispatch-guidance { padding: 12px 16px; background: #fffbeb; border-top: 1px solid #fde68a; font-size: 12.5px; }
-  .dispatch-guidance code { background: #fef3c7; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
-  .dispatch-guidance .label { font-weight: 600; font-size: 11px; text-transform: uppercase; color: #92400e; margin-bottom: 4px; }
-  .terminal-guidance { padding: 12px 16px; background: #fffbeb; border-top: 1px solid #fde68a; font-size: 12.5px; }
-  .terminal-guidance code { background: #fef3c7; padding: 2px 6px; border-radius: 3px; font-size: 12px; word-break: break-all; }
-  .terminal-guidance .label { font-weight: 600; font-size: 11px; text-transform: uppercase; color: #92400e; margin-bottom: 4px; }
 
   /* Collapsible panels */
   .dispatch-panel.collapsed .dispatch-log,
-  .dispatch-panel.collapsed .dispatch-guidance,
-  .terminal-panel.collapsed .terminal-container,
-  .terminal-panel.collapsed .terminal-guidance { display: none; }
+  .terminal-panel.collapsed .terminal-container { display: none; }
   .minimize-btn {
     cursor: pointer; color: var(--text-light); font-size: 11px;
     border: 1px solid var(--border); background: none;
@@ -321,6 +322,7 @@
   .agent-tile-header .status-dot.running { background: var(--orange); animation: pulse 1.5s infinite; }
   .agent-tile-header .status-dot.completed { background: var(--blue); }
   .agent-tile-header .status-dot.failed, .agent-tile-header .status-dot.killed { background: var(--red); }
+  .agent-tile-header .status-dot.suspended { background: #f59e0b; }
   .agent-tile-title { font-size: 13px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .agent-tile-elapsed { font-size: 11px; color: var(--text-light); flex-shrink: 0; }
   .agent-tile-badges { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 14px 8px; }
@@ -691,31 +693,31 @@ function createDispatchPanel(dispatch) {
     ? `Continue ${dispatch.work_item_id}: ${dispatch.title || ''}`
     : dispatch.title || '';
   const isRunning = dispatch.status === 'running';
+  const isSuspended = dispatch.status === 'suspended';
   const skipBadge = dispatch.skip_permissions ? '<span class="auto-badge">[skip-perms]</span>' : '';
   const planBadge = dispatch.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
+  const suspendedBadge = isSuspended ? '<span class="suspended-badge">[suspended]</span>' : '';
   panel.innerHTML = `
     <div class="dispatch-header">
       <span class="status-dot ${isRunning ? 'running' : dispatch.status}"></span>
-      <span class="dispatch-title">${esc(titleParts.join(' — '))}${planBadge}${skipBadge}</span>
+      <span class="dispatch-title">${esc(titleParts.join(' — '))}${planBadge}${skipBadge}${suspendedBadge}</span>
       <span class="dispatch-meta">${new Date(dispatch.started_at).toLocaleTimeString()}</span>
       <button class="focus-btn" data-focus-dispatch="${esc(dispatch.id)}">Focus</button>
       <button class="minimize-btn" data-minimize-dispatch="${esc(dispatch.id)}">▼</button>
+      <button class="suspend-btn" data-suspend-dispatch="${esc(dispatch.id)}" ${!isRunning ? 'style="display:none"' : ''}>Suspend</button>
+      <button class="resume-btn" data-resume-dispatch="${esc(dispatch.id)}" ${!isSuspended ? 'style="display:none"' : ''}>Resume</button>
       <button class="kill-btn" data-kill-dispatch="${esc(dispatch.id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
       <button class="dismiss-btn" data-dismiss-dispatch="${esc(dispatch.id)}" ${isRunning ? 'style="display:none"' : ''}>✕</button>
     </div>
     <div class="dispatch-log" id="log-${dispatch.id}"></div>
-    <div class="dispatch-guidance">
-      <div class="label">Continue from terminal</div>
-      <code data-dispatch-id="${esc(dispatch.id)}">${dispatch.session_id
-        ? `cd ${esc(dispatch.project_path)} && claude --resume ${esc(dispatch.session_id)}`
-        : `cd ${esc(dispatch.project_path)} && claude "${esc(guidancePrompt)}"`}</code>
-    </div>
     <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
       <button class="focus-btn" data-focus-dispatch-bottom="${esc(dispatch.id)}">Focus</button>
+      ${sessionIdTag(dispatch.claude_session_id)}
       ${dispatch.project_key ? `<span class="tag" style="margin-left:auto;font-size:10px">${esc(dispatch.project_key.split('/').pop())}</span>` : ''}
       ${dispatch.epic_id ? `<span class="tag" style="font-size:10px">${esc(dispatch.epic_id)}</span>` : ''}
     </div>
   `;
+  bindSessionIdCopy(panel);
   // Register in sessionPanels
   const panelKey = `dispatch:${dispatch.id}`;
   sessionPanels.set(panelKey, panel);
@@ -755,18 +757,86 @@ function createDispatchPanel(dispatch) {
       updateDispatchBadge();
     } catch {}
   };
+  // Bind suspend button
+  panel.querySelector(`[data-suspend-dispatch="${dispatch.id}"]`).onclick = async (e) => {
+    const btn = e.target;
+    btn.disabled = true;
+    try {
+      const resp = await fetch(`/api/dispatch/${dispatch.id}/suspend`, { method: 'POST' });
+      if (resp.ok) {
+        dispatch.status = 'suspended';
+        panel.className = panel.className.replace(/status-\w+/, 'status-suspended');
+        const dot = panel.querySelector('.status-dot');
+        dot.classList.remove('running');
+        dot.classList.add('suspended');
+        btn.style.display = 'none';
+        panel.querySelector(`[data-kill-dispatch="${dispatch.id}"]`).disabled = true;
+        const resumeBtn = panel.querySelector(`[data-resume-dispatch="${dispatch.id}"]`);
+        if (resumeBtn) resumeBtn.style.display = '';
+        const dismissBtn = panel.querySelector(`[data-dismiss-dispatch="${dispatch.id}"]`);
+        if (dismissBtn) dismissBtn.style.display = '';
+        // Add suspended badge
+        const titleEl = panel.querySelector('.dispatch-title');
+        if (titleEl && !titleEl.querySelector('.suspended-badge')) {
+          titleEl.insertAdjacentHTML('beforeend', '<span class="suspended-badge">[suspended]</span>');
+        }
+        updateDispatchBadge();
+        refreshSessionsSidebar();
+      }
+    } catch {}
+  };
+  // Bind resume button
+  panel.querySelector(`[data-resume-dispatch="${dispatch.id}"]`).onclick = async (e) => {
+    const btn = e.target;
+    btn.disabled = true;
+    try {
+      const resp = await fetch(`/api/dispatch/${dispatch.id}/resume`, { method: 'POST' });
+      if (resp.ok) {
+        // Old panel will be cleaned up on next poll; new session will appear
+        await dismissDispatchPanel(dispatch.id);
+        updateDispatchBadge();
+        refreshSessionsSidebar();
+      }
+    } catch {}
+  };
   // Bind dismiss button
   panel.querySelector(`[data-dismiss-dispatch="${dispatch.id}"]`).onclick = async () => {
-    try { await fetch(`/api/dispatch/${dispatch.id}`, { method: 'DELETE' }); } catch {}
-    const idx = activeDispatches.findIndex(d => d.id === dispatch.id);
-    if (idx !== -1) activeDispatches.splice(idx, 1);
-    const panelKey = `dispatch:${dispatch.id}`;
-    if (panel.parentElement) panel.remove();
-    sessionPanels.delete(panelKey);
+    await dismissDispatchPanel(dispatch.id);
     updateDispatchBadge();
     refreshSessionsSidebar();
   };
   return panel;
+}
+
+async function dismissDispatchPanel(id) {
+  try { await fetch(`/api/dispatch/${id}`, { method: 'DELETE' }); } catch {}
+  const idx = activeDispatches.findIndex(d => d.id === id);
+  if (idx !== -1) activeDispatches.splice(idx, 1);
+  const panelKey = `dispatch:${id}`;
+  const panel = sessionPanels.get(panelKey);
+  if (panel?.parentElement) panel.remove();
+  sessionPanels.delete(panelKey);
+}
+
+function finalizeDispatchPanel(dispatch) {
+  const panel = document.getElementById(`dispatch-${dispatch.id}`);
+  if (!panel) return;
+  // Update status class
+  panel.className = panel.className.replace(/status-\w+/, `status-${dispatch.status}`);
+  const dot = panel.querySelector('.status-dot');
+  if (dot) {
+    dot.classList.remove('running');
+    dot.classList.add(dispatch.status === 'completed' ? 'completed' : 'failed');
+  }
+  // Hide action buttons, show dismiss
+  const killBtn = panel.querySelector(`[data-kill-dispatch="${dispatch.id}"]`);
+  if (killBtn) killBtn.disabled = true;
+  const suspendBtn = panel.querySelector(`[data-suspend-dispatch="${dispatch.id}"]`);
+  if (suspendBtn) suspendBtn.style.display = 'none';
+  const dismissBtn = panel.querySelector(`[data-dismiss-dispatch="${dispatch.id}"]`);
+  if (dismissBtn) dismissBtn.style.display = '';
+  updateDispatchBadge();
+  refreshSessionsSidebar();
 }
 
 function connectDispatchStream(dispatch) {
@@ -777,21 +847,11 @@ function connectDispatchStream(dispatch) {
   const es = new EventSource(`/api/dispatch/${dispatch.id}/stream`);
 
   es.onmessage = (e) => {
-    // Check for session_id in system init events
-    try {
-      const evt = JSON.parse(e.data);
-      if (evt.type === 'system' && evt.subtype === 'init' && evt.session_id) {
-        dispatch.session_id = evt.session_id;
-        const codeEl = document.querySelector(`code[data-dispatch-id="${dispatch.id}"]`);
-        if (codeEl) {
-          codeEl.textContent = `cd ${dispatch.project_path} && claude --resume ${evt.session_id}`;
-        }
-      }
-    } catch {}
     const text = extractStreamText(e.data);
     if (text) {
+      const nearBottom = (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight) < 50;
       logEl.textContent += text;
-      logEl.scrollTop = logEl.scrollHeight;
+      if (nearBottom) logEl.scrollTop = logEl.scrollHeight;
     }
   };
 
@@ -803,37 +863,18 @@ function connectDispatchStream(dispatch) {
       dispatch.status = 'completed';
     }
     es.close();
-    // Keep panel visible — update status visually
-    const panelEl = sessionPanels.get(`dispatch:${dispatch.id}`);
-    if (panelEl) {
-      const dot = panelEl.querySelector('.status-dot');
-      if (dot) { dot.classList.remove('running'); dot.classList.add(dispatch.status === 'completed' ? 'completed' : 'failed'); }
-      const killBtn = panelEl.querySelector(`[data-kill-dispatch="${dispatch.id}"]`);
-      if (killBtn) killBtn.disabled = true;
-      const dismissBtn = panelEl.querySelector(`[data-dismiss-dispatch="${dispatch.id}"]`);
-      if (dismissBtn) dismissBtn.style.display = '';
-    }
-    updateDispatchBadge();
-    refreshSessionsSidebar();
+    finalizeDispatchPanel(dispatch);
   });
 
   es.onerror = () => {
+    if (dispatch.status !== 'running') {
+      // Stream ended for an already-finalized dispatch (e.g. log replay finished) — just close
+      es.close();
+      return;
+    }
     dispatch.status = 'failed';
-    const panelEl = document.getElementById(`dispatch-${dispatch.id}`);
-    if (panelEl) {
-      panelEl.className = panelEl.className.replace(/status-\w+/, 'status-failed');
-      // Show dismiss button, hide kill
-      const dismissBtn = panelEl.querySelector(`[data-dismiss-dispatch="${dispatch.id}"]`);
-      if (dismissBtn) dismissBtn.style.display = '';
-      const killBtn = panelEl.querySelector(`[data-kill-dispatch="${dispatch.id}"]`);
-      if (killBtn) killBtn.disabled = true;
-    }
-    if (dotEl) {
-      dotEl.classList.remove('running');
-      dotEl.classList.add('failed');
-    }
-    updateDispatchBadge();
     es.close();
+    finalizeDispatchPanel(dispatch);
   };
 }
 
@@ -881,7 +922,12 @@ async function dismissAllCompleted() {
   refreshSessionsSidebar();
 }
 
+let _placeTimer = null;
 function placeSessionPanels() {
+  if (_placeTimer) return;
+  _placeTimer = requestAnimationFrame(() => { _placeTimer = null; _placeSessionPanelsNow(); });
+}
+function _placeSessionPanelsNow() {
   // 1. Ensure global fallback container exists
   let globalContainer = document.getElementById('dispatch-panels');
   if (!globalContainer) {
@@ -1025,14 +1071,23 @@ async function loadXterm() {
   }
 }
 
-// Fit terminal preserving logical scroll position (lines from bottom)
+// Fit terminal preserving proportional scroll position (stable across reflows)
 function fitPreservingScroll(term, fitAddon) {
   const buf = term.buffer.active;
-  const scrollOffset = buf.baseY - buf.viewportY;
+  const wasAtBottom = buf.viewportY >= buf.baseY;
+  const scrollFraction = buf.baseY > 0 ? buf.viewportY / buf.baseY : 1;
+
   fitAddon.fit();
+
   const newBuf = term.buffer.active;
-  const targetY = Math.max(0, newBuf.baseY - scrollOffset);
-  const delta = targetY - newBuf.viewportY;
+  if (wasAtBottom || newBuf.baseY === 0) {
+    const delta = newBuf.baseY - newBuf.viewportY;
+    if (delta !== 0) term.scrollLines(delta);
+    return;
+  }
+  const targetY = Math.round(scrollFraction * newBuf.baseY);
+  const clampedY = Math.max(0, Math.min(newBuf.baseY, targetY));
+  const delta = clampedY - newBuf.viewportY;
   if (delta !== 0) term.scrollLines(delta);
 }
 
@@ -1079,31 +1134,66 @@ function togglePanelCollapse(key, panel, btn) {
   }
 }
 
+async function dismissTerminalPanel(id) {
+  try { await fetch(`/api/terminal/${id}`, { method: 'DELETE' }); } catch {}
+  const idx = activeTerminals.findIndex(t => t.id === id);
+  if (idx !== -1) activeTerminals.splice(idx, 1);
+  const panelKey = `terminal:${id}`;
+  const panel = sessionPanels.get(panelKey);
+  if (panel?.parentElement) panel.remove();
+  sessionPanels.delete(panelKey);
+}
+
+function finalizeTerminalPanel(terminalInfo) {
+  const panel = document.getElementById(`terminal-${terminalInfo.id}`);
+  if (!panel) return;
+  panel.className = panel.className.replace(/status-\w+/, `status-${terminalInfo.status}`);
+  const dot = panel.querySelector('.status-dot');
+  if (dot) {
+    dot.classList.remove('running');
+    dot.classList.add(terminalInfo.status === 'completed' ? 'completed' : 'failed');
+  }
+  const killBtn = panel.querySelector(`[data-kill-terminal="${terminalInfo.id}"]`);
+  if (killBtn) killBtn.disabled = true;
+  const suspendBtn = panel.querySelector(`[data-suspend-terminal="${terminalInfo.id}"]`);
+  if (suspendBtn) suspendBtn.style.display = 'none';
+  const dismissBtn = panel.querySelector(`[data-dismiss-terminal="${terminalInfo.id}"]`);
+  if (dismissBtn) dismissBtn.style.display = '';
+  updateDispatchBadge();
+  refreshSessionsSidebar();
+}
+
 function createTerminalPanel(terminalInfo) {
   const panel = document.createElement('div');
-  panel.className = 'terminal-panel';
+  panel.className = `terminal-panel status-${terminalInfo.status}`;
   panel.id = `terminal-${terminalInfo.id}`;
   const isRunning = terminalInfo.status === 'running';
+  const isSuspended = terminalInfo.status === 'suspended';
   const shellBadge = terminalInfo.type === 'shell' ? '<span class="auto-badge" style="background:#2d7d46">[shell]</span>' : '';
   const skipBadge = terminalInfo.skip_permissions ? '<span class="auto-badge">[skip-perms]</span>' : '';
   const planBadge = terminalInfo.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
+  const suspendedBadge = isSuspended ? '<span class="suspended-badge">[suspended]</span>' : '';
   panel.innerHTML = `
     <div class="terminal-header">
       <span class="status-dot ${isRunning ? 'running' : terminalInfo.status}"></span>
-      <span class="terminal-title">${esc(terminalInfo.id)} — ${esc(terminalInfo.title || 'Terminal')}${shellBadge}${planBadge}${skipBadge}</span>
+      <span class="terminal-title">${esc(terminalInfo.id)} — ${esc(terminalInfo.title || 'Terminal')}${shellBadge}${planBadge}${skipBadge}${suspendedBadge}</span>
       <span class="terminal-meta">${new Date(terminalInfo.started_at).toLocaleTimeString()}</span>
       <button class="focus-btn" data-focus-terminal="${esc(terminalInfo.id)}">Focus</button>
       <button class="minimize-btn" data-minimize-terminal="${esc(terminalInfo.id)}">▼</button>
+      <button class="suspend-btn" data-suspend-terminal="${esc(terminalInfo.id)}" ${!isRunning ? 'style="display:none"' : ''}>Suspend</button>
+      <button class="resume-btn" data-resume-terminal="${esc(terminalInfo.id)}" ${!isSuspended ? 'style="display:none"' : ''}>Resume</button>
       <button class="kill-btn" data-kill-terminal="${esc(terminalInfo.id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
       <button class="dismiss-btn" data-dismiss-terminal="${esc(terminalInfo.id)}" ${isRunning ? 'style="display:none"' : ''}>✕</button>
     </div>
     <div class="terminal-container" id="term-container-${terminalInfo.id}"></div>
     <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
       <button class="focus-btn" data-focus-terminal-bottom="${esc(terminalInfo.id)}">Focus</button>
+      ${sessionIdTag(terminalInfo.claude_session_id)}
       ${terminalInfo.project_key ? `<span class="tag" style="margin-left:auto;font-size:10px">${esc(terminalInfo.project_key.split('/').pop())}</span>` : ''}
       ${terminalInfo.epic_id ? `<span class="tag" style="font-size:10px">${esc(terminalInfo.epic_id)}</span>` : ''}
     </div>
   `;
+  bindSessionIdCopy(panel);
   // Register in sessionPanels
   const panelKey = `terminal:${terminalInfo.id}`;
   sessionPanels.set(panelKey, panel);
@@ -1142,14 +1232,50 @@ function createTerminalPanel(terminalInfo) {
       updateDispatchBadge();
     } catch {}
   };
+  // Bind suspend button
+  panel.querySelector(`[data-suspend-terminal="${terminalInfo.id}"]`).onclick = async (e) => {
+    const btn = e.target;
+    btn.disabled = true;
+    try {
+      const resp = await fetch(`/api/terminal/${terminalInfo.id}/suspend`, { method: 'POST' });
+      if (resp.ok) {
+        terminalInfo.status = 'suspended';
+        panel.classList.add('status-suspended');
+        const dot = panel.querySelector('.status-dot');
+        dot.classList.remove('running');
+        dot.classList.add('suspended');
+        btn.style.display = 'none';
+        panel.querySelector(`[data-kill-terminal="${terminalInfo.id}"]`).disabled = true;
+        const resumeBtn = panel.querySelector(`[data-resume-terminal="${terminalInfo.id}"]`);
+        if (resumeBtn) resumeBtn.style.display = '';
+        const dismissBtn = panel.querySelector(`[data-dismiss-terminal="${terminalInfo.id}"]`);
+        if (dismissBtn) dismissBtn.style.display = '';
+        // Add suspended badge
+        const titleEl = panel.querySelector('.terminal-title');
+        if (titleEl && !titleEl.querySelector('.suspended-badge')) {
+          titleEl.insertAdjacentHTML('beforeend', '<span class="suspended-badge">[suspended]</span>');
+        }
+        updateDispatchBadge();
+        refreshSessionsSidebar();
+      }
+    } catch {}
+  };
+  // Bind resume button
+  panel.querySelector(`[data-resume-terminal="${terminalInfo.id}"]`).onclick = async (e) => {
+    const btn = e.target;
+    btn.disabled = true;
+    try {
+      const resp = await fetch(`/api/terminal/${terminalInfo.id}/resume`, { method: 'POST' });
+      if (resp.ok) {
+        await dismissTerminalPanel(terminalInfo.id);
+        updateDispatchBadge();
+        refreshSessionsSidebar();
+      }
+    } catch {}
+  };
   // Bind dismiss button
   panel.querySelector(`[data-dismiss-terminal="${terminalInfo.id}"]`).onclick = async () => {
-    try { await fetch(`/api/terminal/${terminalInfo.id}`, { method: 'DELETE' }); } catch {}
-    const idx = activeTerminals.findIndex(t => t.id === terminalInfo.id);
-    if (idx !== -1) activeTerminals.splice(idx, 1);
-    const panelKey = `terminal:${terminalInfo.id}`;
-    if (panel.parentElement) panel.remove();
-    sessionPanels.delete(panelKey);
+    await dismissTerminalPanel(terminalInfo.id);
     updateDispatchBadge();
     refreshSessionsSidebar();
   };
@@ -1238,54 +1364,27 @@ async function connectTerminalWs(terminalInfo) {
   const ws = new WebSocket(`${proto}//${location.host}/api/terminal/${terminalInfo.id}/ws`);
   terminalInfo._ws = ws;
 
-  // Local scrollback mirror — used to replay on column-change resize (avoids xterm reflow bugs)
-  const LOCAL_SCROLLBACK_LIMIT = 100 * 1024;
-  let localScrollback = '';
-
   ws.onmessage = (e) => {
     try {
       const msg = JSON.parse(e.data);
       if (msg.type === 'scrollback') {
-        localScrollback = msg.data;
         term.reset();
+        fitAddon.fit();
+        lastCols = term.cols;
+        lastRows = term.rows;
         term.write(msg.data, () => {
-          fitAddon.fit();
-          lastCols = term.cols;
-          lastRows = term.rows;
-          if (ws.readyState === WebSocket.OPEN) {
+          if ((term.cols !== msg.cols || term.rows !== msg.rows) && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
           }
         });
       } else if (msg.type === 'data') {
-        localScrollback += msg.data;
-        if (localScrollback.length > LOCAL_SCROLLBACK_LIMIT) {
-          const sliced = localScrollback.slice(-LOCAL_SCROLLBACK_LIMIT);
-          const nl = sliced.indexOf('\n');
-          localScrollback = nl > 0 ? sliced.slice(nl + 1) : sliced;
-        }
         term.write(msg.data);
+      } else if (msg.type === 'dims') {
+        lastCols = msg.cols;
+        lastRows = msg.rows;
       } else if (msg.type === 'exit') {
         terminalInfo.status = msg.code === 0 ? 'completed' : 'failed';
-        // Update panel status visually — keep panel visible for resume info
-        const panelEl = document.getElementById(`terminal-${terminalInfo.id}`);
-        if (panelEl) {
-          const dot = panelEl.querySelector('.status-dot');
-          if (dot) { dot.classList.remove('running'); dot.classList.add(msg.code === 0 ? 'completed' : 'failed'); }
-          const killBtn = panelEl.querySelector(`[data-kill-terminal="${terminalInfo.id}"]`);
-          if (killBtn) killBtn.disabled = true;
-          const dismissBtn = panelEl.querySelector(`[data-dismiss-terminal="${terminalInfo.id}"]`);
-          if (dismissBtn) dismissBtn.style.display = '';
-          // Insert resume guidance before footer
-          const footer = panelEl.querySelector('div[style*="border-top"]');
-          if (footer && !panelEl.querySelector('.terminal-guidance')) {
-            const guidance = document.createElement('div');
-            guidance.className = 'terminal-guidance';
-            guidance.innerHTML = `<div class="label">Session ended — continue from terminal</div><code>cd ${esc(terminalInfo.project_path || '~')} && claude --resume ${esc(terminalInfo.id)}</code>`;
-            footer.parentNode.insertBefore(guidance, footer);
-          }
-        }
-        updateDispatchBadge();
-        refreshSessionsSidebar();
+        finalizeTerminalPanel(terminalInfo);
       }
     } catch {}
   };
@@ -1309,15 +1408,8 @@ async function connectTerminalWs(terminalInfo) {
     const rect = containerEl.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
     if (terminalInfo._needsInitialFit) {
-      // First time container becomes visible — replay if content exists to avoid reflow
       terminalInfo._needsInitialFit = false;
-      if (localScrollback) {
-        term.reset();
-        fitAddon.fit();
-        term.write(localScrollback);
-      } else {
-        fitAddon.fit();
-      }
+      fitAddon.fit();
       lastCols = term.cols;
       lastRows = term.rows;
       if (ws.readyState === WebSocket.OPEN) {
@@ -1328,18 +1420,7 @@ async function connectTerminalWs(terminalInfo) {
     if (resizeTimer) clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
       resizeTimer = null;
-      // Check if columns would change — if so, replay instead of reflow
-      const proposedDims = fitAddon.proposeDimensions();
-      const newCols = proposedDims?.cols ?? term.cols;
-      if (newCols !== lastCols && localScrollback) {
-        // Column change — reset and replay scrollback to avoid xterm reflow artifacts
-        term.reset();
-        fitAddon.fit();
-        term.write(localScrollback);
-      } else {
-        // Row-only change — safe to use normal fit (no reflow triggered)
-        fitPreservingScroll(term, fitAddon);
-      }
+      fitPreservingScroll(term, fitAddon);
       if (term.cols !== lastCols || term.rows !== lastRows) {
         lastCols = term.cols;
         lastRows = term.rows;
@@ -1365,18 +1446,11 @@ async function restoreTerminals() {
       createTerminalPanel(terminalInfo);
       if (t.status === 'running') {
         toConnect.push(terminalInfo);
+      } else if (t.status === 'suspended') {
+        // Suspended terminal — keep panel visible (no WebSocket needed)
       } else {
-        // Exited terminal restored on page load — show resume guidance
-        const panelEl = document.getElementById(`terminal-${terminalInfo.id}`);
-        if (panelEl) {
-          const footer = panelEl.querySelector('div[style*="border-top"]');
-          if (footer && !panelEl.querySelector('.terminal-guidance')) {
-            const guidance = document.createElement('div');
-            guidance.className = 'terminal-guidance';
-            guidance.innerHTML = `<div class="label">Session ended — continue from terminal</div><code>cd ${esc(terminalInfo.project_path || '~')} && claude --resume ${esc(terminalInfo.id)}</code>`;
-            footer.parentNode.insertBefore(guidance, footer);
-          }
-        }
+        // Exited terminal — show finalized panel (keep visible for review)
+        finalizeTerminalPanel(terminalInfo);
       }
     }
     // Cleanup stale panels for sessions that no longer exist
@@ -1624,10 +1698,12 @@ async function restoreDispatches() {
         existing.status = d.status;
         continue;
       }
-      const dispatch = { ...d, title: d.work_item_id, session_id: d.session_id || null, needs_input: d.needs_input || false };
+      const dispatch = { ...d, title: d.work_item_id, needs_input: d.needs_input || false };
       activeDispatches.push(dispatch);
       createDispatchPanel(dispatch);
-      if (d.status === 'running') connectDispatchStream(dispatch);
+      if (d.status === 'running' || d.status === 'completed' || d.status === 'failed') {
+        connectDispatchStream(dispatch);
+      }
     }
     // Cleanup stale panels for sessions that no longer exist
     const activeIds = new Set(list.map(d => `dispatch:${d.id}`));
@@ -1816,7 +1892,7 @@ function renderOrgView(org, data, orgSessions) {
       html += `<h4 style="font-size:13px;color:var(--text-light);margin:8px 0 4px">${esc(pk)}</h4>`;
       html += `<table class="org-agents-table"><thead><tr><th></th><th>Title</th><th>Work Item</th><th>Status</th><th>Elapsed</th><th></th></tr></thead><tbody>`;
       for (const s of sessions) {
-        const dotClass = s.status === 'running' ? 'running' : (s.status === 'completed' ? 'completed' : (s.status === 'interrupted' ? 'interrupted' : 'failed'));
+        const dotClass = s.status === 'running' ? 'running' : (s.status === 'suspended' ? 'suspended' : (s.status === 'completed' ? 'completed' : (s.status === 'interrupted' ? 'interrupted' : 'failed')));
         const elapsed = formatElapsed(s.started_at);
         html += `<tr>`;
         html += `<td><span class="status-dot ${dotClass}" style="display:inline-block"></span></td>`;
@@ -4059,6 +4135,25 @@ function buildSessionsSidebar() {
   container.appendChild(divider);
 }
 
+function copySessionId(sessionId, el) {
+  navigator.clipboard.writeText(sessionId).then(() => {
+    const orig = el.textContent;
+    el.textContent = 'Copied!';
+    setTimeout(() => { el.textContent = orig; }, 1200);
+  }).catch(() => {});
+}
+
+function sessionIdTag(sessionId) {
+  if (!sessionId) return '';
+  return `<span class="tag session-id-copy" style="font-family:monospace;font-size:10px;cursor:pointer;opacity:0.8" title="Click to copy session ID">${esc(sessionId)}</span>`;
+}
+
+function bindSessionIdCopy(container) {
+  for (const el of container.querySelectorAll('.session-id-copy')) {
+    el.onclick = (e) => { e.stopPropagation(); copySessionId(el.textContent, el); };
+  }
+}
+
 function formatElapsed(startedAt) {
   const ms = Date.now() - new Date(startedAt).getTime();
   const s = Math.floor(ms / 1000);
@@ -4137,7 +4232,7 @@ function refreshSessionsSidebar() {
   function renderEntry(s, indented) {
     const entry = document.createElement('div');
     entry.className = 'session-entry' + (indented ? ' indented' : '');
-    const dotClass = s.status === 'running' ? 'running' : (s.status === 'completed' ? 'completed' : (s.status === 'interrupted' ? 'interrupted' : 'failed'));
+    const dotClass = s.status === 'running' ? 'running' : (s.status === 'suspended' ? 'suspended' : (s.status === 'completed' ? 'completed' : (s.status === 'interrupted' ? 'interrupted' : 'failed')));
     const elapsed = formatElapsed(s.started_at);
     entry.innerHTML = `<span class="status-dot ${dotClass}" style="width:8px;height:8px"></span><span class="session-label">${esc(s.label)}</span><span class="session-meta">${elapsed}</span>`;
     entry.onclick = () => navigateToSession(s);
@@ -4204,7 +4299,7 @@ function openFocusPopup(type, id) {
   const popup = document.createElement('div');
   popup.className = 'focus-popup' + (type === 'terminal' ? ' terminal-focus' : '');
 
-  let sourceEl, parentEl, title, status, startedAt, sessionId, dispatch, terminalInfo;
+  let sourceEl, parentEl, title, status, startedAt, dispatch, terminalInfo;
 
   if (type === 'dispatch') {
     dispatch = activeDispatches.find(d => d.id === id);
@@ -4214,7 +4309,6 @@ function openFocusPopup(type, id) {
     title = dispatch.work_item_id ? `${dispatch.work_item_id} — ${dispatch.title || ''}` : (dispatch.title || dispatch.id);
     status = dispatch.status;
     startedAt = dispatch.started_at;
-    sessionId = dispatch.session_id;
   } else {
     terminalInfo = activeTerminals.find(t => t.id === id);
     if (!terminalInfo) return;
@@ -4232,9 +4326,8 @@ function openFocusPopup(type, id) {
   // Header
   const header = document.createElement('div');
   header.className = 'focus-popup-header';
-  const dotClass = status === 'running' ? 'running' : (status === 'completed' ? 'completed' : 'failed');
+  const dotClass = status === 'running' ? 'running' : (status === 'suspended' ? 'suspended' : (status === 'completed' ? 'completed' : 'failed'));
   let metaHtml = formatElapsed(startedAt);
-  if (type === 'dispatch' && sessionId) metaHtml += ` | ${sessionId}`;
   const focusBadge = type === 'terminal' ? '<span class="focus-lock-badge">FOCUSED</span>' : '';
   header.innerHTML = `<span class="status-dot ${dotClass}"></span><span class="focus-title">${esc(title)}${focusBadge}</span><span class="focus-meta">${metaHtml}</span>`;
 
@@ -4263,6 +4356,18 @@ function openFocusPopup(type, id) {
   closeBtn.onclick = () => closeFocusPopup();
   footer.appendChild(closeBtn);
 
+  // Session ID copy button
+  const sessionId = type === 'dispatch' ? dispatch?.claude_session_id : terminalInfo?.claude_session_id;
+  if (sessionId) {
+    const sidSpan = document.createElement('span');
+    sidSpan.className = 'tag session-id-copy';
+    sidSpan.style.cssText = 'font-family:monospace;font-size:10px;cursor:pointer;opacity:0.8';
+    sidSpan.title = 'Click to copy session ID';
+    sidSpan.textContent = sessionId;
+    sidSpan.onclick = () => copySessionId(sessionId, sidSpan);
+    footer.appendChild(sidSpan);
+  }
+
   const isRunning = status === 'running';
   const killBtn = document.createElement('button');
   killBtn.className = 'btn btn-kill';
@@ -4289,6 +4394,52 @@ function openFocusPopup(type, id) {
   };
   footer.appendChild(killBtn);
 
+  // Suspend button
+  if (isRunning) {
+    const suspendBtn = document.createElement('button');
+    suspendBtn.className = 'suspend-btn';
+    suspendBtn.textContent = 'Suspend';
+    suspendBtn.onclick = async () => {
+      suspendBtn.disabled = true;
+      const endpoint = type === 'dispatch' ? `/api/dispatch/${id}/suspend` : `/api/terminal/${id}/suspend`;
+      try {
+        const resp = await fetch(endpoint, { method: 'POST' });
+        if (resp.ok) {
+          if (dispatch) dispatch.status = 'suspended';
+          if (terminalInfo) terminalInfo.status = 'suspended';
+          const dot = header.querySelector('.status-dot');
+          dot.classList.remove('running');
+          dot.classList.add('suspended');
+          killBtn.disabled = true;
+          updateDispatchBadge();
+          refreshSessionsSidebar();
+          closeFocusPopup();
+        }
+      } catch {}
+    };
+    footer.appendChild(suspendBtn);
+  }
+
+  // Resume button (for suspended sessions opened in focus)
+  if (status === 'suspended') {
+    const resumeBtn = document.createElement('button');
+    resumeBtn.className = 'resume-btn';
+    resumeBtn.textContent = 'Resume';
+    resumeBtn.onclick = async () => {
+      resumeBtn.disabled = true;
+      const endpoint = type === 'dispatch' ? `/api/dispatch/${id}/resume` : `/api/terminal/${id}/resume`;
+      try {
+        const resp = await fetch(endpoint, { method: 'POST' });
+        if (resp.ok) {
+          updateDispatchBadge();
+          refreshSessionsSidebar();
+          closeFocusPopup();
+        }
+      } catch {}
+    };
+    footer.appendChild(resumeBtn);
+  }
+
   // /exit button for terminal sessions
   if (type === 'terminal' && terminalInfo && isRunning) {
     const exitBtn = document.createElement('button');
@@ -4304,22 +4455,6 @@ function openFocusPopup(type, id) {
       }
     };
     footer.appendChild(exitBtn);
-  }
-
-  if (type === 'dispatch' && dispatch) {
-    const copyBtn = document.createElement('button');
-    copyBtn.className = 'btn btn-copy';
-    copyBtn.textContent = 'Copy Resume';
-    copyBtn.onclick = () => {
-      const cmd = dispatch.session_id
-        ? `cd ${dispatch.project_path} && claude --resume ${dispatch.session_id}`
-        : `cd ${dispatch.project_path} && claude "${dispatch.title || ''}"`;
-      navigator.clipboard.writeText(cmd).then(() => {
-        copyBtn.textContent = 'Copied!';
-        setTimeout(() => { copyBtn.textContent = 'Copy Resume'; }, 1500);
-      });
-    };
-    footer.appendChild(copyBtn);
   }
 
   popup.appendChild(header);
@@ -4342,7 +4477,6 @@ function openFocusPopup(type, id) {
     const metaEl = header.querySelector('.focus-meta');
     if (metaEl) {
       let meta = formatElapsed(startedAt);
-      if (type === 'dispatch' && dispatch?.session_id) meta += ` | ${dispatch.session_id}`;
       metaEl.textContent = meta;
     }
     // Update status dot in popup
@@ -4409,6 +4543,7 @@ function renderAgentTile(agent) {
   if (agent.work_item_id) badges += `<span class="badge badge-open">${esc(agent.work_item_id)}</span>`;
   if (agent.epic_id) badges += `<span class="badge badge-epic">${esc(agent.epic_id)}</span>`;
   badges += `<span class="badge ${typeBadgeClass}">${typeLabel}</span>`;
+  if (agent.claude_session_id) badges += sessionIdTag(agent.claude_session_id);
 
   return `<div class="agent-tile" data-agent-type="${esc(agent.type)}" data-agent-id="${esc(agent.id)}">
     <div class="agent-tile-header">
@@ -4419,6 +4554,8 @@ function renderAgentTile(agent) {
     <div class="agent-tile-badges">${badges}</div>
     <div class="agent-tile-preview">${esc(preview)}</div>
     <div class="agent-tile-footer">
+      <button class="suspend-btn" data-tile-suspend="${esc(agent.type)}:${esc(agent.id)}" ${(agent.status !== 'running' || isCli) ? 'style="display:none"' : ''}>Suspend</button>
+      <button class="resume-btn" data-tile-resume="${esc(agent.type)}:${esc(agent.id)}" ${agent.status !== 'suspended' ? 'style="display:none"' : ''}>Resume</button>
       <button class="kill-btn" data-tile-kill="${esc(agent.type)}:${esc(agent.id)}" ${(agent.status !== 'running' || isCli) ? 'disabled' : ''}>Kill</button>
       ${isCli ? '' : `<button class="focus-btn" data-tile-focus="${esc(agent.type)}:${esc(agent.id)}">Focus</button>`}
     </div>
@@ -4433,10 +4570,10 @@ async function fetchAgentsList() {
   ]);
   const agents = [];
   for (const d of dispatches) {
-    agents.push({ type: 'dispatch', id: d.id, status: d.status, title: d.work_item_id || d.id, work_item_id: d.work_item_id, project_key: d.project_key, epic_id: d.epic_id, started_at: d.started_at, last_output: d.last_output || [], session_id: d.session_id, cost_usd: d.cost_usd });
+    agents.push({ type: 'dispatch', id: d.id, status: d.status, title: d.work_item_id || d.id, work_item_id: d.work_item_id, project_key: d.project_key, epic_id: d.epic_id, started_at: d.started_at, last_output: d.last_output || [], cost_usd: d.cost_usd, claude_session_id: d.claude_session_id });
   }
   for (const t of terminals) {
-    agents.push({ type: 'terminal', id: t.id, status: t.status, title: t.title || t.id, work_item_id: t.work_item_id, project_key: t.project_key, epic_id: t.epic_id, started_at: t.started_at, last_output: t.last_output || [] });
+    agents.push({ type: 'terminal', id: t.id, status: t.status, title: t.title || t.id, work_item_id: t.work_item_id, project_key: t.project_key, epic_id: t.epic_id, started_at: t.started_at, last_output: t.last_output || [], claude_session_id: t.claude_session_id });
   }
   for (const c of cliSessions) {
     agents.push({ type: 'cli', id: c.id, status: c.status === 'running' ? 'running' : 'completed', title: c.title, work_item_id: c.work_item_id, project_key: c.project_key, epic_id: c.epic_id, started_at: c.registered_at, last_output: [] });
@@ -4595,6 +4732,53 @@ function bindAgentsEvents(agents, filters) {
         dot.classList.add('failed');
       } catch {}
     };
+  });
+
+  // Suspend buttons (agents tile view)
+  document.querySelectorAll('[data-tile-suspend]').forEach(btn => {
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      const [type, id] = btn.dataset.tileSuspend.split(':');
+      btn.disabled = true;
+      const endpoint = type === 'terminal' ? `/api/terminal/${id}/suspend` : `/api/dispatch/${id}/suspend`;
+      try {
+        const resp = await fetch(endpoint, { method: 'POST' });
+        if (resp.ok) {
+          const agent = agents.find(a => a.id === id);
+          if (agent) agent.status = 'suspended';
+          const d = activeDispatches.find(a => a.id === id);
+          if (d) d.status = 'suspended';
+          const t = activeTerminals.find(a => a.id === id);
+          if (t) t.status = 'suspended';
+          updateDispatchBadge();
+          refreshSessionsSidebar();
+          if (location.hash.startsWith('#agents')) route();
+        }
+      } catch {}
+    };
+  });
+
+  // Resume buttons (agents tile view)
+  document.querySelectorAll('[data-tile-resume]').forEach(btn => {
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      const [type, id] = btn.dataset.tileResume.split(':');
+      btn.disabled = true;
+      const endpoint = type === 'terminal' ? `/api/terminal/${id}/resume` : `/api/dispatch/${id}/resume`;
+      try {
+        const resp = await fetch(endpoint, { method: 'POST' });
+        if (resp.ok) {
+          updateDispatchBadge();
+          refreshSessionsSidebar();
+          if (location.hash.startsWith('#agents')) route();
+        }
+      } catch {}
+    };
+  });
+
+  // Session ID copy (agent tiles)
+  document.querySelectorAll('.agent-tile .session-id-copy').forEach(el => {
+    el.onclick = (e) => { e.stopPropagation(); copySessionId(el.textContent, el); };
   });
 
   // Status filter tabs

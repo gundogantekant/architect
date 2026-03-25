@@ -88,8 +88,9 @@ function saveDispatchToDb(d) {
     title: d.title || d.work_item_id, permission_mode: d.permission_mode || 'acceptEdits',
     skip_permissions: d.skip_permissions || false,
     status: d.status, started_at: d.started_at, completed_at: d.completed_at,
-    session_id: d.session_id || null, cost_usd: d.cost_usd || null,
+    cost_usd: d.cost_usd || null,
     pid: d.pid || null,
+    claude_session_id: d.claude_session_id || null,
   });
 }
 
@@ -101,6 +102,7 @@ function saveTerminalToDb(t) {
     skip_permissions: t.skip_permissions || false,
     status: t.status, started_at: t.started_at, exited_at: t.exited_at,
     pid: t.pid || null, tmux_session: t.tmux_session || null,
+    claude_session_id: t.claude_session_id || null,
   });
 }
 
@@ -305,6 +307,13 @@ function restoreSessions() {
   let interruptedTerminals = 0;
 
   for (const d of db.getPersistedDispatches()) {
+    if (d.status === 'suspended') {
+      // Suspended dispatches: load into memory as-is (no running process)
+      dispatches.set(d.id, {
+        ...d, output: [], lastLines: [], listeners: new Set(), process: null,
+      });
+      continue;
+    }
     if (d.status === 'running' && d.pid) {
       if (isPidAlive(d.pid)) {
         // Process survived restart — reconnect via log file tailing
@@ -342,6 +351,11 @@ function restoreSessions() {
   }
 
   for (const t of db.getPersistedTerminals()) {
+    if (t.status === 'suspended') {
+      // Suspended terminals: load into memory as-is (no running process)
+      terminals.set(t.id, { ...t, ptyProcess: null, scrollback: '', wsClients: new Set() });
+      continue;
+    }
     if (t.status === 'running') {
       if (t.tmux_session && TMUX_AVAILABLE && tmuxSessionExists(t.tmux_session)) {
         // Re-attach to tmux session
@@ -460,8 +474,8 @@ function wireDispatchHandlers(dispatch, proc) {
       if (!line.trim()) continue;
       try {
         const evt = JSON.parse(line);
-        if (evt.type === 'system' && evt.subtype === 'init' && evt.session_id) {
-          dispatch.session_id = evt.session_id;
+        if (evt.session_id && !dispatch.claude_session_id) {
+          dispatch.claude_session_id = evt.session_id;
           saveDispatchToDb(dispatch);
         }
         if (evt.type === 'result' && evt.total_cost_usd != null) {
@@ -1552,6 +1566,7 @@ const routes = [
       skip_permissions: resolvedSkipPerms,
       status: 'running',
       needs_input: false,
+      claude_session_id: null,
       output: [],
       lastLines: [],
       listeners: new Set(),
@@ -1654,7 +1669,6 @@ const routes = [
         project_key: d.project_key,
         project_path: d.project_path,
         status: d.status,
-        session_id: d.session_id || null,
         cost_usd: d.cost_usd || null,
         started_at: d.started_at,
         completed_at: d.completed_at,
@@ -1662,6 +1676,7 @@ const routes = [
         needs_input: d.needs_input || false,
         permission_mode: d.permission_mode || 'acceptEdits',
         skip_permissions: d.skip_permissions || false,
+        claude_session_id: d.claude_session_id || null,
       });
     }
     json(res, list);
@@ -1712,6 +1727,97 @@ const routes = [
     db.deleteDispatch(m[1]);
     unlinkFile(join(LOGS_DIR, `${m[1]}.jsonl`)).catch(() => {});
     json(res, { status: 'killed', id: m[1] });
+  }],
+
+  // Suspend a dispatch (kill process but keep record for resume)
+  [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/suspend$/, 'POST', async (m, _req, res) => {
+    const dispatch = dispatches.get(m[1]);
+    if (!dispatch) return err(res, 'dispatch not found');
+    if (dispatch.status !== 'running') return err(res, 'dispatch is not running', 400);
+    if (!dispatch.claude_session_id) return err(res, 'session ID not yet captured — try again shortly', 400);
+    if (dispatch.process) {
+      const timer = killProcessGraceful(dispatch.process);
+      dispatch.process.on('close', () => clearTimeout(timer));
+    } else if (dispatch.pid && isPidAlive(dispatch.pid)) {
+      try { process.kill(dispatch.pid, 'SIGTERM'); } catch {}
+    }
+    dispatch.status = 'suspended';
+    dispatch.completed_at = new Date().toISOString();
+    if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
+    if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
+    archiveSession(dispatch, 'dispatch');
+    for (const listener of dispatch.listeners) listener(null);
+    dispatch.listeners.clear();
+    saveDispatchToDb(dispatch);
+    json(res, { status: 'suspended', id: m[1], claude_session_id: dispatch.claude_session_id });
+  }],
+
+  // Resume a suspended dispatch
+  [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/resume$/, 'POST', async (m, req, res) => {
+    const old = dispatches.get(m[1]);
+    if (!old) return err(res, 'dispatch not found');
+    if (old.status !== 'suspended') return err(res, 'dispatch is not suspended', 400);
+    if (!old.claude_session_id) return err(res, 'no session ID available for resume', 400);
+
+    const body = await parseBody(req);
+    const resumeSessionId = old.claude_session_id;
+    const { work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions } = old;
+
+    // Remove old suspended record
+    dispatches.delete(m[1]);
+    db.deleteDispatch(m[1]);
+
+    // Create new dispatch with --resume flag
+    const id = `D-${Date.now()}`;
+    const resolvedPermMode = permission_mode || 'acceptEdits';
+    const resolvedSkipPerms = skip_permissions === true || skip_permissions === 'true';
+
+    const dispatch = {
+      id,
+      work_item_id,
+      epic_id,
+      project_key,
+      project_path,
+      title: title || '',
+      permission_mode: resolvedPermMode,
+      skip_permissions: resolvedSkipPerms,
+      status: 'running',
+      needs_input: false,
+      claude_session_id: resumeSessionId,
+      output: [],
+      lastLines: [],
+      listeners: new Set(),
+      started_at: new Date().toISOString(),
+      completed_at: null,
+    };
+
+    const args = ['-p', '--output-format', 'stream-json', '--verbose'];
+    args.push('--resume', resumeSessionId);
+    args.push('--permission-mode', resolvedPermMode === 'plan' ? 'plan' : 'acceptEdits');
+    if (resolvedSkipPerms) args.push('--dangerously-skip-permissions');
+    args.push('--add-dir', ROOT);
+
+    let proc;
+    try {
+      proc = spawn(CLAUDE_BIN, args, { cwd: project_path, env: { ...process.env, ARCHITECT_ROOT: ROOT }, stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (e) {
+      return err(res, `Failed to spawn resumed dispatch: ${e.message}`, 500);
+    }
+
+    dispatch.process = proc;
+    dispatch.pid = proc.pid;
+    const logPath = join(LOGS_DIR, `${id}.jsonl`);
+    dispatch.logPath = logPath;
+    dispatch.logStream = createWriteStream(logPath, { flags: 'a' });
+    wireDispatchHandlers(dispatch, proc);
+
+    const prompt = body?.additional_instructions || 'Continue where you left off.';
+    proc.stdin.write(prompt + '\n');
+    proc.stdin.end();
+
+    dispatches.set(id, dispatch);
+    saveDispatchToDb(dispatch);
+    json(res, { dispatch_id: id, status: 'running', resumed_from: m[1] });
   }],
 
   // --- Terminal endpoints ---
@@ -1771,8 +1877,10 @@ const routes = [
     let ptyProcess;
     let tmuxName = null;
     let agentsFile = null;
+    const claudeSessionId = crypto.randomUUID();
     try {
-      const ptyArgs = [];
+      const ptyArgs = ['--session-id', claudeSessionId];
+      ptyArgs.push('--permission-mode', resolvedTermPermMode === 'plan' ? 'plan' : 'acceptEdits');
       if (resolvedTermSkipPerms) {
         ptyArgs.push('--dangerously-skip-permissions');
       }
@@ -1837,6 +1945,7 @@ const routes = [
         ? parseInt(execFileSync('tmux', ['display-message', '-t', tmuxName, '-p', '#{pane_pid}'], { encoding: 'utf8' }).trim(), 10)
         : ptyProcess.pid,
       tmux_session: tmuxName,
+      claude_session_id: claudeSessionId,
       agents_file: agentsFile,
       scrollback: '',
       logStream: createWriteStream(join(LOGS_DIR, `${id}.raw`), { flags: 'a' }),
@@ -1847,13 +1956,40 @@ const routes = [
 
     wireTerminalHandlers(terminal);
 
-    // After PTY is ready, write the prompt as first input
-    // Tmux needs longer delay: session creation → claude starts → node-pty attaches
-    setTimeout(() => {
-      if (terminal.ptyProcess) {
-        terminal.ptyProcess.write(prompt + '\r');
+    // Write prompt to PTY using readiness-gated chunked delivery.
+    // Wait for Claude to emit output (ready indicator), then write in chunks
+    // to avoid PTY buffer overflow (macOS default ~4KB).
+    const CHUNK_SIZE = 2048;
+    const CHUNK_DELAY = 50;
+    const MAX_WAIT = tmuxName ? 8000 : 5000;
+    let promptWritten = false;
+
+    async function writePromptChunked(ptyProc) {
+      if (promptWritten) return;
+      promptWritten = true;
+      for (let i = 0; i < prompt.length; i += CHUNK_SIZE) {
+        const chunk = prompt.slice(i, i + CHUNK_SIZE);
+        ptyProc.write(chunk);
+        if (i + CHUNK_SIZE < prompt.length) {
+          await new Promise(r => setTimeout(r, CHUNK_DELAY));
+        }
       }
-    }, tmuxName ? 1500 : 500);
+      ptyProc.write('\r');
+    }
+
+    // Listen for first output data as readiness signal
+    const onData = terminal.ptyProcess.onData(() => {
+      onData.dispose();
+      writePromptChunked(terminal.ptyProcess);
+    });
+
+    // Fallback: write after MAX_WAIT if no output received
+    setTimeout(() => {
+      if (!promptWritten && terminal.ptyProcess) {
+        onData.dispose();
+        writePromptChunked(terminal.ptyProcess);
+      }
+    }, MAX_WAIT);
 
     terminals.set(id, terminal);
     saveTerminalToDb(terminal);
@@ -1946,6 +2082,7 @@ const routes = [
         last_output: scrollLines,
         permission_mode: t.permission_mode || 'acceptEdits',
         skip_permissions: t.skip_permissions || false,
+        claude_session_id: t.claude_session_id || null,
       });
     }
     json(res, list);
@@ -2002,6 +2139,115 @@ const routes = [
     db.deleteTerminal(m[1]);
     unlinkFile(join(LOGS_DIR, `${m[1]}.raw`)).catch(() => {});
     json(res, { status: 'killed', id: m[1] });
+  }],
+
+  // Suspend a terminal (kill process but keep record for resume)
+  [/^\/api\/terminal\/([A-Za-z0-9_-]+)\/suspend$/, 'POST', async (m, _req, res) => {
+    const terminal = terminals.get(m[1]);
+    if (!terminal) return err(res, 'terminal not found');
+    if (terminal.status !== 'running') return err(res, 'terminal is not running', 400);
+    if (terminal.ptyProcess) {
+      try { terminal.ptyProcess.kill('SIGHUP'); } catch {}
+    } else if (terminal.tmux_session && TMUX_AVAILABLE) {
+      try { execFileSync('tmux', ['kill-session', '-t', terminal.tmux_session], { stdio: 'ignore' }); } catch {}
+    } else if (terminal.pid && isPidAlive(terminal.pid)) {
+      try { process.kill(terminal.pid, 'SIGTERM'); } catch {}
+    }
+    terminal.status = 'suspended';
+    terminal.exited_at = new Date().toISOString();
+    if (terminal.logStream) { terminal.logStream.end(); terminal.logStream = null; }
+    for (const ws of terminal.wsClients) {
+      try { ws.send(JSON.stringify({ type: 'suspended' })); ws.close(); } catch {}
+    }
+    terminal.wsClients.clear();
+    terminal.ptyProcess = null;
+    archiveSession(terminal, 'terminal');
+    saveTerminalToDb(terminal);
+    json(res, { status: 'suspended', id: m[1], claude_session_id: terminal.claude_session_id });
+  }],
+
+  // Resume a suspended terminal
+  [/^\/api\/terminal\/([A-Za-z0-9_-]+)\/resume$/, 'POST', async (m, req, res) => {
+    const old = terminals.get(m[1]);
+    if (!old) return err(res, 'terminal not found');
+    if (old.status !== 'suspended') return err(res, 'terminal is not suspended', 400);
+    if (!old.claude_session_id) return err(res, 'no session ID available for resume', 400);
+
+    const body = await parseBody(req);
+    const resumeSessionId = old.claude_session_id;
+    const { work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions } = old;
+
+    // Remove old suspended record
+    if (old.agents_file) unlinkFile(old.agents_file).catch(() => {});
+    terminals.delete(m[1]);
+    db.deleteTerminal(m[1]);
+
+    // Create new terminal with --resume flag
+    const id = `T-${Date.now()}`;
+    const resolvedPermMode = permission_mode || 'acceptEdits';
+    const resolvedSkipPerms = skip_permissions === true || skip_permissions === 'true';
+
+    let ptyProcess;
+    let tmuxName = null;
+    try {
+      const ptyArgs = ['--resume', resumeSessionId];
+      if (resolvedSkipPerms) ptyArgs.push('--dangerously-skip-permissions');
+      ptyArgs.push('--add-dir', ROOT);
+
+      if (TMUX_AVAILABLE) {
+        tmuxName = `architect-${id}`;
+        const cliParts = [CLAUDE_BIN, ...ptyArgs.map(a => `'${a.replace(/'/g, "'\\''")}'`)];
+        const shellCmd = cliParts.join(' ');
+        execFileSync('tmux', [
+          'new-session', '-d', '-s', tmuxName, '-x', '80', '-y', '24',
+          'sh', '-c', shellCmd,
+        ], { cwd: project_path, env: { ...process.env, ARCHITECT_ROOT: ROOT } });
+        ptyProcess = pty.spawn('tmux', ['attach-session', '-t', tmuxName], {
+          name: 'xterm-256color', cols: 80, rows: 24,
+          cwd: project_path,
+          env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT },
+        });
+      } else {
+        ptyProcess = pty.spawn(CLAUDE_BIN, ptyArgs, {
+          name: 'xterm-256color', cols: 80, rows: 24,
+          cwd: project_path,
+          env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT },
+        });
+      }
+    } catch (e) {
+      if (tmuxName) { try { execFileSync('tmux', ['kill-session', '-t', tmuxName], { stdio: 'ignore' }); } catch {} }
+      return err(res, `Failed to spawn resumed terminal: ${e.message}`, 500);
+    }
+
+    const terminal = {
+      id,
+      type: 'claude',
+      work_item_id,
+      epic_id,
+      project_key,
+      project_path,
+      title: title || 'Resumed session',
+      permission_mode: resolvedPermMode,
+      skip_permissions: resolvedSkipPerms,
+      status: 'running',
+      ptyProcess,
+      pid: tmuxName
+        ? parseInt(execFileSync('tmux', ['display-message', '-t', tmuxName, '-p', '#{pane_pid}'], { encoding: 'utf8' }).trim(), 10)
+        : ptyProcess.pid,
+      tmux_session: tmuxName,
+      claude_session_id: resumeSessionId,
+      agents_file: null,
+      scrollback: '',
+      logStream: createWriteStream(join(LOGS_DIR, `${id}.raw`), { flags: 'a' }),
+      wsClients: new Set(),
+      started_at: new Date().toISOString(),
+      exited_at: null,
+    };
+
+    wireTerminalHandlers(terminal);
+    terminals.set(id, terminal);
+    saveTerminalToDb(terminal);
+    json(res, { terminal_id: id, status: 'running', resumed_from: m[1] });
   }],
 
   // --- Projects & Time Report endpoints ---
@@ -2222,7 +2468,15 @@ server.on('upgrade', (req, socket, head) => {
         if (msg.type === 'input' && terminal.ptyProcess) {
           terminal.ptyProcess.write(msg.data);
         } else if (msg.type === 'resize' && terminal.ptyProcess && msg.cols && msg.rows) {
-          terminal.ptyProcess.resize(msg.cols, msg.rows);
+          clearTimeout(terminal._resizeTimer);
+          terminal._resizeTimer = setTimeout(() => {
+            if (terminal.ptyProcess) {
+              terminal.ptyProcess.resize(msg.cols, msg.rows);
+              for (const client of terminal.wsClients) {
+                try { client.send(JSON.stringify({ type: 'dims', cols: msg.cols, rows: msg.rows })); } catch {}
+              }
+            }
+          }, 50);
         }
       } catch {}
     });
@@ -2282,9 +2536,9 @@ setInterval(() => {
     }
   }
 
-  // Auto-cleanup: remove exited terminals after 10 minutes
+  // Auto-cleanup: remove exited terminals after 10 minutes (skip suspended)
   for (const [id, terminal] of terminals) {
-    if (terminal.status !== 'running' && terminal.exited_at) {
+    if (terminal.status !== 'running' && terminal.status !== 'suspended' && terminal.exited_at) {
       if (now - new Date(terminal.exited_at).getTime() > 10 * 60 * 1000) {
         if (terminal.agents_file) unlinkFile(terminal.agents_file).catch(() => {});
         unlinkFile(join(LOGS_DIR, `${id}.raw`)).catch(() => {});
@@ -2294,9 +2548,9 @@ setInterval(() => {
     }
   }
 
-  // Auto-cleanup: remove non-running dispatches after 30 minutes
+  // Auto-cleanup: remove non-running dispatches after 30 minutes (skip suspended)
   for (const [id, dispatch] of dispatches) {
-    if (dispatch.status !== 'running' && dispatch.completed_at) {
+    if (dispatch.status !== 'running' && dispatch.status !== 'suspended' && dispatch.completed_at) {
       if (now - new Date(dispatch.completed_at).getTime() > 30 * 60 * 1000) {
         dispatches.delete(id);
         db.deleteDispatch(id);
