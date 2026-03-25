@@ -1612,9 +1612,27 @@ const routes = [
   }],
 
   // Stream dispatch output (SSE)
+  // Return raw JSONL log content as plain text (reliable, no SSE race)
+  [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/log$/, 'GET', async (m, _req, res) => {
+    const dispatch = dispatches.get(m[1]);
+    if (!dispatch) return err(res, 'dispatch not found');
+    const logPath = join(LOGS_DIR, `${dispatch.id}.jsonl`);
+    try {
+      const content = readFileSync(logPath, 'utf8');
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end(content);
+    } catch {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end(dispatch.output.join('\n'));
+    }
+  }],
+
+  // SSE stream — supports ?after=N to skip first N lines (used after HTTP log fetch)
   [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/stream$/, 'GET', async (m, _req, res) => {
     const dispatch = dispatches.get(m[1]);
     if (!dispatch) return err(res, 'dispatch not found');
+
+    const afterLine = parseInt(new URL(_req.url, 'http://x').searchParams.get('after') || '0');
 
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -1624,19 +1642,24 @@ const routes = [
 
     // Replay from log file (source of truth) or fall back to in-memory buffer
     const logPath = join(LOGS_DIR, `${dispatch.id}.jsonl`);
+    let replayCount = 0;
     try {
       const content = readFileSync(logPath, 'utf8');
       for (const line of content.split('\n')) {
-        if (line.trim()) res.write(`data: ${line}\n\n`);
+        if (line.trim()) {
+          replayCount++;
+          if (replayCount > afterLine) res.write(`data: ${line}\n\n`);
+        }
       }
     } catch {
       for (const line of dispatch.output) {
-        res.write(`data: ${line}\n\n`);
+        replayCount++;
+        if (replayCount > afterLine) res.write(`data: ${line}\n\n`);
       }
     }
 
     if (dispatch.status !== 'running') {
-      res.write(`event: done\ndata: ${JSON.stringify({ status: dispatch.status })}\n\n`);
+      res.write(`event: done\ndata: ${JSON.stringify({ status: dispatch.status, replay_lines: replayCount })}\n\n`);
       res.end();
       return;
     }
@@ -2411,6 +2434,45 @@ const routes = [
         text(res, `Error reading log: ${e.message}`, 'text/plain', 500);
       }
     }
+  }],
+
+  // --- Test endpoints (for E2E test seeding) ---
+  [/^\/api\/test\/seed-dispatch$/, 'POST', async (_m, req, res) => {
+    const body = await parseBody(req);
+    const { id, status, project_key, title, work_item_id } = body;
+    if (!id) return err(res, 'id is required', 400);
+
+    const dispatch = {
+      id,
+      work_item_id: work_item_id || null,
+      epic_id: null,
+      project_key: project_key || 'test/test/main',
+      project_path: ROOT,
+      title: title || id,
+      permission_mode: 'plan',
+      skip_permissions: false,
+      status: status || 'completed',
+      needs_input: false,
+      claude_session_id: null,
+      output: [],
+      lastLines: [],
+      listeners: new Set(),
+      started_at: new Date().toISOString(),
+      completed_at: status !== 'running' ? new Date().toISOString() : null,
+      process: null,
+      pid: null,
+    };
+
+    // Load output from log file if it exists
+    const logPath = join(LOGS_DIR, `${id}.jsonl`);
+    try {
+      const content = readFileSync(logPath, 'utf8');
+      dispatch.output = content.split('\n').filter(l => l.trim());
+    } catch {}
+
+    dispatches.set(id, dispatch);
+    saveDispatchToDb(dispatch);
+    json(res, { dispatch_id: id, status: dispatch.status });
   }],
 ];
 

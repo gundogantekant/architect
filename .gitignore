@@ -6,6 +6,7 @@ work/
 projects/
 .claude/worktrees/
 .playwright-mcp/
+test-results/
 work/architect.db
 work/architect.db-wal
 work/architect.db-shm

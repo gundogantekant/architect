@@ -1,0 +1,403 @@
+/**
+ * Terminal Experience E2E Tests
+ *
+ * Behavioral test suite for the dashboard dispatch/terminal UX.
+ * Tests run against a live dashboard at http://127.0.0.1:3777.
+ *
+ * Prerequisite: dashboard server must be running (dashctl.sh start).
+ *
+ * These tests seed dispatches via the test-seed API endpoint which creates
+ * dispatch records with pre-built JSONL log content, avoiding the need to
+ * spawn real Claude processes.
+ */
+
+import { test, expect } from '@playwright/test';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+
+const BASE = 'http://127.0.0.1:3777';
+// Resolve to the same LOGS_DIR the server uses: ROOT/work/logs
+const ROOT = join(import.meta.dirname, '..', '..', '..');
+const LOGS_DIR = join(ROOT, 'work', 'logs');
+
+// --- Helpers ---
+
+/** Generate a stream-json JSONL log with substantial structured content */
+function generateTestLog(lineCount = 300) {
+  const files = ['entities.md', 'rules.md', 'CLAUDE.md', 'load-portfolio-context.md'];
+  const lines = [];
+
+  for (const file of files) {
+    // Content block start (tool use marker)
+    lines.push(JSON.stringify({
+      type: 'content_block_start',
+      index: 0,
+      content_block: { type: 'text', text: '' },
+    }));
+
+    // Generate substantial text content per file section
+    for (let i = 0; i < Math.ceil(lineCount / files.length); i++) {
+      const text = i === 0
+        ? `\n## File: ${file}\n\n### Section ${i + 1}\n\n`
+        : `This is detailed analysis line ${i} for ${file}. ` +
+          `The file contains important configuration that affects the system behavior. ` +
+          `Key observations include structural patterns, dependency chains, and architectural constraints ` +
+          `that must be preserved during any refactoring effort.\n\n`;
+
+      lines.push(JSON.stringify({
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text },
+      }));
+    }
+  }
+
+  // Result event
+  lines.push(JSON.stringify({
+    type: 'result',
+    subtype: 'success',
+    total_cost_usd: 0.05,
+  }));
+
+  return lines.join('\n') + '\n';
+}
+
+/** Seed a dispatch directly via log file + API */
+async function seedDispatch(id, { status = 'completed', projectKey = 'test/test/main' } = {}) {
+  // Write JSONL log file
+  mkdirSync(LOGS_DIR, { recursive: true });
+  const logContent = generateTestLog();
+  writeFileSync(join(LOGS_DIR, `${id}.jsonl`), logContent);
+
+  // Seed via test API
+  const resp = await fetch(`${BASE}/api/test/seed-dispatch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id,
+      status,
+      project_key: projectKey,
+      title: `Test dispatch ${id}`,
+      work_item_id: `W-TEST-${id.split('-').pop()}`,
+    }),
+  });
+  if (!resp.ok) throw new Error(`Seed failed: ${resp.status} ${await resp.text()}`);
+  return resp.json();
+}
+
+/** Clean up a seeded dispatch */
+async function cleanupDispatch(id) {
+  await fetch(`${BASE}/api/dispatch/${id}`, { method: 'DELETE' }).catch(() => {});
+}
+
+/** Wait for a selector to have non-empty text content */
+async function waitForContent(page, selector, minLength = 100) {
+  await page.waitForFunction(
+    ([sel, min]) => {
+      const el = document.querySelector(sel);
+      return el && el.textContent.length > min;
+    },
+    [selector, minLength],
+    { timeout: 15_000 },
+  );
+}
+
+
+// ============================================================
+// Test Group 1: Multi-tab content consistency
+// ============================================================
+
+test.describe('Multi-tab content consistency', () => {
+  const dispatchId = 'D-test-multitab';
+
+  test.beforeEach(async () => {
+    await seedDispatch(dispatchId, { status: 'completed' });
+  });
+
+  test.afterEach(async () => {
+    await cleanupDispatch(dispatchId);
+  });
+
+  test('two tabs show identical content for a completed dispatch', async ({ browser }) => {
+    const ctx1 = await browser.newContext();
+    const ctx2 = await browser.newContext();
+    const tab1 = await ctx1.newPage();
+    const tab2 = await ctx2.newPage();
+
+    // Navigate both tabs to dashboard
+    await tab1.goto(BASE);
+    await tab2.goto(BASE);
+
+    const logSelector = `#log-${dispatchId}`;
+
+    // Wait for content in both tabs
+    await waitForContent(tab1, logSelector);
+    await waitForContent(tab2, logSelector);
+
+    const content1 = await tab1.$eval(logSelector, el => el.textContent);
+    const content2 = await tab2.$eval(logSelector, el => el.textContent);
+
+    // Both must have substantial content
+    expect(content1.length).toBeGreaterThan(5000);
+    expect(content2.length).toBeGreaterThan(5000);
+
+    // Content must be identical
+    expect(content1).toBe(content2);
+
+    // Content must include distinct file sections
+    expect(content1).toContain('entities.md');
+    expect(content1).toContain('load-portfolio-context.md');
+
+    await ctx1.close();
+    await ctx2.close();
+  });
+
+  test('second tab shows completed status, not failed', async ({ browser }) => {
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+
+    await page.goto(BASE);
+
+    const logSelector = `#log-${dispatchId}`;
+    await waitForContent(page, logSelector);
+
+    // Panel should not have failed status class
+    const panel = page.locator(`#dispatch-${dispatchId}`);
+    await expect(panel).not.toHaveClass(/status-failed/);
+
+    // Content must be non-empty
+    const content = await page.$eval(logSelector, el => el.textContent);
+    expect(content.length).toBeGreaterThan(5000);
+
+    await ctx.close();
+  });
+});
+
+
+// ============================================================
+// Test Group 2: Dispatch log scroll — window mode
+// ============================================================
+
+test.describe('Dispatch log scroll — window mode', () => {
+  const dispatchId = 'D-test-scroll-window';
+
+  test.beforeEach(async () => {
+    await seedDispatch(dispatchId, { status: 'completed' });
+  });
+
+  test.afterEach(async () => {
+    await cleanupDispatch(dispatchId);
+  });
+
+  test('dispatch log is scrollable with content overflow', async ({ page }) => {
+    await page.goto(BASE);
+    const logSelector = `#log-${dispatchId}`;
+    await waitForContent(page, logSelector);
+
+    const metrics = await page.$eval(logSelector, el => ({
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+      scrollTop: el.scrollTop,
+    }));
+
+    // Content must overflow the panel (350px max-height)
+    expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight * 3);
+    // Should be scrolled to bottom initially
+    expect(metrics.scrollTop).toBeGreaterThan(0);
+  });
+
+  test('scroll-up shows earlier content (entities.md near top)', async ({ page }) => {
+    await page.goto(BASE);
+    const logSelector = `#log-${dispatchId}`;
+    await waitForContent(page, logSelector);
+
+    // Scroll to top
+    await page.$eval(logSelector, el => { el.scrollTop = 0; });
+    await page.waitForTimeout(100);
+
+    // Get visible text near the top
+    const topText = await page.$eval(logSelector, el => {
+      // Get text content from the visible portion (first ~500 chars)
+      return el.textContent.substring(0, 500);
+    });
+
+    // First file section should be entities.md
+    expect(topText).toContain('entities.md');
+  });
+
+  test('scroll position is preserved when content does not change', async ({ page }) => {
+    await page.goto(BASE);
+    const logSelector = `#log-${dispatchId}`;
+    await waitForContent(page, logSelector);
+
+    // Scroll to middle
+    const midScroll = await page.$eval(logSelector, el => {
+      const mid = el.scrollHeight / 2;
+      el.scrollTop = mid;
+      return el.scrollTop;
+    });
+
+    // Wait a moment
+    await page.waitForTimeout(500);
+
+    // Position should not have changed (no new content forcing scroll)
+    const currentScroll = await page.$eval(logSelector, el => el.scrollTop);
+    expect(currentScroll).toBe(midScroll);
+  });
+});
+
+
+// ============================================================
+// Test Group 3: Dispatch log scroll — focused mode
+// ============================================================
+
+test.describe('Dispatch log scroll — focused mode', () => {
+  const dispatchId = 'D-test-scroll-focus';
+
+  test.beforeEach(async () => {
+    await seedDispatch(dispatchId, { status: 'completed' });
+  });
+
+  test.afterEach(async () => {
+    await cleanupDispatch(dispatchId);
+  });
+
+  test('focus popup shows content scrolled to bottom', async ({ page }) => {
+    await page.goto(BASE);
+    const logSelector = `#log-${dispatchId}`;
+    await waitForContent(page, logSelector);
+
+    // Click focus button
+    await page.click(`[data-focus-dispatch="${dispatchId}"]`);
+    await page.waitForSelector('.focus-overlay', { state: 'visible' });
+    await page.waitForTimeout(300); // let scroll settle
+
+    // In focus mode, log should be scrolled to bottom
+    const metrics = await page.$eval(logSelector, el => ({
+      scrollHeight: el.scrollHeight,
+      scrollTop: el.scrollTop,
+      clientHeight: el.clientHeight,
+      atBottom: (el.scrollHeight - el.scrollTop - el.clientHeight) < 50,
+    }));
+
+    expect(metrics.atBottom).toBe(true);
+  });
+
+  test('scroll-up in popup reveals consistent history', async ({ page }) => {
+    await page.goto(BASE);
+    const logSelector = `#log-${dispatchId}`;
+    await waitForContent(page, logSelector);
+
+    // Get the full content before focus
+    const fullContent = await page.$eval(logSelector, el => el.textContent);
+
+    // Open focus popup
+    await page.click(`[data-focus-dispatch="${dispatchId}"]`);
+    await page.waitForSelector('.focus-overlay', { state: 'visible' });
+    await page.waitForTimeout(300);
+
+    // Scroll to top in popup
+    await page.$eval(logSelector, el => { el.scrollTop = 0; });
+    await page.waitForTimeout(100);
+
+    // Content in popup should be the same as inline
+    const popupContent = await page.$eval(logSelector, el => el.textContent);
+    expect(popupContent).toBe(fullContent);
+
+    // Top content should include entities.md
+    expect(popupContent.substring(0, 500)).toContain('entities.md');
+  });
+
+  test('closing popup restores inline panel with content', async ({ page }) => {
+    await page.goto(BASE);
+    const logSelector = `#log-${dispatchId}`;
+    await waitForContent(page, logSelector);
+
+    const contentBefore = await page.$eval(logSelector, el => el.textContent);
+
+    // Open and close focus popup
+    await page.click(`[data-focus-dispatch="${dispatchId}"]`);
+    await page.waitForSelector('.focus-overlay', { state: 'visible' });
+    await page.waitForTimeout(200);
+
+    // Close via escape
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('.focus-overlay', { state: 'detached' });
+    await page.waitForTimeout(200);
+
+    // Content should still be intact
+    const contentAfter = await page.$eval(logSelector, el => el.textContent);
+    expect(contentAfter).toBe(contentBefore);
+    expect(contentAfter.length).toBeGreaterThan(5000);
+  });
+});
+
+
+// ============================================================
+// Test Group 4: Session history consistency
+// ============================================================
+
+test.describe('Session history consistency', () => {
+  const ids = ['D-test-hist-1', 'D-test-hist-2', 'D-test-hist-3'];
+
+  test.beforeEach(async () => {
+    for (const id of ids) {
+      await seedDispatch(id, { status: 'completed' });
+    }
+  });
+
+  test.afterEach(async () => {
+    for (const id of ids) {
+      await cleanupDispatch(id);
+    }
+  });
+
+  test('multiple concurrent dispatches all render with content', async ({ page }) => {
+    await page.goto(BASE);
+
+    for (const id of ids) {
+      const logSelector = `#log-${id}`;
+      await waitForContent(page, logSelector, 100);
+
+      const content = await page.$eval(logSelector, el => el.textContent);
+      expect(content.length).toBeGreaterThan(5000);
+      expect(content).toContain('entities.md');
+    }
+  });
+
+  test('content survives page refresh', async ({ page }) => {
+    await page.goto(BASE);
+
+    // Wait for first dispatch to load
+    await waitForContent(page, `#log-${ids[0]}`, 100);
+
+    // Capture content
+    const contentBefore = await page.$eval(`#log-${ids[0]}`, el => el.textContent);
+
+    // Refresh
+    await page.reload();
+
+    // Wait for content to reload
+    await waitForContent(page, `#log-${ids[0]}`, 100);
+
+    const contentAfter = await page.$eval(`#log-${ids[0]}`, el => el.textContent);
+    expect(contentAfter).toBe(contentBefore);
+    expect(contentAfter.length).toBeGreaterThan(5000);
+  });
+
+  test('navigation between views preserves panels', async ({ page }) => {
+    await page.goto(BASE);
+    await waitForContent(page, `#log-${ids[0]}`, 100);
+
+    const content1 = await page.$eval(`#log-${ids[0]}`, el => el.textContent);
+
+    // Navigate away and back
+    await page.goto(`${BASE}/#settings`);
+    await page.waitForTimeout(500);
+    await page.goto(BASE);
+    await waitForContent(page, `#log-${ids[0]}`, 100);
+
+    const content2 = await page.$eval(`#log-${ids[0]}`, el => el.textContent);
+    expect(content2).toBe(content1);
+  });
+});

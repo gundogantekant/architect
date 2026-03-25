@@ -839,43 +839,73 @@ function finalizeDispatchPanel(dispatch) {
   refreshSessionsSidebar();
 }
 
-function connectDispatchStream(dispatch) {
-  const logEl = document.getElementById(`log-${dispatch.id}`);
-  const dotEl = document.querySelector(`#dispatch-${dispatch.id} .status-dot`);
-  if (!logEl) return;
+async function loadDispatchContent(dispatch) {
+  if (dispatch._contentLoaded) return;
 
-  const es = new EventSource(`/api/dispatch/${dispatch.id}/stream`);
+  // Wait for the panel to be placed in the DOM (placeSessionPanels uses requestAnimationFrame)
+  let logEl = document.getElementById(`log-${dispatch.id}`);
+  if (!logEl) {
+    await new Promise(r => requestAnimationFrame(r));
+    logEl = document.getElementById(`log-${dispatch.id}`);
+    if (!logEl) return;
+  }
 
-  es.onmessage = (e) => {
-    const text = extractStreamText(e.data);
-    if (text) {
-      const nearBottom = (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight) < 50;
-      logEl.textContent += text;
-      if (nearBottom) logEl.scrollTop = logEl.scrollHeight;
+  // Phase 1: Load historical content via reliable HTTP GET (no SSE race)
+  let replayLines = 0;
+  try {
+    const resp = await fetch(`/api/dispatch/${dispatch.id}/log`);
+    if (resp.ok) {
+      const content = await resp.text();
+      for (const line of content.split('\n')) {
+        if (!line.trim()) continue;
+        replayLines++;
+        const text = extractStreamText(line);
+        if (text) logEl.textContent += text;
+      }
+      logEl.scrollTop = logEl.scrollHeight;
     }
-  };
+  } catch {}
 
-  es.addEventListener('done', (e) => {
-    try {
-      const data = JSON.parse(e.data);
-      dispatch.status = data.status;
-    } catch {
-      dispatch.status = 'completed';
-    }
-    es.close();
-    finalizeDispatchPanel(dispatch);
-  });
+  dispatch._contentLoaded = true;
+  dispatch._replayLines = replayLines;
 
-  es.onerror = () => {
-    if (dispatch.status !== 'running') {
-      // Stream ended for an already-finalized dispatch (e.g. log replay finished) — just close
+  // Phase 2: If running, connect SSE for live-only updates (skip replayed lines)
+  if (dispatch.status === 'running') {
+    const es = new EventSource(`/api/dispatch/${dispatch.id}/stream?after=${replayLines}`);
+    dispatch._eventSource = es;
+
+    es.onmessage = (e) => {
+      const text = extractStreamText(e.data);
+      if (text) {
+        const visible = logEl.offsetParent !== null;
+        if (visible) {
+          const nearBottom = (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight) < 50;
+          logEl.textContent += text;
+          if (nearBottom) logEl.scrollTop = logEl.scrollHeight;
+        } else {
+          logEl.textContent += text; // append but skip scroll (collapsed panel)
+        }
+      }
+    };
+
+    es.addEventListener('done', (e) => {
+      try { dispatch.status = JSON.parse(e.data).status; } catch { dispatch.status = 'completed'; }
       es.close();
-      return;
-    }
-    dispatch.status = 'failed';
-    es.close();
+      dispatch._eventSource = null;
+      finalizeDispatchPanel(dispatch);
+    });
+
+    es.onerror = () => {
+      if (dispatch.status !== 'running') { es.close(); dispatch._eventSource = null; return; }
+      dispatch.status = 'failed';
+      es.close();
+      dispatch._eventSource = null;
+      finalizeDispatchPanel(dispatch);
+    };
+  } else {
+    // Already completed — content loaded via HTTP, just finalize panel appearance
     finalizeDispatchPanel(dispatch);
-  };
+  }
 }
 
 async function killAllSessions() {
@@ -1673,7 +1703,7 @@ async function dispatchWorkItem(workItem, projectKey) {
           updateDispatchBadge();
           createDispatchPanel(dispatch);
           placeSessionPanels();
-          connectDispatchStream(dispatch);
+          loadDispatchContent(dispatch);
           overlay.remove();
           resolve(dispatch);
         }
@@ -1690,6 +1720,7 @@ async function dispatchWorkItem(workItem, projectKey) {
 async function restoreDispatches() {
   try {
     const list = await api('dispatch/active');
+    const newDispatches = [];
     for (const d of list) {
       const existing = activeDispatches.find(a => a.id === d.id);
       if (existing) {
@@ -1701,9 +1732,7 @@ async function restoreDispatches() {
       const dispatch = { ...d, title: d.work_item_id, needs_input: d.needs_input || false };
       activeDispatches.push(dispatch);
       createDispatchPanel(dispatch);
-      if (d.status === 'running' || d.status === 'completed' || d.status === 'failed') {
-        connectDispatchStream(dispatch);
-      }
+      newDispatches.push(dispatch);
     }
     // Cleanup stale panels for sessions that no longer exist
     const activeIds = new Set(list.map(d => `dispatch:${d.id}`));
@@ -1716,6 +1745,12 @@ async function restoreDispatches() {
     }
     placeSessionPanels();
     updateDispatchBadge();
+    // Load content (loadDispatchContent handles waiting for DOM placement)
+    for (const dispatch of newDispatches) {
+      if (dispatch.status !== 'suspended') {
+        loadDispatchContent(dispatch);
+      }
+    }
   } catch {}
 }
 
@@ -2691,7 +2726,7 @@ function showDiscussModal() {
         updateDispatchBadge();
         createDispatchPanel(dispatch);
         placeSessionPanels();
-        connectDispatchStream(dispatch);
+        loadDispatchContent(dispatch);
       }
 
       overlay.remove();
@@ -2822,7 +2857,7 @@ async function showReviewModal(projectKey) {
       updateDispatchBadge();
       createDispatchPanel(dispatch);
       placeSessionPanels();
-      connectDispatchStream(dispatch);
+      loadDispatchContent(dispatch);
       overlay.remove();
     } catch (e) {
       btn.disabled = false;
@@ -2971,7 +3006,7 @@ async function showEpicDiscussModal(epicId) {
         updateDispatchBadge();
         createDispatchPanel(dispatch);
         placeSessionPanels();
-        connectDispatchStream(dispatch);
+        loadDispatchContent(dispatch);
       }
 
       overlay.remove();
@@ -4035,7 +4070,7 @@ async function showEpicDispatchModal(epicId) {
       updateDispatchBadge();
       createDispatchPanel(dispatch);
       placeSessionPanels();
-      connectDispatchStream(dispatch);
+      loadDispatchContent(dispatch);
       overlay.remove();
     } catch (e) {
       btn.disabled = false; btn.textContent = 'Dispatch';
@@ -4100,7 +4135,7 @@ function showOnboardModal() {
       updateDispatchBadge();
       createDispatchPanel(dispatch);
       placeSessionPanels();
-      connectDispatchStream(dispatch);
+      loadDispatchContent(dispatch);
       overlay.remove();
     } catch (e) {
       btn.disabled = false; btn.textContent = 'Onboard';
@@ -4511,6 +4546,11 @@ function closeFocusPopup() {
         if (terminalInfo._fitAddon && terminalInfo._term) fitPreservingScroll(terminalInfo._term, terminalInfo._fitAddon);
       }, 50);
     }
+  }
+
+  // Scroll dispatch log to bottom after returning to inline panel
+  if (type === 'dispatch' && sourceEl) {
+    requestAnimationFrame(() => { sourceEl.scrollTop = sourceEl.scrollHeight; });
   }
 
   if (escHandler) document.removeEventListener('keydown', escHandler);
@@ -5004,7 +5044,7 @@ async function showQuickDispatchModal() {
         updateDispatchBadge();
         createDispatchPanel(dispatch);
         placeSessionPanels();
-        connectDispatchStream(dispatch);
+        loadDispatchContent(dispatch);
       }
       overlay.remove();
       // Refresh agents view if on that page
