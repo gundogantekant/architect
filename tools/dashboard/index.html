@@ -1426,10 +1426,16 @@ async function connectTerminalWs(terminalInfo) {
       loadingEl.textContent = `Loading ${recKB} / ${totKB} KB (${pct}%)`;
     }
   }
+  let loadingFallbackTimer = null;
   function removeLoadingOverlay() {
+    if (loadingFallbackTimer) { clearTimeout(loadingFallbackTimer); loadingFallbackTimer = null; }
     const loadingEl = containerEl.querySelector('.terminal-loading');
     if (loadingEl) loadingEl.remove();
   }
+
+  // Safety fallback: if loading overlay is still present after 10s, remove it
+  // (covers edge cases: WS failures, empty scrollback, server errors)
+  loadingFallbackTimer = setTimeout(() => removeLoadingOverlay(), 10000);
 
   let scrollbackTotal = 0;
   let scrollbackReceived = 0;

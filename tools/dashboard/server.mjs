@@ -2729,13 +2729,16 @@ server.on('upgrade', (req, socket, head) => {
       if (scrollbackData) {
         // Send size hint so client can show progress, then stream in chunks
         const SCROLL_CHUNK = 8 * 1024; // 8KB chunks for progress granularity
-        ws.send(JSON.stringify({ type: 'scrollback-start', total: scrollbackData.length, cols: dims.cols, rows: dims.rows }));
+        try { ws.send(JSON.stringify({ type: 'scrollback-start', total: scrollbackData.length, cols: dims.cols, rows: dims.rows })); } catch {}
         for (let i = 0; i < scrollbackData.length; i += SCROLL_CHUNK) {
           const chunk = scrollbackData.slice(i, i + SCROLL_CHUNK);
           const done = Math.min(i + SCROLL_CHUNK, scrollbackData.length);
-          ws.send(JSON.stringify({ type: 'scrollback', data: chunk, offset: i, total: scrollbackData.length, done }));
+          try { ws.send(JSON.stringify({ type: 'scrollback', data: chunk, offset: i, total: scrollbackData.length, done })); } catch {}
         }
-        ws.send(JSON.stringify({ type: 'scrollback-end', cols: dims.cols, rows: dims.rows }));
+        try { ws.send(JSON.stringify({ type: 'scrollback-end', cols: dims.cols, rows: dims.rows })); } catch {}
+      } else {
+        // No scrollback available — remove loading overlay immediately
+        try { ws.send(JSON.stringify({ type: 'scrollback-end', cols: dims.cols, rows: dims.rows })); } catch {}
       }
       if (terminal.status !== 'running') {
         ws.send(JSON.stringify({ type: 'exit', code: 0 }));
