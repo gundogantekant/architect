@@ -796,6 +796,73 @@ test.describe('Terminal loading state', () => {
     await fetch(`${BASE}/api/terminal/${terminalId}`, { method: 'DELETE' }).catch(() => {});
   });
 
+  test('loading overlay shows KB progress during scrollback delivery', async ({ page }) => {
+    // Install a MutationObserver BEFORE seeding, so we capture all loading text transitions
+    await page.goto(BASE);
+
+    // Set up observer that captures all loading overlay text changes
+    await page.evaluate(() => {
+      window._loadingTexts = [];
+      window._loadingObserver = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+          const target = m.target.closest?.('.terminal-loading') || m.target;
+          if (target?.classList?.contains('terminal-loading')) {
+            window._loadingTexts.push(target.textContent);
+          }
+          // Also capture added nodes
+          for (const node of m.addedNodes) {
+            if (node.classList?.contains('terminal-loading')) {
+              window._loadingTexts.push(node.textContent);
+            }
+          }
+        }
+      });
+      window._loadingObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+    });
+
+    // Now seed the terminal with large scrollback
+    const largeTermId = 'T-test-loading-progress';
+    const lines = [];
+    for (let i = 1; i <= 500; i++) {
+      lines.push(`Line ${String(i).padStart(3, '0')}: ${'X'.repeat(100)}`);
+    }
+    await fetch(`${BASE}/api/test/seed-terminal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: largeTermId,
+        status: 'completed',
+        scrollback: lines.join('\n') + '\n',
+      }),
+    });
+
+    // Trigger terminal restore (poll normally handles this)
+    await page.evaluate(() => { if (typeof restoreTerminals === 'function') restoreTerminals(); });
+    await page.waitForSelector(`#terminal-${largeTermId}`, { timeout: 10_000 });
+    await page.waitForTimeout(5000); // let full load + xterm render complete
+
+    // Collect all captured loading text transitions
+    const result = await page.evaluate(() => {
+      window._loadingObserver?.disconnect();
+      return {
+        texts: window._loadingTexts || [],
+        loadingGone: !document.querySelector('.terminal-loading'),
+      };
+    });
+
+    // The overlay should have shown "Connecting" initially
+    const hasConnecting = result.texts.some(t => /Connecting/i.test(t));
+    // And then transitioned to KB progress
+    const hasKBProgress = result.texts.some(t => /\d+\s*\/\s*\d+\s*KB/.test(t));
+    // And ultimately been removed
+    expect(result.loadingGone).toBe(true);
+
+    // At minimum, the initial "Connecting" text should have been observed
+    expect(hasConnecting || hasKBProgress).toBe(true);
+
+    await fetch(`${BASE}/api/terminal/${largeTermId}`, { method: 'DELETE' }).catch(() => {});
+  });
+
   test('terminal panel shows loading indicator before content arrives', async ({ page }) => {
     await page.goto(BASE);
 

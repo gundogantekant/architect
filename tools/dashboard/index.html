@@ -260,8 +260,8 @@
   .terminal-header .terminal-meta { font-size: 11px; color: var(--text-light); }
   .terminal-container { height: 400px; background: #1e1e2e; overscroll-behavior: contain; overflow: hidden; position: relative; }
   .terminal-container.terminal-light { background: #f8f8f8; }
-  .terminal-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #888; font-size: 13px; z-index: 1; }
-  .terminal-loading::after { content: ''; display: inline-block; width: 12px; height: 12px; border: 2px solid #555; border-top-color: #aaa; border-radius: 50%; margin-left: 8px; animation: spin 0.8s linear infinite; }
+  .terminal-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #999; font-size: 12px; font-family: Menlo, Monaco, 'Courier New', monospace; z-index: 1; gap: 8px; }
+  .terminal-loading::before { content: ''; display: inline-block; width: 12px; height: 12px; border: 2px solid #555; border-top-color: #aaa; border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
   /* Interactive checkbox in modals */
@@ -1415,17 +1415,35 @@ async function connectTerminalWs(terminalInfo) {
     // Otherwise: ResizeObserver will call sendReadyMessage after initial fit
   };
 
-  // Helper to remove loading overlay once content arrives
+  // Helper to update or remove loading overlay
+  function updateLoadingProgress(received, total) {
+    const loadingEl = containerEl.querySelector('.terminal-loading');
+    if (!loadingEl) return;
+    if (total > 0) {
+      const pct = Math.min(100, Math.round(received / total * 100));
+      const recKB = (received / 1024).toFixed(0);
+      const totKB = (total / 1024).toFixed(0);
+      loadingEl.textContent = `Loading ${recKB} / ${totKB} KB (${pct}%)`;
+    }
+  }
   function removeLoadingOverlay() {
     const loadingEl = containerEl.querySelector('.terminal-loading');
     if (loadingEl) loadingEl.remove();
   }
 
+  let scrollbackTotal = 0;
+  let scrollbackReceived = 0;
+  let scrollbackInitDone = false;
+
   ws.onmessage = (e) => {
     try {
       const msg = JSON.parse(e.data);
-      if (msg.type === 'scrollback') {
-        // Only reset on initial load (empty terminal) — not on reconnect or duplicate messages
+      if (msg.type === 'scrollback-start') {
+        // Size hint — prepare for chunked scrollback
+        scrollbackTotal = msg.total || 0;
+        scrollbackReceived = 0;
+        updateLoadingProgress(0, scrollbackTotal);
+        // Reset terminal for initial load
         const buf = term.buffer.active;
         const hasContent = buf.baseY > 0 || buf.cursorY > 0;
         if (!hasContent) {
@@ -1434,12 +1452,36 @@ async function connectTerminalWs(terminalInfo) {
           lastCols = term.cols;
           lastRows = term.rows;
         }
-        term.write(msg.data, () => {
-          removeLoadingOverlay();
-          if ((term.cols !== msg.cols || term.rows !== msg.rows) && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+        scrollbackInitDone = true;
+      } else if (msg.type === 'scrollback') {
+        // Chunked scrollback data with progress
+        if (!scrollbackInitDone) {
+          // Legacy single-message scrollback (no start/end framing)
+          const buf = term.buffer.active;
+          const hasContent = buf.baseY > 0 || buf.cursorY > 0;
+          if (!hasContent) {
+            term.reset();
+            fitAddon.fit();
+            lastCols = term.cols;
+            lastRows = term.rows;
           }
-        });
+          term.write(msg.data, () => {
+            removeLoadingOverlay();
+            if (msg.cols && msg.rows && (term.cols !== msg.cols || term.rows !== msg.rows) && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+            }
+          });
+        } else {
+          scrollbackReceived = msg.done || (scrollbackReceived + (msg.data?.length || 0));
+          updateLoadingProgress(scrollbackReceived, scrollbackTotal);
+          term.write(msg.data);
+        }
+      } else if (msg.type === 'scrollback-end') {
+        // All chunks received — remove overlay and sync dimensions
+        removeLoadingOverlay();
+        if (msg.cols && msg.rows && (term.cols !== msg.cols || term.rows !== msg.rows) && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+        }
       } else if (msg.type === 'data') {
         removeLoadingOverlay();
         term.write(msg.data);
