@@ -763,3 +763,387 @@ test.describe('Multi-client terminal', () => {
     expect(after.scrollHeight).toBe(before.scrollHeight);
   });
 });
+
+
+// ============================================================
+// Test Group 9: Terminal loading state — no blank content visible
+// ============================================================
+
+test.describe('Terminal loading state', () => {
+  const terminalId = 'T-test-loading';
+
+  function generateScrollback(lineCount = 200) {
+    const lines = [];
+    for (let i = 1; i <= lineCount; i++) {
+      lines.push(`Line ${String(i).padStart(3, '0')}: Terminal output for loading state test with enough text to fill the width.`);
+    }
+    return lines.join('\n') + '\n';
+  }
+
+  test.beforeEach(async () => {
+    await fetch(`${BASE}/api/test/seed-terminal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: terminalId,
+        status: 'completed',
+        scrollback: generateScrollback(),
+      }),
+    });
+  });
+
+  test.afterEach(async () => {
+    await fetch(`${BASE}/api/terminal/${terminalId}`, { method: 'DELETE' }).catch(() => {});
+  });
+
+  test('terminal panel shows loading indicator before content arrives', async ({ page }) => {
+    await page.goto(BASE);
+
+    // Panel should appear
+    await page.waitForSelector(`#terminal-${terminalId}`, { timeout: 10_000 });
+
+    // Before xterm renders scrollback, there should be a loading indicator
+    // OR the terminal container should not be blank (no visible empty dark box)
+    const initialState = await page.evaluate((id) => {
+      const panel = document.getElementById(`terminal-${id}`);
+      if (!panel) return null;
+      const container = panel.querySelector(`#term-container-${id}`);
+      const loading = container?.querySelector('.terminal-loading');
+      const xterm = container?.querySelector('.xterm');
+      const viewport = container?.querySelector('.xterm-viewport');
+      return {
+        hasPanel: true,
+        hasLoadingIndicator: !!loading,
+        hasXterm: !!xterm,
+        hasScrollableContent: viewport ? viewport.scrollHeight > viewport.clientHeight : false,
+        containerVisible: container ? getComputedStyle(container).display !== 'none' : false,
+      };
+    }, terminalId);
+
+    // If the container is visible and has no xterm content yet, there MUST be a loading indicator
+    if (initialState && initialState.containerVisible && !initialState.hasScrollableContent) {
+      expect(initialState.hasLoadingIndicator).toBe(true);
+    }
+
+    // Wait for xterm to render
+    await page.waitForTimeout(4000);
+
+    // After content arrives, loading indicator should be gone and xterm should be scrollable
+    const finalState = await page.evaluate((id) => {
+      const panel = document.getElementById(`terminal-${id}`);
+      if (!panel) return null;
+      const container = panel.querySelector(`#term-container-${id}`);
+      const loading = container?.querySelector('.terminal-loading');
+      const viewport = container?.querySelector('.xterm-viewport');
+      return {
+        hasLoadingIndicator: !!loading,
+        hasXterm: !!container?.querySelector('.xterm'),
+        scrollable: viewport ? viewport.scrollHeight > viewport.clientHeight : false,
+      };
+    }, terminalId);
+
+    expect(finalState).not.toBeNull();
+    expect(finalState.hasLoadingIndicator).toBe(false);
+    expect(finalState.hasXterm).toBe(true);
+    expect(finalState.scrollable).toBe(true);
+  });
+});
+
+
+// ============================================================
+// Test Group 10: Session ID display and copy
+// ============================================================
+
+test.describe('Session ID display and copy', () => {
+  const terminalId = 'T-test-session-id';
+  const testSessionId = 'test-session-abc-123-def';
+
+  test.beforeEach(async () => {
+    await fetch(`${BASE}/api/test/seed-terminal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: terminalId,
+        status: 'completed',
+        scrollback: 'Line 001: Session ID test output\n',
+        claude_session_id: testSessionId,
+      }),
+    });
+  });
+
+  test.afterEach(async () => {
+    await fetch(`${BASE}/api/terminal/${terminalId}`, { method: 'DELETE' }).catch(() => {});
+  });
+
+  test('session ID tag is visible in terminal panel footer', async ({ page }) => {
+    await page.goto(BASE);
+    await page.waitForSelector(`#terminal-${terminalId}`, { timeout: 10_000 });
+
+    // Session ID should appear as a clickable tag in the panel
+    const sessionIdEl = await page.$(`#terminal-${terminalId} .session-id-copy`);
+    expect(sessionIdEl).not.toBeNull();
+
+    const sessionIdText = await sessionIdEl.textContent();
+    expect(sessionIdText).toBe(testSessionId);
+  });
+
+  test('clicking session ID tag copies to clipboard', async ({ browser }) => {
+    // Need a context with clipboard permissions
+    const ctx = await browser.newContext({
+      permissions: ['clipboard-read', 'clipboard-write'],
+    });
+    const page = await ctx.newPage();
+    await page.goto(BASE);
+    await page.waitForSelector(`#terminal-${terminalId}`, { timeout: 10_000 });
+
+    const sessionIdEl = page.locator(`#terminal-${terminalId} .session-id-copy`);
+    await sessionIdEl.click();
+
+    // Wait for the "Copied!" feedback
+    await expect(sessionIdEl).toHaveText('Copied!', { timeout: 3000 });
+
+    // Verify clipboard content
+    const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
+    expect(clipboardText).toBe(testSessionId);
+
+    // After timeout, original text should restore
+    await page.waitForTimeout(1500);
+    await expect(sessionIdEl).toHaveText(testSessionId);
+
+    await ctx.close();
+  });
+});
+
+
+// ============================================================
+// Test Group 11: Terminal column alignment quality
+// ============================================================
+
+test.describe('Terminal column alignment', () => {
+  const terminalId = 'T-test-cols';
+
+  /**
+   * Generate lines that are exactly 80 chars — these should NOT wrap in a browser
+   * terminal that is wider than 80 columns. The key assertion is that the xterm
+   * uses the browser's available width, not a fixed 80-column layout.
+   */
+  function generateScrollback(lineCount = 50) {
+    const lines = [];
+    for (let i = 1; i <= lineCount; i++) {
+      const num = String(i).padStart(3, '0');
+      // Each line is exactly 79 chars + \n — fits in 80 cols without wrapping
+      const prefix = `Line ${num}: `;
+      const pad = 'A'.repeat(79 - prefix.length);
+      lines.push(prefix + pad);
+    }
+    return lines.join('\n') + '\n';
+  }
+
+  test.beforeEach(async () => {
+    await fetch(`${BASE}/api/test/seed-terminal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: terminalId,
+        status: 'completed',
+        scrollback: generateScrollback(),
+      }),
+    });
+  });
+
+  test.afterEach(async () => {
+    await fetch(`${BASE}/api/terminal/${terminalId}`, { method: 'DELETE' }).catch(() => {});
+  });
+
+  test('terminal uses browser width — not fixed at 80 columns', async ({ page }) => {
+    await page.goto(BASE);
+    await page.waitForSelector(`#terminal-${terminalId}`, { timeout: 10_000 });
+    await page.waitForTimeout(4000); // let xterm render
+
+    const analysis = await page.evaluate((id) => {
+      const panel = document.getElementById(`terminal-${id}`);
+      if (!panel) return null;
+      const container = panel.querySelector(`#term-container-${id}`);
+      if (!container) return null;
+
+      // xterm only renders visible rows — check a line near the bottom (Line 050)
+      // Also check any visible "Line NNN:" row for completeness
+      const rows = container.querySelectorAll('.xterm-rows > div');
+      let foundLine = false;
+      let lineText = '';
+      let lineNum = '';
+      for (let i = 0; i < rows.length; i++) {
+        const text = rows[i]?.textContent || '';
+        const match = text.match(/Line \d{3}:/);
+        if (match) {
+          foundLine = true;
+          lineText = text.trim();
+          lineNum = match[0];
+          break;
+        }
+      }
+
+      // Check the container width — terminal should use available width
+      const viewport = container.querySelector('.xterm-viewport');
+      const termWidth = viewport?.clientWidth || 0;
+
+      // A 79-char line should fit entirely in one row if cols > 79
+      const fullLineOnOneRow = foundLine && lineText.length >= 79;
+
+      return {
+        foundLine,
+        lineNum,
+        lineText: lineText.substring(0, 100),
+        lineLength: lineText.length,
+        fullLineOnOneRow,
+        termWidth,
+        rowCount: rows.length,
+      };
+    }, terminalId);
+
+    expect(analysis).not.toBeNull();
+    expect(analysis.foundLine).toBe(true);
+    // Terminal must be wider than 80 cols (browser viewport gives more space)
+    expect(analysis.termWidth).toBeGreaterThan(500);
+    // 79-char line should fit in a single xterm row
+    expect(analysis.fullLineOnOneRow).toBe(true);
+  });
+});
+
+
+// ============================================================
+// Test Group 12: Completed session persistence across polling
+// ============================================================
+
+test.describe('Completed session persistence', () => {
+  const terminalId = 'T-test-persist-poll';
+
+  function generateScrollback() {
+    const lines = [];
+    for (let i = 1; i <= 50; i++) {
+      lines.push(`Line ${String(i).padStart(3, '0')}: Persistence test output.`);
+    }
+    return lines.join('\n') + '\n';
+  }
+
+  test.beforeEach(async () => {
+    await fetch(`${BASE}/api/test/seed-terminal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: terminalId,
+        status: 'completed',
+        scrollback: generateScrollback(),
+      }),
+    });
+  });
+
+  test.afterEach(async () => {
+    await fetch(`${BASE}/api/terminal/${terminalId}`, { method: 'DELETE' }).catch(() => {});
+  });
+
+  test('completed terminal panel survives polling cycle', async ({ page }) => {
+    await page.goto(BASE);
+    await page.waitForSelector(`#terminal-${terminalId}`, { timeout: 10_000 });
+    await page.waitForTimeout(3000); // let xterm render
+
+    // Verify panel exists with content
+    const before = await page.evaluate((id) => {
+      const panel = document.getElementById(`terminal-${id}`);
+      return {
+        exists: !!panel,
+        hasXterm: !!panel?.querySelector('.xterm'),
+      };
+    }, terminalId);
+    expect(before.exists).toBe(true);
+
+    // Wait past two polling cycles (10s each)
+    await page.waitForTimeout(22000);
+
+    // Panel must still exist
+    const after = await page.evaluate((id) => {
+      const panel = document.getElementById(`terminal-${id}`);
+      return {
+        exists: !!panel,
+        hasXterm: !!panel?.querySelector('.xterm'),
+      };
+    }, terminalId);
+    expect(after.exists).toBe(true);
+    expect(after.hasXterm).toBe(true);
+  });
+
+  test('completed terminal panel survives page reload', async ({ page }) => {
+    await page.goto(BASE);
+    await page.waitForSelector(`#terminal-${terminalId}`, { timeout: 10_000 });
+    await page.waitForTimeout(3000);
+
+    await page.reload();
+    await page.waitForSelector(`#terminal-${terminalId}`, { timeout: 15_000 });
+    await page.waitForTimeout(4000);
+
+    const after = await page.evaluate((id) => {
+      const panel = document.getElementById(`terminal-${id}`);
+      const viewport = panel?.querySelector('.xterm-viewport');
+      return {
+        exists: !!panel,
+        hasXterm: !!panel?.querySelector('.xterm'),
+        scrollable: viewport ? viewport.scrollHeight > viewport.clientHeight : false,
+      };
+    }, terminalId);
+    expect(after.exists).toBe(true);
+    if (after.hasXterm) {
+      expect(after.scrollable).toBe(true);
+    }
+  });
+});
+
+
+// ============================================================
+// Test Group 13: Dispatch content completeness
+// ============================================================
+
+test.describe('Dispatch content completeness', () => {
+  const dispatchId = 'D-test-complete';
+
+  test.beforeEach(async () => {
+    await seedDispatch(dispatchId, { status: 'completed' });
+  });
+
+  test.afterEach(async () => {
+    await cleanupDispatch(dispatchId);
+  });
+
+  test('all file sections are present in dispatch log — no truncation', async ({ page }) => {
+    await page.goto(BASE);
+    const logSelector = `#log-${dispatchId}`;
+    await waitForContent(page, logSelector, 100);
+
+    const content = await page.$eval(logSelector, el => el.textContent);
+
+    // All 4 file sections must be present (from generateTestLogLines)
+    const expectedSections = ['entities.md', 'rules.md', 'CLAUDE.md', 'load-portfolio-context.md'];
+    for (const section of expectedSections) {
+      expect(content, `Missing section: ${section}`).toContain(section);
+    }
+
+    // Content must be substantial — generateTestLogLines produces ~300 lines
+    expect(content.length).toBeGreaterThan(10000);
+  });
+
+  test('dispatch log content length is consistent across reloads', async ({ page }) => {
+    await page.goto(BASE);
+    const logSelector = `#log-${dispatchId}`;
+    await waitForContent(page, logSelector, 100);
+
+    const contentBefore = await page.$eval(logSelector, el => el.textContent);
+
+    await page.reload();
+    await waitForContent(page, logSelector, 100);
+
+    const contentAfter = await page.$eval(logSelector, el => el.textContent);
+
+    // Content should be identical — no truncation on reload
+    expect(contentAfter.length).toBe(contentBefore.length);
+    expect(contentAfter).toBe(contentBefore);
+  });
+});

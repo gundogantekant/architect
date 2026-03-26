@@ -209,7 +209,9 @@ function cleanTmuxCapture(text) {
   }
   while (result.length && result[0] === '') result.shift();
   while (result.length && result[result.length - 1] === '') result.pop();
-  return result.join('\n') + '\n';
+  // Use \r\n so xterm.js moves cursor to column 0 on each new line
+  // (xterm's convertEol is false by default — \n alone only moves down, not to col 0)
+  return result.join('\r\n') + '\r\n';
 }
 
 // Shared terminal handler wiring (used for fresh spawn and restore)
@@ -2026,14 +2028,17 @@ const routes = [
     // Write prompt to PTY using readiness-gated chunked delivery.
     // Wait for Claude to emit output (ready indicator), then write in chunks
     // to avoid PTY buffer overflow (macOS default ~4KB).
-    const CHUNK_SIZE = 2048;
-    const CHUNK_DELAY = 50;
+    // Uses bracketed paste mode to suppress character-by-character echo.
+    const CHUNK_SIZE = 1024;
+    const CHUNK_DELAY = 100;
     const MAX_WAIT = tmuxName ? 8000 : 5000;
     let promptWritten = false;
 
     async function writePromptChunked(ptyProc) {
       if (promptWritten) return;
       promptWritten = true;
+      // Bracketed paste: tells terminal to treat content as pasted text (no per-char echo)
+      ptyProc.write('\x1b[200~');
       for (let i = 0; i < prompt.length; i += CHUNK_SIZE) {
         const chunk = prompt.slice(i, i + CHUNK_SIZE);
         ptyProc.write(chunk);
@@ -2041,6 +2046,7 @@ const routes = [
           await new Promise(r => setTimeout(r, CHUNK_DELAY));
         }
       }
+      ptyProc.write('\x1b[201~');
       ptyProc.write('\r');
     }
 
@@ -2556,7 +2562,7 @@ const routes = [
   // Seed a terminal with scrollback content (no real PTY)
   [/^\/api\/test\/seed-terminal$/, 'POST', async (_m, req, res) => {
     const body = await parseBody(req);
-    const { id, scrollback, status } = body;
+    const { id, scrollback, status, claude_session_id } = body;
     if (!id) return err(res, 'id is required', 400);
 
     const terminal = {
@@ -2572,7 +2578,7 @@ const routes = [
       exited_at: status !== 'running' ? new Date().toISOString() : null,
       permission_mode: 'plan',
       skip_permissions: false,
-      claude_session_id: null,
+      claude_session_id: claude_session_id || null,
       ptyProcess: null,
       scrollback: scrollback || '',
       wsClients: new Set(),
@@ -2619,37 +2625,57 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
   wss.handleUpgrade(req, socket, head, (ws) => {
-    // Replay scrollback: prefer live tmux capture (plain text, creates real xterm scrollback)
-    const dims = terminal.ptyProcess
-      ? { cols: terminal.ptyProcess.cols, rows: terminal.ptyProcess.rows }
-      : { cols: 80, rows: 24 };
-    let scrollbackSent = false;
-    if (terminal.tmux_session && TMUX_AVAILABLE && tmuxSessionExists(terminal.tmux_session)) {
-      try {
-        // Plain text scrollback history (no escape codes) — creates scrollable xterm content
-        const raw = execFileSync('tmux', ['capture-pane', '-t', terminal.tmux_session, '-p', '-S', '-32768'], { encoding: 'utf8' });
-        const history = cleanTmuxCapture(raw);
-        if (history.trim()) {
-          ws.send(JSON.stringify({ type: 'scrollback', data: history, cols: dims.cols, rows: dims.rows }));
-          scrollbackSent = true;
-        }
-      } catch {}
+    // Wait for client 'ready' message with actual browser terminal dimensions
+    // before capturing and sending scrollback (ensures correct column width).
+    const READY_TIMEOUT = 2000;
+    let readyResolved = false;
+
+    function sendScrollback(clientDims) {
+      if (readyResolved) return;
+      readyResolved = true;
+
+      const dims = clientDims
+        || (terminal.ptyProcess ? { cols: terminal.ptyProcess.cols, rows: terminal.ptyProcess.rows } : { cols: 80, rows: 24 });
+
+      // Resize tmux pane to match client dimensions before capturing scrollback
+      if (clientDims && terminal.tmux_session && TMUX_AVAILABLE && tmuxSessionExists(terminal.tmux_session)) {
+        try {
+          execFileSync('tmux', ['resize-pane', '-t', terminal.tmux_session, '-x', String(clientDims.cols), '-y', String(clientDims.rows)], { stdio: 'ignore' });
+        } catch {}
+      }
+
+      let scrollbackSent = false;
+      if (terminal.tmux_session && TMUX_AVAILABLE && tmuxSessionExists(terminal.tmux_session)) {
+        try {
+          const raw = execFileSync('tmux', ['capture-pane', '-t', terminal.tmux_session, '-p', '-S', '-32768'], { encoding: 'utf8' });
+          const history = cleanTmuxCapture(raw);
+          if (history.trim()) {
+            ws.send(JSON.stringify({ type: 'scrollback', data: history, cols: dims.cols, rows: dims.rows }));
+            scrollbackSent = true;
+          }
+        } catch {}
+      }
+      if (!scrollbackSent && terminal.scrollback) {
+        const cleaned = cleanTmuxCapture(terminal.scrollback);
+        ws.send(JSON.stringify({ type: 'scrollback', data: cleaned, cols: dims.cols, rows: dims.rows }));
+      }
+      if (terminal.status !== 'running') {
+        ws.send(JSON.stringify({ type: 'exit', code: 0 }));
+      }
     }
-    if (!scrollbackSent && terminal.scrollback) {
-      const cleaned = cleanTmuxCapture(terminal.scrollback);
-      ws.send(JSON.stringify({ type: 'scrollback', data: cleaned, cols: dims.cols, rows: dims.rows }));
-    }
-    // If already exited, send exit event
-    if (terminal.status !== 'running') {
-      ws.send(JSON.stringify({ type: 'exit', code: 0 }));
-    }
+
+    // Fallback: send scrollback after timeout if client doesn't send 'ready'
+    const readyTimer = setTimeout(() => sendScrollback(null), READY_TIMEOUT);
 
     terminal.wsClients.add(ws);
 
     ws.on('message', (raw) => {
       try {
         const msg = JSON.parse(raw.toString());
-        if (msg.type === 'input' && terminal.ptyProcess) {
+        if (msg.type === 'ready' && msg.cols && msg.rows) {
+          clearTimeout(readyTimer);
+          sendScrollback({ cols: msg.cols, rows: msg.rows });
+        } else if (msg.type === 'input' && terminal.ptyProcess) {
           terminal.ptyProcess.write(msg.data);
         } else if (msg.type === 'resize' && terminal.ptyProcess && msg.cols && msg.rows) {
           clearTimeout(terminal._resizeTimer);
