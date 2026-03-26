@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createServer } from 'node:http';
 import { readFile, writeFile, rename, readdir, stat, mkdir, unlink as unlinkFile } from 'node:fs/promises';
-import { createWriteStream, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
+import { createWriteStream, readFileSync, writeFileSync, appendFileSync, renameSync, existsSync } from 'node:fs';
 import { join, resolve, extname, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { spawn, execFileSync } from 'node:child_process';
@@ -332,21 +332,26 @@ function restoreSessions() {
         tailLogFile(dispatch);
         console.log(`Dispatch ${d.id}: PID ${d.pid} still alive, reconnecting via log tail`);
       } else {
-        // PID dead — mark interrupted
+        // PID dead — mark interrupted, load log content for display
         interruptedDispatches++;
         d.status = 'interrupted';
         d.completed_at = now;
         db.updateDispatchStatus(d.id, 'interrupted', now);
-        archiveSession(d, 'dispatch');
+        const logPath = join(LOGS_DIR, `${d.id}.jsonl`);
+        let output = [];
+        try { output = readFileSync(logPath, 'utf8').split('\n').filter(l => l.trim()); } catch {}
         dispatches.set(d.id, {
-          ...d, output: [], lastLines: [], listeners: new Set(), process: null,
+          ...d, output, lastLines: [], listeners: new Set(), process: null,
         });
       }
     } else {
-      // Non-running dispatch (completed/failed/killed/interrupted) — archive then clean up
-      archiveSession(d, 'dispatch');
-      db.deleteDispatch(d.id);
-      unlinkFile(join(LOGS_DIR, `${d.id}.jsonl`)).catch(() => {});
+      // Non-running dispatch (completed/failed/killed/interrupted) — load into memory with log content
+      const logPath = join(LOGS_DIR, `${d.id}.jsonl`);
+      let output = [];
+      try { output = readFileSync(logPath, 'utf8').split('\n').filter(l => l.trim()); } catch {}
+      dispatches.set(d.id, {
+        ...d, output, lastLines: [], listeners: new Set(), process: null,
+      });
     }
   }
 
@@ -406,19 +411,32 @@ function restoreSessions() {
         });
         console.log(`Terminal ${t.id}: PID ${t.pid} alive but no tmux — marked as detached`);
       } else {
-        // Dead
+        // Dead — mark interrupted, load scrollback for display
         interruptedTerminals++;
         t.status = 'interrupted';
         t.exited_at = now;
         db.updateTerminalStatus(t.id, 'interrupted', now);
-        archiveSession(t, 'terminal');
-        terminals.set(t.id, { ...t, ptyProcess: null, scrollback: '', wsClients: new Set() });
+        const logPath = join(LOGS_DIR, `${t.id}.raw`);
+        let scrollback = '';
+        try { scrollback = readFileSync(logPath, 'utf8'); } catch {}
+        if (scrollback.length > SCROLLBACK_LIMIT) {
+          const sliced = scrollback.slice(-SCROLLBACK_LIMIT);
+          const firstNewline = sliced.indexOf('\n');
+          scrollback = firstNewline > 0 ? sliced.slice(firstNewline + 1) : sliced;
+        }
+        terminals.set(t.id, { ...t, ptyProcess: null, scrollback, wsClients: new Set() });
       }
     } else {
-      // Non-running terminal — archive then clean up
-      archiveSession(t, 'terminal');
-      db.deleteTerminal(t.id);
-      unlinkFile(join(LOGS_DIR, `${t.id}.raw`)).catch(() => {});
+      // Non-running terminal (completed/failed/killed/interrupted) — load into memory with scrollback
+      const logPath = join(LOGS_DIR, `${t.id}.raw`);
+      let scrollback = '';
+      try { scrollback = readFileSync(logPath, 'utf8'); } catch {}
+      if (scrollback.length > SCROLLBACK_LIMIT) {
+        const sliced = scrollback.slice(-SCROLLBACK_LIMIT);
+        const firstNewline = sliced.indexOf('\n');
+        scrollback = firstNewline > 0 ? sliced.slice(firstNewline + 1) : sliced;
+      }
+      terminals.set(t.id, { ...t, ptyProcess: null, scrollback, wsClients: new Set() });
     }
   }
 
@@ -2439,8 +2457,22 @@ const routes = [
   // --- Test endpoints (for E2E test seeding) ---
   [/^\/api\/test\/seed-dispatch$/, 'POST', async (_m, req, res) => {
     const body = await parseBody(req);
-    const { id, status, project_key, title, work_item_id } = body;
+    const { id, status, project_key, title, work_item_id, log_lines } = body;
     if (!id) return err(res, 'id is required', 400);
+
+    // Write JSONL log file atomically if log_lines provided
+    const logPath = join(LOGS_DIR, `${id}.jsonl`);
+    if (log_lines && Array.isArray(log_lines)) {
+      await mkdir(LOGS_DIR, { recursive: true });
+      writeFileSync(logPath, log_lines.join('\n') + '\n');
+    }
+
+    // Load output from log file
+    let output = [];
+    try {
+      const content = readFileSync(logPath, 'utf8');
+      output = content.split('\n').filter(l => l.trim());
+    } catch {}
 
     const dispatch = {
       id,
@@ -2454,25 +2486,45 @@ const routes = [
       status: status || 'completed',
       needs_input: false,
       claude_session_id: null,
-      output: [],
+      output,
       lastLines: [],
       listeners: new Set(),
       started_at: new Date().toISOString(),
       completed_at: status !== 'running' ? new Date().toISOString() : null,
       process: null,
       pid: null,
+      logPath,
     };
-
-    // Load output from log file if it exists
-    const logPath = join(LOGS_DIR, `${id}.jsonl`);
-    try {
-      const content = readFileSync(logPath, 'utf8');
-      dispatch.output = content.split('\n').filter(l => l.trim());
-    } catch {}
 
     dispatches.set(id, dispatch);
     saveDispatchToDb(dispatch);
     json(res, { dispatch_id: id, status: dispatch.status });
+  }],
+
+  // Simulate server restart: clear memory, re-load from DB + log files
+  [/^\/api\/test\/reset-sessions$/, 'POST', async (_m, _req, res) => {
+    dispatches.clear();
+    terminals.clear();
+    cliSessions.clear();
+    restoreSessions();
+    json(res, { dispatches: dispatches.size, terminals: terminals.size });
+  }],
+
+  // Append output to a running dispatch (simulates wireDispatchHandlers without Claude)
+  [/^\/api\/test\/append-dispatch-output$/, 'POST', async (_m, req, res) => {
+    const body = await parseBody(req);
+    const { id, lines } = body;
+    if (!id || !lines) return err(res, 'id and lines required', 400);
+    const dispatch = dispatches.get(id);
+    if (!dispatch) return err(res, 'dispatch not found');
+
+    const logPath = join(LOGS_DIR, `${id}.jsonl`);
+    for (const line of lines) {
+      dispatch.output.push(line);
+      appendFileSync(logPath, line + '\n');
+      for (const listener of dispatch.listeners) listener(line);
+    }
+    json(res, { appended: lines.length });
   }],
 ];
 
@@ -2598,38 +2650,7 @@ setInterval(() => {
     }
   }
 
-  // Auto-cleanup: remove exited terminals after 10 minutes (skip suspended)
-  for (const [id, terminal] of terminals) {
-    if (terminal.status !== 'running' && terminal.status !== 'suspended' && terminal.exited_at) {
-      if (now - new Date(terminal.exited_at).getTime() > 10 * 60 * 1000) {
-        if (terminal.agents_file) unlinkFile(terminal.agents_file).catch(() => {});
-        unlinkFile(join(LOGS_DIR, `${id}.raw`)).catch(() => {});
-        terminals.delete(id);
-        db.deleteTerminal(id);
-      }
-    }
-  }
-
-  // Auto-cleanup: remove non-running dispatches after 30 minutes (skip suspended)
-  for (const [id, dispatch] of dispatches) {
-    if (dispatch.status !== 'running' && dispatch.status !== 'suspended' && dispatch.completed_at) {
-      if (now - new Date(dispatch.completed_at).getTime() > 30 * 60 * 1000) {
-        dispatches.delete(id);
-        db.deleteDispatch(id);
-        unlinkFile(join(LOGS_DIR, `${id}.jsonl`)).catch(() => {});
-      }
-    }
-  }
-
-  // Auto-cleanup: remove exited CLI sessions after 10 minutes
-  for (const [id, cli] of cliSessions) {
-    if (cli.status !== 'running' && cli.exited_at) {
-      if (now - new Date(cli.exited_at).getTime() > 10 * 60 * 1000) {
-        cliSessions.delete(id);
-        db.deleteCliSession(id);
-      }
-    }
-  }
+  // Sessions persist until explicitly dismissed by the user — no auto-cleanup
 }, 60 * 1000);
 
 function shutdownFlush() {

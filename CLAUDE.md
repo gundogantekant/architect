@@ -150,7 +150,7 @@ The dashboard supports dispatching Claude Code agents directly from work items:
 - **Session restart survival**: Dispatch sessions store PID and stream output to `work/logs/D-xxx.jsonl`; on restart, live PIDs are reconnected with log replay via SSE. Terminal sessions use tmux (when available) for full PTY re-attachment; otherwise PID liveness is tracked. Log files are cleaned up when dispatches are deleted or auto-expire.
 - Interactive terminals use xterm.js + WebSocket for bidirectional PTY I/O (node-pty). See `domain/entities.md` → TerminalSession for schema.
 - Kill buttons on dispatch/terminal panels; "Kill All Sessions" button for bulk cleanup.
-- Auto-cleanup: exited terminals removed after 10min, completed dispatches after 30min.
+- Sessions persist until explicitly dismissed by the user — no auto-cleanup timers.
 - `#agents` route: tile-based view of all dispatched agents, filterable by status/epic/project. Tiles show status, output preview, and support focus/kill actions. Quick dispatch modal available. Active list responses include `epic_id` and `last_output` fields.
 - **Foldable panels**: minimize/expand dispatch and terminal panels. Collapse state persisted to sessionStorage across navigation.
 - **Contextual placement**: session panels appear under their associated work item row in component/epic views. Standalone sessions fall back to a global container at the top.

@@ -12,30 +12,23 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 
 const BASE = 'http://127.0.0.1:3777';
-// Resolve to the same LOGS_DIR the server uses: ROOT/work/logs
-const ROOT = join(import.meta.dirname, '..', '..', '..');
-const LOGS_DIR = join(ROOT, 'work', 'logs');
 
 // --- Helpers ---
 
-/** Generate a stream-json JSONL log with substantial structured content */
-function generateTestLog(lineCount = 300) {
+/** Generate stream-json JSONL lines with substantial structured content */
+function generateTestLogLines(lineCount = 300) {
   const files = ['entities.md', 'rules.md', 'CLAUDE.md', 'load-portfolio-context.md'];
   const lines = [];
 
   for (const file of files) {
-    // Content block start (tool use marker)
     lines.push(JSON.stringify({
       type: 'content_block_start',
       index: 0,
       content_block: { type: 'text', text: '' },
     }));
 
-    // Generate substantial text content per file section
     for (let i = 0; i < Math.ceil(lineCount / files.length); i++) {
       const text = i === 0
         ? `\n## File: ${file}\n\n### Section ${i + 1}\n\n`
@@ -52,24 +45,17 @@ function generateTestLog(lineCount = 300) {
     }
   }
 
-  // Result event
   lines.push(JSON.stringify({
     type: 'result',
     subtype: 'success',
     total_cost_usd: 0.05,
   }));
 
-  return lines.join('\n') + '\n';
+  return lines;
 }
 
-/** Seed a dispatch directly via log file + API */
+/** Seed a dispatch atomically via API (server writes JSONL + loads into memory) */
 async function seedDispatch(id, { status = 'completed', projectKey = 'test/test/main' } = {}) {
-  // Write JSONL log file
-  mkdirSync(LOGS_DIR, { recursive: true });
-  const logContent = generateTestLog();
-  writeFileSync(join(LOGS_DIR, `${id}.jsonl`), logContent);
-
-  // Seed via test API
   const resp = await fetch(`${BASE}/api/test/seed-dispatch`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -79,6 +65,7 @@ async function seedDispatch(id, { status = 'completed', projectKey = 'test/test/
       project_key: projectKey,
       title: `Test dispatch ${id}`,
       work_item_id: `W-TEST-${id.split('-').pop()}`,
+      log_lines: generateTestLogLines(),
     }),
   });
   if (!resp.ok) throw new Error(`Seed failed: ${resp.status} ${await resp.text()}`);
@@ -399,5 +386,105 @@ test.describe('Session history consistency', () => {
 
     const content2 = await page.$eval(`#log-${ids[0]}`, el => el.textContent);
     expect(content2).toBe(content1);
+  });
+});
+
+
+// ============================================================
+// Test Group 5: Session persistence across server restart
+// ============================================================
+
+test.describe('Session persistence across restart', () => {
+  const dispatchId = 'D-test-persist';
+
+  test.beforeEach(async () => {
+    await seedDispatch(dispatchId, { status: 'completed' });
+  });
+
+  test.afterEach(async () => {
+    await cleanupDispatch(dispatchId);
+  });
+
+  test('content survives simulated server restart', async ({ page }) => {
+    // Verify content loads initially
+    await page.goto(BASE);
+    await waitForContent(page, `#log-${dispatchId}`);
+    const contentBefore = await page.$eval(`#log-${dispatchId}`, el => el.textContent);
+    expect(contentBefore.length).toBeGreaterThan(5000);
+
+    // Simulate server restart: clear memory, re-load from DB + log files
+    const resetResp = await fetch(`${BASE}/api/test/reset-sessions`, { method: 'POST' });
+    expect(resetResp.ok).toBe(true);
+
+    // Reload page — dispatches should be restored from DB with log content
+    await page.reload();
+    await waitForContent(page, `#log-${dispatchId}`);
+
+    const contentAfter = await page.$eval(`#log-${dispatchId}`, el => el.textContent);
+    expect(contentAfter.length).toBeGreaterThan(5000);
+    expect(contentAfter).toContain('entities.md');
+    expect(contentAfter).toContain('load-portfolio-context.md');
+  });
+});
+
+
+// ============================================================
+// Test Group 6: Live streaming for running dispatches
+// ============================================================
+
+test.describe('Live streaming for running dispatch', () => {
+  const dispatchId = 'D-test-live';
+
+  test.beforeEach(async () => {
+    // Seed a running dispatch with NO initial content
+    await fetch(`${BASE}/api/test/seed-dispatch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: dispatchId,
+        status: 'running',
+        project_key: 'test/test/main',
+        title: 'Live streaming test',
+        work_item_id: 'W-TEST-LIVE',
+        log_lines: [],
+      }),
+    });
+  });
+
+  test.afterEach(async () => {
+    await cleanupDispatch(dispatchId);
+  });
+
+  test('new content appears via SSE as lines are appended', async ({ page }) => {
+    await page.goto(BASE);
+
+    // Wait for dispatch panel to exist (may have empty log initially)
+    await page.waitForSelector(`#dispatch-${dispatchId}`, { timeout: 10_000 });
+    await page.waitForTimeout(1000); // let SSE connect
+
+    // Append content lines to the running dispatch
+    const newLines = [];
+    for (let i = 0; i < 20; i++) {
+      newLines.push(JSON.stringify({
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: `Live line ${i}: streaming entities.md analysis content here.\n` },
+      }));
+    }
+
+    const appendResp = await fetch(`${BASE}/api/test/append-dispatch-output`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: dispatchId, lines: newLines }),
+    });
+    expect(appendResp.ok).toBe(true);
+
+    // Wait for content to appear in the browser
+    await waitForContent(page, `#log-${dispatchId}`, 100);
+
+    const content = await page.$eval(`#log-${dispatchId}`, el => el.textContent);
+    expect(content).toContain('Live line 0');
+    expect(content).toContain('Live line 19');
+    expect(content).toContain('entities.md');
   });
 });
