@@ -1322,3 +1322,79 @@ test.describe('PTY prompt delivery completeness', () => {
   });
 
 });
+
+
+// ============================================================
+// Test Group 15: Dispatch stdin delivery — large prompt completeness
+// ============================================================
+
+test.describe('Dispatch stdin delivery completeness', () => {
+
+  /** Generate a realistic dispatch prompt payload */
+  function generateDispatchPrompt(targetBytes) {
+    const sections = [
+      '# Identity\n\nYou are a specialized SDLC orchestrator agent responsible for coordinating work across multiple sub-agents.\n',
+      '# Workflow Selection\n\n| Task | Agent | Model |\n|------|-------|-------|\n| Triage and dispatch | pm | sonnet |\n| Architecture decisions | planner | opus |\n| Code implementation | coder | inherit |\n| Testing | tester | sonnet |\n| Code review | reviewer | sonnet |\n',
+      '# Project Context\n\nStack: TypeScript, Node.js, React, PostgreSQL\nArchitecture: Clean Architecture with domain/usecases/adapters/infrastructure layers\nCI: GitHub Actions with lint, test, build stages\nDeployment: Docker containers on AWS ECS\n',
+      '# Coding Standards\n\n- Domain-first naming: use business terminology, not technical jargon\n- DRY: three occurrences = extract to shared utility\n- No over-engineering: no abstractions without two concrete use cases\n- Clean architecture layers: dependencies point inward only\n- OWASP Top 10 awareness for all user-facing code\n',
+      '# Environment\n\nProject directory: /Users/developer/projects/webapp\nArchitect root: /Users/developer/architect\nDashboard API: http://127.0.0.1:3777\nGit branch: feature/new-auth-flow\n',
+    ];
+
+    let content = '';
+    let idx = 0;
+    while (content.length < targetBytes) {
+      content += sections[idx % sections.length];
+      // Add unique detail lines for precise byte tracking
+      for (let j = 0; j < 20; j++) {
+        content += `Configuration line ${idx * 20 + j}: parameter_${Math.random().toString(36).slice(2, 14)} = "${Math.random().toString(36).slice(2, 18)}"\n`;
+      }
+      idx++;
+    }
+    return content.slice(0, targetBytes);
+  }
+
+  test('30KB dispatch prompt is fully received by child process', async () => {
+    const payload = generateDispatchPrompt(30 * 1024);
+
+    const resp = await fetch(`${BASE}/api/test/stdin-delivery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload }),
+    });
+    expect(resp.ok).toBe(true);
+
+    const result = await resp.json();
+    expect(result.match).toBe(true);
+    expect(result.received_bytes).toBe(result.payload_length);
+  });
+
+  test('60KB dispatch prompt is fully received by child process', async () => {
+    const payload = generateDispatchPrompt(60 * 1024);
+
+    const resp = await fetch(`${BASE}/api/test/stdin-delivery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload }),
+    });
+    expect(resp.ok).toBe(true);
+
+    const result = await resp.json();
+    expect(result.match).toBe(true);
+    expect(result.received_bytes).toBe(result.payload_length);
+  });
+
+  test('150KB dispatch prompt is fully received by child process', async () => {
+    const payload = generateDispatchPrompt(150 * 1024);
+
+    const resp = await fetch(`${BASE}/api/test/stdin-delivery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload }),
+    });
+    expect(resp.ok).toBe(true);
+
+    const result = await resp.json();
+    expect(result.match).toBe(true);
+    expect(result.received_bytes).toBe(result.payload_length);
+  });
+});

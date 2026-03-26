@@ -1508,7 +1508,10 @@ const routes = [
       return json(res, { error: `Failed to spawn claude: ${err.message}` }, 500);
     }
 
-    proc.stdin.write(prompt);
+    // Write prompt with backpressure handling to prevent truncation on large prompts
+    if (!proc.stdin.write(prompt)) {
+      await new Promise(r => proc.stdin.once('drain', r));
+    }
     proc.stdin.end();
 
     dispatch.process = proc;
@@ -1642,7 +1645,10 @@ const routes = [
       return json(res, { error: `Failed to spawn claude: ${err.message}` }, 500);
     }
 
-    proc.stdin.write(prompt);
+    // Write prompt with backpressure handling to prevent truncation on large prompts
+    if (!proc.stdin.write(prompt)) {
+      await new Promise(r => proc.stdin.once('drain', r));
+    }
     proc.stdin.end();
 
     dispatch.process = proc;
@@ -2588,6 +2594,37 @@ const routes = [
     terminals.set(id, terminal);
     saveTerminalToDb(terminal);
     json(res, { terminal_id: id, status: terminal.status });
+  }],
+
+  // Test endpoint: spawn a child process with stdin pipe (same as dispatch),
+  // write a large payload, and verify the process received all of it.
+  [/^\/api\/test\/stdin-delivery$/, 'POST', async (_m, req, res) => {
+    const body = await parseBody(req);
+    const { payload } = body;
+    if (!payload) return err(res, 'payload is required', 400);
+
+    // Spawn wc -c to count bytes received on stdin
+    const { spawn: spawnChild } = await import('child_process');
+    const proc = spawnChild('wc', ['-c'], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+    let stdout = '';
+    proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+
+    // Use same backpressure-aware write as dispatch
+    if (!proc.stdin.write(payload)) {
+      await new Promise(r => proc.stdin.once('drain', r));
+    }
+    proc.stdin.end();
+
+    const exitCode = await new Promise(r => proc.on('close', r));
+    const receivedBytes = parseInt(stdout.trim(), 10);
+
+    json(res, {
+      payload_length: payload.length,
+      received_bytes: receivedBytes,
+      match: receivedBytes === payload.length,
+      exit_code: exitCode,
+    });
   }],
 
   // Test endpoint: spawn a real PTY (cat), write a large payload using the same
