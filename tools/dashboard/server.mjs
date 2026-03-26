@@ -2596,6 +2596,64 @@ const routes = [
     json(res, { terminal_id: id, status: terminal.status });
   }],
 
+  // Test endpoint: spawn a real PTY terminal with a large prompt written to it,
+  // simulating the exact dispatch flow. Returns the terminal ID so a browser
+  // can connect via WS and verify content delivery.
+  [/^\/api\/test\/spawn-prompt-terminal$/, 'POST', async (_m, req, res) => {
+    const body = await parseBody(req);
+    const { payload } = body;
+    if (!payload) return err(res, 'payload is required', 400);
+
+    const id = `T-test-prompt-${Date.now()}`;
+
+    // Spawn cat in a PTY — it echoes all input, simulating Claude receiving a prompt
+    let ptyProcess;
+    try {
+      ptyProcess = pty.spawn('cat', [], {
+        name: 'xterm-256color', cols: 120, rows: 24,
+        env: { ...process.env, TERM: 'xterm-256color' },
+      });
+    } catch (e) {
+      return json(res, { error: `Failed to spawn: ${e.message}` }, 500);
+    }
+
+    const terminal = {
+      id, type: 'claude', work_item_id: null, epic_id: null,
+      project_key: 'test/test/main', project_path: ROOT,
+      title: `Prompt delivery test ${id}`,
+      status: 'running', ptyProcess, pid: ptyProcess.pid,
+      tmux_session: null, claude_session_id: null,
+      agents_file: null, scrollback: '',
+      logStream: null, wsClients: new Set(),
+      started_at: new Date().toISOString(), exited_at: null,
+      permission_mode: 'plan', skip_permissions: false,
+    };
+
+    wireTerminalHandlers(terminal);
+    terminals.set(id, terminal);
+    saveTerminalToDb(terminal);
+
+    // Write prompt using same chunked method — this runs ASYNC while client connects
+    const CHUNK_SIZE = 1024;
+    const CHUNK_DELAY = 100;
+    (async () => {
+      ptyProcess.write('\x1b[200~');
+      for (let i = 0; i < payload.length; i += CHUNK_SIZE) {
+        ptyProcess.write(payload.slice(i, i + CHUNK_SIZE));
+        if (i + CHUNK_SIZE < payload.length) {
+          await new Promise(r => setTimeout(r, CHUNK_DELAY));
+        }
+      }
+      ptyProcess.write('\x1b[201~');
+      ptyProcess.write('\r');
+      // Send EOF after prompt is fully written + settle time
+      await new Promise(r => setTimeout(r, 500));
+      ptyProcess.write('\x04');
+    })();
+
+    json(res, { terminal_id: id, status: 'running', payload_length: payload.length });
+  }],
+
   // Test endpoint: spawn a child process with stdin pipe (same as dispatch),
   // write a large payload, and verify the process received all of it.
   [/^\/api\/test\/stdin-delivery$/, 'POST', async (_m, req, res) => {

@@ -954,7 +954,9 @@ test.describe('Session ID display and copy', () => {
     expect(sessionIdText).toBe(testSessionId);
   });
 
-  test('clicking session ID tag copies to clipboard', async ({ browser }) => {
+  // Firefox doesn't support clipboard-read/write permissions in Playwright
+  test('clicking session ID tag copies to clipboard', async ({ browser, browserName }) => {
+    test.skip(browserName === 'firefox', 'Firefox does not support clipboard permissions in Playwright');
     // Need a context with clipboard permissions
     const ctx = await browser.newContext({
       permissions: ['clipboard-read', 'clipboard-write'],
@@ -1396,5 +1398,222 @@ test.describe('Dispatch stdin delivery completeness', () => {
     const result = await resp.json();
     expect(result.match).toBe(true);
     expect(result.received_bytes).toBe(result.payload_length);
+  });
+});
+
+
+// ============================================================
+// Test Group 16: Terminal content delivery after dispatch (race condition)
+// ============================================================
+
+test.describe('Terminal content delivery after dispatch', () => {
+
+  /** Generate a large prompt payload with unique markers */
+  function generatePrompt(targetBytes) {
+    const startMarker = '### PROMPT_START_MARKER ###\n';
+    const endMarker = '\n### PROMPT_END_MARKER ###\n';
+    let content = startMarker;
+    let lineNum = 0;
+    while (content.length < targetBytes - endMarker.length) {
+      content += `Prompt line ${String(++lineNum).padStart(4, '0')}: configuration detail for the dispatched agent session.\n`;
+    }
+    content += endMarker;
+    return content;
+  }
+
+  test('browser shows complete content after connecting mid-prompt-write', async ({ page }) => {
+    // Spawn a terminal that writes a large prompt asynchronously
+    const payload = generatePrompt(20 * 1024); // 20KB prompt
+    const spawnResp = await fetch(`${BASE}/api/test/spawn-prompt-terminal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload }),
+    });
+    expect(spawnResp.ok).toBe(true);
+    const { terminal_id: termId } = await spawnResp.json();
+
+    // Navigate to dashboard — this connects WS while prompt is being written
+    await page.goto(BASE);
+    await page.waitForSelector(`#terminal-${termId}`, { timeout: 15_000 });
+
+    // Wait for prompt writing to complete + terminal to render
+    // 20KB at 1KB/100ms ≈ 2s write + settle time
+    await page.waitForTimeout(8000);
+
+    // Loading overlay must be gone
+    const state = await page.evaluate((id) => {
+      const panel = document.getElementById(`terminal-${id}`);
+      if (!panel) return null;
+      const container = panel.querySelector(`#term-container-${id}`);
+      return {
+        hasLoading: !!container?.querySelector('.terminal-loading'),
+        hasXterm: !!container?.querySelector('.xterm'),
+        viewportHeight: container?.querySelector('.xterm-viewport')?.scrollHeight || 0,
+      };
+    }, termId);
+
+    expect(state).not.toBeNull();
+    expect(state.hasLoading).toBe(false);
+    expect(state.hasXterm).toBe(true);
+    // Terminal should have substantial content (prompt was echoed)
+    expect(state.viewportHeight).toBeGreaterThan(100);
+
+    // Cleanup
+    await fetch(`${BASE}/api/terminal/${termId}`, { method: 'DELETE' }).catch(() => {});
+  });
+
+  test('browser close and reopen shows terminal content', async ({ browser }) => {
+    // Spawn terminal with prompt
+    const payload = generatePrompt(10 * 1024);
+    const spawnResp = await fetch(`${BASE}/api/test/spawn-prompt-terminal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload }),
+    });
+    expect(spawnResp.ok).toBe(true);
+    const { terminal_id: termId } = await spawnResp.json();
+
+    // Wait for prompt writing to complete
+    await new Promise(r => setTimeout(r, 5000));
+
+    // First browser session — verify content loads
+    const ctx1 = await browser.newContext();
+    const page1 = await ctx1.newPage();
+    await page1.goto(BASE);
+    await page1.waitForSelector(`#terminal-${termId}`, { timeout: 15_000 });
+    await page1.waitForTimeout(5000);
+
+    const state1 = await page1.evaluate((id) => {
+      const panel = document.getElementById(`terminal-${id}`);
+      const container = panel?.querySelector(`#term-container-${id}`);
+      return {
+        hasXterm: !!container?.querySelector('.xterm'),
+        hasLoading: !!container?.querySelector('.terminal-loading'),
+        viewportHeight: container?.querySelector('.xterm-viewport')?.scrollHeight || 0,
+      };
+    }, termId);
+
+    expect(state1.hasXterm).toBe(true);
+    expect(state1.hasLoading).toBe(false);
+    expect(state1.viewportHeight).toBeGreaterThan(100);
+
+    // Close browser context (simulates closing the browser)
+    await ctx1.close();
+
+    // Wait a moment
+    await new Promise(r => setTimeout(r, 1000));
+
+    // Reopen browser — fresh context, no cached state
+    const ctx2 = await browser.newContext();
+    const page2 = await ctx2.newPage();
+    await page2.goto(BASE);
+    await page2.waitForSelector(`#terminal-${termId}`, { timeout: 15_000 });
+    await page2.waitForTimeout(5000);
+
+    const state2 = await page2.evaluate((id) => {
+      const panel = document.getElementById(`terminal-${id}`);
+      const container = panel?.querySelector(`#term-container-${id}`);
+      return {
+        hasXterm: !!container?.querySelector('.xterm'),
+        hasLoading: !!container?.querySelector('.terminal-loading'),
+        viewportHeight: container?.querySelector('.xterm-viewport')?.scrollHeight || 0,
+      };
+    }, termId);
+
+    expect(state2.hasXterm).toBe(true);
+    expect(state2.hasLoading).toBe(false);
+    expect(state2.viewportHeight).toBeGreaterThan(100);
+
+    await ctx2.close();
+    await fetch(`${BASE}/api/terminal/${termId}`, { method: 'DELETE' }).catch(() => {});
+  });
+
+  test('loading overlay resolves even with empty scrollback on fresh terminal', async ({ page }) => {
+    // Spawn terminal — connect immediately before any output
+    const spawnResp = await fetch(`${BASE}/api/test/spawn-prompt-terminal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload: 'short\n' }),
+    });
+    expect(spawnResp.ok).toBe(true);
+    const { terminal_id: termId } = await spawnResp.json();
+
+    await page.goto(BASE);
+    await page.waitForSelector(`#terminal-${termId}`, { timeout: 15_000 });
+
+    // Within 12 seconds (10s fallback + margin), loading must resolve
+    await page.waitForFunction(
+      (id) => {
+        const container = document.querySelector(`#term-container-${id}`);
+        return container && !container.querySelector('.terminal-loading');
+      },
+      termId,
+      { timeout: 15_000 },
+    );
+
+    const state = await page.evaluate((id) => {
+      const container = document.querySelector(`#term-container-${id}`);
+      return {
+        hasLoading: !!container?.querySelector('.terminal-loading'),
+        hasXterm: !!container?.querySelector('.xterm'),
+      };
+    }, termId);
+
+    expect(state.hasLoading).toBe(false);
+    expect(state.hasXterm).toBe(true);
+
+    await fetch(`${BASE}/api/terminal/${termId}`, { method: 'DELETE' }).catch(() => {});
+  });
+
+  test('50KB prompt — content visible from a separate browser context', async ({ browser }) => {
+    // Simulate: dispatch with large prompt, then open a separate browser to view it
+    const payload = generatePrompt(50 * 1024); // 50KB — realistic dispatch prompt size
+    const spawnResp = await fetch(`${BASE}/api/test/spawn-prompt-terminal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload }),
+    });
+    expect(spawnResp.ok).toBe(true);
+    const { terminal_id: termId } = await spawnResp.json();
+
+    // Wait for prompt writing to complete (50KB at 1KB/100ms ≈ 5s + settle)
+    await new Promise(r => setTimeout(r, 8000));
+
+    // Open two separate browser contexts (simulates Chrome and Firefox tabs)
+    const ctx1 = await browser.newContext();
+    const ctx2 = await browser.newContext();
+    const page1 = await ctx1.newPage();
+    const page2 = await ctx2.newPage();
+
+    // Both navigate to dashboard
+    await page1.goto(BASE);
+    await page2.goto(BASE);
+
+    // Both wait for terminal panel
+    await page1.waitForSelector(`#terminal-${termId}`, { timeout: 15_000 });
+    await page2.waitForSelector(`#terminal-${termId}`, { timeout: 15_000 });
+    await page1.waitForTimeout(5000);
+    await page2.waitForTimeout(5000);
+
+    // Both must show content without stuck loading
+    for (const [label, pg] of [['Context 1', page1], ['Context 2', page2]]) {
+      const state = await pg.evaluate((id) => {
+        const panel = document.getElementById(`terminal-${id}`);
+        const container = panel?.querySelector(`#term-container-${id}`);
+        return {
+          hasXterm: !!container?.querySelector('.xterm'),
+          hasLoading: !!container?.querySelector('.terminal-loading'),
+          scrollHeight: container?.querySelector('.xterm-viewport')?.scrollHeight || 0,
+        };
+      }, termId);
+
+      expect(state.hasXterm, `${label}: should have xterm`).toBe(true);
+      expect(state.hasLoading, `${label}: loading should be gone`).toBe(false);
+      expect(state.scrollHeight, `${label}: should have scrollable content`).toBeGreaterThan(100);
+    }
+
+    await ctx1.close();
+    await ctx2.close();
+    await fetch(`${BASE}/api/terminal/${termId}`, { method: 'DELETE' }).catch(() => {});
   });
 });
