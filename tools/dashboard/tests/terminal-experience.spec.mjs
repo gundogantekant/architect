@@ -626,3 +626,140 @@ test.describe('Terminal scrollback', () => {
     expect(afterClose.hasXterm).toBe(true);
   });
 });
+
+
+// ============================================================
+// Test Group 8: Multi-client terminal (two browsers same terminal)
+// ============================================================
+
+test.describe('Multi-client terminal', () => {
+  const terminalId = 'T-test-multi';
+
+  function generateScrollback(lineCount = 200) {
+    const lines = [];
+    for (let i = 1; i <= lineCount; i++) {
+      lines.push(`Line ${String(i).padStart(3, '0')}: Terminal output for multi-client test with enough text to fill width.`);
+    }
+    return lines.join('\n') + '\n';
+  }
+
+  test.beforeEach(async () => {
+    await fetch(`${BASE}/api/test/seed-terminal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: terminalId,
+        status: 'completed',
+        scrollback: generateScrollback(),
+      }),
+    });
+  });
+
+  test.afterEach(async () => {
+    await fetch(`${BASE}/api/terminal/${terminalId}`, { method: 'DELETE' }).catch(() => {});
+  });
+
+  test('two browser tabs both show terminal content', async ({ browser }) => {
+    const ctx1 = await browser.newContext();
+    const ctx2 = await browser.newContext();
+    const tab1 = await ctx1.newPage();
+    const tab2 = await ctx2.newPage();
+
+    // Tab 1 connects first
+    await tab1.goto(BASE);
+    await tab1.waitForSelector(`#terminal-${terminalId}`, { timeout: 10_000 });
+    await tab1.waitForTimeout(3000);
+
+    // Tab 2 connects second (same terminal)
+    await tab2.goto(BASE);
+    await tab2.waitForSelector(`#terminal-${terminalId}`, { timeout: 10_000 });
+    await tab2.waitForTimeout(3000);
+
+    // Both tabs must have scrollable xterm content
+    for (const [label, tab] of [['Tab 1', tab1], ['Tab 2', tab2]]) {
+      const metrics = await tab.evaluate((id) => {
+        const panel = document.getElementById(`terminal-${id}`);
+        if (!panel) return null;
+        const viewport = panel.querySelector('.xterm-viewport');
+        return {
+          hasXterm: !!panel.querySelector('.xterm'),
+          scrollHeight: viewport?.scrollHeight || 0,
+          clientHeight: viewport?.clientHeight || 0,
+          scrollable: viewport ? viewport.scrollHeight > viewport.clientHeight : false,
+        };
+      }, terminalId);
+
+      expect(metrics, `${label} should have terminal`).not.toBeNull();
+      expect(metrics.hasXterm, `${label} should have xterm`).toBe(true);
+      expect(metrics.scrollable, `${label} should be scrollable`).toBe(true);
+    }
+
+    // Verify Tab 1 was NOT blanked by Tab 2's connection
+    const tab1Check = await tab1.evaluate((id) => {
+      const viewport = document.querySelector(`#terminal-${id} .xterm-viewport`);
+      return { scrollHeight: viewport?.scrollHeight || 0 };
+    }, terminalId);
+    expect(tab1Check.scrollHeight).toBeGreaterThan(390);
+
+    await ctx1.close();
+    await ctx2.close();
+  });
+
+  test('terminal panel reappears after page refresh', async ({ page }) => {
+    await page.goto(BASE);
+    await page.waitForSelector(`#terminal-${terminalId}`, { timeout: 10_000 });
+    await page.waitForTimeout(3000);
+
+    // Verify panel exists before refresh
+    const before = await page.evaluate((id) => {
+      return { exists: !!document.getElementById(`terminal-${id}`) };
+    }, terminalId);
+    expect(before.exists).toBe(true);
+
+    // Refresh
+    await page.reload();
+    await page.waitForSelector(`#terminal-${terminalId}`, { timeout: 15_000 });
+    await page.waitForTimeout(4000);
+
+    // Panel must reappear with xterm content
+    const after = await page.evaluate((id) => {
+      const panel = document.getElementById(`terminal-${id}`);
+      const viewport = panel?.querySelector('.xterm-viewport');
+      return {
+        exists: !!panel,
+        hasXterm: !!panel?.querySelector('.xterm'),
+        scrollable: viewport ? viewport.scrollHeight > viewport.clientHeight : false,
+      };
+    }, terminalId);
+    expect(after.exists).toBe(true);
+    // xterm may or may not load depending on CDN speed; panel must at least exist
+    // If xterm loaded, verify scrollable
+    if (after.hasXterm) {
+      expect(after.scrollable).toBe(true);
+    }
+  });
+
+  test('polling does not reset terminal content after 12 seconds', async ({ page }) => {
+    await page.goto(BASE);
+    await page.waitForSelector(`#terminal-${terminalId}`, { timeout: 10_000 });
+    await page.waitForTimeout(3000);
+
+    // Record scrollHeight before polling
+    const before = await page.evaluate((id) => {
+      const viewport = document.querySelector(`#terminal-${id} .xterm-viewport`);
+      return { scrollHeight: viewport?.scrollHeight || 0 };
+    }, terminalId);
+    expect(before.scrollHeight).toBeGreaterThan(390);
+
+    // Wait for polling cycle (restoreTerminals runs every 10s)
+    await page.waitForTimeout(12000);
+
+    // Content must still be present (not reset by duplicate connection)
+    const after = await page.evaluate((id) => {
+      const viewport = document.querySelector(`#terminal-${id} .xterm-viewport`);
+      return { scrollHeight: viewport?.scrollHeight || 0 };
+    }, terminalId);
+    expect(after.scrollHeight).toBeGreaterThan(390);
+    expect(after.scrollHeight).toBe(before.scrollHeight);
+  });
+});

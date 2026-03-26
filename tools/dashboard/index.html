@@ -1325,6 +1325,9 @@ function createTerminalPanel(terminalInfo) {
 }
 
 async function connectTerminalWs(terminalInfo) {
+  // Prevent duplicate WebSocket connections (from polling, refresh, or multi-tab)
+  if (terminalInfo._ws && terminalInfo._ws.readyState <= WebSocket.OPEN) return;
+
   const mods = await loadXterm();
   if (!mods) return;
 
@@ -1398,10 +1401,15 @@ async function connectTerminalWs(terminalInfo) {
     try {
       const msg = JSON.parse(e.data);
       if (msg.type === 'scrollback') {
-        term.reset();
-        fitAddon.fit();
-        lastCols = term.cols;
-        lastRows = term.rows;
+        // Only reset on initial load (empty terminal) — not on reconnect or duplicate messages
+        const buf = term.buffer.active;
+        const hasContent = buf.baseY > 0 || buf.cursorY > 0;
+        if (!hasContent) {
+          term.reset();
+          fitAddon.fit();
+          lastCols = term.cols;
+          lastRows = term.rows;
+        }
         term.write(msg.data, () => {
           if ((term.cols !== msg.cols || term.rows !== msg.rows) && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));

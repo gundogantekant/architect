@@ -2636,7 +2636,8 @@ server.on('upgrade', (req, socket, head) => {
       } catch {}
     }
     if (!scrollbackSent && terminal.scrollback) {
-      ws.send(JSON.stringify({ type: 'scrollback', data: terminal.scrollback, cols: dims.cols, rows: dims.rows }));
+      const cleaned = cleanTmuxCapture(terminal.scrollback);
+      ws.send(JSON.stringify({ type: 'scrollback', data: cleaned, cols: dims.cols, rows: dims.rows }));
     }
     // If already exited, send exit event
     if (terminal.status !== 'running') {
