@@ -2589,6 +2589,75 @@ const routes = [
     saveTerminalToDb(terminal);
     json(res, { terminal_id: id, status: terminal.status });
   }],
+
+  // Test endpoint: spawn a real PTY (cat), write a large payload using the same
+  // chunked delivery, wait for echo, and return captured output for verification.
+  [/^\/api\/test\/prompt-delivery$/, 'POST', async (_m, req, res) => {
+    const body = await parseBody(req);
+    const { payload, chunk_size, chunk_delay } = body;
+    if (!payload) return err(res, 'payload is required', 400);
+
+    const CHUNK = chunk_size || 1024;
+    const DELAY = chunk_delay || 100;
+
+    // Spawn cat in a PTY — it echoes all input back
+    let ptyProc;
+    try {
+      ptyProc = pty.spawn('cat', [], {
+        name: 'xterm-256color', cols: 200, rows: 24,
+        env: { ...process.env, TERM: 'xterm-256color' },
+      });
+    } catch (e) {
+      return json(res, { error: `Failed to spawn cat: ${e.message}` }, 500);
+    }
+
+    let captured = '';
+    ptyProc.onData((data) => { captured += data; });
+
+    // Write payload using same chunked + bracketed paste method as real terminals
+    ptyProc.write('\x1b[200~');
+    for (let i = 0; i < payload.length; i += CHUNK) {
+      const chunk = payload.slice(i, i + CHUNK);
+      ptyProc.write(chunk);
+      if (i + CHUNK < payload.length) {
+        await new Promise(r => setTimeout(r, DELAY));
+      }
+    }
+    ptyProc.write('\x1b[201~');
+    ptyProc.write('\r');
+
+    // Wait for echo to settle, then send EOF to cat
+    const settleDelay = Math.max(500, Math.ceil(payload.length / CHUNK) * DELAY + 500);
+    await new Promise(r => setTimeout(r, settleDelay));
+
+    // Send Ctrl+D (EOF) to terminate cat
+    ptyProc.write('\x04');
+    await new Promise(r => setTimeout(r, 200));
+
+    try { ptyProc.kill(); } catch {}
+
+    // Strip ANSI escape sequences and bracketed paste markers from captured output
+    const clean = captured
+      .replace(/\x1b\[[0-9;]*[a-zA-Z~]/g, '')  // ANSI CSI sequences
+      .replace(/\x1b\].*?\x07/g, '')            // OSC sequences
+      .replace(/\r/g, '')                        // carriage returns
+      .replace(/\x04/g, '');                     // EOF chars
+
+    json(res, {
+      payload_length: payload.length,
+      captured_length: clean.length,
+      captured_raw_length: captured.length,
+      // Check if every line from the payload appears in the captured output
+      lines_sent: payload.split('\n').filter(l => l.trim()).length,
+      lines_captured: clean.split('\n').filter(l => l.trim()).length,
+      // Return first/last 500 chars for debugging
+      head: clean.slice(0, 500),
+      tail: clean.slice(-500),
+      // Return markers for specific content verification
+      contains_start: clean.includes(payload.slice(0, 50)),
+      contains_end: clean.includes(payload.slice(-50)),
+    });
+  }],
 ];
 
 const server = createServer(async (req, res) => {

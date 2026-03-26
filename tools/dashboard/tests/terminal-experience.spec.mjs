@@ -1147,3 +1147,111 @@ test.describe('Dispatch content completeness', () => {
     expect(contentAfter).toBe(contentBefore);
   });
 });
+
+
+// ============================================================
+// Test Group 14: PTY prompt delivery — large payload completeness
+// ============================================================
+
+test.describe('PTY prompt delivery completeness', () => {
+
+  /**
+   * Generate a realistic prompt payload of the given size.
+   * Includes unique markers at start, middle, and end for verification.
+   */
+  function generatePayload(targetBytes) {
+    const startMarker = '### START_MARKER_ALPHA ###';
+    const endMarker = '### END_MARKER_OMEGA ###';
+    const sections = [
+      '# Identity\n\nYou are a specialized SDLC orchestrator agent.',
+      '# Workflow Selection\n\n| Task | Agent | Model |\n|------|-------|-------|\n| Triage | pm | sonnet |\n| Planning | planner | opus |',
+      '# Coding Standards\n\n- Domain-first naming\n- DRY: three occurrences = extract\n- No over-engineering\n- Clean architecture layers',
+      '# Project Context\n\nStack: TypeScript, Node.js, React\nStructure: src/, tests/, docs/\nCI: GitHub Actions',
+      '# Environment\n\nProject directory: /Users/test/project\nArchitect root: /Users/test/architect\nDashboard: http://127.0.0.1:3777',
+    ];
+
+    let content = startMarker + '\n\n';
+    let sectionIdx = 0;
+    while (content.length < targetBytes - endMarker.length - 200) {
+      const section = sections[sectionIdx % sections.length];
+      const iteration = Math.floor(sectionIdx / sections.length) + 1;
+      content += `\n## Section ${sectionIdx + 1} (iteration ${iteration})\n\n${section}\n`;
+      // Add numbered lines for precise tracking
+      for (let j = 0; j < 10; j++) {
+        content += `Detail line ${sectionIdx * 10 + j}: configuration parameter with value ${Math.random().toString(36).slice(2, 10)}.\n`;
+      }
+      sectionIdx++;
+    }
+    content += '\n' + endMarker + '\n';
+    return content;
+  }
+
+  test('10KB payload is fully delivered through PTY chunked write', async () => {
+    const payload = generatePayload(10 * 1024);
+
+    const resp = await fetch(`${BASE}/api/test/prompt-delivery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload }),
+    });
+    expect(resp.ok).toBe(true);
+
+    const result = await resp.json();
+    // Start and end markers must both be present in captured output
+    expect(result.contains_start).toBe(true);
+    expect(result.contains_end).toBe(true);
+    // Captured output should contain all content lines
+    expect(result.lines_captured).toBeGreaterThanOrEqual(result.lines_sent - 5); // small tolerance for echo artifacts
+  });
+
+  test('30KB payload is fully delivered through PTY chunked write', async () => {
+    const payload = generatePayload(30 * 1024);
+
+    const resp = await fetch(`${BASE}/api/test/prompt-delivery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload }),
+    });
+    expect(resp.ok).toBe(true);
+
+    const result = await resp.json();
+    expect(result.contains_start).toBe(true);
+    expect(result.contains_end).toBe(true);
+    expect(result.lines_captured).toBeGreaterThanOrEqual(result.lines_sent - 5);
+  });
+
+  test('60KB payload is fully delivered through PTY chunked write', async () => {
+    const payload = generatePayload(60 * 1024);
+
+    const resp = await fetch(`${BASE}/api/test/prompt-delivery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload }),
+    });
+    expect(resp.ok).toBe(true);
+
+    const result = await resp.json();
+    expect(result.contains_start).toBe(true);
+    expect(result.contains_end).toBe(true);
+    expect(result.lines_captured).toBeGreaterThanOrEqual(result.lines_sent - 5);
+  });
+
+  test('100KB payload is fully delivered — no truncation at large sizes', async () => {
+    const payload = generatePayload(100 * 1024);
+
+    const resp = await fetch(`${BASE}/api/test/prompt-delivery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload }),
+    });
+    expect(resp.ok).toBe(true);
+
+    const result = await resp.json();
+    expect(result.contains_start).toBe(true);
+    expect(result.contains_end).toBe(true);
+    // At 100KB, captured must be at least 95% of sent (accounting for echo artifacts)
+    expect(result.captured_length).toBeGreaterThan(result.payload_length * 0.95);
+    expect(result.lines_captured).toBeGreaterThanOrEqual(result.lines_sent - 5);
+  });
+
+});
