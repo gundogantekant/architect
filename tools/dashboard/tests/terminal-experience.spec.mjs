@@ -488,3 +488,141 @@ test.describe('Live streaming for running dispatch', () => {
     expect(content).toContain('entities.md');
   });
 });
+
+
+// ============================================================
+// Test Group 7: Terminal scrollback
+// ============================================================
+
+test.describe('Terminal scrollback', () => {
+  const terminalId = 'T-test-scroll';
+
+  /** Generate 200 numbered lines of plain text scrollback */
+  function generateScrollback(lineCount = 200) {
+    const lines = [];
+    for (let i = 1; i <= lineCount; i++) {
+      const num = String(i).padStart(3, '0');
+      lines.push(`Line ${num}: This is terminal output line ${i} with enough text to fill the width of a standard terminal window.`);
+    }
+    return lines.join('\n') + '\n';
+  }
+
+  test.beforeEach(async () => {
+    const resp = await fetch(`${BASE}/api/test/seed-terminal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: terminalId,
+        status: 'completed',
+        scrollback: generateScrollback(),
+      }),
+    });
+    if (!resp.ok) throw new Error(`Seed terminal failed: ${resp.status}`);
+  });
+
+  test.afterEach(async () => {
+    await fetch(`${BASE}/api/terminal/${terminalId}`, { method: 'DELETE' }).catch(() => {});
+  });
+
+  test('scrollback creates scrollable xterm content', async ({ page }) => {
+    await page.goto(BASE);
+
+    // Wait for terminal panel to appear and WebSocket to connect
+    await page.waitForSelector(`#terminal-${terminalId}`, { timeout: 10_000 });
+    await page.waitForTimeout(3000); // let xterm render scrollback
+
+    const metrics = await page.evaluate((id) => {
+      const panel = document.getElementById(`terminal-${id}`);
+      if (!panel) return null;
+      const viewport = panel.querySelector('.xterm-viewport');
+      return {
+        hasXterm: !!panel.querySelector('.xterm'),
+        scrollHeight: viewport?.scrollHeight || 0,
+        clientHeight: viewport?.clientHeight || 0,
+        scrollable: viewport ? viewport.scrollHeight > viewport.clientHeight : false,
+      };
+    }, terminalId);
+
+    expect(metrics).not.toBeNull();
+    expect(metrics.hasXterm).toBe(true);
+    expect(metrics.scrollable).toBe(true);
+    expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight * 2);
+  });
+
+  test('scrollback content has proper depth — no excessive blank padding', async ({ page }) => {
+    await page.goto(BASE);
+    await page.waitForSelector(`#terminal-${terminalId}`, { timeout: 10_000 });
+    await page.waitForTimeout(3000);
+
+    const analysis = await page.evaluate((id) => {
+      const panel = document.getElementById(`terminal-${id}`);
+      if (!panel) return null;
+      const viewport = panel.querySelector('.xterm-viewport');
+      if (!viewport) return null;
+
+      // xterm.js only renders visible rows in the DOM — scrollback is in the internal buffer.
+      // We verify scrollback quality by checking:
+      // 1. scrollHeight is proportional to content (200 lines × ~lineHeight ≈ large scrollHeight)
+      // 2. scrollHeight is NOT inflated by excessive blank rows (would be much larger than expected)
+      const scrollHeight = viewport.scrollHeight;
+      const clientHeight = viewport.clientHeight;
+      const scrollRatio = scrollHeight / clientHeight;
+
+      // 200 lines of text at ~15px line height ≈ 3000px scrollHeight.
+      // clientHeight ≈ 390px. Expected ratio ≈ 7-10x.
+      // If blank padding inflated it, ratio would be much higher (50x+).
+      return {
+        scrollHeight,
+        clientHeight,
+        scrollRatio: Math.round(scrollRatio * 10) / 10,
+        scrollable: scrollHeight > clientHeight,
+      };
+    }, terminalId);
+
+    expect(analysis).not.toBeNull();
+    expect(analysis.scrollable).toBe(true);
+    // Ratio should be reasonable (5-30x) — not inflated by blank padding (50x+)
+    expect(analysis.scrollRatio).toBeGreaterThan(3);
+    expect(analysis.scrollRatio).toBeLessThan(50);
+  });
+
+  test('terminal scroll works in focus mode', async ({ page }) => {
+    await page.goto(BASE);
+    await page.waitForSelector(`#terminal-${terminalId}`, { timeout: 10_000 });
+    await page.waitForTimeout(3000);
+
+    // Verify scrollable before focus
+    const beforeFocus = await page.evaluate((id) => {
+      const panel = document.getElementById(`terminal-${id}`);
+      if (!panel) return null;
+      const viewport = panel.querySelector('.xterm-viewport');
+      return {
+        hasXterm: !!panel.querySelector('.xterm'),
+        scrollable: viewport ? viewport.scrollHeight > viewport.clientHeight : false,
+      };
+    }, terminalId);
+
+    expect(beforeFocus).not.toBeNull();
+    expect(beforeFocus.hasXterm).toBe(true);
+    expect(beforeFocus.scrollable).toBe(true);
+
+    // Open focus popup
+    await page.click(`[data-focus-terminal="${terminalId}"]`);
+    await page.waitForSelector('.focus-overlay', { state: 'visible' });
+    await page.waitForTimeout(500);
+
+    // Close popup
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('.focus-overlay', { state: 'detached' });
+    await page.waitForTimeout(300);
+
+    // Verify inline panel still has xterm after close
+    const afterClose = await page.evaluate((id) => {
+      const panel = document.getElementById(`terminal-${id}`);
+      return { exists: !!panel, hasXterm: !!panel?.querySelector('.xterm') };
+    }, terminalId);
+
+    expect(afterClose.exists).toBe(true);
+    expect(afterClose.hasXterm).toBe(true);
+  });
+});

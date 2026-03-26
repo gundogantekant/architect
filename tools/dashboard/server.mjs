@@ -193,6 +193,25 @@ function captureTmuxScrollback(name) {
   } catch { return ''; }
 }
 
+/** Clean tmux capture-pane plain text output: strip trailing whitespace, collapse blank runs, trim */
+function cleanTmuxCapture(text) {
+  const lines = text.split('\n').map(l => l.trimEnd());
+  const result = [];
+  let blankCount = 0;
+  for (const line of lines) {
+    if (line === '') {
+      blankCount++;
+      if (blankCount <= 2) result.push(line);
+    } else {
+      blankCount = 0;
+      result.push(line);
+    }
+  }
+  while (result.length && result[0] === '') result.shift();
+  while (result.length && result[result.length - 1] === '') result.pop();
+  return result.join('\n') + '\n';
+}
+
 // Shared terminal handler wiring (used for fresh spawn and restore)
 function wireTerminalHandlers(terminal) {
   terminal.ptyProcess.onData((data) => {
@@ -1000,10 +1019,17 @@ function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInst
 }
 
 const routes = [
-  // Static: index.html
+  // Static: index.html (ETag + no-cache to force Chrome revalidation)
   [/^\/$/, 'GET', async (_m, _req, res) => {
-    const html = await readFile(join(import.meta.dirname, 'index.html'), 'utf8');
-    text(res, html, 'text/html');
+    const htmlPath = join(import.meta.dirname, 'index.html');
+    const html = await readFile(htmlPath, 'utf8');
+    const mtime = (await stat(htmlPath)).mtimeMs;
+    res.writeHead(200, {
+      'Content-Type': 'text/html',
+      'Cache-Control': 'no-cache, must-revalidate',
+      'ETag': `"${mtime.toString(36)}"`,
+    });
+    res.end(html);
   }],
 
   // Registry
@@ -2526,6 +2552,37 @@ const routes = [
     }
     json(res, { appended: lines.length });
   }],
+
+  // Seed a terminal with scrollback content (no real PTY)
+  [/^\/api\/test\/seed-terminal$/, 'POST', async (_m, req, res) => {
+    const body = await parseBody(req);
+    const { id, scrollback, status } = body;
+    if (!id) return err(res, 'id is required', 400);
+
+    const terminal = {
+      id,
+      type: 'claude',
+      work_item_id: null,
+      epic_id: null,
+      project_key: 'test/test/main',
+      project_path: ROOT,
+      title: `Test terminal ${id}`,
+      status: status || 'completed',
+      started_at: new Date().toISOString(),
+      exited_at: status !== 'running' ? new Date().toISOString() : null,
+      permission_mode: 'plan',
+      skip_permissions: false,
+      claude_session_id: null,
+      ptyProcess: null,
+      scrollback: scrollback || '',
+      wsClients: new Set(),
+      tmux_session: null,
+    };
+
+    terminals.set(id, terminal);
+    saveTerminalToDb(terminal);
+    json(res, { terminal_id: id, status: terminal.status });
+  }],
 ];
 
 const server = createServer(async (req, res) => {
@@ -2562,11 +2619,23 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
   wss.handleUpgrade(req, socket, head, (ws) => {
-    // Replay scrollback buffer with PTY dimensions for client-side reflow awareness
-    if (terminal.scrollback) {
-      const dims = terminal.ptyProcess
-        ? { cols: terminal.ptyProcess.cols, rows: terminal.ptyProcess.rows }
-        : { cols: 80, rows: 24 };
+    // Replay scrollback: prefer live tmux capture (plain text, creates real xterm scrollback)
+    const dims = terminal.ptyProcess
+      ? { cols: terminal.ptyProcess.cols, rows: terminal.ptyProcess.rows }
+      : { cols: 80, rows: 24 };
+    let scrollbackSent = false;
+    if (terminal.tmux_session && TMUX_AVAILABLE && tmuxSessionExists(terminal.tmux_session)) {
+      try {
+        // Plain text scrollback history (no escape codes) — creates scrollable xterm content
+        const raw = execFileSync('tmux', ['capture-pane', '-t', terminal.tmux_session, '-p', '-S', '-32768'], { encoding: 'utf8' });
+        const history = cleanTmuxCapture(raw);
+        if (history.trim()) {
+          ws.send(JSON.stringify({ type: 'scrollback', data: history, cols: dims.cols, rows: dims.rows }));
+          scrollbackSent = true;
+        }
+      } catch {}
+    }
+    if (!scrollbackSent && terminal.scrollback) {
       ws.send(JSON.stringify({ type: 'scrollback', data: terminal.scrollback, cols: dims.cols, rows: dims.rows }));
     }
     // If already exited, send exit event

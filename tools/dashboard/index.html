@@ -1479,8 +1479,8 @@ async function restoreTerminals() {
       } else if (t.status === 'suspended') {
         // Suspended terminal — keep panel visible (no WebSocket needed)
       } else {
-        // Exited terminal — show finalized panel (keep visible for review)
-        finalizeTerminalPanel(terminalInfo);
+        // Exited terminal — connect WS to load scrollback into xterm, then finalize
+        toConnect.push(terminalInfo);
       }
     }
     // Cleanup stale panels for sessions that no longer exist
