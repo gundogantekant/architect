@@ -2801,23 +2801,15 @@ server.on('upgrade', (req, socket, head) => {
       const dims = clientDims
         || (terminal.ptyProcess ? { cols: terminal.ptyProcess.cols, rows: terminal.ptyProcess.rows } : { cols: 80, rows: 24 });
 
-      // Resize tmux pane to match client dimensions before capturing scrollback
-      if (clientDims && terminal.tmux_session && TMUX_AVAILABLE && tmuxSessionExists(terminal.tmux_session)) {
-        try {
-          execFileSync('tmux', ['resize-pane', '-t', terminal.tmux_session, '-x', String(clientDims.cols), '-y', String(clientDims.rows)], { stdio: 'ignore' });
-        } catch {}
+      // Resize PTY directly (non-blocking — no tmux execFileSync)
+      if (clientDims && terminal.ptyProcess) {
+        try { terminal.ptyProcess.resize(clientDims.cols, clientDims.rows); } catch {}
       }
 
-      // Resolve scrollback content
+      // Serve scrollback from in-memory buffer (instant, non-blocking).
+      // terminal.scrollback is maintained in real-time by wireTerminalHandlers onData.
       let scrollbackData = '';
-      if (terminal.tmux_session && TMUX_AVAILABLE && tmuxSessionExists(terminal.tmux_session)) {
-        try {
-          const raw = execFileSync('tmux', ['capture-pane', '-t', terminal.tmux_session, '-p', '-S', '-32768'], { encoding: 'utf8' });
-          const history = cleanTmuxCapture(raw);
-          if (history.trim()) scrollbackData = history;
-        } catch {}
-      }
-      if (!scrollbackData && terminal.scrollback) {
+      if (terminal.scrollback) {
         scrollbackData = cleanTmuxCapture(terminal.scrollback);
       }
 

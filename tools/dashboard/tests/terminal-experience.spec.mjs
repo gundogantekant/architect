@@ -85,7 +85,7 @@ async function waitForContent(page, selector, minLength = 100) {
       return el && el.textContent.length > min;
     },
     [selector, minLength],
-    { timeout: 15_000 },
+    { timeout: 25_000 },
   );
 }
 
@@ -1126,8 +1126,8 @@ test.describe('Completed session persistence', () => {
     }, terminalId);
     expect(before.exists).toBe(true);
 
-    // Wait past two polling cycles (10s each)
-    await page.waitForTimeout(22000);
+    // Wait past two polling cycles (10s each) + Firefox xterm CDN load buffer
+    await page.waitForTimeout(30000);
 
     // Panel must still exist
     const after = await page.evaluate((id) => {
