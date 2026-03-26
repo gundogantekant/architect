@@ -1400,22 +1400,11 @@ async function connectTerminalWs(terminalInfo) {
   const ws = new WebSocket(`${proto}//${location.host}/api/terminal/${terminalInfo.id}/ws`);
   terminalInfo._ws = ws;
 
-  // Send actual browser terminal dimensions so server captures scrollback at correct width.
-  // Defer until after fit completes — sending before fit would report default 80x24.
-  function sendReadyMessage() {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'ready', cols: term.cols, rows: term.rows }));
-    }
-  }
-  ws.onopen = () => {
-    if (!terminalInfo._needsInitialFit) {
-      // Container already has layout — fit already happened, send immediately
-      sendReadyMessage();
-    }
-    // Otherwise: ResizeObserver will call sendReadyMessage after initial fit
-  };
+  // Server pushes scrollback immediately on connect — buffer messages until xterm is ready.
+  // No 'ready' handshake needed. Server sends from memory, client replays when able.
+  const msgQueue = [];
+  let xtermReady = false;
 
-  // Helper to update or remove loading overlay
   function updateLoadingProgress(received, total) {
     const loadingEl = containerEl.querySelector('.terminal-loading');
     if (!loadingEl) return;
@@ -1432,71 +1421,76 @@ async function connectTerminalWs(terminalInfo) {
     const loadingEl = containerEl.querySelector('.terminal-loading');
     if (loadingEl) loadingEl.remove();
   }
-
-  // Safety fallback: if loading overlay is still present after 10s, remove it
-  // (covers edge cases: WS failures, empty scrollback, server errors)
   loadingFallbackTimer = setTimeout(() => removeLoadingOverlay(), 10000);
 
   let scrollbackTotal = 0;
   let scrollbackReceived = 0;
-  let scrollbackInitDone = false;
+
+  function processMessage(msg) {
+    if (msg.type === 'scrollback-start') {
+      scrollbackTotal = msg.total || 0;
+      scrollbackReceived = 0;
+      updateLoadingProgress(0, scrollbackTotal);
+      const buf = term.buffer.active;
+      if (buf.baseY === 0 && buf.cursorY === 0) {
+        term.reset();
+        fitAddon.fit();
+        lastCols = term.cols;
+        lastRows = term.rows;
+      }
+    } else if (msg.type === 'scrollback') {
+      scrollbackReceived = msg.done || (scrollbackReceived + (msg.data?.length || 0));
+      updateLoadingProgress(scrollbackReceived, scrollbackTotal);
+      term.write(msg.data);
+    } else if (msg.type === 'scrollback-end') {
+      removeLoadingOverlay();
+      // Now that xterm has content, send actual dimensions for future output
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      }
+    } else if (msg.type === 'data') {
+      removeLoadingOverlay();
+      term.write(msg.data);
+    } else if (msg.type === 'dims') {
+      lastCols = msg.cols;
+      lastRows = msg.rows;
+    } else if (msg.type === 'exit') {
+      terminalInfo.status = msg.code === 0 ? 'completed' : 'failed';
+      finalizeTerminalPanel(terminalInfo);
+    }
+  }
+
+  // Mark xterm ready once the terminal has non-zero dimensions (fit complete)
+  function markXtermReady() {
+    if (xtermReady) return;
+    xtermReady = true;
+    // Flush buffered messages
+    for (const msg of msgQueue) {
+      try { processMessage(msg); } catch {}
+    }
+    msgQueue.length = 0;
+  }
+
+  // If fit already happened, mark ready immediately
+  if (!terminalInfo._needsInitialFit) {
+    markXtermReady();
+  }
 
   ws.onmessage = (e) => {
     try {
       const msg = JSON.parse(e.data);
-      if (msg.type === 'scrollback-start') {
-        // Size hint — prepare for chunked scrollback
-        scrollbackTotal = msg.total || 0;
-        scrollbackReceived = 0;
-        updateLoadingProgress(0, scrollbackTotal);
-        // Reset terminal for initial load
-        const buf = term.buffer.active;
-        const hasContent = buf.baseY > 0 || buf.cursorY > 0;
-        if (!hasContent) {
-          term.reset();
-          fitAddon.fit();
-          lastCols = term.cols;
-          lastRows = term.rows;
-        }
-        scrollbackInitDone = true;
-      } else if (msg.type === 'scrollback') {
-        // Chunked scrollback data with progress
-        if (!scrollbackInitDone) {
-          // Legacy single-message scrollback (no start/end framing)
-          const buf = term.buffer.active;
-          const hasContent = buf.baseY > 0 || buf.cursorY > 0;
-          if (!hasContent) {
-            term.reset();
-            fitAddon.fit();
-            lastCols = term.cols;
-            lastRows = term.rows;
-          }
-          term.write(msg.data, () => {
-            removeLoadingOverlay();
-            if (msg.cols && msg.rows && (term.cols !== msg.cols || term.rows !== msg.rows) && ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-            }
-          });
-        } else {
+      if (xtermReady) {
+        processMessage(msg);
+      } else {
+        // Buffer until xterm is ready — still update progress overlay
+        msgQueue.push(msg);
+        if (msg.type === 'scrollback-start') {
+          scrollbackTotal = msg.total || 0;
+          updateLoadingProgress(0, scrollbackTotal);
+        } else if (msg.type === 'scrollback') {
           scrollbackReceived = msg.done || (scrollbackReceived + (msg.data?.length || 0));
           updateLoadingProgress(scrollbackReceived, scrollbackTotal);
-          term.write(msg.data);
         }
-      } else if (msg.type === 'scrollback-end') {
-        // All chunks received — remove overlay and sync dimensions
-        removeLoadingOverlay();
-        if (msg.cols && msg.rows && (term.cols !== msg.cols || term.rows !== msg.rows) && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-        }
-      } else if (msg.type === 'data') {
-        removeLoadingOverlay();
-        term.write(msg.data);
-      } else if (msg.type === 'dims') {
-        lastCols = msg.cols;
-        lastRows = msg.rows;
-      } else if (msg.type === 'exit') {
-        terminalInfo.status = msg.code === 0 ? 'completed' : 'failed';
-        finalizeTerminalPanel(terminalInfo);
       }
     } catch {}
   };
@@ -1524,8 +1518,8 @@ async function connectTerminalWs(terminalInfo) {
       fitAddon.fit();
       lastCols = term.cols;
       lastRows = term.rows;
-      // Send ready with actual dimensions (deferred from ws.onopen because container had no layout)
-      sendReadyMessage();
+      // xterm now has proper dimensions — flush buffered scrollback messages
+      markXtermReady();
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
       }

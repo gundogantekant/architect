@@ -2789,61 +2789,39 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
   wss.handleUpgrade(req, socket, head, (ws) => {
-    // Wait for client 'ready' message with actual browser terminal dimensions
-    // before capturing and sending scrollback (ensures correct column width).
-    const READY_TIMEOUT = 2000;
-    let readyResolved = false;
+    // Immediately push scrollback from memory — no waiting for client 'ready'.
+    // Client buffers messages until xterm is initialized.
+    const dims = terminal.ptyProcess
+      ? { cols: terminal.ptyProcess.cols, rows: terminal.ptyProcess.rows }
+      : { cols: 80, rows: 24 };
 
-    function sendScrollback(clientDims) {
-      if (readyResolved) return;
-      readyResolved = true;
-
-      const dims = clientDims
-        || (terminal.ptyProcess ? { cols: terminal.ptyProcess.cols, rows: terminal.ptyProcess.rows } : { cols: 80, rows: 24 });
-
-      // Resize PTY directly (non-blocking — no tmux execFileSync)
-      if (clientDims && terminal.ptyProcess) {
-        try { terminal.ptyProcess.resize(clientDims.cols, clientDims.rows); } catch {}
-      }
-
-      // Serve scrollback from in-memory buffer (instant, non-blocking).
-      // terminal.scrollback is maintained in real-time by wireTerminalHandlers onData.
-      let scrollbackData = '';
-      if (terminal.scrollback) {
-        scrollbackData = cleanTmuxCapture(terminal.scrollback);
-      }
-
-      if (scrollbackData) {
-        // Send size hint so client can show progress, then stream in chunks
-        const SCROLL_CHUNK = 8 * 1024; // 8KB chunks for progress granularity
-        try { ws.send(JSON.stringify({ type: 'scrollback-start', total: scrollbackData.length, cols: dims.cols, rows: dims.rows })); } catch {}
-        for (let i = 0; i < scrollbackData.length; i += SCROLL_CHUNK) {
-          const chunk = scrollbackData.slice(i, i + SCROLL_CHUNK);
-          const done = Math.min(i + SCROLL_CHUNK, scrollbackData.length);
-          try { ws.send(JSON.stringify({ type: 'scrollback', data: chunk, offset: i, total: scrollbackData.length, done })); } catch {}
-        }
-        try { ws.send(JSON.stringify({ type: 'scrollback-end', cols: dims.cols, rows: dims.rows })); } catch {}
-      } else {
-        // No scrollback available — remove loading overlay immediately
-        try { ws.send(JSON.stringify({ type: 'scrollback-end', cols: dims.cols, rows: dims.rows })); } catch {}
-      }
-      if (terminal.status !== 'running') {
-        ws.send(JSON.stringify({ type: 'exit', code: 0 }));
-      }
+    let scrollbackData = '';
+    if (terminal.scrollback) {
+      scrollbackData = cleanTmuxCapture(terminal.scrollback);
     }
 
-    // Fallback: send scrollback after timeout if client doesn't send 'ready'
-    const readyTimer = setTimeout(() => sendScrollback(null), READY_TIMEOUT);
+    if (scrollbackData) {
+      const SCROLL_CHUNK = 8 * 1024;
+      try { ws.send(JSON.stringify({ type: 'scrollback-start', total: scrollbackData.length, cols: dims.cols, rows: dims.rows })); } catch {}
+      for (let i = 0; i < scrollbackData.length; i += SCROLL_CHUNK) {
+        const chunk = scrollbackData.slice(i, i + SCROLL_CHUNK);
+        const done = Math.min(i + SCROLL_CHUNK, scrollbackData.length);
+        try { ws.send(JSON.stringify({ type: 'scrollback', data: chunk, offset: i, total: scrollbackData.length, done })); } catch {}
+      }
+      try { ws.send(JSON.stringify({ type: 'scrollback-end', cols: dims.cols, rows: dims.rows })); } catch {}
+    } else {
+      try { ws.send(JSON.stringify({ type: 'scrollback-end', cols: dims.cols, rows: dims.rows })); } catch {}
+    }
+    if (terminal.status !== 'running') {
+      try { ws.send(JSON.stringify({ type: 'exit', code: 0 })); } catch {}
+    }
 
     terminal.wsClients.add(ws);
 
     ws.on('message', (raw) => {
       try {
         const msg = JSON.parse(raw.toString());
-        if (msg.type === 'ready' && msg.cols && msg.rows) {
-          clearTimeout(readyTimer);
-          sendScrollback({ cols: msg.cols, rows: msg.rows });
-        } else if (msg.type === 'input' && terminal.ptyProcess) {
+        if (msg.type === 'input' && terminal.ptyProcess) {
           terminal.ptyProcess.write(msg.data);
         } else if (msg.type === 'resize' && terminal.ptyProcess && msg.cols && msg.rows) {
           clearTimeout(terminal._resizeTimer);
