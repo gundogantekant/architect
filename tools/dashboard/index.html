@@ -844,6 +844,8 @@ function finalizeDispatchPanel(dispatch) {
 
 async function loadDispatchContent(dispatch) {
   if (dispatch._contentLoaded) return;
+  // Prevent duplicate WebSocket connections
+  if (dispatch._ws && dispatch._ws.readyState <= WebSocket.OPEN) return;
 
   // Wait for the panel to be placed in the DOM (placeSessionPanels uses requestAnimationFrame)
   let logEl = document.getElementById(`log-${dispatch.id}`);
@@ -853,62 +855,50 @@ async function loadDispatchContent(dispatch) {
     if (!logEl) return;
   }
 
-  // Phase 1: Load historical content via reliable HTTP GET (no SSE race)
-  let replayLines = 0;
-  try {
-    const resp = await fetch(`/api/dispatch/${dispatch.id}/log`);
-    if (resp.ok) {
-      const content = await resp.text();
-      for (const line of content.split('\n')) {
-        if (!line.trim()) continue;
-        replayLines++;
-        const text = extractStreamText(line);
-        if (text) logEl.textContent += text;
-      }
-      logEl.scrollTop = logEl.scrollHeight;
-    }
-  } catch {}
+  // Single WebSocket connection — server replays from memory, then broadcasts live
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${proto}//${location.host}/api/dispatch/${dispatch.id}/ws`);
+  dispatch._ws = ws;
 
-  dispatch._contentLoaded = true;
-  dispatch._replayLines = replayLines;
-
-  // Phase 2: If running, connect SSE for live-only updates (skip replayed lines)
-  if (dispatch.status === 'running') {
-    const es = new EventSource(`/api/dispatch/${dispatch.id}/stream?after=${replayLines}`);
-    dispatch._eventSource = es;
-
-    es.onmessage = (e) => {
-      const text = extractStreamText(e.data);
-      if (text) {
-        const visible = logEl.offsetParent !== null;
-        if (visible) {
-          const nearBottom = (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight) < 50;
-          logEl.textContent += text;
-          if (nearBottom) logEl.scrollTop = logEl.scrollHeight;
-        } else {
-          logEl.textContent += text; // append but skip scroll (collapsed panel)
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'data') {
+        const text = extractStreamText(msg.data);
+        if (text) {
+          const visible = logEl.offsetParent !== null;
+          if (visible) {
+            const nearBottom = (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight) < 50;
+            logEl.textContent += text;
+            if (nearBottom) logEl.scrollTop = logEl.scrollHeight;
+          } else {
+            logEl.textContent += text;
+          }
         }
+      } else if (msg.type === 'replay-end') {
+        dispatch._contentLoaded = true;
+        logEl.scrollTop = logEl.scrollHeight;
+      } else if (msg.type === 'done') {
+        dispatch.status = msg.status || 'completed';
+        dispatch._ws = null;
+        finalizeDispatchPanel(dispatch);
       }
-    };
+    } catch {}
+  };
 
-    es.addEventListener('done', (e) => {
-      try { dispatch.status = JSON.parse(e.data).status; } catch { dispatch.status = 'completed'; }
-      es.close();
-      dispatch._eventSource = null;
-      finalizeDispatchPanel(dispatch);
-    });
-
-    es.onerror = () => {
-      if (dispatch.status !== 'running') { es.close(); dispatch._eventSource = null; return; }
+  ws.onclose = () => {
+    dispatch._ws = null;
+    // If not yet finalized and was running, treat as connection loss
+    if (dispatch.status === 'running' && !dispatch._contentLoaded) {
       dispatch.status = 'failed';
-      es.close();
-      dispatch._eventSource = null;
       finalizeDispatchPanel(dispatch);
-    };
-  } else {
-    // Already completed — content loaded via HTTP, just finalize panel appearance
-    finalizeDispatchPanel(dispatch);
-  }
+    }
+  };
+
+  ws.onerror = () => {};
+
+  // For non-running dispatches, server will send replay + done, then close
+  // For running dispatches, server sends replay then streams live data
 }
 
 async function killAllSessions() {
@@ -1159,6 +1149,8 @@ function togglePanelCollapse(key, panel, btn) {
         if (t._needsInitialFit) {
           t._fitAddon.fit();
           t._needsInitialFit = false;
+          // Flush buffered WS messages if xterm connected while collapsed
+          if (t._markXtermReady) t._markXtermReady();
         } else {
           fitPreservingScroll(t._term, t._fitAddon);
         }
@@ -1421,7 +1413,15 @@ async function connectTerminalWs(terminalInfo) {
     const loadingEl = containerEl.querySelector('.terminal-loading');
     if (loadingEl) loadingEl.remove();
   }
-  loadingFallbackTimer = setTimeout(() => removeLoadingOverlay(), 10000);
+  loadingFallbackTimer = setTimeout(() => {
+    removeLoadingOverlay();
+    // Also flush messages — if xterm never got dimensions, force-fit and mark ready
+    if (!xtermReady) {
+      try { fitAddon.fit(); } catch {}
+      terminalInfo._needsInitialFit = false;
+      markXtermReady();
+    }
+  }, 10000);
 
   let scrollbackTotal = 0;
   let scrollbackReceived = 0;
@@ -1460,20 +1460,45 @@ async function connectTerminalWs(terminalInfo) {
     }
   }
 
+  // Polling fallback timer — declared early so markXtermReady can clear it
+  let readyPollTimer = null;
+
   // Mark xterm ready once the terminal has non-zero dimensions (fit complete)
   function markXtermReady() {
     if (xtermReady) return;
     xtermReady = true;
+    if (readyPollTimer) { clearInterval(readyPollTimer); readyPollTimer = null; }
     // Flush buffered messages
     for (const msg of msgQueue) {
       try { processMessage(msg); } catch {}
     }
     msgQueue.length = 0;
   }
+  terminalInfo._markXtermReady = markXtermReady;
 
   // If fit already happened, mark ready immediately
   if (!terminalInfo._needsInitialFit) {
     markXtermReady();
+  }
+  if (terminalInfo._needsInitialFit) {
+    let pollCount = 0;
+    readyPollTimer = setInterval(() => {
+      pollCount++;
+      if (pollCount >= 20 || xtermReady) { clearInterval(readyPollTimer); readyPollTimer = null; return; }
+      const rect = containerEl.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0 && terminalInfo._needsInitialFit) {
+        terminalInfo._needsInitialFit = false;
+        fitAddon.fit();
+        lastCols = term.cols;
+        lastRows = term.rows;
+        markXtermReady();
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+        }
+        clearInterval(readyPollTimer);
+        readyPollTimer = null;
+      }
+    }, 500);
   }
 
   ws.onmessage = (e) => {

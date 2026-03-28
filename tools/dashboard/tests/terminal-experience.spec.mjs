@@ -15,6 +15,7 @@ import { test, expect } from '@playwright/test';
 
 const BASE = 'http://127.0.0.1:3777';
 
+
 // --- Helpers ---
 
 /** Generate stream-json JSONL lines with substantial structured content */
@@ -455,12 +456,12 @@ test.describe('Live streaming for running dispatch', () => {
     await cleanupDispatch(dispatchId);
   });
 
-  test('new content appears via SSE as lines are appended', async ({ page }) => {
+  test('new content appears via WebSocket as lines are appended', async ({ page }) => {
     await page.goto(BASE);
 
     // Wait for dispatch panel to exist (may have empty log initially)
     await page.waitForSelector(`#dispatch-${dispatchId}`, { timeout: 10_000 });
-    await page.waitForTimeout(1000); // let SSE connect
+    await page.waitForTimeout(1000); // let WebSocket connect
 
     // Append content lines to the running dispatch
     const newLines = [];
@@ -1615,5 +1616,146 @@ test.describe('Terminal content delivery after dispatch', () => {
     await ctx1.close();
     await ctx2.close();
     await fetch(`${BASE}/api/terminal/${termId}`, { method: 'DELETE' }).catch(() => {});
+  });
+});
+
+
+// ============================================================
+// Test Group 16: Dispatch WebSocket broadcaster
+// ============================================================
+
+test.describe('Dispatch WebSocket broadcaster', () => {
+  const dispatchId = 'D-test-ws-replay';
+
+  test.afterEach(async () => {
+    await cleanupDispatch(dispatchId);
+  });
+
+  test('completed dispatch content delivered via WebSocket replay', async ({ page }) => {
+    await seedDispatch(dispatchId, { status: 'completed' });
+    await page.goto(BASE);
+
+    const logSelector = `#log-${dispatchId}`;
+    await waitForContent(page, logSelector);
+
+    const content = await page.$eval(logSelector, el => el.textContent);
+    expect(content.length).toBeGreaterThan(5000);
+    expect(content).toContain('entities.md');
+    expect(content).toContain('load-portfolio-context.md');
+
+    // Panel should be finalized (not running)
+    const panel = page.locator(`#dispatch-${dispatchId}`);
+    await expect(panel).not.toHaveClass(/status-running/);
+  });
+
+  test('running dispatch receives live lines via WebSocket broadcast', async ({ page }) => {
+    // Seed a running dispatch with no initial content
+    await fetch(`${BASE}/api/test/seed-dispatch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: dispatchId,
+        status: 'running',
+        project_key: 'test/test/main',
+        title: 'WS broadcast test',
+        work_item_id: 'W-TEST-WS',
+        log_lines: [],
+      }),
+    });
+
+    await page.goto(BASE);
+    await page.waitForSelector(`#dispatch-${dispatchId}`, { timeout: 10_000 });
+    await page.waitForTimeout(1000); // let WebSocket connect
+
+    // Append content lines
+    const newLines = [];
+    for (let i = 0; i < 10; i++) {
+      newLines.push(JSON.stringify({
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: `WS broadcast line ${i}\n` },
+      }));
+    }
+
+    await fetch(`${BASE}/api/test/append-dispatch-output`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: dispatchId, lines: newLines }),
+    });
+
+    // Verify content arrives
+    await waitForContent(page, `#log-${dispatchId}`, 50);
+    const content = await page.$eval(`#log-${dispatchId}`, el => el.textContent);
+    expect(content).toContain('WS broadcast line 0');
+    expect(content).toContain('WS broadcast line 9');
+  });
+
+  test('dispatch content survives restart via memory replay', async ({ page }) => {
+    await seedDispatch(dispatchId, { status: 'completed' });
+
+    // Load and verify initial content
+    await page.goto(BASE);
+    await waitForContent(page, `#log-${dispatchId}`);
+    const before = await page.$eval(`#log-${dispatchId}`, el => el.textContent);
+    expect(before.length).toBeGreaterThan(5000);
+
+    // Simulate restart — server rebuilds memory from disk
+    const resetResp = await fetch(`${BASE}/api/test/reset-sessions`, { method: 'POST' });
+    expect(resetResp.ok).toBe(true);
+
+    // Reload and verify content restored from memory
+    await page.reload();
+    await waitForContent(page, `#log-${dispatchId}`);
+    const after = await page.$eval(`#log-${dispatchId}`, el => el.textContent);
+    expect(after.length).toBeGreaterThan(5000);
+    expect(after).toContain('entities.md');
+  });
+});
+
+
+// ============================================================
+// Test Group 17: Terminal xterm readiness fallback
+// ============================================================
+
+test.describe('Terminal xterm readiness fallback', () => {
+  const termId = 'T-test-readiness';
+
+  test.afterEach(async () => {
+    await fetch(`${BASE}/api/terminal/${termId}`, { method: 'DELETE' }).catch(() => {});
+  });
+
+  test('terminal content renders after fallback timer when container has zero dimensions', async ({ page }) => {
+    // Generate scrollback content
+    const lines = [];
+    for (let i = 0; i < 100; i++) {
+      lines.push(`Readiness test line ${i}: content that must render after fallback`);
+    }
+    const scrollback = lines.join('\r\n') + '\r\n';
+
+    await fetch(`${BASE}/api/test/seed-terminal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: termId, scrollback, status: 'completed' }),
+    });
+
+    await page.goto(BASE);
+    await page.waitForSelector(`#terminal-${termId}`, { timeout: 15_000 });
+
+    // Wait for xterm to render — the fallback timer + polling should ensure content loads
+    // even if initial container dimensions are zero (Chrome timing)
+    await page.waitForTimeout(3000);
+
+    const state = await page.evaluate((id) => {
+      const container = document.getElementById(`term-container-${id}`);
+      return {
+        hasXterm: !!container?.querySelector('.xterm'),
+        hasLoading: !!container?.querySelector('.terminal-loading'),
+        scrollHeight: container?.querySelector('.xterm-viewport')?.scrollHeight || 0,
+      };
+    }, termId);
+
+    expect(state.hasXterm).toBe(true);
+    expect(state.hasLoading).toBe(false);
+    expect(state.scrollHeight).toBeGreaterThan(50);
   });
 });

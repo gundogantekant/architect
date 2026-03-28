@@ -1,6 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
+  globalSetup: './tests/global-setup.mjs',
   testDir: './tests',
   timeout: 120_000,
   expect: { timeout: 30_000 },
@@ -10,6 +11,6 @@ export default defineConfig({
   },
   projects: [
     { name: 'chromium', use: { browserName: 'chromium' } },
-    { name: 'firefox', use: { browserName: 'firefox' } },
+    { name: 'firefox', use: { browserName: 'firefox' }, dependencies: ['chromium'] },
   ],
 });

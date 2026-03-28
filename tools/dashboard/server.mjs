@@ -250,6 +250,23 @@ function wireTerminalHandlers(terminal) {
   });
 }
 
+// Broadcast a JSONL line to all dispatch WebSocket clients
+function broadcastDispatchLine(dispatch, line) {
+  const msg = JSON.stringify({ type: 'data', data: line });
+  for (const ws of dispatch.wsClients) {
+    try { ws.send(msg); } catch {}
+  }
+}
+
+// Broadcast done + close all dispatch WebSocket clients
+function broadcastDispatchDone(dispatch) {
+  const msg = JSON.stringify({ type: 'done', status: dispatch.status });
+  for (const ws of dispatch.wsClients) {
+    try { ws.send(msg); ws.close(); } catch {}
+  }
+  dispatch.wsClients.clear();
+}
+
 // Tail a log file for a reconnected dispatch (PID alive but no process handle)
 function tailLogFile(dispatch) {
   let offset = 0;
@@ -286,8 +303,7 @@ function tailLogFile(dispatch) {
       dispatch.completed_at = new Date().toISOString();
       if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
       saveDispatchToDb(dispatch);
-      for (const listener of dispatch.listeners) listener(null);
-      dispatch.listeners.clear();
+      broadcastDispatchDone(dispatch);
       return;
     }
     try {
@@ -309,7 +325,7 @@ function tailLogFile(dispatch) {
             saveDispatchToDb(dispatch);
           }
         } catch {}
-        for (const listener of dispatch.listeners) listener(line);
+        broadcastDispatchLine(dispatch, line);
       }
     } catch {}
   }, 2000);
@@ -331,7 +347,7 @@ function restoreSessions() {
     if (d.status === 'suspended') {
       // Suspended dispatches: load into memory as-is (no running process)
       dispatches.set(d.id, {
-        ...d, output: [], lastLines: [], listeners: new Set(), process: null,
+        ...d, output: [], lastLines: [], wsClients: new Set(), process: null,
       });
       continue;
     }
@@ -344,7 +360,7 @@ function restoreSessions() {
           ...d,
           output: [],
           lastLines: [],
-          listeners: new Set(),
+          wsClients: new Set(),
           process: null,
           logPath,
           logStream: null,
@@ -362,7 +378,7 @@ function restoreSessions() {
         let output = [];
         try { output = readFileSync(logPath, 'utf8').split('\n').filter(l => l.trim()); } catch {}
         dispatches.set(d.id, {
-          ...d, output, lastLines: [], listeners: new Set(), process: null,
+          ...d, output, lastLines: [], wsClients: new Set(), process: null,
         });
       }
     } else {
@@ -371,7 +387,7 @@ function restoreSessions() {
       let output = [];
       try { output = readFileSync(logPath, 'utf8').split('\n').filter(l => l.trim()); } catch {}
       dispatches.set(d.id, {
-        ...d, output, lastLines: [], listeners: new Set(), process: null,
+        ...d, output, lastLines: [], wsClients: new Set(), process: null,
       });
     }
   }
@@ -536,7 +552,7 @@ function wireDispatchHandlers(dispatch, proc) {
       } catch {}
       dispatch.output.push(line);
       if (dispatch.logStream) dispatch.logStream.write(line + '\n');
-      for (const listener of dispatch.listeners) listener(line);
+      broadcastDispatchLine(dispatch, line);
     }
   });
 
@@ -544,7 +560,7 @@ function wireDispatchHandlers(dispatch, proc) {
     const line = JSON.stringify({ type: 'stderr', content: chunk.toString() });
     dispatch.output.push(line);
     if (dispatch.logStream) dispatch.logStream.write(line + '\n');
-    for (const listener of dispatch.listeners) listener(line);
+    broadcastDispatchLine(dispatch, line);
   });
 
   proc.on('close', (code) => {
@@ -553,8 +569,7 @@ function wireDispatchHandlers(dispatch, proc) {
     dispatch.process = null;
     if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
     if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
-    for (const listener of dispatch.listeners) listener(null);
-    dispatch.listeners.clear();
+    broadcastDispatchDone(dispatch);
     archiveSession(dispatch, 'dispatch');
     saveDispatchToDb(dispatch);
     // Keep dispatch in memory for frontend display; auto-cleanup timer handles removal after 30min
@@ -1492,7 +1507,7 @@ const routes = [
       needs_input: false,
       output: [],
       lastLines: [],
-      listeners: new Set(),
+      wsClients: new Set(),
       started_at: new Date().toISOString(),
       completed_at: null,
     };
@@ -1618,7 +1633,7 @@ const routes = [
       claude_session_id: null,
       output: [],
       lastLines: [],
-      listeners: new Set(),
+      wsClients: new Set(),
       started_at: new Date().toISOString(),
       completed_at: null,
     };
@@ -1668,15 +1683,9 @@ const routes = [
   [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/log$/, 'GET', async (m, _req, res) => {
     const dispatch = dispatches.get(m[1]);
     if (!dispatch) return err(res, 'dispatch not found');
-    const logPath = join(LOGS_DIR, `${dispatch.id}.jsonl`);
-    try {
-      const content = readFileSync(logPath, 'utf8');
-      res.writeHead(200, { 'Content-Type': 'text/plain' });
-      res.end(content);
-    } catch {
-      res.writeHead(200, { 'Content-Type': 'text/plain' });
-      res.end(dispatch.output.join('\n'));
-    }
+    // Serve from memory — disk is only for restart recovery
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end(dispatch.output.join('\n'));
   }],
 
   // SSE stream — supports ?after=N to skip first N lines (used after HTTP log fetch)
@@ -1692,22 +1701,11 @@ const routes = [
       'Connection': 'keep-alive',
     });
 
-    // Replay from log file (source of truth) or fall back to in-memory buffer
-    const logPath = join(LOGS_DIR, `${dispatch.id}.jsonl`);
+    // Replay from memory — disk is only for restart recovery
     let replayCount = 0;
-    try {
-      const content = readFileSync(logPath, 'utf8');
-      for (const line of content.split('\n')) {
-        if (line.trim()) {
-          replayCount++;
-          if (replayCount > afterLine) res.write(`data: ${line}\n\n`);
-        }
-      }
-    } catch {
-      for (const line of dispatch.output) {
-        replayCount++;
-        if (replayCount > afterLine) res.write(`data: ${line}\n\n`);
-      }
+    for (const line of dispatch.output) {
+      replayCount++;
+      if (replayCount > afterLine) res.write(`data: ${line}\n\n`);
     }
 
     if (dispatch.status !== 'running') {
@@ -1717,19 +1715,28 @@ const routes = [
     }
 
     // Listen for new events
-    const listener = (line) => {
-      if (line === null) {
-        res.write(`event: done\ndata: ${JSON.stringify({ status: dispatch.status })}\n\n`);
-        res.end();
-      } else {
-        res.write(`data: ${line}\n\n`);
-      }
+    // SSE adapter: wrap the HTTP response as a fake wsClient for unified broadcasting
+    const sseAdapter = {
+      send(raw) {
+        try {
+          const msg = JSON.parse(raw);
+          if (msg.type === 'data') {
+            res.write(`data: ${msg.data}\n\n`);
+          } else if (msg.type === 'done') {
+            res.write(`event: done\ndata: ${JSON.stringify({ status: msg.status })}\n\n`);
+            res.end();
+            dispatch.wsClients.delete(sseAdapter);
+          }
+        } catch {}
+      },
+      close() {},
+      readyState: 1, // WebSocket.OPEN
     };
 
-    dispatch.listeners.add(listener);
+    dispatch.wsClients.add(sseAdapter);
 
     _req.on('close', () => {
-      dispatch.listeners.delete(listener);
+      dispatch.wsClients.delete(sseAdapter);
     });
   }],
 
@@ -1772,8 +1779,7 @@ const routes = [
       dispatch.completed_at = new Date().toISOString();
       if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
       if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
-      for (const listener of dispatch.listeners) listener(null);
-      dispatch.listeners.clear();
+      broadcastDispatchDone(dispatch);
       archiveSession(dispatch, 'dispatch');
       saveDispatchToDb(dispatch);
       killed++;
@@ -1796,8 +1802,7 @@ const routes = [
     if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
     if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
     archiveSession(dispatch, 'dispatch');
-    for (const listener of dispatch.listeners) listener(null);
-    dispatch.listeners.clear();
+    broadcastDispatchDone(dispatch);
     dispatches.delete(m[1]);
     db.deleteDispatch(m[1]);
     unlinkFile(join(LOGS_DIR, `${m[1]}.jsonl`)).catch(() => {});
@@ -1821,8 +1826,7 @@ const routes = [
     if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
     if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
     archiveSession(dispatch, 'dispatch');
-    for (const listener of dispatch.listeners) listener(null);
-    dispatch.listeners.clear();
+    broadcastDispatchDone(dispatch);
     saveDispatchToDb(dispatch);
     json(res, { status: 'suspended', id: m[1], claude_session_id: dispatch.claude_session_id });
   }],
@@ -1861,7 +1865,7 @@ const routes = [
       claude_session_id: resumeSessionId,
       output: [],
       lastLines: [],
-      listeners: new Set(),
+      wsClients: new Set(),
       started_at: new Date().toISOString(),
       completed_at: null,
     };
@@ -2526,7 +2530,7 @@ const routes = [
       claude_session_id: null,
       output,
       lastLines: [],
-      listeners: new Set(),
+      wsClients: new Set(),
       started_at: new Date().toISOString(),
       completed_at: status !== 'running' ? new Date().toISOString() : null,
       process: null,
@@ -2548,6 +2552,28 @@ const routes = [
     json(res, { dispatches: dispatches.size, terminals: terminals.size });
   }],
 
+  // Purge all sessions from memory AND DB (for test isolation)
+  [/^\/api\/test\/purge-all$/, 'POST', async (_m, _req, res) => {
+    for (const [id, d] of dispatches) {
+      if (d.process) try { d.process.kill('SIGKILL'); } catch {}
+      if (d._tailInterval) clearInterval(d._tailInterval);
+      if (d.logStream) try { d.logStream.end(); } catch {}
+      broadcastDispatchDone(d);
+      db.deleteDispatch(id);
+    }
+    for (const [id, t] of terminals) {
+      if (t.ptyProcess) try { t.ptyProcess.kill('SIGHUP'); } catch {}
+      if (t.tmux_session && TMUX_AVAILABLE) try { execFileSync('tmux', ['kill-session', '-t', t.tmux_session], { stdio: 'ignore' }); } catch {}
+      if (t.logStream) try { t.logStream.end(); } catch {}
+      for (const ws of t.wsClients) { try { ws.close(); } catch {} }
+      db.deleteTerminal(id);
+    }
+    dispatches.clear();
+    terminals.clear();
+    cliSessions.clear();
+    json(res, { purged: true });
+  }],
+
   // Append output to a running dispatch (simulates wireDispatchHandlers without Claude)
   [/^\/api\/test\/append-dispatch-output$/, 'POST', async (_m, req, res) => {
     const body = await parseBody(req);
@@ -2560,7 +2586,7 @@ const routes = [
     for (const line of lines) {
       dispatch.output.push(line);
       appendFileSync(logPath, line + '\n');
-      for (const listener of dispatch.listeners) listener(line);
+      broadcastDispatchLine(dispatch, line);
     }
     json(res, { appended: lines.length });
   }],
@@ -2773,11 +2799,39 @@ const server = createServer(async (req, res) => {
   err(res, 'not found');
 });
 
-// --- WebSocket server for terminal I/O ---
+// --- WebSocket server for terminal & dispatch I/O ---
 const wss = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, 'http://localhost');
+
+  // Dispatch WebSocket: replay output from memory, then broadcast live updates
+  const dispatchMatch = url.pathname.match(/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/ws$/);
+  if (dispatchMatch) {
+    const dispatch = dispatches.get(dispatchMatch[1]);
+    if (!dispatch) { socket.destroy(); return; }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      // Replay output from memory
+      const output = dispatch.output;
+      if (output.length > 0) {
+        try { ws.send(JSON.stringify({ type: 'replay-start', total: output.length })); } catch {}
+        for (const line of output) {
+          try { ws.send(JSON.stringify({ type: 'data', data: line })); } catch {}
+        }
+        try { ws.send(JSON.stringify({ type: 'replay-end' })); } catch {}
+      } else {
+        try { ws.send(JSON.stringify({ type: 'replay-end' })); } catch {}
+      }
+      if (dispatch.status !== 'running') {
+        try { ws.send(JSON.stringify({ type: 'done', status: dispatch.status })); } catch {}
+      }
+      dispatch.wsClients.add(ws);
+      ws.on('close', () => { dispatch.wsClients.delete(ws); });
+    });
+    return;
+  }
+
+  // Terminal WebSocket: push scrollback then bridge live PTY I/O
   const match = url.pathname.match(/^\/api\/terminal\/([A-Za-z0-9_-]+)\/ws$/);
   if (!match) {
     socket.destroy();
@@ -2876,8 +2930,7 @@ setInterval(() => {
         if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
         saveDispatchToDb(dispatch);
         archiveSession(dispatch, 'dispatch');
-        for (const listener of dispatch.listeners) listener(null);
-        dispatch.listeners.clear();
+        broadcastDispatchDone(dispatch);
       }
     }
   }
