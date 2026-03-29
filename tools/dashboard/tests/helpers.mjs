@@ -91,7 +91,7 @@ export async function waitForTerminalContent(page, terminalId, minLines = 10, ti
       return false;
     },
     { id: terminalId, min: minLines },
-    { timeout },
+    { timeout, polling: 500 },
   );
 }
 

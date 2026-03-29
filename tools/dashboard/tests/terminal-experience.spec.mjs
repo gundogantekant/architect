@@ -1,9 +1,12 @@
 /**
- * Terminal Experience E2E Tests
+ * Behavioral E2E Test Suite — verifies user-visible terminal behaviors.
  *
  * 31 tests across 6 suites covering the EventStream-based terminal architecture.
- * Tests run against a live dashboard at http://127.0.0.1:3777.
+ * Tests are requirements-driven: each test describes an observable user outcome.
+ * For named bug guards (preventing regression of specific failure modes), see
+ * regression.spec.mjs. For scroll integrity at scale, see scroll-behavior.spec.mjs.
  *
+ * Tests run against a live dashboard at http://127.0.0.1:3777.
  * Prerequisite: dashboard server must be running (dashctl.sh start).
  */
 
@@ -611,7 +614,8 @@ test.describe('Suite 5: Input and Control', () => {
       if (sess?._wsManager) sess._wsManager.send({ type: 'input', data: '\x1b[A' });
     }, terminal_id);
 
-    await page.waitForTimeout(500);
+    // Wait for stable LIVE state — WS may briefly reconnect during history navigation
+    await waitForTerminalLive(page, terminal_id, 10_000);
     // Terminal must still be functional after history navigation
     const state = await getSessionState(page, terminal_id);
     expect(state?.state).toBe('LIVE');

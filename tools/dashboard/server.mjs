@@ -2833,6 +2833,7 @@ const routes = [
       }
     }
 
+    const terminalStatus = status || 'completed';
     const terminal = {
       id,
       type: 'claude',
@@ -2842,13 +2843,15 @@ const routes = [
       project_key: 'test/test/main',
       project_path: ROOT,
       title: `Test terminal ${id}`,
-      status: status || 'completed',
+      status: terminalStatus,
       started_at: new Date().toISOString(),
-      exited_at: status !== 'running' ? new Date().toISOString() : null,
+      exited_at: terminalStatus !== 'running' ? new Date().toISOString() : null,
       permission_mode: 'plan',
       skip_permissions: false,
       claude_session_id: claude_session_id || null,
       ptyProcess: null,
+      // In-memory flag: skip auto-cleanup for test-seeded running terminals (no real PTY/pid/tmux)
+      _skipAutoCleanup: terminalStatus === 'running',
       eventStream,
       wsClients: eventStream.subscribers,
       cols: 80,
@@ -3206,7 +3209,7 @@ setInterval(() => {
 
   // Terminals: check PID/tmux liveness for running without ptyProcess
   for (const [, terminal] of terminals) {
-    if (terminal.status === 'running' && !terminal.ptyProcess) {
+    if (terminal.status === 'running' && !terminal.ptyProcess && !terminal._skipAutoCleanup) {
       const tmuxAlive = terminal.tmux_session && TMUX_AVAILABLE && tmuxSessionExists(terminal.tmux_session);
       const pidAlive = terminal.pid && isPidAlive(terminal.pid);
       if (!tmuxAlive && !pidAlive) {
