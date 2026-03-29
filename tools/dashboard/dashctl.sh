@@ -456,6 +456,39 @@ cmd_uninstall() {
   esac
 }
 
+cmd_reset() {
+  local confirm=false
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --confirm) confirm=true ;;
+      *) ;;
+    esac
+    shift
+  done
+
+  local DB_FILE="$ROOT/work/architect.db"
+
+  echo "WARNING: This will permanently delete the dashboard database."
+
+  if [ "$confirm" = false ]; then
+    printf "Type 'yes' to confirm: "
+    read -r user_input
+    if [ "$user_input" != "yes" ]; then
+      echo "Aborted."
+      exit 1
+    fi
+  fi
+
+  cmd_stop
+
+  if [ -f "$DB_FILE" ]; then
+    rm -f "$DB_FILE"
+  fi
+
+  echo "Database wiped. Run './dashctl.sh start' to restart with a fresh database."
+}
+
 cmd_help() {
   cat <<HELP
 dashctl.sh — Architect Dashboard lifecycle manager
@@ -469,6 +502,7 @@ Commands:
   status               Show server status, PID, port, uptime
   logs [-n N] [-f]     Tail the log file (default: last 50 lines)
   fresh [--clear-sessions]  Stop, optionally clear sessions, start
+  reset [--confirm]    Wipe the dashboard database (keeps logs and work files)
   install              Install auto-start service (launchd/systemd)
   uninstall            Remove auto-start service
   help                 Show this help
@@ -490,6 +524,7 @@ case "${1:-help}" in
   status)    cmd_status ;;
   logs)      shift; cmd_logs "$@" ;;
   fresh)     shift; cmd_fresh "$@" ;;
+  reset)     shift; cmd_reset "$@" ;;
   install)   cmd_install ;;
   uninstall) cmd_uninstall ;;
   help|--help|-h) cmd_help ;;
