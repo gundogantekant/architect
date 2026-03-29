@@ -643,3 +643,11 @@ export function getEpicStats(epicId) {
 export function getWorkItemStats(workItemId) {
   return db.prepare('SELECT * FROM work_item_stats WHERE work_item_id = ?').get(workItemId);
 }
+
+export function hardDeleteAllTestData() {
+  db.pragma('foreign_keys = OFF');
+  db.prepare('DELETE FROM epic_logs').run();
+  db.prepare('DELETE FROM work_items').run();
+  db.prepare('DELETE FROM epics').run();
+  db.pragma('foreign_keys = ON');
+}

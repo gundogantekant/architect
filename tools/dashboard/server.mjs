@@ -1829,9 +1829,11 @@ const routes = [
   }],
 
   // List dispatches (returns all including completed/failed/interrupted)
-  [/^\/api\/dispatch\/active$/, 'GET', async (_m, _req, res) => {
+  [/^\/api\/dispatch\/active$/, 'GET', async (_m, req, res) => {
+    const workerId = req.headers['x-test-worker-id'];
     const list = [];
     for (const [id, d] of dispatches) {
+      if (workerId !== undefined && d._testWorkerId !== workerId) continue;
       list.push({
         id,
         work_item_id: d.work_item_id,
@@ -2707,8 +2709,9 @@ const routes = [
   // --- Test endpoints (for E2E test seeding) ---
   [/^\/api\/test\/seed-dispatch$/, 'POST', async (_m, req, res) => {
     const body = await parseBody(req);
-    const { id, status, project_key, title, work_item_id, log_lines } = body;
+    const { id, status, project_key, title, work_item_id, log_lines, claude_session_id } = body;
     if (!id) return err(res, 'id is required', 400);
+    const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
 
     // Write JSONL log file atomically if log_lines provided
     const logPath = join(LOGS_DIR, `${id}.jsonl`);
@@ -2735,7 +2738,7 @@ const routes = [
       skip_permissions: false,
       status: status || 'completed',
       needs_input: false,
-      claude_session_id: null,
+      claude_session_id: claude_session_id || null,
       output,
       lastLines: [],
       wsClients: new Set(),
@@ -2744,6 +2747,7 @@ const routes = [
       process: null,
       pid: null,
       logPath,
+      _testWorkerId,
     };
 
     dispatches.set(id, dispatch);
@@ -2785,9 +2789,11 @@ const routes = [
       dispatches.clear();
       terminals.clear();
       cliSessions.clear();
+      // Hard-delete all epics and work items created during tests
+      db.hardDeleteAllTestData();
     } else {
-      // Worker-scoped purge — only delete terminals belonging to this worker.
-      const toDelete = [];
+      // Worker-scoped purge — delete terminals and dispatches belonging to this worker.
+      const toDeleteTerminals = [];
       for (const [id, t] of terminals) {
         if (t._testWorkerId !== workerId) continue;
         if (t.ptyProcess) try { t.ptyProcess.kill('SIGHUP'); } catch {}
@@ -2797,9 +2803,22 @@ const routes = [
           t.eventStream.subscribers.clear();
         }
         db.deleteTerminal(id);
-        toDelete.push(id);
+        toDeleteTerminals.push(id);
       }
-      for (const id of toDelete) terminals.delete(id);
+      for (const id of toDeleteTerminals) terminals.delete(id);
+
+      // Worker-scoped dispatch purge — only delete dispatches belonging to this worker.
+      const toDeleteDispatches = [];
+      for (const [id, d] of dispatches) {
+        if (d._testWorkerId !== workerId) continue;
+        if (d.process) try { d.process.kill('SIGKILL'); } catch {}
+        if (d._tailInterval) clearInterval(d._tailInterval);
+        if (d.logStream) try { d.logStream.end(); } catch {}
+        broadcastDispatchDone(d);
+        db.deleteDispatch(id);
+        toDeleteDispatches.push(id);
+      }
+      for (const id of toDeleteDispatches) dispatches.delete(id);
     }
 
     json(res, { purged: true });
@@ -3210,13 +3229,13 @@ server.on('upgrade', (req, socket, head) => {
       try {
         const msg = JSON.parse(raw.toString());
         if (msg.type === 'input' && terminal.ptyProcess) {
-          terminal.ptyProcess.write(msg.data);
+          try { terminal.ptyProcess.write(msg.data); } catch {}
         } else if (msg.type === 'resize' && msg.cols && msg.rows) {
           clearTimeout(terminal._resizeTimer);
           terminal._resizeTimer = setTimeout(() => {
             terminal.cols = msg.cols;
             terminal.rows = msg.rows;
-            if (terminal.ptyProcess) terminal.ptyProcess.resize(msg.cols, msg.rows);
+            if (terminal.ptyProcess) try { terminal.ptyProcess.resize(msg.cols, msg.rows); } catch {}
             // Broadcast resize event to all subscribers
             const resizeEvent = terminal.eventStream.append('resize', { cols: msg.cols, rows: msg.rows });
             try { appendFileSync(termEventLogPath(terminal.id), JSON.stringify(resizeEvent) + '\n'); } catch {}

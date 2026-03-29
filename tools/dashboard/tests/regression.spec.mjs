@@ -11,6 +11,7 @@ import { test, expect } from '@playwright/test';
 import {
   purgeAll,
   seedTerminal,
+  seedDispatch,
   pumpTerminal,
   waitForTerminalLive,
   waitForTerminalContent,
@@ -230,4 +231,43 @@ test('R-6. No blank-line run artifacts after initial replay', async ({ page }) =
   // The seed content has exactly one blank line per 7-line cycle (i%7===3).
   // No more than 2 consecutive blanks should appear in the rendered output.
   expect(maxConsecutiveBlanks).toBeLessThanOrEqual(2);
+});
+
+// ============================================================
+// R-7: Badge decrements immediately when dispatch killed (no stale state)
+// ============================================================
+
+test('R-7. Badge decrements immediately when dispatch killed (syncSessionState)', async ({ page }) => {
+  // Regression: badge stale after dispatch termination via non-UI path
+  // Failure mode: badge updated only in some code paths but not when dispatch finalized
+  // Fixed by: syncSessionState() called from all dispatch termination paths
+
+  const { dispatch_id: id } = await seedDispatch({ status: 'running' });
+  await page.goto(`${BASE}/`);
+
+  // Wait for badge to show at least 1 (one running session)
+  await expect(page.locator('#dispatch-badge:not(.empty)')).toBeVisible({ timeout: 5000 });
+  const badgeText = await page.locator('#dispatch-badge').textContent();
+  const countBefore = parseInt(badgeText || '0');
+  expect(countBefore).toBeGreaterThanOrEqual(1);
+
+  // Wait for the dispatch panel to appear — confirms WS is connected and receiving messages
+  await expect(page.locator(`#dispatch-${id}`)).toBeVisible({ timeout: 5000 });
+
+  // Kill via API (not via UI kill button — tests that syncSessionState is called by WS/finalize path)
+  await fetch(`${BASE}/api/dispatch/${id}`, { method: 'DELETE' });
+
+  // Badge must decrement within 2s (well before the 10s poll interval).
+  // Uses count comparison (not === 0) to be robust in multi-worker environments
+  // where other workers' sessions may keep the total above 0.
+  await page.waitForFunction(
+    (before) => {
+      const badge = document.getElementById('dispatch-badge');
+      if (!badge) return false;
+      if (badge.classList.contains('empty')) return true;
+      return parseInt(badge.textContent || '0') < before;
+    },
+    countBefore,
+    { timeout: 5000 }
+  );
 });

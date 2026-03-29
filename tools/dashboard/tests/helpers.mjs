@@ -203,6 +203,63 @@ export async function getSessionState(page, terminalId) {
   }, terminalId);
 }
 
+export async function seedWorkItem(opts = {}) {
+  return api('work-items', {
+    method: 'POST',
+    body: JSON.stringify({
+      title: opts.title || 'Test work item',
+      status: opts.status || 'open',
+      priority: 'medium',
+      project_key: opts.project_key || 'ticari/architect/main',
+    }),
+  });
+}
+
+export async function seedEpic(opts = {}) {
+  return api('epics', {
+    method: 'POST',
+    body: JSON.stringify({
+      title: opts.title || 'Test epic',
+      status: opts.status || 'active',
+      priority: 'medium',
+    }),
+  });
+}
+
+export async function seedDispatch(opts = {}) {
+  const id = opts.id || `D-${Date.now()}`;
+  const logLines = opts.output
+    ? opts.output.map(text => JSON.stringify({ type: 'content_block_delta', delta: { text } }))
+    : [];
+  const res = await api('test/seed-dispatch', {
+    method: 'POST',
+    body: JSON.stringify({
+      id,
+      status: opts.status || 'completed',
+      project_key: opts.project_key || 'ticari/architect/main',
+      title: opts.title || id,
+      work_item_id: opts.work_item_id || null,
+      log_lines: logLines,
+      claude_session_id: opts.claude_session_id || null,
+    }),
+  });
+  return { dispatch_id: id, ...res };
+}
+
+export async function getDispatchPanelState(page, id) {
+  return page.evaluate((id) => {
+    const panel = document.getElementById(`dispatch-${id}`);
+    if (!panel) return null;
+    const logEl = document.getElementById(`log-${id}`);
+    return {
+      visible: !!(panel.offsetWidth || panel.offsetHeight),
+      collapsed: panel.classList.contains('collapsed'),
+      status: [...panel.classList].find(c => c.startsWith('status-'))?.replace('status-', ''),
+      lineCount: logEl ? logEl.querySelectorAll('.log-line, .log-entry, div').length : 0,
+    };
+  }, id);
+}
+
 /**
  * Compare the first lineCount non-empty buffer lines from two terminals on two pages.
  * Returns { match, lines1, lines2 }.

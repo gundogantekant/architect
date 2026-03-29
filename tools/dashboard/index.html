@@ -548,6 +548,53 @@ function getPermissionMode(overlay, selectId) {
   return overlay.querySelector('#' + selectId).value;
 }
 
+function createDispatchOverlay(opts) {
+  const { title, buildFields, onSubmit, submitLabel = 'Dispatch', cancelId, submitId } = opts;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>${esc(title)}</h3>
+      ${buildFields(overlay)}
+      <div class="modal-actions">
+        <button class="btn btn-cancel" data-modal-cancel${cancelId ? ` id="${cancelId}"` : ''}>Cancel</button>
+        <button class="btn btn-dispatch" data-modal-submit${submitId ? ` id="${submitId}"` : ''}>${esc(submitLabel)}</button>
+      </div>
+    </div>
+  `;
+
+  const close = () => overlay.remove();
+
+  overlay.querySelector('[data-modal-cancel]').onclick = close;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  overlay.querySelector('[data-modal-submit]').onclick = async () => {
+    const btn = overlay.querySelector('[data-modal-submit]');
+    btn.disabled = true;
+    btn.textContent = 'Dispatching...';
+    try {
+      await onSubmit(overlay);
+      close();
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = submitLabel;
+      const modal = overlay.querySelector('.modal');
+      let errEl = modal.querySelector('._modal-error');
+      if (!errEl) {
+        errEl = document.createElement('p');
+        errEl.className = '_modal-error';
+        errEl.style.cssText = 'color:var(--danger,red);margin:8px 0 0;font-size:13px';
+        modal.querySelector('.modal-actions').before(errEl);
+      }
+      errEl.textContent = err.message || 'Dispatch failed';
+    }
+  };
+
+  document.body.appendChild(overlay);
+  return { overlay, close };
+}
+
 // Helper: check if work item is blocked by incomplete dependencies
 function isBlockedByDeps(item, allItems) {
   if (!item.depends_on || !item.depends_on.length) return { blocked: false, pending: [] };
@@ -671,6 +718,11 @@ function updateDispatchBadge() {
   refreshSessionsSidebar();
 }
 
+function syncSessionState() {
+  placeSessionPanels();    // debounced via rAF — repositions all panels
+  updateDispatchBadge();   // immediate — updates badge counts + refreshSessionsSidebar
+}
+
 function extractStreamText(line) {
   try {
     const evt = JSON.parse(line);
@@ -704,129 +756,7 @@ function extractStreamText(line) {
 }
 
 function createDispatchPanel(dispatch) {
-  const panel = document.createElement('div');
-  panel.className = `dispatch-panel status-${dispatch.status}`;
-  panel.id = `dispatch-${dispatch.id}`;
-  const titleParts = [dispatch.id];
-  if (dispatch.work_item_id) titleParts.push(dispatch.work_item_id);
-  titleParts.push(dispatch.title || '');
-  const guidancePrompt = dispatch.work_item_id
-    ? `Continue ${dispatch.work_item_id}: ${dispatch.title || ''}`
-    : dispatch.title || '';
-  const isRunning = dispatch.status === 'running';
-  const isSuspended = dispatch.status === 'suspended';
-  const skipBadge = dispatch.skip_permissions ? '<span class="auto-badge">[skip-perms]</span>' : '';
-  const planBadge = dispatch.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
-  const suspendedBadge = isSuspended ? '<span class="suspended-badge">[suspended]</span>' : '';
-  panel.innerHTML = `
-    <div class="dispatch-header">
-      <span class="status-dot ${isRunning ? 'running' : dispatch.status}"></span>
-      <span class="dispatch-title">${esc(titleParts.join(' — '))}${planBadge}${skipBadge}${suspendedBadge}</span>
-      <span class="dispatch-meta">${new Date(dispatch.started_at).toLocaleTimeString()}</span>
-      <button class="focus-btn" data-focus-dispatch="${esc(dispatch.id)}">Focus</button>
-      <button class="minimize-btn" data-minimize-dispatch="${esc(dispatch.id)}">▼</button>
-      <button class="suspend-btn" data-suspend-dispatch="${esc(dispatch.id)}" ${!isRunning ? 'style="display:none"' : ''}>Suspend</button>
-      <button class="resume-btn" data-resume-dispatch="${esc(dispatch.id)}" ${!isSuspended ? 'style="display:none"' : ''}>Resume</button>
-      <button class="kill-btn" data-kill-dispatch="${esc(dispatch.id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
-      <button class="dismiss-btn" data-dismiss-dispatch="${esc(dispatch.id)}" ${isRunning ? 'style="display:none"' : ''}>✕</button>
-    </div>
-    <div class="dispatch-log" id="log-${dispatch.id}"></div>
-    <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
-      <button class="focus-btn" data-focus-dispatch-bottom="${esc(dispatch.id)}">Focus</button>
-      ${sessionIdTag(dispatch.claude_session_id)}
-      ${dispatch.project_key ? `<span class="tag" style="margin-left:auto;font-size:10px">${esc(dispatch.project_key.split('/').pop())}</span>` : ''}
-      ${dispatch.epic_id ? `<span class="tag" style="font-size:10px">${esc(dispatch.epic_id)}</span>` : ''}
-    </div>
-  `;
-  bindSessionIdCopy(panel);
-  // Register in sessionPanels
-  const panelKey = `dispatch:${dispatch.id}`;
-  sessionPanels.set(panelKey, panel);
-  // Apply persisted collapse state or default preference
-  const dispatchCollapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : (window._prefs?.default_panel_state === 'minimized');
-  if (dispatchCollapsed) {
-    panel.classList.add('collapsed');
-    panel.querySelector(`[data-minimize-dispatch="${dispatch.id}"]`).textContent = '▶';
-    sessionCollapseState.set(panelKey, true);
-  }
-  // Bind minimize button + header click to toggle collapse
-  panel.querySelector(`[data-minimize-dispatch="${dispatch.id}"]`).onclick = () => {
-    togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-dispatch="${dispatch.id}"]`));
-  };
-  panel.querySelector('.dispatch-header').addEventListener('click', (e) => {
-    if (e.target.closest('button')) return;
-    togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-dispatch="${dispatch.id}"]`));
-  });
-  // Bind focus buttons (top + bottom)
-  panel.querySelector(`[data-focus-dispatch="${dispatch.id}"]`).onclick = () => openFocusPopup('dispatch', dispatch.id);
-  const bottomFocusD = panel.querySelector(`[data-focus-dispatch-bottom="${dispatch.id}"]`);
-  if (bottomFocusD) bottomFocusD.onclick = () => openFocusPopup('dispatch', dispatch.id);
-  // Bind kill button
-  panel.querySelector(`[data-kill-dispatch="${dispatch.id}"]`).onclick = async (e) => {
-    const btn = e.target;
-    btn.disabled = true;
-    try {
-      await fetch(`/api/dispatch/${dispatch.id}`, { method: 'DELETE' });
-      dispatch.status = 'killed';
-      panel.className = panel.className.replace(/status-\w+/, 'status-killed');
-      const dot = panel.querySelector('.status-dot');
-      dot.classList.remove('running');
-      dot.classList.add('killed', 'failed');
-      // Show dismiss button after kill
-      const dismissBtn = panel.querySelector(`[data-dismiss-dispatch="${dispatch.id}"]`);
-      if (dismissBtn) dismissBtn.style.display = '';
-      updateDispatchBadge();
-    } catch {}
-  };
-  // Bind suspend button
-  panel.querySelector(`[data-suspend-dispatch="${dispatch.id}"]`).onclick = async (e) => {
-    const btn = e.target;
-    btn.disabled = true;
-    try {
-      const resp = await fetch(`/api/dispatch/${dispatch.id}/suspend`, { method: 'POST' });
-      if (resp.ok) {
-        dispatch.status = 'suspended';
-        panel.className = panel.className.replace(/status-\w+/, 'status-suspended');
-        const dot = panel.querySelector('.status-dot');
-        dot.classList.remove('running');
-        dot.classList.add('suspended');
-        btn.style.display = 'none';
-        panel.querySelector(`[data-kill-dispatch="${dispatch.id}"]`).disabled = true;
-        const resumeBtn = panel.querySelector(`[data-resume-dispatch="${dispatch.id}"]`);
-        if (resumeBtn) resumeBtn.style.display = '';
-        const dismissBtn = panel.querySelector(`[data-dismiss-dispatch="${dispatch.id}"]`);
-        if (dismissBtn) dismissBtn.style.display = '';
-        // Add suspended badge
-        const titleEl = panel.querySelector('.dispatch-title');
-        if (titleEl && !titleEl.querySelector('.suspended-badge')) {
-          titleEl.insertAdjacentHTML('beforeend', '<span class="suspended-badge">[suspended]</span>');
-        }
-        updateDispatchBadge();
-        refreshSessionsSidebar();
-      }
-    } catch {}
-  };
-  // Bind resume button
-  panel.querySelector(`[data-resume-dispatch="${dispatch.id}"]`).onclick = async (e) => {
-    const btn = e.target;
-    btn.disabled = true;
-    try {
-      const resp = await fetch(`/api/dispatch/${dispatch.id}/resume`, { method: 'POST' });
-      if (resp.ok) {
-        // Old panel will be cleaned up on next poll; new session will appear
-        await dismissDispatchPanel(dispatch.id);
-        updateDispatchBadge();
-        refreshSessionsSidebar();
-      }
-    } catch {}
-  };
-  // Bind dismiss button
-  panel.querySelector(`[data-dismiss-dispatch="${dispatch.id}"]`).onclick = async () => {
-    await dismissDispatchPanel(dispatch.id);
-    updateDispatchBadge();
-    refreshSessionsSidebar();
-  };
-  return panel;
+  return createSessionPanel('dispatch', dispatch);
 }
 
 async function dismissDispatchPanel(id) {
@@ -841,23 +771,23 @@ async function dismissDispatchPanel(id) {
 
 function finalizeDispatchPanel(dispatch) {
   const panel = document.getElementById(`dispatch-${dispatch.id}`);
-  if (!panel) return;
-  // Update status class
-  panel.className = panel.className.replace(/status-\w+/, `status-${dispatch.status}`);
-  const dot = panel.querySelector('.status-dot');
-  if (dot) {
-    dot.classList.remove('running');
-    dot.classList.add(dispatch.status === 'completed' ? 'completed' : 'failed');
+  if (panel) {
+    // Update status class
+    panel.className = panel.className.replace(/status-\w+/, `status-${dispatch.status}`);
+    const dot = panel.querySelector('.status-dot');
+    if (dot) {
+      dot.classList.remove('running');
+      dot.classList.add(dispatch.status === 'completed' ? 'completed' : 'failed');
+    }
+    // Hide action buttons, show dismiss
+    const killBtn = panel.querySelector(`[data-kill-dispatch="${dispatch.id}"]`);
+    if (killBtn) killBtn.disabled = true;
+    const suspendBtn = panel.querySelector(`[data-suspend-dispatch="${dispatch.id}"]`);
+    if (suspendBtn) suspendBtn.style.display = 'none';
+    const dismissBtn = panel.querySelector(`[data-dismiss-dispatch="${dispatch.id}"]`);
+    if (dismissBtn) dismissBtn.style.display = '';
   }
-  // Hide action buttons, show dismiss
-  const killBtn = panel.querySelector(`[data-kill-dispatch="${dispatch.id}"]`);
-  if (killBtn) killBtn.disabled = true;
-  const suspendBtn = panel.querySelector(`[data-suspend-dispatch="${dispatch.id}"]`);
-  if (suspendBtn) suspendBtn.style.display = 'none';
-  const dismissBtn = panel.querySelector(`[data-dismiss-dispatch="${dispatch.id}"]`);
-  if (dismissBtn) dismissBtn.style.display = '';
-  updateDispatchBadge();
-  refreshSessionsSidebar();
+  syncSessionState();
 }
 
 async function loadDispatchContent(dispatch) {
@@ -906,10 +836,14 @@ async function loadDispatchContent(dispatch) {
 
   ws.onclose = () => {
     dispatch._ws = null;
-    // If not yet finalized and was running, treat as connection loss
     if (dispatch.status === 'running' && !dispatch._contentLoaded) {
+      // WS closed before replay-end was received — treat as connection failure
       dispatch.status = 'failed';
       finalizeDispatchPanel(dispatch);
+    } else {
+      // Either done message was received (status != 'running') or WS dropped after
+      // successful connect — sync badge so kills/completions via WS are reflected
+      syncSessionState();
     }
   };
 
@@ -933,7 +867,7 @@ async function killAllSessions() {
   });
   document.querySelectorAll('.kill-btn').forEach(btn => { btn.disabled = true; });
   document.querySelectorAll('.dismiss-btn').forEach(btn => { btn.style.display = ''; });
-  updateDispatchBadge();
+  syncSessionState();
 }
 
 async function dismissAllCompleted() {
@@ -959,8 +893,7 @@ async function dismissAllCompleted() {
   }
   activeDispatches.splice(0, activeDispatches.length, ...activeDispatches.filter(d => d.status === 'running'));
   activeTerminals.splice(0, activeTerminals.length, ...activeTerminals.filter(t => t.status === 'running'));
-  updateDispatchBadge();
-  refreshSessionsSidebar();
+  syncSessionState();
 }
 
 let _placeTimer = null;
@@ -988,6 +921,7 @@ function _placeSessionPanelsNow() {
 
   const movedPanels = new Set();
   let globalHasPanels = false;
+  const pendingContentLoads = [];
 
   // 2. Build active session list
   const allSessions = [
@@ -1043,6 +977,17 @@ function _placeSessionPanelsNow() {
       targetSlot.appendChild(panel);
       movedPanels.add(session.key);
     }
+
+    // Collect dispatches needing content load — called after step 4 when all
+    // containers are in the document, so getElementById resolves correctly.
+    if (session.key.startsWith('dispatch:')) {
+      const dispatchId = session.key.slice('dispatch:'.length);
+      const dispatch = activeDispatches.find(d => d.id === dispatchId);
+      if (dispatch && dispatch._pendingContentLoad) {
+        dispatch._pendingContentLoad = false;
+        pendingContentLoads.push(dispatch);
+      }
+    }
   }
 
   // 4. Insert global container only if it has panels and isn't already in DOM
@@ -1051,6 +996,12 @@ function _placeSessionPanelsNow() {
     main.insertBefore(globalContainer, main.firstChild);
   } else if (!globalHasPanels && globalContainer.parentElement) {
     globalContainer.remove();
+  }
+
+  // All containers are now in the document — safe to call loadDispatchContent
+  // (getElementById resolves correctly since panels are connected to the DOM)
+  for (const dispatch of pendingContentLoads) {
+    loadDispatchContent(dispatch);
   }
 
   // 5. Cross-project minimization: force-collapse panels from other projects
@@ -1628,141 +1579,11 @@ function finalizeTerminalPanel(terminalInfo) {
   if (suspendBtn) suspendBtn.style.display = 'none';
   const dismissBtn = panel.querySelector(`[data-dismiss-terminal="${terminalInfo.id}"]`);
   if (dismissBtn) dismissBtn.style.display = '';
-  updateDispatchBadge();
-  refreshSessionsSidebar();
+  syncSessionState();
 }
 
 function createTerminalPanel(terminalInfo) {
-  const panel = document.createElement('div');
-  panel.className = `terminal-panel status-${terminalInfo.status}`;
-  panel.id = `terminal-${terminalInfo.id}`;
-  const isRunning = terminalInfo.status === 'running';
-  const isSuspended = terminalInfo.status === 'suspended';
-  const shellBadge = terminalInfo.type === 'shell' ? '<span class="auto-badge" style="background:#2d7d46">[shell]</span>' : '';
-  const skipBadge = terminalInfo.skip_permissions ? '<span class="auto-badge">[skip-perms]</span>' : '';
-  const planBadge = terminalInfo.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
-  const suspendedBadge = isSuspended ? '<span class="suspended-badge">[suspended]</span>' : '';
-  panel.innerHTML = `
-    <div class="terminal-header">
-      <span class="status-dot ${isRunning ? 'running' : terminalInfo.status}"></span>
-      <span class="terminal-title">${esc(terminalInfo.id)} — ${esc(terminalInfo.title || 'Terminal')}${shellBadge}${planBadge}${skipBadge}${suspendedBadge}</span>
-      <span class="terminal-meta">${new Date(terminalInfo.started_at).toLocaleTimeString()}</span>
-      <button class="focus-btn" data-focus-terminal="${esc(terminalInfo.id)}">Focus</button>
-      <button class="minimize-btn" data-minimize-terminal="${esc(terminalInfo.id)}">▼</button>
-      <button class="suspend-btn" data-suspend-terminal="${esc(terminalInfo.id)}" ${!isRunning ? 'style="display:none"' : ''}>Suspend</button>
-      <button class="resume-btn" data-resume-terminal="${esc(terminalInfo.id)}" ${!isSuspended ? 'style="display:none"' : ''}>Resume</button>
-      <button class="kill-btn" data-kill-terminal="${esc(terminalInfo.id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
-      <button class="dismiss-btn" data-dismiss-terminal="${esc(terminalInfo.id)}" ${isRunning ? 'style="display:none"' : ''}>✕</button>
-    </div>
-    <div class="terminal-container" id="term-container-${terminalInfo.id}"><div class="terminal-loading">Connecting</div></div>
-    <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
-      <button class="focus-btn" data-focus-terminal-bottom="${esc(terminalInfo.id)}">Focus</button>
-      <span class="agent-badge" data-agent="${esc(terminalInfo.agent_type || 'claude')}">[${esc((terminalInfo.agent_type || 'claude').charAt(0).toUpperCase() + (terminalInfo.agent_type || 'claude').slice(1))}]</span>
-      <span class="injection-indicator" style="display:none"></span>
-      ${sessionIdTag(terminalInfo.claude_session_id)}
-      ${terminalInfo.project_key ? `<span class="tag" style="margin-left:auto;font-size:10px">${esc(terminalInfo.project_key.split('/').pop())}</span>` : ''}
-      ${terminalInfo.epic_id ? `<span class="tag" style="font-size:10px">${esc(terminalInfo.epic_id)}</span>` : ''}
-    </div>
-  `;
-  bindSessionIdCopy(panel);
-  // Register in sessionPanels
-  const panelKey = `terminal:${terminalInfo.id}`;
-  sessionPanels.set(panelKey, panel);
-  // Apply persisted collapse state or default preference
-  const termCollapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : (window._prefs?.default_panel_state === 'minimized');
-  if (termCollapsed) {
-    panel.classList.add('collapsed');
-    panel.querySelector(`[data-minimize-terminal="${terminalInfo.id}"]`).textContent = '▶';
-    sessionCollapseState.set(panelKey, true);
-  }
-  // Bind minimize button + header click to toggle collapse
-  panel.querySelector(`[data-minimize-terminal="${terminalInfo.id}"]`).onclick = () => {
-    togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-terminal="${terminalInfo.id}"]`));
-  };
-  panel.querySelector('.terminal-header').addEventListener('click', (e) => {
-    if (e.target.closest('button')) return;
-    togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-terminal="${terminalInfo.id}"]`));
-  });
-  // Bind focus buttons (top + bottom)
-  panel.querySelector(`[data-focus-terminal="${terminalInfo.id}"]`).onclick = () => openFocusPopup('terminal', terminalInfo.id);
-  const bottomFocusT = panel.querySelector(`[data-focus-terminal-bottom="${terminalInfo.id}"]`);
-  if (bottomFocusT) bottomFocusT.onclick = () => openFocusPopup('terminal', terminalInfo.id);
-  // Bind kill button
-  panel.querySelector(`[data-kill-terminal="${terminalInfo.id}"]`).onclick = async (e) => {
-    const btn = e.target;
-    btn.disabled = true;
-    try {
-      await fetch(`/api/terminal/${terminalInfo.id}`, { method: 'DELETE' });
-      terminalInfo.status = 'killed';
-      const dot = panel.querySelector('.status-dot');
-      dot.classList.remove('running');
-      dot.classList.add('failed');
-      // Show dismiss button after kill
-      const dismissBtn = panel.querySelector(`[data-dismiss-terminal="${terminalInfo.id}"]`);
-      if (dismissBtn) dismissBtn.style.display = '';
-      updateDispatchBadge();
-    } catch {}
-  };
-  // Bind suspend button
-  panel.querySelector(`[data-suspend-terminal="${terminalInfo.id}"]`).onclick = async (e) => {
-    const btn = e.target;
-    btn.disabled = true;
-    try {
-      const resp = await fetch(`/api/terminal/${terminalInfo.id}/suspend`, { method: 'POST' });
-      if (resp.ok) {
-        terminalInfo.status = 'suspended';
-        panel.classList.add('status-suspended');
-        const dot = panel.querySelector('.status-dot');
-        dot.classList.remove('running');
-        dot.classList.add('suspended');
-        btn.style.display = 'none';
-        panel.querySelector(`[data-kill-terminal="${terminalInfo.id}"]`).disabled = true;
-        const resumeBtn = panel.querySelector(`[data-resume-terminal="${terminalInfo.id}"]`);
-        if (resumeBtn) resumeBtn.style.display = '';
-        const dismissBtn = panel.querySelector(`[data-dismiss-terminal="${terminalInfo.id}"]`);
-        if (dismissBtn) dismissBtn.style.display = '';
-        // Add suspended badge
-        const titleEl = panel.querySelector('.terminal-title');
-        if (titleEl && !titleEl.querySelector('.suspended-badge')) {
-          titleEl.insertAdjacentHTML('beforeend', '<span class="suspended-badge">[suspended]</span>');
-        }
-        updateDispatchBadge();
-        refreshSessionsSidebar();
-      }
-    } catch {}
-  };
-  // Bind resume button
-  panel.querySelector(`[data-resume-terminal="${terminalInfo.id}"]`).onclick = async (e) => {
-    const btn = e.target;
-    btn.disabled = true;
-    try {
-      const resp = await fetch(`/api/terminal/${terminalInfo.id}/resume`, { method: 'POST' });
-      if (resp.ok) {
-        await dismissTerminalPanel(terminalInfo.id);
-        updateDispatchBadge();
-        refreshSessionsSidebar();
-      }
-    } catch {}
-  };
-  // Bind dismiss button
-  panel.querySelector(`[data-dismiss-terminal="${terminalInfo.id}"]`).onclick = async () => {
-    await dismissTerminalPanel(terminalInfo.id);
-    updateDispatchBadge();
-    refreshSessionsSidebar();
-  };
-  // Focus xterm on click, but preserve text selection and scroll position
-  const termContainer = panel.querySelector(`#term-container-${terminalInfo.id}`);
-  if (termContainer) {
-    termContainer.addEventListener('click', () => {
-      if (terminalInfo._term?.hasSelection()) return;
-      const term = terminalInfo._term;
-      if (!term) return;
-      // Only auto-focus if viewport is at the bottom (not browsing history)
-      const buf = term.buffer.active;
-      if (buf.viewportY >= buf.baseY) term.focus();
-    });
-  }
-  return panel;
+  return createSessionPanel('terminal', terminalInfo);
 }
 
 // connectTerminalWs is replaced by initSession
@@ -1807,37 +1628,270 @@ async function restoreTerminals() {
     // Wait for requestAnimationFrame so panels are in the DOM before connecting
     await new Promise(resolve => requestAnimationFrame(resolve));
     for (const t of toConnect) await initSession(t);
-    updateDispatchBadge();
+    syncSessionState();
   } catch {}
 }
 
 function createCliSessionPanel(session) {
+  return createSessionPanel('cli', session);
+}
+
+function createSessionPanel(type, info) {
+  const id = info.id;
   const panel = document.createElement('div');
-  panel.className = 'cli-session-panel';
-  panel.id = `cli-${session.id}`;
-  const isRunning = session.status === 'running';
-  const elapsed = formatElapsed(session.registered_at);
-  panel.innerHTML = `
-    <div class="cli-session-header">
-      <span class="status-dot ${isRunning ? 'running' : 'exited'}"></span>
-      <span class="cli-title">${esc(session.title)}<span class="badge-cli">[CLI]</span></span>
-      <span class="cli-meta">${elapsed}</span>
-      <button class="minimize-btn" data-minimize-cli="${esc(session.id)}">▼</button>
-    </div>
-  `;
-  const panelKey = `cli:${session.id}`;
-  sessionPanels.set(panelKey, panel);
-  if (sessionCollapseState.get(panelKey)) {
-    panel.classList.add('collapsed');
-    panel.querySelector(`[data-minimize-cli="${session.id}"]`).textContent = '▶';
+
+  if (type === 'dispatch') {
+    const dispatch = info;
+    panel.className = `dispatch-panel status-${dispatch.status}`;
+    panel.id = `dispatch-${id}`;
+    const titleParts = [dispatch.id];
+    if (dispatch.work_item_id) titleParts.push(dispatch.work_item_id);
+    titleParts.push(dispatch.title || '');
+    const isRunning = dispatch.status === 'running';
+    const isSuspended = dispatch.status === 'suspended';
+    const skipBadge = dispatch.skip_permissions ? '<span class="auto-badge">[skip-perms]</span>' : '';
+    const planBadge = dispatch.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
+    const suspendedBadge = isSuspended ? '<span class="suspended-badge">[suspended]</span>' : '';
+    panel.innerHTML = `
+      <div class="dispatch-header">
+        <span class="status-dot ${isRunning ? 'running' : dispatch.status}"></span>
+        <span class="dispatch-title">${esc(titleParts.join(' — '))}${planBadge}${skipBadge}${suspendedBadge}</span>
+        <span class="dispatch-meta">${new Date(dispatch.started_at).toLocaleTimeString()}</span>
+        <button class="focus-btn" data-focus-dispatch="${esc(id)}">Focus</button>
+        <button class="minimize-btn" data-minimize-dispatch="${esc(id)}">▼</button>
+        <button class="suspend-btn" data-suspend-dispatch="${esc(id)}" ${!isRunning ? 'style="display:none"' : ''}>Suspend</button>
+        <button class="resume-btn" data-resume-dispatch="${esc(id)}" ${!isSuspended ? 'style="display:none"' : ''}>Resume</button>
+        <button class="kill-btn" data-kill-dispatch="${esc(id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
+        <button class="dismiss-btn" data-dismiss-dispatch="${esc(id)}" ${isRunning ? 'style="display:none"' : ''}>✕</button>
+      </div>
+      <div class="dispatch-log" id="log-${id}"></div>
+      <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
+        <button class="focus-btn" data-focus-dispatch-bottom="${esc(id)}">Focus</button>
+        ${sessionIdTag(dispatch.claude_session_id)}
+        ${dispatch.project_key ? `<span class="tag" style="margin-left:auto;font-size:10px">${esc(dispatch.project_key.split('/').pop())}</span>` : ''}
+        ${dispatch.epic_id ? `<span class="tag" style="font-size:10px">${esc(dispatch.epic_id)}</span>` : ''}
+      </div>
+    `;
+    bindSessionIdCopy(panel);
+    const panelKey = `dispatch:${id}`;
+    sessionPanels.set(panelKey, panel);
+    const collapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : (window._prefs?.default_panel_state === 'minimized');
+    if (collapsed) {
+      panel.classList.add('collapsed');
+      panel.querySelector(`[data-minimize-dispatch="${id}"]`).textContent = '▶';
+      sessionCollapseState.set(panelKey, true);
+    }
+    panel.querySelector(`[data-minimize-dispatch="${id}"]`).onclick = () => {
+      togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-dispatch="${id}"]`));
+    };
+    panel.querySelector('.dispatch-header').addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-dispatch="${id}"]`));
+    });
+    panel.querySelector(`[data-focus-dispatch="${id}"]`).onclick = () => openFocusPopup('dispatch', id);
+    const bottomFocusD = panel.querySelector(`[data-focus-dispatch-bottom="${id}"]`);
+    if (bottomFocusD) bottomFocusD.onclick = () => openFocusPopup('dispatch', id);
+    panel.querySelector(`[data-kill-dispatch="${id}"]`).onclick = async (e) => {
+      const btn = e.target;
+      btn.disabled = true;
+      try {
+        await fetch(`/api/dispatch/${id}`, { method: 'DELETE' });
+        dispatch.status = 'killed';
+        panel.className = panel.className.replace(/status-\w+/, 'status-killed');
+        const dot = panel.querySelector('.status-dot');
+        dot.classList.remove('running');
+        dot.classList.add('killed', 'failed');
+        const dismissBtn = panel.querySelector(`[data-dismiss-dispatch="${id}"]`);
+        if (dismissBtn) dismissBtn.style.display = '';
+        syncSessionState();
+      } catch {}
+    };
+    panel.querySelector(`[data-suspend-dispatch="${id}"]`).onclick = async (e) => {
+      const btn = e.target;
+      btn.disabled = true;
+      try {
+        const resp = await fetch(`/api/dispatch/${id}/suspend`, { method: 'POST' });
+        if (resp.ok) {
+          dispatch.status = 'suspended';
+          panel.className = panel.className.replace(/status-\w+/, 'status-suspended');
+          const dot = panel.querySelector('.status-dot');
+          dot.classList.remove('running');
+          dot.classList.add('suspended');
+          btn.style.display = 'none';
+          panel.querySelector(`[data-kill-dispatch="${id}"]`).disabled = true;
+          const resumeBtn = panel.querySelector(`[data-resume-dispatch="${id}"]`);
+          if (resumeBtn) resumeBtn.style.display = '';
+          const dismissBtn = panel.querySelector(`[data-dismiss-dispatch="${id}"]`);
+          if (dismissBtn) dismissBtn.style.display = '';
+          const titleEl = panel.querySelector('.dispatch-title');
+          if (titleEl && !titleEl.querySelector('.suspended-badge')) {
+            titleEl.insertAdjacentHTML('beforeend', '<span class="suspended-badge">[suspended]</span>');
+          }
+          syncSessionState();
+        }
+      } catch {}
+    };
+    panel.querySelector(`[data-resume-dispatch="${id}"]`).onclick = async (e) => {
+      const btn = e.target;
+      btn.disabled = true;
+      try {
+        const resp = await fetch(`/api/dispatch/${id}/resume`, { method: 'POST' });
+        if (resp.ok) {
+          await dismissDispatchPanel(id);
+          syncSessionState();
+        }
+      } catch {}
+    };
+    panel.querySelector(`[data-dismiss-dispatch="${id}"]`).onclick = async () => {
+      await dismissDispatchPanel(id);
+      syncSessionState();
+    };
+
+  } else if (type === 'terminal') {
+    const terminalInfo = info;
+    panel.className = `terminal-panel status-${terminalInfo.status}`;
+    panel.id = `terminal-${id}`;
+    const isRunning = terminalInfo.status === 'running';
+    const isSuspended = terminalInfo.status === 'suspended';
+    const shellBadge = terminalInfo.type === 'shell' ? '<span class="auto-badge" style="background:#2d7d46">[shell]</span>' : '';
+    const skipBadge = terminalInfo.skip_permissions ? '<span class="auto-badge">[skip-perms]</span>' : '';
+    const planBadge = terminalInfo.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
+    const suspendedBadge = isSuspended ? '<span class="suspended-badge">[suspended]</span>' : '';
+    panel.innerHTML = `
+      <div class="terminal-header">
+        <span class="status-dot ${isRunning ? 'running' : terminalInfo.status}"></span>
+        <span class="terminal-title">${esc(id)} — ${esc(terminalInfo.title || 'Terminal')}${shellBadge}${planBadge}${skipBadge}${suspendedBadge}</span>
+        <span class="terminal-meta">${new Date(terminalInfo.started_at).toLocaleTimeString()}</span>
+        <button class="focus-btn" data-focus-terminal="${esc(id)}">Focus</button>
+        <button class="minimize-btn" data-minimize-terminal="${esc(id)}">▼</button>
+        <button class="suspend-btn" data-suspend-terminal="${esc(id)}" ${!isRunning ? 'style="display:none"' : ''}>Suspend</button>
+        <button class="resume-btn" data-resume-terminal="${esc(id)}" ${!isSuspended ? 'style="display:none"' : ''}>Resume</button>
+        <button class="kill-btn" data-kill-terminal="${esc(id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
+        <button class="dismiss-btn" data-dismiss-terminal="${esc(id)}" ${isRunning ? 'style="display:none"' : ''}>✕</button>
+      </div>
+      <div class="terminal-container" id="term-container-${id}"><div class="terminal-loading">Connecting</div></div>
+      <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
+        <button class="focus-btn" data-focus-terminal-bottom="${esc(id)}">Focus</button>
+        <span class="agent-badge" data-agent="${esc(terminalInfo.agent_type || 'claude')}">[${esc((terminalInfo.agent_type || 'claude').charAt(0).toUpperCase() + (terminalInfo.agent_type || 'claude').slice(1))}]</span>
+        <span class="injection-indicator" style="display:none"></span>
+        ${sessionIdTag(terminalInfo.claude_session_id)}
+        ${terminalInfo.project_key ? `<span class="tag" style="margin-left:auto;font-size:10px">${esc(terminalInfo.project_key.split('/').pop())}</span>` : ''}
+        ${terminalInfo.epic_id ? `<span class="tag" style="font-size:10px">${esc(terminalInfo.epic_id)}</span>` : ''}
+      </div>
+    `;
+    bindSessionIdCopy(panel);
+    const panelKey = `terminal:${id}`;
+    sessionPanels.set(panelKey, panel);
+    const collapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : (window._prefs?.default_panel_state === 'minimized');
+    if (collapsed) {
+      panel.classList.add('collapsed');
+      panel.querySelector(`[data-minimize-terminal="${id}"]`).textContent = '▶';
+      sessionCollapseState.set(panelKey, true);
+    }
+    panel.querySelector(`[data-minimize-terminal="${id}"]`).onclick = () => {
+      togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-terminal="${id}"]`));
+    };
+    panel.querySelector('.terminal-header').addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-terminal="${id}"]`));
+    });
+    panel.querySelector(`[data-focus-terminal="${id}"]`).onclick = () => openFocusPopup('terminal', id);
+    const bottomFocusT = panel.querySelector(`[data-focus-terminal-bottom="${id}"]`);
+    if (bottomFocusT) bottomFocusT.onclick = () => openFocusPopup('terminal', id);
+    panel.querySelector(`[data-kill-terminal="${id}"]`).onclick = async (e) => {
+      const btn = e.target;
+      btn.disabled = true;
+      try {
+        await fetch(`/api/terminal/${id}`, { method: 'DELETE' });
+        terminalInfo.status = 'killed';
+        const dot = panel.querySelector('.status-dot');
+        dot.classList.remove('running');
+        dot.classList.add('failed');
+        const dismissBtn = panel.querySelector(`[data-dismiss-terminal="${id}"]`);
+        if (dismissBtn) dismissBtn.style.display = '';
+        syncSessionState();
+      } catch {}
+    };
+    panel.querySelector(`[data-suspend-terminal="${id}"]`).onclick = async (e) => {
+      const btn = e.target;
+      btn.disabled = true;
+      try {
+        const resp = await fetch(`/api/terminal/${id}/suspend`, { method: 'POST' });
+        if (resp.ok) {
+          terminalInfo.status = 'suspended';
+          panel.classList.add('status-suspended');
+          const dot = panel.querySelector('.status-dot');
+          dot.classList.remove('running');
+          dot.classList.add('suspended');
+          btn.style.display = 'none';
+          panel.querySelector(`[data-kill-terminal="${id}"]`).disabled = true;
+          const resumeBtn = panel.querySelector(`[data-resume-terminal="${id}"]`);
+          if (resumeBtn) resumeBtn.style.display = '';
+          const dismissBtn = panel.querySelector(`[data-dismiss-terminal="${id}"]`);
+          if (dismissBtn) dismissBtn.style.display = '';
+          const titleEl = panel.querySelector('.terminal-title');
+          if (titleEl && !titleEl.querySelector('.suspended-badge')) {
+            titleEl.insertAdjacentHTML('beforeend', '<span class="suspended-badge">[suspended]</span>');
+          }
+          syncSessionState();
+        }
+      } catch {}
+    };
+    panel.querySelector(`[data-resume-terminal="${id}"]`).onclick = async (e) => {
+      const btn = e.target;
+      btn.disabled = true;
+      try {
+        const resp = await fetch(`/api/terminal/${id}/resume`, { method: 'POST' });
+        if (resp.ok) {
+          await dismissTerminalPanel(id);
+          syncSessionState();
+        }
+      } catch {}
+    };
+    panel.querySelector(`[data-dismiss-terminal="${id}"]`).onclick = async () => {
+      await dismissTerminalPanel(id);
+      syncSessionState();
+    };
+    const termContainer = panel.querySelector(`#term-container-${id}`);
+    if (termContainer) {
+      termContainer.addEventListener('click', () => {
+        if (terminalInfo._term?.hasSelection()) return;
+        const term = terminalInfo._term;
+        if (!term) return;
+        const buf = term.buffer.active;
+        if (buf.viewportY >= buf.baseY) term.focus();
+      });
+    }
+
+  } else if (type === 'cli') {
+    const session = info;
+    panel.className = 'cli-session-panel';
+    panel.id = `cli-${id}`;
+    const isRunning = session.status === 'running';
+    const elapsed = formatElapsed(session.registered_at);
+    panel.innerHTML = `
+      <div class="cli-session-header">
+        <span class="status-dot ${isRunning ? 'running' : 'exited'}"></span>
+        <span class="cli-title">${esc(session.title)}<span class="badge-cli">[CLI]</span></span>
+        <span class="cli-meta">${elapsed}</span>
+        <button class="minimize-btn" data-minimize-cli="${esc(id)}">▼</button>
+      </div>
+    `;
+    const panelKey = `cli:${id}`;
+    sessionPanels.set(panelKey, panel);
+    if (sessionCollapseState.get(panelKey)) {
+      panel.classList.add('collapsed');
+      panel.querySelector(`[data-minimize-cli="${id}"]`).textContent = '▶';
+    }
+    panel.querySelector(`[data-minimize-cli="${id}"]`).onclick = () => {
+      togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-cli="${id}"]`));
+    };
+    panel.querySelector('.cli-session-header').addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-cli="${id}"]`));
+    });
   }
-  panel.querySelector(`[data-minimize-cli="${session.id}"]`).onclick = () => {
-    togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-cli="${session.id}"]`));
-  };
-  panel.querySelector('.cli-session-header').addEventListener('click', (e) => {
-    if (e.target.closest('button')) return;
-    togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-cli="${session.id}"]`));
-  });
+
   return panel;
 }
 
@@ -1871,18 +1925,19 @@ async function restoreCliSessions() {
       }
     }
     placeSessionPanels();
-    updateDispatchBadge();
+    syncSessionState();
   } catch {}
 }
 
 async function dispatchWorkItem(workItem, projectKey) {
-  // Show modal
   return new Promise((resolve) => {
-    const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
-    overlay.innerHTML = `
-      <div class="modal">
-        <h3>Dispatch ${esc(workItem.id)}</h3>
+    let resolvedTerminal = null;
+
+    const { overlay, close } = createDispatchOverlay({
+      title: `Dispatch ${workItem.id}`,
+      cancelId: 'modal-cancel',
+      submitId: 'modal-dispatch',
+      buildFields: () => `
         <div style="margin-bottom:14px">
           <span class="badge badge-${workItem.status === 'done' ? 'done' : (workItem.depends_on?.length ? 'blocked' : 'open')}">${esc(workItem.status)}</span>
           <span class="badge badge-${workItem.priority || 'medium'}">${esc(workItem.priority || 'medium')}</span>
@@ -1915,39 +1970,14 @@ async function dispatchWorkItem(workItem, projectKey) {
         </div>
         ${permissionModeSelect('dispatch-perm-mode')}
         ${skipPermissionsCheckbox('dispatch-skip-perms')}
-        <div class="modal-actions">
-          <button class="btn btn-cancel" id="modal-cancel">Cancel</button>
-          <button class="btn btn-dispatch" id="modal-dispatch">Dispatch</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
+      `,
+      onSubmit: async (overlay) => {
+        const instructions = overlay.querySelector('#dispatch-instructions').value.trim();
+        const plainTerminal = !overlay.querySelector('#dispatch-claude-agent').checked;
+        const agentType = overlay.querySelector('#dispatch-agent-type')?.value || 'claude';
+        const permMode = getPermissionMode(overlay, 'dispatch-perm-mode');
+        const skipPerms = overlay.querySelector('#dispatch-skip-perms').checked;
 
-    overlay.querySelector('#modal-cancel').onclick = () => {
-      overlay.remove();
-      resolve(null);
-    };
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) { overlay.remove(); resolve(null); }
-    });
-
-    overlay.querySelector('#dispatch-claude-agent').onchange = () => {
-      const agent = overlay.querySelector('#dispatch-claude-agent').checked;
-      overlay.querySelector('#dispatch-perm-mode').disabled = !agent;
-      overlay.querySelector('#dispatch-skip-perms').disabled = !agent;
-    };
-
-    overlay.querySelector('#modal-dispatch').onclick = async () => {
-      const instructions = overlay.querySelector('#dispatch-instructions').value.trim();
-      const plainTerminal = !overlay.querySelector('#dispatch-claude-agent').checked;
-      const agentType = overlay.querySelector('#dispatch-agent-type')?.value || 'claude';
-      const permMode = getPermissionMode(overlay, 'dispatch-perm-mode');
-      const skipPerms = overlay.querySelector('#dispatch-skip-perms').checked;
-      const btn = overlay.querySelector('#modal-dispatch');
-      btn.disabled = true;
-      btn.textContent = 'Dispatching...';
-
-      try {
         const endpoint = plainTerminal ? '/api/terminal/shell' : '/api/terminal';
         const body = plainTerminal
           ? { work_item_id: workItem.id, project_key: projectKey, title: workItem.title, epic_id: workItem.epic_id || null }
@@ -1969,7 +1999,6 @@ async function dispatchWorkItem(workItem, projectKey) {
         const result = await resp.json();
         if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
 
-        // Resolve registry path for terminal guidance
         let projectPath = '';
         if (projectKey === ARCHITECT_KEY) {
           projectPath = '(architect root)';
@@ -1985,33 +2014,46 @@ async function dispatchWorkItem(workItem, projectKey) {
           } catch {}
         }
 
-        {
-          const terminalInfo = {
-            id: result.terminal_id,
-            type: plainTerminal ? 'shell' : 'claude',
-            agent_type: plainTerminal ? 'shell' : agentType,
-            work_item_id: workItem.id,
-            project_key: projectKey,
-            project_path: projectPath,
-            title: workItem.title,
-            permission_mode: plainTerminal ? 'acceptEdits' : permMode,
-            skip_permissions: skipPerms,
-            status: 'running',
-            started_at: new Date().toISOString(),
-          };
-          activeTerminals.push(terminalInfo);
-          updateDispatchBadge();
-          createTerminalPanel(terminalInfo);
-          placeSessionPanels();
-          await initSession(terminalInfo);
-          overlay.remove();
-          resolve(terminalInfo);
-        }
-      } catch (e) {
-        btn.disabled = false;
-        btn.textContent = 'Dispatch';
-        alert('Dispatch failed: ' + e.message);
-      }
+        resolvedTerminal = {
+          id: result.terminal_id,
+          type: plainTerminal ? 'shell' : 'claude',
+          agent_type: plainTerminal ? 'shell' : agentType,
+          work_item_id: workItem.id,
+          project_key: projectKey,
+          project_path: projectPath,
+          title: workItem.title,
+          permission_mode: plainTerminal ? 'acceptEdits' : permMode,
+          skip_permissions: skipPerms,
+          status: 'running',
+          started_at: new Date().toISOString(),
+        };
+        activeTerminals.push(resolvedTerminal);
+        syncSessionState();
+        createTerminalPanel(resolvedTerminal);
+        placeSessionPanels();
+        await initSession(resolvedTerminal);
+      },
+    });
+
+    overlay.querySelector('#dispatch-claude-agent').onchange = () => {
+      const agent = overlay.querySelector('#dispatch-claude-agent').checked;
+      overlay.querySelector('#dispatch-perm-mode').disabled = !agent;
+      overlay.querySelector('#dispatch-skip-perms').disabled = !agent;
+    };
+
+    const cancelBtn = overlay.querySelector('[data-modal-cancel]');
+    const origCancelOnclick = cancelBtn.onclick;
+    cancelBtn.onclick = () => { origCancelOnclick(); resolve(null); };
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) { close(); resolve(null); }
+    }, { once: true });
+
+    const submitBtn = overlay.querySelector('[data-modal-submit]');
+    const origSubmitOnclick = submitBtn.onclick;
+    submitBtn.onclick = async () => {
+      await origSubmitOnclick();
+      if (resolvedTerminal) resolve(resolvedTerminal);
     };
   });
 }
@@ -2034,23 +2076,32 @@ async function restoreDispatches() {
       createDispatchPanel(dispatch);
       newDispatches.push(dispatch);
     }
-    // Cleanup stale panels for sessions that no longer exist
-    const activeIds = new Set(list.map(d => `dispatch:${d.id}`));
+    // Cleanup stale panels and entries for sessions that no longer exist
+    const activeIds = new Set(list.map(d => d.id));
+    const staleIndexes = [];
+    for (let i = 0; i < activeDispatches.length; i++) {
+      if (!activeIds.has(activeDispatches[i].id)) staleIndexes.push(i);
+    }
+    for (let i = staleIndexes.length - 1; i >= 0; i--) {
+      activeDispatches.splice(staleIndexes[i], 1);
+    }
     for (const key of sessionPanels.keys()) {
-      if (key.startsWith('dispatch:') && !activeIds.has(key)) {
+      if (key.startsWith('dispatch:') && !activeIds.has(key.slice('dispatch:'.length))) {
         const panel = sessionPanels.get(key);
         if (panel?.parentElement) panel.remove();
         sessionPanels.delete(key);
       }
     }
-    placeSessionPanels();
-    updateDispatchBadge();
-    // Load content (loadDispatchContent handles waiting for DOM placement)
+    // Mark new dispatches so _placeSessionPanelsNow triggers loadDispatchContent
+    // immediately after placing them in the DOM — avoids the race between route()
+    // clearing main.innerHTML and a rAF-wait in loadDispatchContent.
     for (const dispatch of newDispatches) {
       if (dispatch.status !== 'suspended') {
-        loadDispatchContent(dispatch);
+        dispatch._pendingContentLoad = true;
       }
     }
+    placeSessionPanels();
+    syncSessionState();
   } catch {}
 }
 
@@ -2921,11 +2972,11 @@ function showWorkItemModal(existingItem = null) {
 
 // --- Discuss Modal ---
 function showDiscussModal() {
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>Discuss with Agent</h3>
+  createDispatchOverlay({
+    title: 'Discuss with Agent',
+    cancelId: 'discuss-cancel',
+    submitId: 'discuss-submit',
+    buildFields: () => `
       <div class="field">
         <label>Project</label>
         <div style="font-size:13px"><code>${esc(currentProjectKey)}</code></div>
@@ -2945,29 +2996,14 @@ function showDiscussModal() {
       </div>
       ${permissionModeSelect('discuss-perm-mode')}
       ${skipPermissionsCheckbox('discuss-skip-perms')}
-      <div class="modal-actions">
-        <button class="btn btn-cancel" id="discuss-cancel">Cancel</button>
-        <button class="btn btn-dispatch" id="discuss-submit">Dispatch</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
+    `,
+    onSubmit: async (overlay) => {
+      const instructions = overlay.querySelector('#discuss-instructions').value.trim();
+      if (!instructions) { throw new Error('Instructions are required'); }
+      const agentType = overlay.querySelector('#discuss-agent-type')?.value || 'claude';
+      const permMode = getPermissionMode(overlay, 'discuss-perm-mode');
+      const skipPerms = overlay.querySelector('#discuss-skip-perms').checked;
 
-  overlay.querySelector('#discuss-cancel').onclick = () => overlay.remove();
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-
-  overlay.querySelector('#discuss-submit').onclick = async () => {
-    const instructions = overlay.querySelector('#discuss-instructions').value.trim();
-    if (!instructions) { alert('Instructions are required'); return; }
-    const agentType = overlay.querySelector('#discuss-agent-type')?.value || 'claude';
-    const permMode = getPermissionMode(overlay, 'discuss-perm-mode');
-    const skipPerms = overlay.querySelector('#discuss-skip-perms').checked;
-
-    const btn = overlay.querySelector('#discuss-submit');
-    btn.disabled = true;
-    btn.textContent = 'Dispatching...';
-
-    try {
       const body = {
         project_key: currentProjectKey,
         additional_instructions: instructions,
@@ -3011,26 +3047,23 @@ function showDiscussModal() {
         started_at: new Date().toISOString(),
       };
       activeTerminals.push(terminalInfo);
-      updateDispatchBadge();
+      syncSessionState();
       createTerminalPanel(terminalInfo);
       placeSessionPanels();
       await initSession(terminalInfo);
-
-      overlay.remove();
-    } catch (e) {
-      btn.disabled = false;
-      btn.textContent = 'Dispatch';
-      alert('Dispatch failed: ' + e.message);
-    }
-  };
+    },
+  });
 }
 
 async function showReviewModal(projectKey) {
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal" style="max-width:560px">
-      <h3>Review Pull Requests</h3>
+  let prs = [];
+
+  const { overlay } = createDispatchOverlay({
+    title: 'Review Pull Requests',
+    cancelId: 'review-cancel',
+    submitId: 'review-submit',
+    submitLabel: 'Review',
+    buildFields: () => `
       <div class="field">
         <label>Project</label>
         <div style="font-size:13px"><code>${esc(projectKey)}</code></div>
@@ -3047,74 +3080,34 @@ async function showReviewModal(projectKey) {
       </div>
       ${permissionModeSelect('review-perm-mode')}
       ${skipPermissionsCheckbox('review-skip-perms')}
-      <div class="modal-actions">
-        <button class="btn btn-cancel" id="review-cancel">Cancel</button>
-        <button class="btn btn-dispatch" id="review-submit">Review</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
+    `,
+    onSubmit: async (overlay) => {
+      const checked = overlay.querySelectorAll('[data-pr-number]:checked');
+      const instructions = overlay.querySelector('#review-instructions').value.trim();
 
-  overlay.querySelector('#review-cancel').onclick = () => overlay.remove();
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-
-  // Async PR fetch
-  let prs = [];
-  const [org, proj, comp] = projectKey.split('/');
-  try {
-    prs = await api(`project/${org}/${proj}/${comp}/prs`);
-    const listEl = document.getElementById('review-pr-list');
-    if (!listEl) return;
-    if (!prs.length) {
-      listEl.innerHTML = '<span style="color:var(--text-light);font-size:13px">No open PRs found</span>';
-    } else {
-      listEl.innerHTML = prs.map((pr, i) => `
-        <label style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px">
-          <input type="checkbox" data-pr-idx="${i}" data-pr-number="${pr.number}" style="flex-shrink:0" />
-          <span style="font-weight:600;color:var(--accent);flex-shrink:0">#${pr.number}</span>
-          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pr.title)}</span>
-          <span style="font-size:11px;color:var(--text-light);flex-shrink:0">${esc(pr.headRefName)}</span>
-        </label>
-      `).join('');
-    }
-  } catch (e) {
-    const listEl = document.getElementById('review-pr-list');
-    if (listEl) listEl.innerHTML = `<span style="color:var(--red);font-size:13px">Failed to fetch PRs</span>`;
-  }
-
-  overlay.querySelector('#review-submit').onclick = async () => {
-    const checked = overlay.querySelectorAll('[data-pr-number]:checked');
-    const instructions = overlay.querySelector('#review-instructions').value.trim();
-
-    if (!checked.length && !instructions) {
-      alert('Select at least one PR or provide instructions');
-      return;
-    }
-
-    const selectedPRs = [...checked].map(cb => prs[parseInt(cb.dataset.prIdx)]);
-    const permMode = getPermissionMode(overlay, 'review-perm-mode');
-    const skipPerms = overlay.querySelector('#review-skip-perms').checked;
-
-    let reviewPrompt = '';
-    if (selectedPRs.length) {
-      reviewPrompt += 'Review the following pull requests using /review:\n\n';
-      for (const pr of selectedPRs) {
-        reviewPrompt += `- PR #${pr.number}: "${pr.title}" (branch: ${pr.headRefName})\n`;
+      if (!checked.length && !instructions) {
+        throw new Error('Select at least one PR or provide instructions');
       }
-    }
-    if (instructions) {
-      reviewPrompt += `\nAdditional instructions:\n${instructions}`;
-    }
 
-    const titleText = selectedPRs.length
-      ? `Review: ${selectedPRs.map(p => `#${p.number}`).join(', ')}`
-      : 'Review: custom';
+      const selectedPRs = [...checked].map(cb => prs[parseInt(cb.dataset.prIdx)]);
+      const permMode = getPermissionMode(overlay, 'review-perm-mode');
+      const skipPerms = overlay.querySelector('#review-skip-perms').checked;
 
-    const btn = overlay.querySelector('#review-submit');
-    btn.disabled = true;
-    btn.textContent = 'Dispatching...';
+      let reviewPrompt = '';
+      if (selectedPRs.length) {
+        reviewPrompt += 'Review the following pull requests using /review:\n\n';
+        for (const pr of selectedPRs) {
+          reviewPrompt += `- PR #${pr.number}: "${pr.title}" (branch: ${pr.headRefName})\n`;
+        }
+      }
+      if (instructions) {
+        reviewPrompt += `\nAdditional instructions:\n${instructions}`;
+      }
 
-    try {
+      const titleText = selectedPRs.length
+        ? `Review: ${selectedPRs.map(p => `#${p.number}`).join(', ')}`
+        : 'Review: custom';
+
       const resp = await fetch('/api/dispatch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3141,17 +3134,36 @@ async function showReviewModal(projectKey) {
         started_at: new Date().toISOString(),
       };
       activeDispatches.push(dispatch);
-      updateDispatchBadge();
+      syncSessionState();
       createDispatchPanel(dispatch);
       placeSessionPanels();
       loadDispatchContent(dispatch);
-      overlay.remove();
-    } catch (e) {
-      btn.disabled = false;
-      btn.textContent = 'Review';
-      alert('Dispatch failed: ' + e.message);
+    },
+  });
+
+  overlay.querySelector('.modal').style.maxWidth = '560px';
+
+  const [org, proj, comp] = projectKey.split('/');
+  try {
+    prs = await api(`project/${org}/${proj}/${comp}/prs`);
+    const listEl = overlay.querySelector('#review-pr-list');
+    if (!listEl) return;
+    if (!prs.length) {
+      listEl.innerHTML = '<span style="color:var(--text-light);font-size:13px">No open PRs found</span>';
+    } else {
+      listEl.innerHTML = prs.map((pr, i) => `
+        <label style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px">
+          <input type="checkbox" data-pr-idx="${i}" data-pr-number="${pr.number}" style="flex-shrink:0" />
+          <span style="font-weight:600;color:var(--accent);flex-shrink:0">#${pr.number}</span>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pr.title)}</span>
+          <span style="font-size:11px;color:var(--text-light);flex-shrink:0">${esc(pr.headRefName)}</span>
+        </label>
+      `).join('');
     }
-  };
+  } catch (e) {
+    const listEl = overlay.querySelector('#review-pr-list');
+    if (listEl) listEl.innerHTML = `<span style="color:var(--red);font-size:13px">Failed to fetch PRs</span>`;
+  }
 }
 
 async function showEpicDiscussModal(epicId) {
@@ -3172,11 +3184,12 @@ async function showEpicDiscussModal(epicId) {
   }
   if (!projectKeys.includes(ARCHITECT_KEY)) projectKeys.unshift(ARCHITECT_KEY);
 
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>Discuss Epic with Agent</h3>
+  const { overlay } = createDispatchOverlay({
+    title: 'Discuss Epic with Agent',
+    cancelId: 'epic-discuss-cancel',
+    submitId: 'epic-discuss-submit',
+    submitLabel: 'Discuss',
+    buildFields: () => `
       <div style="margin-bottom:14px">
         <strong>${esc(epic.title)}</strong>
         <div style="font-size:12px;color:var(--text-light);margin-top:4px">Progress: ${p.done}/${p.total}</div>
@@ -3203,35 +3216,17 @@ async function showEpicDiscussModal(epicId) {
       </div>
       ${permissionModeSelect('epic-discuss-perm-mode')}
       ${skipPermissionsCheckbox('epic-discuss-skip-perms')}
-      <div class="modal-actions">
-        <button class="btn btn-cancel" id="epic-discuss-cancel">Cancel</button>
-        <button class="btn btn-dispatch" id="epic-discuss-submit" style="background:var(--teal)">Discuss</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
+    `,
+    onSubmit: async (overlay) => {
+      const instructions = overlay.querySelector('#epic-discuss-instructions').value.trim();
+      if (!instructions) { throw new Error('Instructions are required'); }
+      const agentType = overlay.querySelector('#epic-discuss-agent-type')?.value || 'claude';
+      const permMode = getPermissionMode(overlay, 'epic-discuss-perm-mode');
+      const skipPerms = overlay.querySelector('#epic-discuss-skip-perms').checked;
+      const pk = overlay.querySelector('#epic-discuss-project').value || projectKeys[0];
 
-  overlay.querySelector('#epic-discuss-cancel').onclick = () => overlay.remove();
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+      if (!pk) { throw new Error('No project key available. Onboard a project first.'); }
 
-  overlay.querySelector('#epic-discuss-submit').onclick = async () => {
-    const instructions = overlay.querySelector('#epic-discuss-instructions').value.trim();
-    if (!instructions) { alert('Instructions are required'); return; }
-    const agentType = overlay.querySelector('#epic-discuss-agent-type')?.value || 'claude';
-    const permMode = getPermissionMode(overlay, 'epic-discuss-perm-mode');
-    const skipPerms = overlay.querySelector('#epic-discuss-skip-perms').checked;
-    const pk = overlay.querySelector('#epic-discuss-project').value || projectKeys[0];
-
-    if (!pk) {
-      alert('No project key available. Onboard a project first.');
-      return;
-    }
-
-    const btn = overlay.querySelector('#epic-discuss-submit');
-    btn.disabled = true;
-    btn.textContent = 'Dispatching...';
-
-    try {
       const body = {
         epic_id: epicId,
         project_key: pk,
@@ -3275,18 +3270,14 @@ async function showEpicDiscussModal(epicId) {
         started_at: new Date().toISOString(),
       };
       activeTerminals.push(terminalInfo);
-      updateDispatchBadge();
+      syncSessionState();
       createTerminalPanel(terminalInfo);
       placeSessionPanels();
       await initSession(terminalInfo);
+    },
+  });
 
-      overlay.remove();
-    } catch (e) {
-      btn.disabled = false;
-      btn.textContent = 'Discuss';
-      alert('Dispatch failed: ' + e.message);
-    }
-  };
+  overlay.querySelector('[data-modal-submit]').style.background = 'var(--teal)';
 }
 
 // --- Epic Views ---
@@ -4220,11 +4211,11 @@ async function showEpicDispatchModal(epicId) {
   }
   if (!projectKeys.includes(ARCHITECT_KEY)) projectKeys.unshift(ARCHITECT_KEY);
 
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>Dispatch from ${esc(epic.id)}</h3>
+  const { overlay } = createDispatchOverlay({
+    title: `Dispatch from ${epic.id}`,
+    cancelId: 'epic-dispatch-cancel',
+    submitId: 'epic-dispatch-go',
+    buildFields: () => `
       <div style="margin-bottom:14px">
         <strong>${esc(epic.title)}</strong>
         <div style="font-size:12px;color:var(--text-light);margin-top:4px">Progress: ${p.done}/${p.total}</div>
@@ -4249,55 +4240,27 @@ async function showEpicDispatchModal(epicId) {
       </div>
       ${permissionModeSelect('epic-dispatch-perm-mode')}
       ${skipPermissionsCheckbox('epic-dispatch-skip-perms')}
-      <div class="modal-actions">
-        <button class="btn btn-cancel" id="epic-dispatch-cancel">Cancel</button>
-        <button class="btn btn-dispatch" id="epic-dispatch-go">Dispatch</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
+    `,
+    onSubmit: async (overlay) => {
+      const modeSelect = overlay.querySelector('#epic-dispatch-mode');
+      const projectSelect = overlay.querySelector('#epic-dispatch-project');
+      const mode = modeSelect.value;
+      const instructions = overlay.querySelector('#epic-dispatch-instructions').value.trim();
+      const permMode = getPermissionMode(overlay, 'epic-dispatch-perm-mode');
+      const skipPerms = overlay.querySelector('#epic-dispatch-skip-perms').checked;
 
-  const modeSelect = overlay.querySelector('#epic-dispatch-mode');
-  const projectField = overlay.querySelector('#epic-dispatch-project-field');
-  const projectSelect = overlay.querySelector('#epic-dispatch-project');
-
-  modeSelect.onchange = () => {
-    if (modeSelect.value !== 'general') {
-      const item = openItems.find(i => i.id === modeSelect.value);
-      if (item) {
-        projectSelect.value = item.project_key;
+      let pk, wid;
+      if (mode === 'general') {
+        pk = projectSelect.value || projectKeys[0];
+        wid = null;
+      } else {
+        wid = mode;
+        const item = openItems.find(i => i.id === wid);
+        pk = item ? item.project_key : (projectSelect.value || projectKeys[0]);
       }
-    }
-  };
 
-  overlay.querySelector('#epic-dispatch-cancel').onclick = () => overlay.remove();
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+      if (!pk) { throw new Error('No project key available for dispatch. Onboard a project first.'); }
 
-  overlay.querySelector('#epic-dispatch-go').onclick = async () => {
-    const mode = modeSelect.value;
-    const instructions = overlay.querySelector('#epic-dispatch-instructions').value.trim();
-    const permMode = getPermissionMode(overlay, 'epic-dispatch-perm-mode');
-    const skipPerms = overlay.querySelector('#epic-dispatch-skip-perms').checked;
-    const btn = overlay.querySelector('#epic-dispatch-go');
-    btn.disabled = true; btn.textContent = 'Dispatching...';
-
-    let pk, wid;
-    if (mode === 'general') {
-      pk = projectSelect.value || projectKeys[0];
-      wid = null;
-    } else {
-      wid = mode;
-      const item = openItems.find(i => i.id === wid);
-      pk = item ? item.project_key : (projectSelect.value || projectKeys[0]);
-    }
-
-    if (!pk) {
-      alert('No project key available for dispatch. Onboard a project first.');
-      btn.disabled = false; btn.textContent = 'Dispatch';
-      return;
-    }
-
-    try {
       const resp = await fetch('/api/dispatch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -4338,14 +4301,19 @@ async function showEpicDispatchModal(epicId) {
         started_at: new Date().toISOString(),
       };
       activeDispatches.push(dispatch);
-      updateDispatchBadge();
+      syncSessionState();
       createDispatchPanel(dispatch);
       placeSessionPanels();
       loadDispatchContent(dispatch);
-      overlay.remove();
-    } catch (e) {
-      btn.disabled = false; btn.textContent = 'Dispatch';
-      alert('Dispatch failed: ' + e.message);
+    },
+  });
+
+  const modeSelect = overlay.querySelector('#epic-dispatch-mode');
+  const projectSelect = overlay.querySelector('#epic-dispatch-project');
+  modeSelect.onchange = () => {
+    if (modeSelect.value !== 'general') {
+      const item = openItems.find(i => i.id === modeSelect.value);
+      if (item) { projectSelect.value = item.project_key; }
     }
   };
 }
@@ -4403,7 +4371,7 @@ function showOnboardModal() {
         started_at: new Date().toISOString(),
       };
       activeDispatches.push(dispatch);
-      updateDispatchBadge();
+      syncSessionState();
       createDispatchPanel(dispatch);
       placeSessionPanels();
       loadDispatchContent(dispatch);
@@ -4689,13 +4657,19 @@ function openFocusPopup(type, id) {
       const dot = header.querySelector('.status-dot');
       dot.classList.remove('running');
       dot.classList.add('failed');
-      // Also update inline panel dot
-      const inlineDot = document.querySelector(`#${type === 'dispatch' ? 'dispatch' : 'terminal'}-${id} .status-dot`);
-      if (inlineDot) { inlineDot.classList.remove('running'); inlineDot.classList.add('failed'); }
-      const inlineKill = document.querySelector(`[data-kill-${type === 'dispatch' ? 'dispatch' : 'terminal'}="${id}"]`);
+      // Also update inline panel status class, dot, and buttons
+      const panelPrefix = type === 'dispatch' ? 'dispatch' : 'terminal';
+      const inlinePanel = document.querySelector(`#${panelPrefix}-${id}`);
+      if (inlinePanel) {
+        inlinePanel.className = inlinePanel.className.replace(/status-\w+/, 'status-killed');
+        const dismissBtn = inlinePanel.querySelector(`[data-dismiss-${panelPrefix}="${id}"]`);
+        if (dismissBtn) dismissBtn.style.display = '';
+      }
+      const inlineDot = document.querySelector(`#${panelPrefix}-${id} .status-dot`);
+      if (inlineDot) { inlineDot.classList.remove('running'); inlineDot.classList.add('killed', 'failed'); }
+      const inlineKill = document.querySelector(`[data-kill-${panelPrefix}="${id}"]`);
       if (inlineKill) inlineKill.disabled = true;
-      updateDispatchBadge();
-      refreshSessionsSidebar();
+      syncSessionState();
     } catch {}
   };
   footer.appendChild(killBtn);
@@ -4717,8 +4691,7 @@ function openFocusPopup(type, id) {
           dot.classList.remove('running');
           dot.classList.add('suspended');
           killBtn.disabled = true;
-          updateDispatchBadge();
-          refreshSessionsSidebar();
+          syncSessionState();
           closeFocusPopup();
         }
       } catch {}
@@ -4737,8 +4710,7 @@ function openFocusPopup(type, id) {
       try {
         const resp = await fetch(endpoint, { method: 'POST' });
         if (resp.ok) {
-          updateDispatchBadge();
-          refreshSessionsSidebar();
+          syncSessionState();
           closeFocusPopup();
         }
       } catch {}
@@ -5036,7 +5008,7 @@ function bindAgentsEvents(agents, filters) {
         if (d) d.status = 'killed';
         const t = activeTerminals.find(a => a.id === id);
         if (t) t.status = 'killed';
-        updateDispatchBadge();
+        syncSessionState();
         // Update tile visually
         const tile = btn.closest('.agent-tile');
         const dot = tile.querySelector('.status-dot');
@@ -5062,8 +5034,7 @@ function bindAgentsEvents(agents, filters) {
           if (d) d.status = 'suspended';
           const t = activeTerminals.find(a => a.id === id);
           if (t) t.status = 'suspended';
-          updateDispatchBadge();
-          refreshSessionsSidebar();
+          syncSessionState();
           if (location.hash.startsWith('#agents')) route();
         }
       } catch {}
@@ -5080,8 +5051,7 @@ function bindAgentsEvents(agents, filters) {
       try {
         const resp = await fetch(endpoint, { method: 'POST' });
         if (resp.ok) {
-          updateDispatchBadge();
-          refreshSessionsSidebar();
+          syncSessionState();
           if (location.hash.startsWith('#agents')) route();
         }
       } catch {}
@@ -5184,11 +5154,11 @@ async function showQuickDispatchModal() {
   let epicsList = [];
   try { epicsList = await getEpics(); } catch {}
 
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>Quick Dispatch</h3>
+  const { overlay } = createDispatchOverlay({
+    title: 'Quick Dispatch',
+    cancelId: 'qd-cancel',
+    submitId: 'qd-go',
+    buildFields: () => `
       <div class="field">
         <label>Target Project *</label>
         <select id="qd-project">
@@ -5225,40 +5195,20 @@ async function showQuickDispatchModal() {
       </div>
       ${permissionModeSelect('qd-perm-mode')}
       ${skipPermissionsCheckbox('qd-skip-perms')}
-      <div class="modal-actions">
-        <button class="btn btn-cancel" id="qd-cancel">Cancel</button>
-        <button class="btn btn-dispatch" id="qd-go">Dispatch</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
+    `,
+    onSubmit: async (overlay) => {
+      const pk = overlay.querySelector('#qd-project').value;
+      const wid = overlay.querySelector('#qd-work-item').value.trim() || null;
+      const epicId = overlay.querySelector('#qd-epic').value || null;
+      const instructions = overlay.querySelector('#qd-instructions').value.trim();
+      const plainTerminal = !overlay.querySelector('#qd-claude-agent').checked;
+      const agentType = overlay.querySelector('#qd-agent-type')?.value || 'claude';
+      const permMode = getPermissionMode(overlay, 'qd-perm-mode');
+      const skipPerms = overlay.querySelector('#qd-skip-perms').checked;
 
-  overlay.querySelector('#qd-cancel').onclick = () => overlay.remove();
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+      if (!pk) { throw new Error('Project is required'); }
+      if (!plainTerminal && !wid && !instructions) { throw new Error('Work item or instructions required'); }
 
-  overlay.querySelector('#qd-claude-agent').onchange = () => {
-    const agent = overlay.querySelector('#qd-claude-agent').checked;
-    overlay.querySelector('#qd-perm-mode').disabled = !agent;
-    overlay.querySelector('#qd-skip-perms').disabled = !agent;
-  };
-
-  overlay.querySelector('#qd-go').onclick = async () => {
-    const pk = overlay.querySelector('#qd-project').value;
-    const wid = overlay.querySelector('#qd-work-item').value.trim() || null;
-    const epicId = overlay.querySelector('#qd-epic').value || null;
-    const instructions = overlay.querySelector('#qd-instructions').value.trim();
-    const plainTerminal = !overlay.querySelector('#qd-claude-agent').checked;
-    const agentType = overlay.querySelector('#qd-agent-type')?.value || 'claude';
-    const permMode = getPermissionMode(overlay, 'qd-perm-mode');
-    const skipPerms = overlay.querySelector('#qd-skip-perms').checked;
-    const btn = overlay.querySelector('#qd-go');
-
-    if (!pk) { alert('Project is required'); return; }
-    if (!plainTerminal && !wid && !instructions) { alert('Work item or instructions required'); return; }
-
-    btn.disabled = true; btn.textContent = 'Dispatching...';
-
-    try {
       const endpoint = plainTerminal ? '/api/terminal/shell' : '/api/terminal';
       const titleText = wid || instructions?.slice(0, 60) || 'Quick dispatch';
       const body = plainTerminal
@@ -5304,17 +5254,19 @@ async function showQuickDispatchModal() {
         status: 'running', started_at: new Date().toISOString(),
       };
       activeTerminals.push(terminalInfo);
-      updateDispatchBadge();
+      syncSessionState();
       createTerminalPanel(terminalInfo);
       placeSessionPanels();
       await initSession(terminalInfo);
-      overlay.remove();
       // Refresh agents view if on that page
       if (location.hash.startsWith('#agents')) route();
-    } catch (e) {
-      btn.disabled = false; btn.textContent = 'Dispatch';
-      alert('Dispatch failed: ' + e.message);
-    }
+    },
+  });
+
+  overlay.querySelector('#qd-claude-agent').onchange = () => {
+    const agent = overlay.querySelector('#qd-claude-agent').checked;
+    overlay.querySelector('#qd-perm-mode').disabled = !agent;
+    overlay.querySelector('#qd-skip-perms').disabled = !agent;
   };
 }
 // --- Time Report view ---
@@ -5891,8 +5843,6 @@ async function route() {
   const hash = location.hash.slice(1);
   const main = $('#main');
 
-  // Close any focus popup before navigation
-  closeFocusPopup();
   updateTitle(getRouteTitle());
   stopAgentsTileRefresh();
   if (settingsRefreshTimer) { clearInterval(settingsRefreshTimer); settingsRefreshTimer = null; }
@@ -6038,13 +5988,18 @@ async function route() {
   placeSessionPanels();
 }
 
-window.addEventListener('hashchange', route);
+window.addEventListener('hashchange', () => { closeFocusPopup(); route(); });
+// Start restoring sessions immediately in parallel with tree building so panels
+// appear within the test's 5 s window regardless of how long the sidebar takes.
+const _restorePromise = Promise.all([
+  restoreDispatches(),
+  restoreTerminals(),
+  restoreCliSessions(),
+]);
 Promise.all([buildTree(), buildEpicTree()]).then(async () => {
   startSessionsSidebarRefresh();
   route();
-  await restoreDispatches();
-  await restoreTerminals();
-  await restoreCliSessions();
+  await _restorePromise;
   refreshSessionsSidebar();
   // Periodic session refresh (every 10s) — sync with server-side auto-cleanup
   setInterval(restoreDispatches, 10000);
