@@ -409,6 +409,24 @@
   .settings-output { margin-top: 10px; padding: 10px; background: #f8f8f8; border-radius: 4px; font-family: monospace; font-size: 12px; white-space: pre-wrap; display: none; }
   .sidebar-settings { padding: 8px 16px; font-size: 12px; cursor: pointer; color: #a6adc8; display: flex; align-items: center; gap: 6px; margin-top: auto; }
   .sidebar-settings:hover { color: #cdd6f4; background: #313244; }
+
+  .agent-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(139, 92, 246, 0.2);
+    color: #a78bfa;
+    margin-right: 6px;
+  }
+  .agent-badge[data-agent="shell"] { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; }
+  .agent-badge[data-agent="codex"] { background: rgba(59, 130, 246, 0.2); color: #93c5fd; }
+  .agent-badge[data-agent="gemini"] { background: rgba(20, 184, 166, 0.2); color: #5eead4; }
+  .injection-indicator {
+    font-size: 10px;
+    color: #9ca3af;
+    margin-left: 6px;
+  }
 </style>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/css/xterm.min.css">
 </head>
@@ -1059,8 +1077,9 @@ function _placeSessionPanelsNow() {
     const panelKey = `terminal:${t.id}`;
     if (!movedPanels.has(panelKey)) continue;
     const panel = sessionPanels.get(panelKey);
-    if (panel && !panel.classList.contains('collapsed') && panel.isConnected && t._fitAddon && t._term) {
-      requestAnimationFrame(() => fitPreservingScroll(t._term, t._fitAddon));
+    const ss = t._sessionState;
+    if (panel && !panel.classList.contains('collapsed') && panel.isConnected && ss?._fitAddon && ss._term) {
+      requestAnimationFrame(() => fitPreservingScroll(ss._term, ss._fitAddon));
     }
   }
 
@@ -1069,6 +1088,158 @@ function _placeSessionPanelsNow() {
     if (!activeKeys.has(key)) {
       if (panel.parentElement) panel.remove();
       sessionPanels.delete(key);
+    }
+  }
+}
+
+// --- Terminal theme ---
+const termThemes = {
+  dark: { background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#f5e0dc', selectionBackground: '#45475a' },
+  light: { background: '#f8f8f8', foreground: '#1e1e2e', cursor: '#333', selectionBackground: '#d0d0d0',
+    black: '#1e1e2e', red: '#d32f2f', green: '#388e3c', yellow: '#f9a825', blue: '#1976d2', magenta: '#7b1fa2', cyan: '#0097a7', white: '#f5f5f5',
+    brightBlack: '#616161', brightRed: '#ef5350', brightGreen: '#66bb6a', brightYellow: '#ffee58', brightBlue: '#42a5f5', brightMagenta: '#ab47bc', brightCyan: '#26c6da', brightWhite: '#fafafa' },
+};
+// termThemes is used in initSession; activeTheme is resolved per-session from window._prefs
+
+// --- TerminalWsManager ---
+class TerminalWsManager {
+  constructor(terminalId) {
+    this.terminalId = terminalId;
+    this.lastSeq = 0;
+    this.state = 'IDLE'; // IDLE | CONNECTING | OPEN | RECONNECTING
+    this._ws = null;
+    this._backoff = 1000;
+    this._backoffTimer = null;
+    this._messageHandler = null;
+    this._closeHandler = null;
+    this._reconnectOnClose = true;
+  }
+
+  connect(fromSeq = 0) {
+    if (this._ws && (this._ws.readyState === WebSocket.CONNECTING || this._ws.readyState === WebSocket.OPEN)) return;
+    this.state = 'CONNECTING';
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    this._ws = new WebSocket(`${proto}//${location.host}/api/terminal/${this.terminalId}/ws?from=${fromSeq}`);
+    this._reconnectOnClose = true;
+
+    this._ws.onopen = () => { this.state = 'OPEN'; };
+
+    this._ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.seq && msg.seq > this.lastSeq) this.lastSeq = msg.seq;
+        if (this._messageHandler) this._messageHandler(msg);
+      } catch {}
+    };
+
+    this._ws.onerror = () => {};
+
+    this._ws.onclose = (e) => {
+      this._ws = null;
+      if (!this._reconnectOnClose || e.code === 1000) {
+        this.state = 'IDLE';
+        if (this._closeHandler) this._closeHandler(e.code);
+        return;
+      }
+      this.state = 'RECONNECTING';
+      if (this._closeHandler) this._closeHandler(e.code);
+      this._backoffTimer = setTimeout(() => {
+        this._backoff = Math.min(this._backoff * 2, 30000);
+        this.connect(this.lastSeq);
+      }, this._backoff);
+    };
+  }
+
+  disconnect() {
+    this._reconnectOnClose = false;
+    if (this._backoffTimer) { clearTimeout(this._backoffTimer); this._backoffTimer = null; }
+    if (this._ws) { this._ws.close(1000); this._ws = null; }
+    this.state = 'IDLE';
+  }
+
+  send(msg) {
+    if (this.state === 'OPEN' && this._ws && this._ws.readyState === WebSocket.OPEN) {
+      this._ws.send(JSON.stringify(msg));
+    }
+  }
+
+  onMessage(handler) { this._messageHandler = handler; }
+  onClose(handler) { this._closeHandler = handler; }
+
+  resetBackoff() { this._backoff = 1000; }
+}
+
+// --- TerminalEventQueue ---
+class TerminalEventQueue {
+  constructor(sessionState) {
+    this._queue = [];
+    this._draining = false;
+    this._ready = false;
+    this._term = null;
+    this._fitAddon = null;
+    this._sessionState = sessionState;
+    this._containerEl = null;
+    this._destroyed = false;
+  }
+
+  markReady(term, fitAddon, containerEl) {
+    this._term = term;
+    this._fitAddon = fitAddon;
+    this._containerEl = containerEl;
+    this._ready = true;
+    if (this._queue.length > 0 && !this._draining) this._drain();
+  }
+
+  enqueue(event) {
+    if (this._destroyed) return;
+    this._queue.push(event);
+    if (this._ready && !this._draining) this._drain();
+  }
+
+  destroy() {
+    this._destroyed = true;
+    this._queue = [];
+    this._draining = false;
+    this._ready = false;
+  }
+
+  async _drain() {
+    if (this._draining || this._destroyed) return;
+    this._draining = true;
+    while (this._queue.length > 0 && !this._destroyed) {
+      const event = this._queue.shift();
+      await this._writeEvent(event);
+    }
+    this._draining = false;
+  }
+
+  async _writeEvent(event) {
+    if (this._destroyed || !this._term) return;
+    const { seq, eventType, payload } = event;
+
+    if (eventType === 'data') {
+      // Sequential write using xterm callback
+      await new Promise(resolve => this._term.write(payload, resolve));
+      if (this._sessionState._wsManager) this._sessionState._wsManager.lastSeq = seq;
+
+    } else if (eventType === 'resize') {
+      const rect = this._containerEl ? this._containerEl.getBoundingClientRect() : null;
+      if (rect && rect.width > 0 && rect.height > 0) {
+        fitPreservingScroll(this._term, this._fitAddon);
+      } else {
+        try { this._term.resize(payload.cols, payload.rows); } catch {}
+      }
+      if (this._sessionState._wsManager) this._sessionState._wsManager.lastSeq = seq;
+
+    } else if (eventType === 'meta') {
+      if (this._sessionState._wsManager) this._sessionState._wsManager.lastSeq = seq;
+      // Handled by session state — don't write to xterm
+      updatePanelMeta(this._sessionState, payload.key, payload.value);
+    }
+
+    // Exit is handled by session state machine, not the queue — but update lastSeq
+    if (seq && this._sessionState._wsManager) {
+      if (this._sessionState._wsManager.lastSeq < seq) this._sessionState._wsManager.lastSeq = seq;
     }
   }
 }
@@ -1114,6 +1285,281 @@ function fitPreservingScroll(term, fitAddon) {
   if (delta !== 0) term.scrollLines(delta);
 }
 
+function updatePanelMeta(sessionState, key, value) {
+  const panel = document.getElementById(`terminal-${sessionState.id}`);
+  if (!panel) return;
+
+  if (key === 'claude_session_id') {
+    sessionState.claudeSessionId = value;
+    let footerEl = panel.querySelector('.session-id-copy');
+    if (footerEl) {
+      footerEl.textContent = value;
+      footerEl.style.display = '';
+    }
+  } else if (key === 'prompt_injection_status') {
+    const indicator = panel.querySelector('.injection-indicator');
+    if (indicator) {
+      if (value === 'waiting') indicator.textContent = '⟳ waiting...';
+      else if (value === 'injecting') indicator.textContent = '⟳ injecting...';
+      else if (value === 'done') indicator.textContent = '✓ injected';
+      else if (value === 'failed') indicator.textContent = '✗ injection failed';
+      indicator.style.display = value ? '' : 'none';
+    }
+  } else if (key === 'status') {
+    sessionState.status = value;
+    if (value === 'completed' || value === 'failed' || value === 'killed') {
+      finalizeTerminalPanel(sessionState);
+    }
+  }
+}
+
+function createContainerReadyPromise(containerEl) {
+  return new Promise((resolve) => {
+    const check = () => {
+      const rect = containerEl.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) { resolve(); return; }
+    };
+    check(); // Synchronous check first
+    const ro = new ResizeObserver(() => {
+      const rect = containerEl.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) { resolve(); }
+    });
+    ro.observe(containerEl);
+    // Store observer ref so it gets cleaned up
+    containerEl._readyObserver = ro;
+  });
+}
+
+async function initSession(terminalInfo) {
+  // Prevent duplicate connections
+  if (terminalInfo._wsManager && terminalInfo._wsManager.state !== 'IDLE') return;
+
+  // Create session state if not exists
+  if (!terminalInfo._sessionState) {
+    terminalInfo._sessionState = {
+      id: terminalInfo.id,
+      state: 'DISCONNECTED',
+      firstLiveSeen: false,
+      claudeSessionId: terminalInfo.claude_session_id || null,
+      _wsManager: null,
+      _eventQueue: null,
+      _term: null,
+      _fitAddon: null,
+      _resizeObserver: null,
+      _resizeTimer: null,
+    };
+    // Register in global map for test access
+    window._termSessions = window._termSessions || new Map();
+    window._termSessions.set(terminalInfo.id, terminalInfo._sessionState);
+  }
+
+  const sessionState = terminalInfo._sessionState;
+  sessionState.state = 'CONNECTING';
+
+  const panel = document.getElementById(`terminal-${terminalInfo.id}`);
+  if (!panel) return;
+  const containerEl = panel.querySelector(`#term-container-${terminalInfo.id}`);
+  if (!containerEl) return;
+
+  // Create WsManager
+  const wsManager = new TerminalWsManager(terminalInfo.id);
+  sessionState._wsManager = wsManager;
+  terminalInfo._wsManager = wsManager;  // back-compat reference
+
+  // Create event queue
+  const eventQueue = new TerminalEventQueue(sessionState);
+  sessionState._eventQueue = eventQueue;
+
+  // Load xterm modules (cached globally)
+  const xtermPromise = loadXterm();
+
+  // Create container ready promise
+  const containerReadyPromise = createContainerReadyPromise(containerEl);
+
+  // Show loading overlay
+  let loadingEl = containerEl.querySelector('.terminal-loading');
+  if (!loadingEl) {
+    loadingEl = document.createElement('div');
+    loadingEl.className = 'terminal-loading';
+    loadingEl.textContent = 'Connecting...';
+    containerEl.appendChild(loadingEl);
+  }
+
+  // Handle WS messages
+  let xtermInitialized = false;
+  let streamStartData = null;
+
+  wsManager.onMessage(async (msg) => {
+    if (msg.type === 'stream-start') {
+      streamStartData = msg;
+      sessionState.state = 'REPLAYING';
+      if (loadingEl) loadingEl.textContent = `Loading... 0 / ${Math.round(msg.rawBytes / 1024)} KB`;
+
+      // Wait for both xterm to load AND container to have dimensions
+      try {
+        const [xtermModules] = await Promise.all([xtermPromise, containerReadyPromise]);
+
+        if (!xtermInitialized) {
+          xtermInitialized = true;
+          const { Terminal, FitAddon, WebLinksAddon } = xtermModules;
+
+          const fitAddon = new FitAddon();
+          const webLinksAddon = new WebLinksAddon();
+          const theme = termThemes[window._prefs?.terminal_theme] || termThemes.dark;
+          const term = new Terminal({
+            cursorBlink: true,
+            fontSize: 13,
+            fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+            theme,
+            scrollback: 50000,
+          });
+
+          term.loadAddon(fitAddon);
+          term.loadAddon(webLinksAddon);
+
+          // Clear loading overlay, attach terminal
+          if (loadingEl) loadingEl.remove();
+          loadingEl = null;
+          containerEl.classList.toggle('terminal-light', (window._prefs?.terminal_theme === 'light'));
+          term.open(containerEl);
+          term.reset();
+          fitAddon.fit();
+
+          sessionState._term = term;
+          sessionState._fitAddon = fitAddon;
+          terminalInfo._term = term;  // back-compat
+          terminalInfo._fitAddon = fitAddon;  // back-compat
+
+          // Keyboard input — only when LIVE
+          term.onData((data) => {
+            if (sessionState.state === 'LIVE') {
+              wsManager.send({ type: 'input', data });
+            }
+          });
+
+          // Escape key for focus popup
+          term.attachCustomKeyEventHandler((e) => {
+            if (e.key === 'Escape' && e.type === 'keydown' && activeFocusPopup) {
+              closeFocusPopup();
+              return false;
+            }
+            return true;
+          });
+
+          // Resize observer (clean, stored on sessionState)
+          const resizeObserver = new ResizeObserver(() => {
+            if (!containerEl.isConnected) return;
+            const rect = containerEl.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) return;
+            if (sessionState._resizeTimer) clearTimeout(sessionState._resizeTimer);
+            sessionState._resizeTimer = setTimeout(() => {
+              sessionState._resizeTimer = null;
+              fitPreservingScroll(term, fitAddon);
+              if (sessionState.state === 'LIVE') {
+                wsManager.send({ type: 'resize', cols: term.cols, rows: term.rows });
+              }
+            }, 100);
+          });
+          resizeObserver.observe(containerEl);
+          sessionState._resizeObserver = resizeObserver;
+
+          // Scroll containment
+          const xtermViewport = containerEl.querySelector('.xterm-viewport');
+          if (xtermViewport) xtermViewport.style.overscrollBehavior = 'contain';
+          containerEl.addEventListener('wheel', (e) => {
+            e.stopPropagation();
+          }, { passive: false });
+
+          // Mark queue ready
+          eventQueue.markReady(term, fitAddon, containerEl);
+        }
+      } catch (err) {
+        console.error('Terminal init error:', err);
+      }
+
+    } else if (msg.type === 'snapshot') {
+      // Write snapshot as a data event
+      eventQueue.enqueue({ seq: msg.upToSeq, eventType: 'data', payload: msg.data, ts: Date.now() });
+
+    } else if (msg.type === 'event') {
+      // Enqueue all events (replay + live) through the ordered queue
+      eventQueue.enqueue({ seq: msg.seq, eventType: msg.eventType, payload: msg.payload, ts: msg.ts });
+      // Update loading progress for data events during replay
+      if (msg.eventType === 'data' && sessionState.state === 'REPLAYING' && loadingEl && streamStartData) {
+        const approx = Math.round((wsManager.lastSeq / Math.max(1, streamStartData.headSeq)) * streamStartData.rawBytes / 1024);
+        loadingEl.textContent = `Loading... ${approx} / ${Math.round(streamStartData.rawBytes / 1024)} KB`;
+      }
+
+    } else if (msg.type === 'stream-live') {
+      sessionState.state = 'LIVE';
+      if (loadingEl) { loadingEl.remove(); loadingEl = null; }
+      wsManager.resetBackoff();
+      // Send resize to notify server of actual client dimensions
+      if (sessionState._term) {
+        wsManager.send({ type: 'resize', cols: sessionState._term.cols, rows: sessionState._term.rows });
+      }
+      // Auto-focus on first LIVE transition
+      if (!sessionState.firstLiveSeen && sessionState._term) {
+        sessionState.firstLiveSeen = true;
+        sessionState._term.focus();
+      }
+
+    } else if (msg.type === 'exit') {
+      terminalInfo.status = msg.code === 0 ? 'completed' : 'failed';
+      sessionState.state = 'EXITED';
+      finalizeTerminalPanel(terminalInfo);
+    }
+  });
+
+  // Handle unexpected close → RECONNECTING
+  wsManager.onClose((code) => {
+    if (sessionState.state === 'EXITED') return;
+    if (code !== 1000) {
+      sessionState.state = 'RECONNECTING';
+      // Write reconnecting message to xterm
+      if (sessionState._term) {
+        sessionState._term.write('\r\n\x1b[33m[reconnecting...]\x1b[0m\r\n');
+      }
+    }
+  });
+
+  wsManager.connect(0);
+}
+
+function destroyTerminal(terminalInfo) {
+  const sessionState = terminalInfo._sessionState;
+  if (!sessionState) return;
+
+  // 1. Clear resize timer
+  if (sessionState._resizeTimer) { clearTimeout(sessionState._resizeTimer); sessionState._resizeTimer = null; }
+
+  // 2. Disconnect resize observer
+  if (sessionState._resizeObserver) { sessionState._resizeObserver.disconnect(); sessionState._resizeObserver = null; }
+
+  // 3. Disconnect WS (no reconnect)
+  if (sessionState._wsManager) { sessionState._wsManager.disconnect(); sessionState._wsManager = null; }
+
+  // 4. Destroy event queue
+  if (sessionState._eventQueue) { sessionState._eventQueue.destroy(); sessionState._eventQueue = null; }
+
+  // 5. Dispose xterm
+  if (sessionState._term) { try { sessionState._term.dispose(); } catch {} sessionState._term = null; }
+
+  sessionState.state = 'DISCONNECTED';
+
+  // Clean up from global map
+  if (window._termSessions) window._termSessions.delete(terminalInfo.id);
+
+  // Remove panel from DOM
+  const panel = document.getElementById(`terminal-${terminalInfo.id}`);
+  if (panel && panel.parentElement) panel.remove();
+  sessionPanels.delete('terminal:' + terminalInfo.id);
+
+  // Remove from activeTerminals
+  const idx = activeTerminals.findIndex(t => t.id === terminalInfo.id);
+  if (idx !== -1) activeTerminals.splice(idx, 1);
+}
+
 // --- Terminal state ---
 const activeTerminals = [];
 
@@ -1144,16 +1590,10 @@ function togglePanelCollapse(key, panel, btn) {
   if (!collapsed && key.startsWith('terminal:')) {
     const tid = key.split(':')[1];
     const t = activeTerminals.find(x => x.id === tid);
-    if (t?._fitAddon && t._term) {
+    const ss = t?._sessionState;
+    if (ss?._fitAddon && ss._term) {
       requestAnimationFrame(() => {
-        if (t._needsInitialFit) {
-          t._fitAddon.fit();
-          t._needsInitialFit = false;
-          // Flush buffered WS messages if xterm connected while collapsed
-          if (t._markXtermReady) t._markXtermReady();
-        } else {
-          fitPreservingScroll(t._term, t._fitAddon);
-        }
+        if (ss._fitAddon && ss._term) fitPreservingScroll(ss._term, ss._fitAddon);
       });
     }
   }
@@ -1161,12 +1601,16 @@ function togglePanelCollapse(key, panel, btn) {
 
 async function dismissTerminalPanel(id) {
   try { await fetch(`/api/terminal/${id}`, { method: 'DELETE' }); } catch {}
-  const idx = activeTerminals.findIndex(t => t.id === id);
-  if (idx !== -1) activeTerminals.splice(idx, 1);
-  const panelKey = `terminal:${id}`;
-  const panel = sessionPanels.get(panelKey);
-  if (panel?.parentElement) panel.remove();
-  sessionPanels.delete(panelKey);
+  const terminalInfo = activeTerminals.find(t => t.id === id);
+  if (terminalInfo) {
+    destroyTerminal(terminalInfo);
+  } else {
+    // Fallback cleanup if terminalInfo not found
+    const panelKey = `terminal:${id}`;
+    const panel = sessionPanels.get(panelKey);
+    if (panel?.parentElement) panel.remove();
+    sessionPanels.delete(panelKey);
+  }
 }
 
 function finalizeTerminalPanel(terminalInfo) {
@@ -1213,6 +1657,8 @@ function createTerminalPanel(terminalInfo) {
     <div class="terminal-container" id="term-container-${terminalInfo.id}"><div class="terminal-loading">Connecting</div></div>
     <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
       <button class="focus-btn" data-focus-terminal-bottom="${esc(terminalInfo.id)}">Focus</button>
+      <span class="agent-badge" data-agent="${esc(terminalInfo.agent_type || 'claude')}">[${esc((terminalInfo.agent_type || 'claude').charAt(0).toUpperCase() + (terminalInfo.agent_type || 'claude').slice(1))}]</span>
+      <span class="injection-indicator" style="display:none"></span>
       ${sessionIdTag(terminalInfo.claude_session_id)}
       ${terminalInfo.project_key ? `<span class="tag" style="margin-left:auto;font-size:10px">${esc(terminalInfo.project_key.split('/').pop())}</span>` : ''}
       ${terminalInfo.epic_id ? `<span class="tag" style="font-size:10px">${esc(terminalInfo.epic_id)}</span>` : ''}
@@ -1319,253 +1765,7 @@ function createTerminalPanel(terminalInfo) {
   return panel;
 }
 
-async function connectTerminalWs(terminalInfo) {
-  // Prevent duplicate WebSocket connections (from polling, refresh, or multi-tab)
-  if (terminalInfo._ws && terminalInfo._ws.readyState <= WebSocket.OPEN) return;
-
-  const mods = await loadXterm();
-  if (!mods) return;
-
-  const containerEl = document.getElementById(`term-container-${terminalInfo.id}`);
-  if (!containerEl) return;
-
-  const { Terminal, FitAddon, WebLinksAddon } = mods;
-
-  const termThemes = {
-    dark: { background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#f5e0dc', selectionBackground: '#45475a' },
-    light: { background: '#f8f8f8', foreground: '#1e1e2e', cursor: '#333', selectionBackground: '#d0d0d0',
-      black: '#1e1e2e', red: '#d32f2f', green: '#388e3c', yellow: '#f9a825', blue: '#1976d2', magenta: '#7b1fa2', cyan: '#0097a7', white: '#f5f5f5',
-      brightBlack: '#616161', brightRed: '#ef5350', brightGreen: '#66bb6a', brightYellow: '#ffee58', brightBlue: '#42a5f5', brightMagenta: '#ab47bc', brightCyan: '#26c6da', brightWhite: '#fafafa' },
-  };
-  const activeTheme = termThemes[window._prefs?.terminal_theme] || termThemes.dark;
-  const term = new Terminal({
-    cursorBlink: true,
-    fontSize: 13,
-    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-    theme: activeTheme,
-    scrollback: 50000,
-  });
-  containerEl.classList.toggle('terminal-light', (window._prefs?.terminal_theme === 'light'));
-
-  const fitAddon = new FitAddon();
-  term.loadAddon(fitAddon);
-  term.loadAddon(new WebLinksAddon());
-  term.open(containerEl);
-
-  // Defer fit until container has layout dimensions (may be collapsed or not yet laid out)
-  const initRect = containerEl.getBoundingClientRect();
-  if (initRect.width > 0 && initRect.height > 0) {
-    fitAddon.fit();
-  } else {
-    terminalInfo._needsInitialFit = true;
-  }
-
-  // Contain scroll events within the xterm viewport to prevent page scroll leaking
-  const xtermViewport = containerEl.querySelector('.xterm-viewport');
-  if (xtermViewport) xtermViewport.style.overscrollBehavior = 'contain';
-
-  // Trap wheel events inside terminal — prevent leaking to parent dashboard scroll
-  containerEl.addEventListener('wheel', (e) => {
-    e.stopPropagation();
-    const buf = term.buffer.active;
-    const atTop = buf.viewportY === 0;
-    const atBottom = buf.viewportY >= buf.baseY;
-    if ((e.deltaY < 0 && atTop) || (e.deltaY > 0 && atBottom)) {
-      e.preventDefault();
-    }
-  }, { passive: false });
-
-  terminalInfo._term = term;
-  terminalInfo._fitAddon = fitAddon;
-
-  // Allow Escape to close focus popup even when xterm has focus
-  term.attachCustomKeyEventHandler((e) => {
-    if (e.key === 'Escape' && e.type === 'keydown' && activeFocusPopup) {
-      closeFocusPopup();
-      return false;
-    }
-    return true;
-  });
-
-  // WebSocket connection
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(`${proto}//${location.host}/api/terminal/${terminalInfo.id}/ws`);
-  terminalInfo._ws = ws;
-
-  // Server pushes scrollback immediately on connect — buffer messages until xterm is ready.
-  // No 'ready' handshake needed. Server sends from memory, client replays when able.
-  const msgQueue = [];
-  let xtermReady = false;
-
-  function updateLoadingProgress(received, total) {
-    const loadingEl = containerEl.querySelector('.terminal-loading');
-    if (!loadingEl) return;
-    if (total > 0) {
-      const pct = Math.min(100, Math.round(received / total * 100));
-      const recKB = (received / 1024).toFixed(0);
-      const totKB = (total / 1024).toFixed(0);
-      loadingEl.textContent = `Loading ${recKB} / ${totKB} KB (${pct}%)`;
-    }
-  }
-  let loadingFallbackTimer = null;
-  function removeLoadingOverlay() {
-    if (loadingFallbackTimer) { clearTimeout(loadingFallbackTimer); loadingFallbackTimer = null; }
-    const loadingEl = containerEl.querySelector('.terminal-loading');
-    if (loadingEl) loadingEl.remove();
-  }
-  loadingFallbackTimer = setTimeout(() => {
-    removeLoadingOverlay();
-    // Also flush messages — if xterm never got dimensions, force-fit and mark ready
-    if (!xtermReady) {
-      try { fitAddon.fit(); } catch {}
-      terminalInfo._needsInitialFit = false;
-      markXtermReady();
-    }
-  }, 10000);
-
-  let scrollbackTotal = 0;
-  let scrollbackReceived = 0;
-
-  function processMessage(msg) {
-    if (msg.type === 'scrollback-start') {
-      scrollbackTotal = msg.total || 0;
-      scrollbackReceived = 0;
-      updateLoadingProgress(0, scrollbackTotal);
-      const buf = term.buffer.active;
-      if (buf.baseY === 0 && buf.cursorY === 0) {
-        term.reset();
-        fitAddon.fit();
-        lastCols = term.cols;
-        lastRows = term.rows;
-      }
-    } else if (msg.type === 'scrollback') {
-      scrollbackReceived = msg.done || (scrollbackReceived + (msg.data?.length || 0));
-      updateLoadingProgress(scrollbackReceived, scrollbackTotal);
-      term.write(msg.data);
-    } else if (msg.type === 'scrollback-end') {
-      removeLoadingOverlay();
-      // Now that xterm has content, send actual dimensions for future output
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-      }
-    } else if (msg.type === 'data') {
-      removeLoadingOverlay();
-      term.write(msg.data);
-    } else if (msg.type === 'dims') {
-      lastCols = msg.cols;
-      lastRows = msg.rows;
-    } else if (msg.type === 'exit') {
-      terminalInfo.status = msg.code === 0 ? 'completed' : 'failed';
-      finalizeTerminalPanel(terminalInfo);
-    }
-  }
-
-  // Polling fallback timer — declared early so markXtermReady can clear it
-  let readyPollTimer = null;
-
-  // Mark xterm ready once the terminal has non-zero dimensions (fit complete)
-  function markXtermReady() {
-    if (xtermReady) return;
-    xtermReady = true;
-    if (readyPollTimer) { clearInterval(readyPollTimer); readyPollTimer = null; }
-    // Flush buffered messages
-    for (const msg of msgQueue) {
-      try { processMessage(msg); } catch {}
-    }
-    msgQueue.length = 0;
-  }
-  terminalInfo._markXtermReady = markXtermReady;
-
-  // If fit already happened, mark ready immediately
-  if (!terminalInfo._needsInitialFit) {
-    markXtermReady();
-  }
-  if (terminalInfo._needsInitialFit) {
-    let pollCount = 0;
-    readyPollTimer = setInterval(() => {
-      pollCount++;
-      if (pollCount >= 20 || xtermReady) { clearInterval(readyPollTimer); readyPollTimer = null; return; }
-      const rect = containerEl.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0 && terminalInfo._needsInitialFit) {
-        terminalInfo._needsInitialFit = false;
-        fitAddon.fit();
-        lastCols = term.cols;
-        lastRows = term.rows;
-        markXtermReady();
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-        }
-        clearInterval(readyPollTimer);
-        readyPollTimer = null;
-      }
-    }, 500);
-  }
-
-  ws.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      if (xtermReady) {
-        processMessage(msg);
-      } else {
-        // Buffer until xterm is ready — still update progress overlay
-        msgQueue.push(msg);
-        if (msg.type === 'scrollback-start') {
-          scrollbackTotal = msg.total || 0;
-          updateLoadingProgress(0, scrollbackTotal);
-        } else if (msg.type === 'scrollback') {
-          scrollbackReceived = msg.done || (scrollbackReceived + (msg.data?.length || 0));
-          updateLoadingProgress(scrollbackReceived, scrollbackTotal);
-        }
-      }
-    } catch {}
-  };
-
-  ws.onclose = () => {
-    terminalInfo._ws = null;
-  };
-
-  // Send keystrokes to server
-  term.onData((data) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'input', data }));
-    }
-  });
-
-  // Handle resize — debounced to prevent rapid reflows during drag; skip zero-sized containers
-  let lastCols = term.cols, lastRows = term.rows;
-  let resizeTimer = null;
-  const resizeObserver = new ResizeObserver(() => {
-    if (!containerEl.isConnected) return;
-    const rect = containerEl.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return;
-    if (terminalInfo._needsInitialFit) {
-      terminalInfo._needsInitialFit = false;
-      fitAddon.fit();
-      lastCols = term.cols;
-      lastRows = term.rows;
-      // xterm now has proper dimensions — flush buffered scrollback messages
-      markXtermReady();
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-      }
-      return;
-    }
-    if (resizeTimer) clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => {
-      resizeTimer = null;
-      fitPreservingScroll(term, fitAddon);
-      if (term.cols !== lastCols || term.rows !== lastRows) {
-        lastCols = term.cols;
-        lastRows = term.rows;
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-        }
-      }
-    }, 100);
-  });
-  resizeObserver.observe(containerEl);
-  terminalInfo._resizeObserver = resizeObserver;
-}
+// connectTerminalWs is replaced by initSession
 
 // Restore terminals on page load
 async function restoreTerminals() {
@@ -1604,7 +1804,9 @@ async function restoreTerminals() {
       }
     }
     placeSessionPanels();
-    for (const t of toConnect) await connectTerminalWs(t);
+    // Wait for requestAnimationFrame so panels are in the DOM before connecting
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    for (const t of toConnect) await initSession(t);
     updateDispatchBadge();
   } catch {}
 }
@@ -1698,13 +1900,18 @@ async function dispatchWorkItem(workItem, projectKey) {
           <label>Additional Instructions</label>
           <textarea id="dispatch-instructions" placeholder="Optional: add context, constraints, or specific instructions for the agent..."></textarea>
         </div>
+        <div class="field">
+          <label for="dispatch-agent-type">Agent</label>
+          <select id="dispatch-agent-type">
+            <option value="claude" selected>Claude</option>
+            <option value="shell">Shell</option>
+            <option value="codex">Codex</option>
+            <option value="gemini">Gemini</option>
+          </select>
+        </div>
         <div class="interactive-toggle">
           <input type="checkbox" id="dispatch-claude-agent" checked />
           <label for="dispatch-claude-agent">Claude Agent</label>
-        </div>
-        <div class="interactive-toggle">
-          <input type="checkbox" id="dispatch-interactive" checked />
-          <label for="dispatch-interactive">Interactive terminal (xterm.js)</label>
         </div>
         ${permissionModeSelect('dispatch-perm-mode')}
         ${skipPermissionsCheckbox('dispatch-skip-perms')}
@@ -1726,7 +1933,6 @@ async function dispatchWorkItem(workItem, projectKey) {
 
     overlay.querySelector('#dispatch-claude-agent').onchange = () => {
       const agent = overlay.querySelector('#dispatch-claude-agent').checked;
-      overlay.querySelector('#dispatch-interactive').disabled = !agent;
       overlay.querySelector('#dispatch-perm-mode').disabled = !agent;
       overlay.querySelector('#dispatch-skip-perms').disabled = !agent;
     };
@@ -1734,7 +1940,7 @@ async function dispatchWorkItem(workItem, projectKey) {
     overlay.querySelector('#modal-dispatch').onclick = async () => {
       const instructions = overlay.querySelector('#dispatch-instructions').value.trim();
       const plainTerminal = !overlay.querySelector('#dispatch-claude-agent').checked;
-      const interactive = overlay.querySelector('#dispatch-interactive').checked;
+      const agentType = overlay.querySelector('#dispatch-agent-type')?.value || 'claude';
       const permMode = getPermissionMode(overlay, 'dispatch-perm-mode');
       const skipPerms = overlay.querySelector('#dispatch-skip-perms').checked;
       const btn = overlay.querySelector('#modal-dispatch');
@@ -1742,7 +1948,7 @@ async function dispatchWorkItem(workItem, projectKey) {
       btn.textContent = 'Dispatching...';
 
       try {
-        const endpoint = plainTerminal ? '/api/terminal/shell' : interactive ? '/api/terminal' : '/api/dispatch';
+        const endpoint = plainTerminal ? '/api/terminal/shell' : '/api/terminal';
         const body = plainTerminal
           ? { work_item_id: workItem.id, project_key: projectKey, title: workItem.title, epic_id: workItem.epic_id || null }
           : {
@@ -1753,6 +1959,7 @@ async function dispatchWorkItem(workItem, projectKey) {
               additional_instructions: instructions,
               permission_mode: permMode,
               skip_permissions: skipPerms,
+              agentType,
             };
         const resp = await fetch(endpoint, {
           method: 'POST',
@@ -1778,10 +1985,11 @@ async function dispatchWorkItem(workItem, projectKey) {
           } catch {}
         }
 
-        if (plainTerminal || interactive) {
+        {
           const terminalInfo = {
             id: result.terminal_id,
             type: plainTerminal ? 'shell' : 'claude',
+            agent_type: plainTerminal ? 'shell' : agentType,
             work_item_id: workItem.id,
             project_key: projectKey,
             project_path: projectPath,
@@ -1795,28 +2003,9 @@ async function dispatchWorkItem(workItem, projectKey) {
           updateDispatchBadge();
           createTerminalPanel(terminalInfo);
           placeSessionPanels();
-          await connectTerminalWs(terminalInfo);
+          await initSession(terminalInfo);
           overlay.remove();
           resolve(terminalInfo);
-        } else {
-          const dispatch = {
-            id: result.dispatch_id,
-            work_item_id: workItem.id,
-            project_key: projectKey,
-            project_path: projectPath,
-            title: workItem.title,
-            permission_mode: permMode,
-            skip_permissions: skipPerms,
-            status: 'running',
-            started_at: new Date().toISOString(),
-          };
-          activeDispatches.push(dispatch);
-          updateDispatchBadge();
-          createDispatchPanel(dispatch);
-          placeSessionPanels();
-          loadDispatchContent(dispatch);
-          overlay.remove();
-          resolve(dispatch);
         }
       } catch (e) {
         btn.disabled = false;
@@ -2745,9 +2934,14 @@ function showDiscussModal() {
         <label>Prompt / Instructions *</label>
         <textarea id="discuss-instructions" placeholder="What would you like to discuss? e.g., architecture decisions, code exploration, questions about the project..."></textarea>
       </div>
-      <div class="interactive-toggle">
-        <input type="checkbox" id="discuss-interactive" />
-        <label for="discuss-interactive">Interactive terminal (xterm.js)</label>
+      <div class="field">
+        <label for="discuss-agent-type">Agent</label>
+        <select id="discuss-agent-type">
+          <option value="claude" selected>Claude</option>
+          <option value="shell">Shell</option>
+          <option value="codex">Codex</option>
+          <option value="gemini">Gemini</option>
+        </select>
       </div>
       ${permissionModeSelect('discuss-perm-mode')}
       ${skipPermissionsCheckbox('discuss-skip-perms')}
@@ -2765,7 +2959,7 @@ function showDiscussModal() {
   overlay.querySelector('#discuss-submit').onclick = async () => {
     const instructions = overlay.querySelector('#discuss-instructions').value.trim();
     if (!instructions) { alert('Instructions are required'); return; }
-    const interactive = overlay.querySelector('#discuss-interactive').checked;
+    const agentType = overlay.querySelector('#discuss-agent-type')?.value || 'claude';
     const permMode = getPermissionMode(overlay, 'discuss-perm-mode');
     const skipPerms = overlay.querySelector('#discuss-skip-perms').checked;
 
@@ -2774,14 +2968,14 @@ function showDiscussModal() {
     btn.textContent = 'Dispatching...';
 
     try {
-      const endpoint = interactive ? '/api/terminal' : '/api/dispatch';
       const body = {
         project_key: currentProjectKey,
         additional_instructions: instructions,
         permission_mode: permMode,
         skip_permissions: skipPerms,
+        agentType,
       };
-      const resp = await fetch(endpoint, {
+      const resp = await fetch('/api/terminal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -2804,41 +2998,23 @@ function showDiscussModal() {
         } catch {}
       }
 
-      if (interactive) {
-        const terminalInfo = {
-          id: result.terminal_id,
-          work_item_id: null,
-          project_key: currentProjectKey,
-          project_path: projectPath,
-          title: instructions.slice(0, 60) + (instructions.length > 60 ? '...' : ''),
-          permission_mode: permMode,
-          skip_permissions: skipPerms,
-          status: 'running',
-          started_at: new Date().toISOString(),
-        };
-        activeTerminals.push(terminalInfo);
-        updateDispatchBadge();
-        createTerminalPanel(terminalInfo);
-        placeSessionPanels();
-        await connectTerminalWs(terminalInfo);
-      } else {
-        const dispatch = {
-          id: result.dispatch_id,
-          work_item_id: null,
-          project_key: currentProjectKey,
-          project_path: projectPath,
-          title: instructions.slice(0, 60) + (instructions.length > 60 ? '...' : ''),
-          permission_mode: permMode,
-          skip_permissions: skipPerms,
-          status: 'running',
-          started_at: new Date().toISOString(),
-        };
-        activeDispatches.push(dispatch);
-        updateDispatchBadge();
-        createDispatchPanel(dispatch);
-        placeSessionPanels();
-        loadDispatchContent(dispatch);
-      }
+      const terminalInfo = {
+        id: result.terminal_id,
+        agent_type: agentType,
+        work_item_id: null,
+        project_key: currentProjectKey,
+        project_path: projectPath,
+        title: instructions.slice(0, 60) + (instructions.length > 60 ? '...' : ''),
+        permission_mode: permMode,
+        skip_permissions: skipPerms,
+        status: 'running',
+        started_at: new Date().toISOString(),
+      };
+      activeTerminals.push(terminalInfo);
+      updateDispatchBadge();
+      createTerminalPanel(terminalInfo);
+      placeSessionPanels();
+      await initSession(terminalInfo);
 
       overlay.remove();
     } catch (e) {
@@ -3016,14 +3192,17 @@ async function showEpicDiscussModal(epicId) {
         <label>Prompt / Instructions *</label>
         <textarea id="epic-discuss-instructions" placeholder="What would you like to discuss? e.g., architecture decisions, scope planning, implementation strategy..."></textarea>
       </div>
-      <div class="interactive-toggle">
-        <input type="checkbox" id="epic-discuss-interactive" checked />
-        <label for="epic-discuss-interactive">Interactive terminal (xterm.js)</label>
+      <div class="field">
+        <label for="epic-discuss-agent-type">Agent</label>
+        <select id="epic-discuss-agent-type">
+          <option value="claude" selected>Claude</option>
+          <option value="shell">Shell</option>
+          <option value="codex">Codex</option>
+          <option value="gemini">Gemini</option>
+        </select>
       </div>
-      <div class="interactive-toggle">
       ${permissionModeSelect('epic-discuss-perm-mode')}
       ${skipPermissionsCheckbox('epic-discuss-skip-perms')}
-      </div>
       <div class="modal-actions">
         <button class="btn btn-cancel" id="epic-discuss-cancel">Cancel</button>
         <button class="btn btn-dispatch" id="epic-discuss-submit" style="background:var(--teal)">Discuss</button>
@@ -3038,7 +3217,7 @@ async function showEpicDiscussModal(epicId) {
   overlay.querySelector('#epic-discuss-submit').onclick = async () => {
     const instructions = overlay.querySelector('#epic-discuss-instructions').value.trim();
     if (!instructions) { alert('Instructions are required'); return; }
-    const interactive = overlay.querySelector('#epic-discuss-interactive').checked;
+    const agentType = overlay.querySelector('#epic-discuss-agent-type')?.value || 'claude';
     const permMode = getPermissionMode(overlay, 'epic-discuss-perm-mode');
     const skipPerms = overlay.querySelector('#epic-discuss-skip-perms').checked;
     const pk = overlay.querySelector('#epic-discuss-project').value || projectKeys[0];
@@ -3053,16 +3232,16 @@ async function showEpicDiscussModal(epicId) {
     btn.textContent = 'Dispatching...';
 
     try {
-      const endpoint = interactive ? '/api/terminal' : '/api/dispatch';
       const body = {
         epic_id: epicId,
         project_key: pk,
         additional_instructions: instructions,
         permission_mode: permMode,
         skip_permissions: skipPerms,
+        agentType,
       };
 
-      const resp = await fetch(endpoint, {
+      const resp = await fetch('/api/terminal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -3082,43 +3261,24 @@ async function showEpicDiscussModal(epicId) {
         } catch {}
       }
 
-      if (interactive) {
-        const terminalInfo = {
-          id: result.terminal_id,
-          work_item_id: null,
-          epic_id: epicId,
-          project_key: pk,
-          project_path: projectPath,
-          title: instructions.slice(0, 60) + (instructions.length > 60 ? '...' : ''),
-          permission_mode: permMode,
-          skip_permissions: skipPerms,
-          status: 'running',
-          started_at: new Date().toISOString(),
-        };
-        activeTerminals.push(terminalInfo);
-        updateDispatchBadge();
-        createTerminalPanel(terminalInfo);
-        placeSessionPanels();
-        await connectTerminalWs(terminalInfo);
-      } else {
-        const dispatch = {
-          id: result.dispatch_id,
-          work_item_id: null,
-          epic_id: epicId,
-          project_key: pk,
-          project_path: projectPath,
-          title: instructions.slice(0, 60) + (instructions.length > 60 ? '...' : ''),
-          permission_mode: permMode,
-          skip_permissions: skipPerms,
-          status: 'running',
-          started_at: new Date().toISOString(),
-        };
-        activeDispatches.push(dispatch);
-        updateDispatchBadge();
-        createDispatchPanel(dispatch);
-        placeSessionPanels();
-        loadDispatchContent(dispatch);
-      }
+      const terminalInfo = {
+        id: result.terminal_id,
+        agent_type: agentType,
+        work_item_id: null,
+        epic_id: epicId,
+        project_key: pk,
+        project_path: projectPath,
+        title: instructions.slice(0, 60) + (instructions.length > 60 ? '...' : ''),
+        permission_mode: permMode,
+        skip_permissions: skipPerms,
+        status: 'running',
+        started_at: new Date().toISOString(),
+      };
+      activeTerminals.push(terminalInfo);
+      updateDispatchBadge();
+      createTerminalPanel(terminalInfo);
+      placeSessionPanels();
+      await initSession(terminalInfo);
 
       overlay.remove();
     } catch (e) {
@@ -4484,8 +4644,8 @@ function openFocusPopup(type, id) {
   body.appendChild(sourceEl);
 
   // For terminals, fit to new size (ResizeObserver handles this with scroll preservation)
-  if (type === 'terminal' && terminalInfo?._fitAddon && terminalInfo?._term) {
-    requestAnimationFrame(() => fitPreservingScroll(terminalInfo._term, terminalInfo._fitAddon));
+  if (type === 'terminal' && terminalInfo?._sessionState?._fitAddon && terminalInfo?._sessionState?._term) {
+    requestAnimationFrame(() => fitPreservingScroll(terminalInfo._sessionState._term, terminalInfo._sessionState._fitAddon));
   }
   // For dispatch logs, scroll to bottom on focus
   if (type === 'dispatch' && sourceEl) {
@@ -4594,8 +4754,8 @@ function openFocusPopup(type, id) {
     exitBtn.textContent = '/exit';
     exitBtn.onclick = () => {
       const t = activeTerminals.find(x => x.id === id);
-      if (t?._ws && t._ws.readyState === WebSocket.OPEN) {
-        t._ws.send(JSON.stringify({ type: 'input', data: '/exit\n' }));
+      if (t?._wsManager) {
+        t._wsManager.send({ type: 'input', data: '/exit\n' });
         exitBtn.disabled = true;
         exitBtn.textContent = 'Sent /exit';
       }
@@ -4652,9 +4812,10 @@ function closeFocusPopup() {
   // Re-fit terminal after moving back to inline panel (delay to let DOM settle)
   if (type === 'terminal') {
     const terminalInfo = activeTerminals.find(t => t.id === id);
-    if (terminalInfo?._fitAddon && terminalInfo?._term) {
+    const ss = terminalInfo?._sessionState;
+    if (ss?._fitAddon && ss._term) {
       setTimeout(() => {
-        if (terminalInfo._fitAddon && terminalInfo._term) fitPreservingScroll(terminalInfo._term, terminalInfo._fitAddon);
+        if (ss._fitAddon && ss._term) fitPreservingScroll(ss._term, ss._fitAddon);
       }, 50);
     }
   }
@@ -5049,13 +5210,18 @@ async function showQuickDispatchModal() {
         <label>Instructions</label>
         <textarea id="qd-instructions" placeholder="What should the agent do?"></textarea>
       </div>
+      <div class="field">
+        <label for="qd-agent-type">Agent</label>
+        <select id="qd-agent-type">
+          <option value="claude" selected>Claude</option>
+          <option value="shell">Shell</option>
+          <option value="codex">Codex</option>
+          <option value="gemini">Gemini</option>
+        </select>
+      </div>
       <div class="interactive-toggle">
         <input type="checkbox" id="qd-claude-agent" checked />
         <label for="qd-claude-agent">Claude Agent</label>
-      </div>
-      <div class="interactive-toggle">
-        <input type="checkbox" id="qd-interactive" checked />
-        <label for="qd-interactive">Interactive terminal (xterm.js)</label>
       </div>
       ${permissionModeSelect('qd-perm-mode')}
       ${skipPermissionsCheckbox('qd-skip-perms')}
@@ -5072,7 +5238,6 @@ async function showQuickDispatchModal() {
 
   overlay.querySelector('#qd-claude-agent').onchange = () => {
     const agent = overlay.querySelector('#qd-claude-agent').checked;
-    overlay.querySelector('#qd-interactive').disabled = !agent;
     overlay.querySelector('#qd-perm-mode').disabled = !agent;
     overlay.querySelector('#qd-skip-perms').disabled = !agent;
   };
@@ -5083,7 +5248,7 @@ async function showQuickDispatchModal() {
     const epicId = overlay.querySelector('#qd-epic').value || null;
     const instructions = overlay.querySelector('#qd-instructions').value.trim();
     const plainTerminal = !overlay.querySelector('#qd-claude-agent').checked;
-    const interactive = overlay.querySelector('#qd-interactive').checked;
+    const agentType = overlay.querySelector('#qd-agent-type')?.value || 'claude';
     const permMode = getPermissionMode(overlay, 'qd-perm-mode');
     const skipPerms = overlay.querySelector('#qd-skip-perms').checked;
     const btn = overlay.querySelector('#qd-go');
@@ -5094,7 +5259,7 @@ async function showQuickDispatchModal() {
     btn.disabled = true; btn.textContent = 'Dispatching...';
 
     try {
-      const endpoint = plainTerminal ? '/api/terminal/shell' : interactive ? '/api/terminal' : '/api/dispatch';
+      const endpoint = plainTerminal ? '/api/terminal/shell' : '/api/terminal';
       const titleText = wid || instructions?.slice(0, 60) || 'Quick dispatch';
       const body = plainTerminal
         ? { work_item_id: wid, epic_id: epicId, project_key: pk, title: titleText }
@@ -5106,6 +5271,7 @@ async function showQuickDispatchModal() {
             additional_instructions: instructions,
             permission_mode: permMode,
             skip_permissions: skipPerms,
+            agentType,
           };
       const resp = await fetch(endpoint, {
         method: 'POST',
@@ -5127,36 +5293,21 @@ async function showQuickDispatchModal() {
         } catch {}
       }
 
-      if (plainTerminal || interactive) {
-        const terminalInfo = {
-          id: result.terminal_id, type: plainTerminal ? 'shell' : 'claude',
-          work_item_id: wid, epic_id: epicId,
-          project_key: pk, project_path: projectPath,
-          title: titleText,
-          permission_mode: plainTerminal ? 'acceptEdits' : permMode,
-          skip_permissions: skipPerms,
-          status: 'running', started_at: new Date().toISOString(),
-        };
-        activeTerminals.push(terminalInfo);
-        updateDispatchBadge();
-        createTerminalPanel(terminalInfo);
-        placeSessionPanels();
-        await connectTerminalWs(terminalInfo);
-      } else {
-        const dispatch = {
-          id: result.dispatch_id, work_item_id: wid, epic_id: epicId,
-          project_key: pk, project_path: projectPath,
-          title: wid || instructions?.slice(0, 60) || 'Quick dispatch',
-          permission_mode: permMode,
-          skip_permissions: skipPerms,
-          status: 'running', started_at: new Date().toISOString(),
-        };
-        activeDispatches.push(dispatch);
-        updateDispatchBadge();
-        createDispatchPanel(dispatch);
-        placeSessionPanels();
-        loadDispatchContent(dispatch);
-      }
+      const terminalInfo = {
+        id: result.terminal_id, type: plainTerminal ? 'shell' : 'claude',
+        agent_type: plainTerminal ? 'shell' : agentType,
+        work_item_id: wid, epic_id: epicId,
+        project_key: pk, project_path: projectPath,
+        title: titleText,
+        permission_mode: plainTerminal ? 'acceptEdits' : permMode,
+        skip_permissions: skipPerms,
+        status: 'running', started_at: new Date().toISOString(),
+      };
+      activeTerminals.push(terminalInfo);
+      updateDispatchBadge();
+      createTerminalPanel(terminalInfo);
+      placeSessionPanels();
+      await initSession(terminalInfo);
       overlay.remove();
       // Refresh agents view if on that page
       if (location.hash.startsWith('#agents')) route();

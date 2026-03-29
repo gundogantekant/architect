@@ -341,9 +341,13 @@ export function getPersistedDispatches() {
 
 export function saveTerminal(t) {
   db.prepare(`
-    INSERT OR REPLACE INTO terminals (id, type, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, exited_at, pid, tmux_session, claude_session_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(t.id, t.type || 'claude', t.work_item_id || null, t.epic_id || null, t.project_key, t.project_path || '', t.title || '', t.permission_mode || 'acceptEdits', t.skip_permissions ? 1 : 0, t.status, t.started_at, t.exited_at || null, t.pid || null, t.tmux_session || null, t.claude_session_id || null);
+    INSERT OR REPLACE INTO terminals (id, type, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, exited_at, pid, tmux_session, claude_session_id, agent_type, head_seq)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(t.id, t.type || 'claude', t.work_item_id || null, t.epic_id || null, t.project_key, t.project_path || '', t.title || '', t.permission_mode || 'acceptEdits', t.skip_permissions ? 1 : 0, t.status, t.started_at, t.exited_at || null, t.pid || null, t.tmux_session || null, t.claude_session_id || null, t.agent_type || 'claude', t.head_seq || 0);
+}
+
+export function updateTerminalClaudeSessionId(id, sessionId) {
+  db.prepare('UPDATE terminals SET claude_session_id = ? WHERE id = ?').run(sessionId, id);
 }
 
 export function deleteTerminal(id) {

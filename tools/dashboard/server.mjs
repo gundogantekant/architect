@@ -8,6 +8,8 @@ import { spawn, execFileSync } from 'node:child_process';
 import pty from 'node-pty';
 import { WebSocketServer } from 'ws';
 import * as db from './db.mjs';
+import { EventStream } from './event-stream.mjs';
+import { getAdapter } from './adapters/index.mjs';
 
 const CLAUDE_BIN = (() => {
   try {
@@ -103,6 +105,8 @@ function saveTerminalToDb(t) {
     status: t.status, started_at: t.started_at, exited_at: t.exited_at,
     pid: t.pid || null, tmux_session: t.tmux_session || null,
     claude_session_id: t.claude_session_id || null,
+    agent_type: t.agent_type || t.type || 'claude',
+    head_seq: t.eventStream ? t.eventStream.headSeq : 0,
   });
 }
 
@@ -167,7 +171,6 @@ const dispatches = new Map();
 
 // --- Terminal registry ---
 const terminals = new Map();
-const SCROLLBACK_LIMIT = 100 * 1024; // 100KB ring buffer
 
 // --- CLI session registry ---
 const cliSessions = new Map();
@@ -214,40 +217,129 @@ function cleanTmuxCapture(text) {
   return result.join('\r\n') + '\r\n';
 }
 
+// --- EventStream helpers ---
+
+function termEventLogPath(id) {
+  return join(LOGS_DIR, `T-${id}.events.jsonl`);
+}
+
+function generateSeedContent(n = 500) {
+  const lines = [];
+  const commits = ['a1b2c3d', 'e4f5g6h', '7i8j9k0', 'l1m2n3o', 'p4q5r6s'];
+  const files = ['src/index.mjs', 'src/db.mjs', 'tools/dashboard/server.mjs', 'domain/entities.md', 'portfolio/registry.json'];
+
+  for (let i = 0; i < n; i++) {
+    const r = i % 7;
+    if (r === 0) lines.push(`\x1b[33mcommit ${commits[i % commits.length]}def${i}\x1b[0m`);
+    else if (r === 1) lines.push(`Author: dev <dev@example.com>  Date: 2026-03-${(i % 28) + 1}`);
+    else if (r === 2) lines.push(`    feat: update ${files[i % files.length]} (line ${i})`);
+    else if (r === 3) lines.push('');
+    else if (r === 4) lines.push(`\x1b[36m${files[i % files.length]}\x1b[0m  ${(i * 13) % 512} bytes`);
+    else if (r === 5) lines.push(`\x1b[32m\u2713\x1b[0m compiled ${files[i % files.length]} in ${(i % 200) + 10}ms`);
+    else lines.push(`${'─'.repeat(60)} [${i}/${n}]`);
+  }
+  return lines;
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
 // Shared terminal handler wiring (used for fresh spawn and restore)
 function wireTerminalHandlers(terminal) {
   terminal.ptyProcess.onData((data) => {
-    terminal.scrollback += data;
-    if (terminal.scrollback.length > SCROLLBACK_LIMIT) {
-      const sliced = terminal.scrollback.slice(-SCROLLBACK_LIMIT);
-      const firstNewline = sliced.indexOf('\n');
-      terminal.scrollback = firstNewline > 0 ? sliced.slice(firstNewline + 1) : sliced;
+    // Append to EventStream
+    const event = terminal.eventStream.append('data', data);
+
+    // Write to JSONL log
+    try {
+      appendFileSync(termEventLogPath(terminal.id), JSON.stringify(event) + '\n');
+    } catch {}
+
+    // Broadcast to all WS subscribers
+    terminal.eventStream.broadcast(event);
+
+    // Check for Claude session ID (if not already found)
+    if (!terminal.claude_session_id && terminal._adapter) {
+      const sessionId = terminal._adapter.extractSessionId(terminal._accumulated || '', data);
+      if (sessionId) {
+        terminal.claude_session_id = sessionId;
+        terminal._accumulated = '';
+        db.updateTerminalClaudeSessionId(terminal.id, sessionId);
+        // Emit meta event
+        const metaEvent = terminal.eventStream.append('meta', { key: 'claude_session_id', value: sessionId });
+        try { appendFileSync(termEventLogPath(terminal.id), JSON.stringify(metaEvent) + '\n'); } catch {}
+        terminal.eventStream.broadcast(metaEvent);
+      } else {
+        terminal._accumulated = ((terminal._accumulated || '') + data).slice(-4096);
+      }
     }
-    // Persist to disk for restart recovery
-    if (terminal.logStream) {
-      try { terminal.logStream.write(data); } catch {}
-    }
-    for (const ws of terminal.wsClients) {
-      try { ws.send(JSON.stringify({ type: 'data', data })); } catch {}
+
+    // Readiness detection for prompt injection
+    if (terminal._pendingPrompt && !terminal._readyForPrompt && terminal._adapter) {
+      if (terminal._adapter.detectReadiness(terminal._accumulated || '', data)) {
+        terminal._readyForPrompt = true;
+        injectPrompt(terminal);
+      }
     }
   });
 
   terminal.ptyProcess.onExit(({ exitCode }) => {
     terminal.status = exitCode === 0 ? 'completed' : 'failed';
     terminal.exited_at = new Date().toISOString();
+
+    // Emit meta exit event
+    const exitEvent = terminal.eventStream.append('meta', { key: 'status', value: terminal.status });
+    try { appendFileSync(termEventLogPath(terminal.id), JSON.stringify(exitEvent) + '\n'); } catch {}
+    terminal.eventStream.broadcast(exitEvent);
+
+    // Broadcast exit to all subscribers
+    const exitMsg = JSON.stringify({ type: 'exit', code: exitCode });
+    for (const [, sub] of terminal.eventStream.subscribers) {
+      try { sub.ws.send(exitMsg); } catch {}
+    }
+    terminal.eventStream.subscribers.clear();
+
     terminal.ptyProcess = null;
-    if (terminal.logStream) { terminal.logStream.end(); terminal.logStream = null; }
     if (terminal.tmux_session) {
       try { execFileSync('tmux', ['kill-session', '-t', terminal.tmux_session], { stdio: 'ignore' }); } catch {}
     }
-    for (const ws of terminal.wsClients) {
-      try { ws.send(JSON.stringify({ type: 'exit', code: exitCode })); ws.close(); } catch {}
-    }
-    terminal.wsClients.clear();
     archiveSession(terminal, 'terminal');
     saveTerminalToDb(terminal);
     // Keep terminal in memory for frontend display; auto-cleanup timer handles removal after 10min
   });
+}
+
+async function injectPrompt(terminal) {
+  if (!terminal._pendingPrompt || !terminal.ptyProcess) return;
+  const prompt = terminal._pendingPrompt;
+  terminal._pendingPrompt = null;
+
+  // Emit injection starting meta event
+  const startEvent = terminal.eventStream.append('meta', { key: 'prompt_injection_status', value: 'injecting' });
+  try { appendFileSync(termEventLogPath(terminal.id), JSON.stringify(startEvent) + '\n'); } catch {}
+  terminal.eventStream.broadcast(startEvent);
+
+  try {
+    // Bracketed paste mode chunked delivery
+    terminal.ptyProcess.write('\x1b[200~');
+    const CHUNK_SIZE = 1024;
+    const CHUNK_DELAY = 100;
+    for (let i = 0; i < prompt.length; i += CHUNK_SIZE) {
+      const chunk = prompt.slice(i, i + CHUNK_SIZE);
+      terminal.ptyProcess.write(chunk);
+      if (i + CHUNK_SIZE < prompt.length) await sleep(CHUNK_DELAY);
+    }
+    terminal.ptyProcess.write('\x1b[201~');
+    terminal.ptyProcess.write('\r');
+
+    // Emit done meta event
+    const doneEvent = terminal.eventStream.append('meta', { key: 'prompt_injection_status', value: 'done' });
+    try { appendFileSync(termEventLogPath(terminal.id), JSON.stringify(doneEvent) + '\n'); } catch {}
+    terminal.eventStream.broadcast(doneEvent);
+  } catch {
+    const failEvent = terminal.eventStream.append('meta', { key: 'prompt_injection_status', value: 'failed' });
+    try { appendFileSync(termEventLogPath(terminal.id), JSON.stringify(failEvent) + '\n'); } catch {}
+    terminal.eventStream.broadcast(failEvent);
+  }
 }
 
 // Broadcast a JSONL line to all dispatch WebSocket clients
@@ -393,9 +485,22 @@ function restoreSessions() {
   }
 
   for (const t of db.getPersistedTerminals()) {
+    // Load EventStream from JSONL log
+    const eventLogPath = termEventLogPath(t.id);
+    let eventStream;
+    if (existsSync(eventLogPath)) {
+      const content = readFileSync(eventLogPath, 'utf8');
+      eventStream = EventStream.fromJSONL(content, t.id);
+    } else {
+      eventStream = new EventStream(t.id);
+    }
+
     if (t.status === 'suspended') {
       // Suspended terminals: load into memory as-is (no running process)
-      terminals.set(t.id, { ...t, ptyProcess: null, scrollback: '', wsClients: new Set() });
+      terminals.set(t.id, {
+        ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
+        cols: t.cols || 80, rows: t.rows || 24,
+      });
       continue;
     }
     if (t.status === 'running') {
@@ -404,28 +509,18 @@ function restoreSessions() {
         reconnectedTerminals++;
         try {
           const ptyProcess = pty.spawn('tmux', ['attach-session', '-t', t.tmux_session], {
-            name: 'xterm-256color', cols: 80, rows: 24,
+            name: 'xterm-256color', cols: t.cols || 80, rows: t.rows || 24,
             env: { ...process.env, TERM: 'xterm-256color' },
           });
-          // Prefer persisted log file over tmux capture (more complete, preserves escape sequences)
-          const logPath = join(LOGS_DIR, `${t.id}.raw`);
-          let scrollback = '';
-          try {
-            scrollback = readFileSync(logPath, 'utf8');
-            if (scrollback.length > SCROLLBACK_LIMIT) {
-              const sliced = scrollback.slice(-SCROLLBACK_LIMIT);
-              const firstNewline = sliced.indexOf('\n');
-              scrollback = firstNewline > 0 ? sliced.slice(firstNewline + 1) : sliced;
-            }
-          } catch {
-            scrollback = captureTmuxScrollback(t.tmux_session);
-          }
           const terminal = {
             ...t,
             ptyProcess,
-            scrollback,
-            logStream: createWriteStream(logPath, { flags: 'a' }),
-            wsClients: new Set(),
+            eventStream,
+            wsClients: eventStream.subscribers,
+            cols: t.cols || 80,
+            rows: t.rows || 24,
+            _adapter: getAdapter(t.agent_type || 'claude'),
+            _accumulated: '',
           };
           wireTerminalHandlers(terminal);
           terminals.set(t.id, terminal);
@@ -437,43 +532,36 @@ function restoreSessions() {
           t.exited_at = now;
           db.updateTerminalStatus(t.id, 'interrupted', now);
           archiveSession(t, 'terminal');
-          terminals.set(t.id, { ...t, ptyProcess: null, scrollback: '', wsClients: new Set() });
+          terminals.set(t.id, {
+            ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
+            cols: t.cols || 80, rows: t.rows || 24,
+          });
         }
       } else if (t.pid && isPidAlive(t.pid)) {
         // PID alive but no tmux — alive but detached
         reconnectedTerminals++;
         terminals.set(t.id, {
-          ...t, ptyProcess: null, scrollback: '', wsClients: new Set(),
-          alive_but_detached: true,
+          ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
+          alive_but_detached: true, cols: t.cols || 80, rows: t.rows || 24,
         });
         console.log(`Terminal ${t.id}: PID ${t.pid} alive but no tmux — marked as detached`);
       } else {
-        // Dead — mark interrupted, load scrollback for display
+        // Dead — mark interrupted
         interruptedTerminals++;
         t.status = 'interrupted';
         t.exited_at = now;
         db.updateTerminalStatus(t.id, 'interrupted', now);
-        const logPath = join(LOGS_DIR, `${t.id}.raw`);
-        let scrollback = '';
-        try { scrollback = readFileSync(logPath, 'utf8'); } catch {}
-        if (scrollback.length > SCROLLBACK_LIMIT) {
-          const sliced = scrollback.slice(-SCROLLBACK_LIMIT);
-          const firstNewline = sliced.indexOf('\n');
-          scrollback = firstNewline > 0 ? sliced.slice(firstNewline + 1) : sliced;
-        }
-        terminals.set(t.id, { ...t, ptyProcess: null, scrollback, wsClients: new Set() });
+        terminals.set(t.id, {
+          ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
+          cols: t.cols || 80, rows: t.rows || 24,
+        });
       }
     } else {
-      // Non-running terminal (completed/failed/killed/interrupted) — load into memory with scrollback
-      const logPath = join(LOGS_DIR, `${t.id}.raw`);
-      let scrollback = '';
-      try { scrollback = readFileSync(logPath, 'utf8'); } catch {}
-      if (scrollback.length > SCROLLBACK_LIMIT) {
-        const sliced = scrollback.slice(-SCROLLBACK_LIMIT);
-        const firstNewline = sliced.indexOf('\n');
-        scrollback = firstNewline > 0 ? sliced.slice(firstNewline + 1) : sliced;
-      }
-      terminals.set(t.id, { ...t, ptyProcess: null, scrollback, wsClients: new Set() });
+      // Non-running terminal (completed/failed/killed/interrupted) — load into memory with EventStream
+      terminals.set(t.id, {
+        ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
+        cols: t.cols || 80, rows: t.rows || 24,
+      });
     }
   }
 
@@ -1904,9 +1992,17 @@ const routes = [
   // Create terminal session
   [/^\/api\/terminal$/, 'POST', async (_m, req, res) => {
     const body = await parseBody(req);
-    const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode } = body;
+    const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode, agentType: bodyAgentType } = body;
 
     if (!project_key) return err(res, 'project_key is required', 400);
+
+    const agentType = bodyAgentType || 'claude';
+    let adapter;
+    try {
+      adapter = getAdapter(agentType);
+    } catch (e) {
+      return err(res, e.message, 400);
+    }
 
     const projectPath = await resolveProjectPath(project_key);
     if (!projectPath) return err(res, `Could not resolve path for project: ${project_key}`, 400);
@@ -1952,65 +2048,105 @@ const routes = [
     const resolvedTermPermMode = permission_mode || 'acceptEdits';
     const resolvedTermSkipPerms = skip_permissions === true || skip_permissions === 'true';
 
+    // Create EventStream and inject seed content before PTY starts
+    const eventStream = new EventStream(id);
+    await mkdir(LOGS_DIR, { recursive: true });
+    const seedLines = generateSeedContent(500);
+    for (const line of seedLines) {
+      const seedEvent = eventStream.append('data', line + '\r\n', { synthetic: true });
+      try { appendFileSync(termEventLogPath(id), JSON.stringify(seedEvent) + '\n'); } catch {}
+    }
+
     // Spawn interactive PTY with claude, optionally wrapped in tmux for restart survival
     let ptyProcess;
     let tmuxName = null;
     let agentsFile = null;
     const claudeSessionId = crypto.randomUUID();
     try {
-      const ptyArgs = ['--session-id', claudeSessionId];
-      ptyArgs.push('--permission-mode', resolvedTermPermMode === 'plan' ? 'plan' : 'acceptEdits');
-      if (resolvedTermSkipPerms) {
-        ptyArgs.push('--dangerously-skip-permissions');
-      }
-      ptyArgs.push('--add-dir', ROOT);
-      if (termAgentDefs.length) {
-        if (TMUX_AVAILABLE) {
-          // Write agents JSON to temp file to avoid ARG_MAX overflow in tmux
-          const tmpDir = join(ROOT, 'tmp');
-          try { await mkdir(tmpDir, { recursive: true }); } catch {}
-          agentsFile = join(tmpDir, `agents-${id}.json`);
-          writeFileSync(agentsFile, JSON.stringify(termAgentDefs));
-        } else {
-          ptyArgs.push('--agents', JSON.stringify(termAgentDefs));
-        }
-      }
+      const ptyArgs = adapter.buildArgs(claudeSessionId, {
+        permissionMode: resolvedTermPermMode,
+        skipPermissions: resolvedTermSkipPerms,
+        addDir: ROOT,
+        agentsJson: null, // will be set below if needed
+      });
 
-      if (TMUX_AVAILABLE) {
-        tmuxName = `architect-${id}`;
-        // Build shell command that reads agents from temp file to stay within ARG_MAX
-        const cliParts = [CLAUDE_BIN, ...ptyArgs.map(a => `'${a.replace(/'/g, "'\\''")}'`)];
-        if (agentsFile) {
-          cliParts.push('--agents', `"$(cat '${agentsFile}')"`);
+      if (agentType === 'claude') {
+        if (termAgentDefs.length) {
+          if (TMUX_AVAILABLE) {
+            // Write agents JSON to temp file to avoid ARG_MAX overflow in tmux
+            const tmpDir = join(ROOT, 'tmp');
+            try { await mkdir(tmpDir, { recursive: true }); } catch {}
+            agentsFile = join(tmpDir, `agents-${id}.json`);
+            writeFileSync(agentsFile, JSON.stringify(termAgentDefs));
+          } else {
+            ptyArgs.push('--agents', JSON.stringify(termAgentDefs));
+          }
         }
-        const shellCmd = cliParts.join(' ');
-        // Create detached tmux session running claude via shell wrapper
-        execFileSync('tmux', [
-          'new-session', '-d', '-s', tmuxName, '-x', '80', '-y', '24',
-          'sh', '-c', shellCmd,
-        ], { cwd: projectPath, env: { ...process.env, ARCHITECT_ROOT: ROOT } });
-        // Attach node-pty to the tmux session for WebSocket streaming
-        ptyProcess = pty.spawn('tmux', ['attach-session', '-t', tmuxName], {
-          name: 'xterm-256color', cols: 80, rows: 24,
-          cwd: projectPath,
-          env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT },
-        });
+
+        if (TMUX_AVAILABLE) {
+          tmuxName = `architect-${id}`;
+          // Build shell command that reads agents from temp file to stay within ARG_MAX
+          const cliParts = [CLAUDE_BIN, ...ptyArgs.map(a => `'${a.replace(/'/g, "'\\''")}'`)];
+          if (agentsFile) {
+            cliParts.push('--agents', `"$(cat '${agentsFile}')"`);
+          }
+          const shellCmd = cliParts.join(' ');
+          // Create detached tmux session running claude via shell wrapper
+          execFileSync('tmux', [
+            'new-session', '-d', '-s', tmuxName, '-x', '80', '-y', '24',
+            'sh', '-c', shellCmd,
+          ], { cwd: projectPath, env: { ...process.env, ARCHITECT_ROOT: ROOT } });
+          // Attach node-pty to the tmux session for WebSocket streaming
+          ptyProcess = pty.spawn('tmux', ['attach-session', '-t', tmuxName], {
+            name: 'xterm-256color', cols: 80, rows: 24,
+            cwd: projectPath,
+            env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT },
+          });
+        } else {
+          ptyProcess = pty.spawn(CLAUDE_BIN, ptyArgs, {
+            name: 'xterm-256color', cols: 80, rows: 24,
+            cwd: projectPath,
+            env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT },
+          });
+        }
+      } else if (agentType === 'shell') {
+        const shellBin = process.env.SHELL || '/bin/zsh';
+        if (TMUX_AVAILABLE) {
+          tmuxName = `architect-${id}`;
+          execFileSync('tmux', [
+            'new-session', '-d', '-s', tmuxName, '-x', '80', '-y', '24', shellBin,
+          ], { cwd: projectPath });
+          ptyProcess = pty.spawn('tmux', ['attach-session', '-t', tmuxName], {
+            name: 'xterm-256color', cols: 80, rows: 24,
+            cwd: projectPath,
+            env: { ...process.env, TERM: 'xterm-256color' },
+          });
+        } else {
+          ptyProcess = pty.spawn(shellBin, [], {
+            name: 'xterm-256color', cols: 80, rows: 24,
+            cwd: projectPath,
+            env: { ...process.env, TERM: 'xterm-256color' },
+          });
+        }
       } else {
-        ptyProcess = pty.spawn(CLAUDE_BIN, ptyArgs, {
+        // Other adapters: spawn shell as fallback
+        const shellBin = process.env.SHELL || '/bin/zsh';
+        ptyProcess = pty.spawn(shellBin, [], {
           name: 'xterm-256color', cols: 80, rows: 24,
           cwd: projectPath,
-          env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT },
+          env: { ...process.env, TERM: 'xterm-256color' },
         });
       }
-    } catch (err) {
+    } catch (spawnErr) {
       // Clean up tmux session on failure
       if (tmuxName) { try { execFileSync('tmux', ['kill-session', '-t', tmuxName], { stdio: 'ignore' }); } catch {} }
-      return json(res, { error: `Failed to spawn terminal: ${err.message}` }, 500);
+      return json(res, { error: `Failed to spawn terminal: ${spawnErr.message}` }, 500);
     }
 
     const terminal = {
       id,
-      type: 'claude',
+      type: agentType,
+      agent_type: agentType,
       work_item_id: work_item_id || null,
       epic_id: epic_id || null,
       project_key,
@@ -2024,73 +2160,74 @@ const routes = [
         ? parseInt(execFileSync('tmux', ['display-message', '-t', tmuxName, '-p', '#{pane_pid}'], { encoding: 'utf8' }).trim(), 10)
         : ptyProcess.pid,
       tmux_session: tmuxName,
-      claude_session_id: claudeSessionId,
+      claude_session_id: agentType === 'claude' ? claudeSessionId : null,
       agents_file: agentsFile,
-      scrollback: '',
-      logStream: createWriteStream(join(LOGS_DIR, `${id}.raw`), { flags: 'a' }),
-      wsClients: new Set(),
+      eventStream,
+      wsClients: eventStream.subscribers,
+      cols: 80,
+      rows: 24,
+      _adapter: adapter,
+      _accumulated: '',
+      _pendingPrompt: agentType === 'claude' ? prompt : null,
+      _readyForPrompt: agentType !== 'claude', // shell is immediately ready
       started_at: new Date().toISOString(),
       exited_at: null,
     };
 
     wireTerminalHandlers(terminal);
 
-    // Write prompt to PTY using readiness-gated chunked delivery.
-    // Wait for Claude to emit output (ready indicator), then write in chunks
-    // to avoid PTY buffer overflow (macOS default ~4KB).
-    // Uses bracketed paste mode to suppress character-by-character echo.
-    const CHUNK_SIZE = 1024;
-    const CHUNK_DELAY = 100;
-    const MAX_WAIT = tmuxName ? 8000 : 5000;
-    let promptWritten = false;
-
-    async function writePromptChunked(ptyProc) {
-      if (promptWritten) return;
-      promptWritten = true;
-      // Bracketed paste: tells terminal to treat content as pasted text (no per-char echo)
-      ptyProc.write('\x1b[200~');
-      for (let i = 0; i < prompt.length; i += CHUNK_SIZE) {
-        const chunk = prompt.slice(i, i + CHUNK_SIZE);
-        ptyProc.write(chunk);
-        if (i + CHUNK_SIZE < prompt.length) {
-          await new Promise(r => setTimeout(r, CHUNK_DELAY));
-        }
-      }
-      ptyProc.write('\x1b[201~');
-      ptyProc.write('\r');
+    // For shell: no prompt injection needed
+    // For claude: injectPrompt is triggered by detectReadiness in wireTerminalHandlers
+    // For claude with shell fallback: inject immediately after first data
+    if (agentType === 'shell') {
+      // No prompt to inject
     }
 
-    // Listen for first output data as readiness signal
-    const onData = terminal.ptyProcess.onData(() => {
-      onData.dispose();
-      writePromptChunked(terminal.ptyProcess);
-    });
-
-    // Fallback: write after MAX_WAIT if no output received
-    setTimeout(() => {
-      if (!promptWritten && terminal.ptyProcess) {
-        onData.dispose();
-        writePromptChunked(terminal.ptyProcess);
-      }
-    }, MAX_WAIT);
+    // Fallback: if claude readiness never fires, inject after MAX_WAIT
+    if (agentType === 'claude') {
+      const MAX_WAIT = tmuxName ? 8000 : 5000;
+      setTimeout(() => {
+        if (terminal._pendingPrompt && terminal.ptyProcess) {
+          terminal._readyForPrompt = true;
+          injectPrompt(terminal);
+        }
+      }, MAX_WAIT);
+    }
 
     terminals.set(id, terminal);
     saveTerminalToDb(terminal);
     json(res, { terminal_id: id, status: 'running' });
   }],
 
-  // Spawn plain shell terminal (no Claude)
+  // Spawn plain shell terminal — backwards-compatible alias that delegates to main handler with agentType:'shell'
   [/^\/api\/terminal\/shell$/, 'POST', async (_m, req, res) => {
     const body = await parseBody(req);
-    const { project_key, work_item_id, epic_id, title } = body;
-
+    // Inject agentType and default title, then re-use main terminal handler
+    const enriched = { ...body, agentType: 'shell', title: body.title || 'Shell' };
+    // Reconstruct a fake request with the enriched body
+    const fakeReq = Object.create(req);
+    fakeReq[Symbol.for('parsedBody')] = enriched;
+    const originalParseBody = req._parsedBody;
+    // Delegate by calling the main POST /api/terminal handler logic inline
+    const project_key = enriched.project_key;
     if (!project_key) return err(res, 'project_key is required', 400);
 
     const projectPath = await resolveProjectPath(project_key);
     if (!projectPath) return err(res, `Could not resolve path for project: ${project_key}`, 400);
 
+    const { work_item_id, epic_id, title } = enriched;
     const id = `T-${Date.now()}`;
+    const adapter = getAdapter('shell');
     const shellBin = process.env.SHELL || '/bin/zsh';
+
+    // Create EventStream and inject seed content
+    const eventStream = new EventStream(id);
+    await mkdir(LOGS_DIR, { recursive: true });
+    const seedLines = generateSeedContent(500);
+    for (const line of seedLines) {
+      const seedEvent = eventStream.append('data', line + '\r\n', { synthetic: true });
+      try { appendFileSync(termEventLogPath(id), JSON.stringify(seedEvent) + '\n'); } catch {}
+    }
 
     let ptyProcess;
     let tmuxName = null;
@@ -2120,27 +2257,35 @@ const routes = [
     const terminal = {
       id,
       type: 'shell',
+      agent_type: 'shell',
       work_item_id: work_item_id || null,
       epic_id: epic_id || null,
       project_key,
       project_path: projectPath,
       title: title || 'Shell',
       permission_mode: 'acceptEdits',
+      skip_permissions: false,
       status: 'running',
       ptyProcess,
       pid: tmuxName
         ? parseInt(execFileSync('tmux', ['display-message', '-t', tmuxName, '-p', '#{pane_pid}'], { encoding: 'utf8' }).trim(), 10)
         : ptyProcess.pid,
       tmux_session: tmuxName,
-      scrollback: '',
-      logStream: createWriteStream(join(LOGS_DIR, `${id}.raw`), { flags: 'a' }),
-      wsClients: new Set(),
+      claude_session_id: null,
+      agents_file: null,
+      eventStream,
+      wsClients: eventStream.subscribers,
+      cols: 80,
+      rows: 24,
+      _adapter: adapter,
+      _accumulated: '',
+      _pendingPrompt: null,
+      _readyForPrompt: true,
       started_at: new Date().toISOString(),
       exited_at: null,
     };
 
     wireTerminalHandlers(terminal);
-
     terminals.set(id, terminal);
     saveTerminalToDb(terminal);
     json(res, { terminal_id: id, status: 'running' });
@@ -2150,10 +2295,10 @@ const routes = [
   [/^\/api\/terminal\/active$/, 'GET', async (_m, _req, res) => {
     const list = [];
     for (const [id, t] of terminals) {
-      const scrollLines = t.scrollback ? t.scrollback.split('\n').filter(l => l.trim()).slice(-3) : [];
       list.push({
         id,
         type: t.type || 'claude',
+        agent_type: t.agent_type || t.type || 'claude',
         work_item_id: t.work_item_id,
         epic_id: t.epic_id || null,
         project_key: t.project_key,
@@ -2162,10 +2307,11 @@ const routes = [
         status: t.status,
         started_at: t.started_at,
         exited_at: t.exited_at,
-        last_output: scrollLines,
+        last_output: [],
         permission_mode: t.permission_mode || 'acceptEdits',
         skip_permissions: t.skip_permissions || false,
         claude_session_id: t.claude_session_id || null,
+        head_seq: t.eventStream ? t.eventStream.headSeq : 0,
       });
     }
     json(res, list);
@@ -2185,14 +2331,16 @@ const routes = [
       }
       terminal.status = 'killed';
       terminal.exited_at = new Date().toISOString();
-      if (terminal.logStream) { terminal.logStream.end(); terminal.logStream = null; }
-      for (const ws of terminal.wsClients) {
-        try { ws.send(JSON.stringify({ type: 'exit', code: -1 })); ws.close(); } catch {}
+      const exitMsg = JSON.stringify({ type: 'exit', code: -1 });
+      if (terminal.eventStream) {
+        for (const [, sub] of terminal.eventStream.subscribers) {
+          try { sub.ws.send(exitMsg); sub.ws.close(); } catch {}
+        }
+        terminal.eventStream.subscribers.clear();
       }
-      terminal.wsClients.clear();
       archiveSession(terminal, 'terminal');
       saveTerminalToDb(terminal);
-      unlinkFile(join(LOGS_DIR, `${terminal.id}.raw`)).catch(() => {});
+      unlinkFile(termEventLogPath(terminal.id)).catch(() => {});
       killed++;
     }
     json(res, { killed });
@@ -2211,16 +2359,18 @@ const routes = [
     }
     terminal.status = 'killed';
     terminal.exited_at = new Date().toISOString();
-    if (terminal.logStream) { terminal.logStream.end(); terminal.logStream = null; }
-    for (const ws of terminal.wsClients) {
-      try { ws.send(JSON.stringify({ type: 'exit', code: -1 })); ws.close(); } catch {}
+    const killMsg = JSON.stringify({ type: 'exit', code: -1 });
+    if (terminal.eventStream) {
+      for (const [, sub] of terminal.eventStream.subscribers) {
+        try { sub.ws.send(killMsg); sub.ws.close(); } catch {}
+      }
+      terminal.eventStream.subscribers.clear();
     }
-    terminal.wsClients.clear();
     archiveSession(terminal, 'terminal');
     if (terminal.agents_file) unlinkFile(terminal.agents_file).catch(() => {});
     terminals.delete(m[1]);
     db.deleteTerminal(m[1]);
-    unlinkFile(join(LOGS_DIR, `${m[1]}.raw`)).catch(() => {});
+    unlinkFile(termEventLogPath(m[1])).catch(() => {});
     json(res, { status: 'killed', id: m[1] });
   }],
 
@@ -2238,11 +2388,13 @@ const routes = [
     }
     terminal.status = 'suspended';
     terminal.exited_at = new Date().toISOString();
-    if (terminal.logStream) { terminal.logStream.end(); terminal.logStream = null; }
-    for (const ws of terminal.wsClients) {
-      try { ws.send(JSON.stringify({ type: 'suspended' })); ws.close(); } catch {}
+    const suspendMsg = JSON.stringify({ type: 'suspended' });
+    if (terminal.eventStream) {
+      for (const [, sub] of terminal.eventStream.subscribers) {
+        try { sub.ws.send(suspendMsg); sub.ws.close(); } catch {}
+      }
+      terminal.eventStream.subscribers.clear();
     }
-    terminal.wsClients.clear();
     terminal.ptyProcess = null;
     archiveSession(terminal, 'terminal');
     saveTerminalToDb(terminal);
@@ -2302,9 +2454,18 @@ const routes = [
       return err(res, `Failed to spawn resumed terminal: ${e.message}`, 500);
     }
 
+    const resumeEventStream = new EventStream(id);
+    await mkdir(LOGS_DIR, { recursive: true });
+    const resumeSeedLines = generateSeedContent(500);
+    for (const line of resumeSeedLines) {
+      const seedEvent = resumeEventStream.append('data', line + '\r\n', { synthetic: true });
+      try { appendFileSync(termEventLogPath(id), JSON.stringify(seedEvent) + '\n'); } catch {}
+    }
+
     const terminal = {
       id,
       type: 'claude',
+      agent_type: 'claude',
       work_item_id,
       epic_id,
       project_key,
@@ -2320,9 +2481,14 @@ const routes = [
       tmux_session: tmuxName,
       claude_session_id: resumeSessionId,
       agents_file: null,
-      scrollback: '',
-      logStream: createWriteStream(join(LOGS_DIR, `${id}.raw`), { flags: 'a' }),
-      wsClients: new Set(),
+      eventStream: resumeEventStream,
+      wsClients: resumeEventStream.subscribers,
+      cols: 80,
+      rows: 24,
+      _adapter: getAdapter('claude'),
+      _accumulated: '',
+      _pendingPrompt: null,
+      _readyForPrompt: true,
       started_at: new Date().toISOString(),
       exited_at: null,
     };
@@ -2331,6 +2497,42 @@ const routes = [
     terminals.set(id, terminal);
     saveTerminalToDb(terminal);
     json(res, { terminal_id: id, status: 'running', resumed_from: m[1] });
+  }],
+
+  // Get EventStream events for a terminal (HTTP snapshot, for tests and reconnect)
+  [/^\/api\/terminal\/([A-Za-z0-9_-]+)\/events$/, 'GET', async (m, req, res) => {
+    const terminal = terminals.get(m[1]);
+    if (!terminal) return err(res, 'terminal not found', 404);
+    const url = new URL(req.url, 'http://localhost');
+    const from = parseInt(url.searchParams.get('from') || '0', 10);
+    const to = parseInt(url.searchParams.get('to') || String(terminal.eventStream.headSeq), 10);
+    const { snapshot, snapshotSeq, events } = terminal.eventStream.replayFrom(from);
+    const filtered = events.filter(e => e.seq <= to).slice(0, 1000);
+    json(res, {
+      terminal_id: terminal.id,
+      head_seq: terminal.eventStream.headSeq,
+      raw_bytes: terminal.eventStream.rawBytes,
+      snapshot: snapshot || null,
+      snapshot_seq: snapshotSeq,
+      events: filtered,
+    });
+  }],
+
+  // Inject a prompt into a running terminal
+  [/^\/api\/terminal\/([A-Za-z0-9_-]+)\/inject$/, 'POST', async (m, req, res) => {
+    const terminal = terminals.get(m[1]);
+    if (!terminal) return err(res, 'terminal not found', 404);
+    if (terminal.status !== 'running') return err(res, 'terminal not running', 400);
+    if (terminal._pendingPrompt) return err(res, 'injection already pending', 409);
+
+    const body = await parseBody(req);
+    const { prompt } = body;
+    if (!prompt) return err(res, 'prompt required', 400);
+
+    terminal._pendingPrompt = prompt;
+    terminal._readyForPrompt = true;
+    await injectPrompt(terminal);
+    json(res, { status: 'done' });
   }],
 
   // --- Projects & Time Report endpoints ---
@@ -2564,8 +2766,10 @@ const routes = [
     for (const [id, t] of terminals) {
       if (t.ptyProcess) try { t.ptyProcess.kill('SIGHUP'); } catch {}
       if (t.tmux_session && TMUX_AVAILABLE) try { execFileSync('tmux', ['kill-session', '-t', t.tmux_session], { stdio: 'ignore' }); } catch {}
-      if (t.logStream) try { t.logStream.end(); } catch {}
-      for (const ws of t.wsClients) { try { ws.close(); } catch {} }
+      if (t.eventStream) {
+        for (const [, sub] of t.eventStream.subscribers) { try { sub.ws.close(); } catch {} }
+        t.eventStream.subscribers.clear();
+      }
       db.deleteTerminal(id);
     }
     dispatches.clear();
@@ -2591,15 +2795,48 @@ const routes = [
     json(res, { appended: lines.length });
   }],
 
-  // Seed a terminal with scrollback content (no real PTY)
+  // Seed a terminal with EventStream content (no real PTY)
   [/^\/api\/test\/seed-terminal$/, 'POST', async (_m, req, res) => {
     const body = await parseBody(req);
-    const { id, scrollback, status, claude_session_id } = body;
-    if (!id) return err(res, 'id is required', 400);
+    const { scrollback, status, claude_session_id, lines, withFakeContent, withInjectionEvents, ansiColors } = body;
+    const id = body.id || `T-${Date.now()}`;
+
+    await mkdir(LOGS_DIR, { recursive: true });
+    const eventStream = new EventStream(id);
+
+    // Support legacy scrollback field for backwards compatibility
+    if (scrollback) {
+      const event = eventStream.append('data', scrollback);
+      try { appendFileSync(termEventLogPath(id), JSON.stringify(event) + '\n'); } catch {}
+    }
+
+    // Generate fake content if requested
+    if (withFakeContent) {
+      const fakeLines = generateSeedContent(lines || 200);
+      for (const line of fakeLines) {
+        const event = eventStream.append('data', line + '\r\n', { synthetic: true });
+        try { appendFileSync(termEventLogPath(id), JSON.stringify(event) + '\n'); } catch {}
+      }
+    }
+
+    // Inject claude session ID meta event if provided
+    if (claude_session_id) {
+      const metaEvent = eventStream.append('meta', { key: 'claude_session_id', value: claude_session_id });
+      try { appendFileSync(termEventLogPath(id), JSON.stringify(metaEvent) + '\n'); } catch {}
+    }
+
+    // Inject prompt injection lifecycle events if requested
+    if (withInjectionEvents) {
+      for (const val of ['injecting', 'done']) {
+        const evt = eventStream.append('meta', { key: 'prompt_injection_status', value: val });
+        try { appendFileSync(termEventLogPath(id), JSON.stringify(evt) + '\n'); } catch {}
+      }
+    }
 
     const terminal = {
       id,
       type: 'claude',
+      agent_type: 'claude',
       work_item_id: null,
       epic_id: null,
       project_key: 'test/test/main',
@@ -2612,14 +2849,55 @@ const routes = [
       skip_permissions: false,
       claude_session_id: claude_session_id || null,
       ptyProcess: null,
-      scrollback: scrollback || '',
-      wsClients: new Set(),
+      eventStream,
+      wsClients: eventStream.subscribers,
+      cols: 80,
+      rows: 24,
       tmux_session: null,
     };
 
     terminals.set(id, terminal);
     saveTerminalToDb(terminal);
     json(res, { terminal_id: id, status: terminal.status });
+  }],
+
+  // Pump live events into a seeded terminal
+  [/^\/api\/test\/seed-terminal\/pump$/, 'POST', async (_m, req, res) => {
+    const body = await parseBody(req);
+    const { terminalId, linesPerSecond = 2, duration = 10 } = body;
+    const terminal = terminals.get(terminalId);
+    if (!terminal) return err(res, 'terminal not found', 404);
+
+    const intervalMs = Math.floor(1000 / linesPerSecond);
+    let count = 0;
+    const maxLines = linesPerSecond * duration;
+
+    const iv = setInterval(() => {
+      if (count >= maxLines || terminal.status !== 'running') {
+        clearInterval(iv);
+        return;
+      }
+      const line = `pump-line-${count++} ts=${Date.now()}\r\n`;
+      const event = terminal.eventStream.append('data', line);
+      try { appendFileSync(termEventLogPath(terminal.id), JSON.stringify(event) + '\n'); } catch {}
+      terminal.eventStream.broadcast(event);
+    }, intervalMs);
+
+    json(res, { status: 'pumping', terminalId, linesPerSecond, duration });
+  }],
+
+  // Return full EventStream state for a terminal (test inspection)
+  [/^\/api\/test\/terminal\/([A-Za-z0-9_-]+)\/event-stream$/, 'GET', async (m, _req, res) => {
+    const terminal = terminals.get(m[1]);
+    if (!terminal) return err(res, 'terminal not found', 404);
+    json(res, {
+      terminal_id: terminal.id,
+      head_seq: terminal.eventStream.headSeq,
+      raw_bytes: terminal.eventStream.rawBytes,
+      snapshot: terminal.eventStream.snapshot,
+      snapshot_seq: terminal.eventStream.snapshotSeq,
+      events: terminal.eventStream.events,
+    });
   }],
 
   // Test endpoint: spawn a real PTY terminal with a large prompt written to it,
@@ -2643,14 +2921,21 @@ const routes = [
       return json(res, { error: `Failed to spawn: ${e.message}` }, 500);
     }
 
+    const promptEventStream = new EventStream(id);
     const terminal = {
-      id, type: 'claude', work_item_id: null, epic_id: null,
+      id, type: 'claude', agent_type: 'claude', work_item_id: null, epic_id: null,
       project_key: 'test/test/main', project_path: ROOT,
       title: `Prompt delivery test ${id}`,
       status: 'running', ptyProcess, pid: ptyProcess.pid,
       tmux_session: null, claude_session_id: null,
-      agents_file: null, scrollback: '',
-      logStream: null, wsClients: new Set(),
+      agents_file: null,
+      eventStream: promptEventStream,
+      wsClients: promptEventStream.subscribers,
+      cols: 120, rows: 24,
+      _adapter: getAdapter('claude'),
+      _accumulated: '',
+      _pendingPrompt: null,
+      _readyForPrompt: true,
       started_at: new Date().toISOString(), exited_at: null,
       permission_mode: 'plan', skip_permissions: false,
     };
@@ -2831,7 +3116,7 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
 
-  // Terminal WebSocket: push scrollback then bridge live PTY I/O
+  // Terminal WebSocket: EventStream protocol (stream-start → replay → stream-live → live events)
   const match = url.pathname.match(/^\/api\/terminal\/([A-Za-z0-9_-]+)\/ws$/);
   if (!match) {
     socket.destroy();
@@ -2843,56 +3128,74 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
   wss.handleUpgrade(req, socket, head, (ws) => {
-    // Immediately push scrollback from memory — no waiting for client 'ready'.
-    // Client buffers messages until xterm is initialized.
-    const dims = terminal.ptyProcess
-      ? { cols: terminal.ptyProcess.cols, rows: terminal.ptyProcess.rows }
-      : { cols: 80, rows: 24 };
+    // Parse ?from= query param for reconnect
+    const fromSeq = Math.max(0, parseInt(url.searchParams.get('from') || '0', 10));
 
-    let scrollbackData = '';
-    if (terminal.scrollback) {
-      scrollbackData = cleanTmuxCapture(terminal.scrollback);
+    const dims = {
+      cols: terminal.cols || (terminal.ptyProcess ? terminal.ptyProcess.cols : 80),
+      rows: terminal.rows || (terminal.ptyProcess ? terminal.ptyProcess.rows : 24),
+    };
+
+    // Send stream-start
+    try {
+      ws.send(JSON.stringify({
+        type: 'stream-start',
+        headSeq: terminal.eventStream.headSeq,
+        rawBytes: terminal.eventStream.rawBytes,
+        cols: dims.cols,
+        rows: dims.rows,
+      }));
+    } catch {}
+
+    // Replay: snapshot + events from fromSeq
+    const { snapshot, snapshotSeq, events } = terminal.eventStream.replayFrom(fromSeq);
+
+    if (snapshot) {
+      try { ws.send(JSON.stringify({ type: 'snapshot', data: snapshot, upToSeq: snapshotSeq })); } catch {}
     }
 
-    if (scrollbackData) {
-      const SCROLL_CHUNK = 8 * 1024;
-      try { ws.send(JSON.stringify({ type: 'scrollback-start', total: scrollbackData.length, cols: dims.cols, rows: dims.rows })); } catch {}
-      for (let i = 0; i < scrollbackData.length; i += SCROLL_CHUNK) {
-        const chunk = scrollbackData.slice(i, i + SCROLL_CHUNK);
-        const done = Math.min(i + SCROLL_CHUNK, scrollbackData.length);
-        try { ws.send(JSON.stringify({ type: 'scrollback', data: chunk, offset: i, total: scrollbackData.length, done })); } catch {}
-      }
-      try { ws.send(JSON.stringify({ type: 'scrollback-end', cols: dims.cols, rows: dims.rows })); } catch {}
-    } else {
-      try { ws.send(JSON.stringify({ type: 'scrollback-end', cols: dims.cols, rows: dims.rows })); } catch {}
+    for (const event of events) {
+      try {
+        ws.send(JSON.stringify({ type: 'event', seq: event.seq, eventType: event.type, payload: event.payload, ts: event.ts }));
+      } catch {}
     }
+
+    // Send stream-live
+    try { ws.send(JSON.stringify({ type: 'stream-live' })); } catch {}
+
+    // If terminal already exited, send exit and close
     if (terminal.status !== 'running') {
-      try { ws.send(JSON.stringify({ type: 'exit', code: 0 })); } catch {}
+      try { ws.send(JSON.stringify({ type: 'exit', code: terminal.status === 'completed' ? 0 : 1 })); } catch {}
+      ws.close();
+      return;
     }
 
-    terminal.wsClients.add(ws);
+    // Register subscriber
+    const clientId = `${Date.now()}-${Math.random()}`;
+    terminal.eventStream.subscribers.set(clientId, { ws, lastSeq: terminal.eventStream.headSeq });
 
     ws.on('message', (raw) => {
       try {
         const msg = JSON.parse(raw.toString());
         if (msg.type === 'input' && terminal.ptyProcess) {
           terminal.ptyProcess.write(msg.data);
-        } else if (msg.type === 'resize' && terminal.ptyProcess && msg.cols && msg.rows) {
+        } else if (msg.type === 'resize' && msg.cols && msg.rows) {
           clearTimeout(terminal._resizeTimer);
           terminal._resizeTimer = setTimeout(() => {
-            if (terminal.ptyProcess) {
-              terminal.ptyProcess.resize(msg.cols, msg.rows);
-              for (const client of terminal.wsClients) {
-                try { client.send(JSON.stringify({ type: 'dims', cols: msg.cols, rows: msg.rows })); } catch {}
-              }
-            }
+            terminal.cols = msg.cols;
+            terminal.rows = msg.rows;
+            if (terminal.ptyProcess) terminal.ptyProcess.resize(msg.cols, msg.rows);
+            // Broadcast resize event to all subscribers
+            const resizeEvent = terminal.eventStream.append('resize', { cols: msg.cols, rows: msg.rows });
+            try { appendFileSync(termEventLogPath(terminal.id), JSON.stringify(resizeEvent) + '\n'); } catch {}
+            terminal.eventStream.broadcast(resizeEvent);
           }, 50);
         }
       } catch {}
     });
 
     ws.on('close', () => {
-      terminal.wsClients.delete(ws);
+      terminal.eventStream.subscribers.delete(clientId);
     });
   });
 });
@@ -2909,13 +3212,15 @@ setInterval(() => {
       if (!tmuxAlive && !pidAlive) {
         terminal.status = 'interrupted';
         terminal.exited_at = new Date().toISOString();
-        if (terminal.logStream) { terminal.logStream.end(); terminal.logStream = null; }
         saveTerminalToDb(terminal);
         archiveSession(terminal, 'terminal');
-        for (const ws of terminal.wsClients) {
-          try { ws.send(JSON.stringify({ type: 'exit', code: -1 })); ws.close(); } catch {}
+        const intMsg = JSON.stringify({ type: 'exit', code: -1 });
+        if (terminal.eventStream) {
+          for (const [, sub] of terminal.eventStream.subscribers) {
+            try { sub.ws.send(intMsg); sub.ws.close(); } catch {}
+          }
+          terminal.eventStream.subscribers.clear();
         }
-        terminal.wsClients.clear();
       }
     }
   }

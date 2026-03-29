@@ -143,40 +143,87 @@ cmd_start() {
 }
 
 cmd_stop() {
-  if ! is_running; then
-    echo "Dashboard is not running"
+  if is_running; then
+    local pid
+    pid="$(get_pid)"
+    echo "Stopping dashboard (PID $pid)..."
+
+    kill "$pid" 2>/dev/null || true
+
+    # Wait up to 10 seconds for graceful shutdown
+    local tries=0
+    while [ $tries -lt 20 ]; do
+      if ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$PID_FILE"
+        echo "Dashboard stopped"
+        return 0
+      fi
+      sleep 0.5
+      tries=$((tries + 1))
+    done
+
+    # Force kill
+    echo "Graceful shutdown timed out, sending SIGKILL..."
+    kill -9 "$pid" 2>/dev/null || true
+    rm -f "$PID_FILE"
+    echo "Dashboard killed"
     return 0
   fi
 
-  local pid
-  pid="$(get_pid)"
-  echo "Stopping dashboard (PID $pid)..."
+  # Not managed via PID file — check if a service owns the port
+  local service
+  service="$(detect_service)"
 
-  kill "$pid" 2>/dev/null || true
+  if [ "$service" = "launchd" ] && port_in_use; then
+    echo "Stopping launchd service ($LAUNCHD_LABEL)..."
+    launchctl stop "$LAUNCHD_LABEL" 2>/dev/null || true
+    local tries=0
+    while [ $tries -lt 20 ]; do
+      if ! port_in_use; then
+        echo "Dashboard stopped"
+        return 0
+      fi
+      sleep 0.5
+      tries=$((tries + 1))
+    done
+    echo "Warning: port $PORT still in use after service stop"
+    return 1
 
-  # Wait up to 10 seconds for graceful shutdown
-  local tries=0
-  while [ $tries -lt 20 ]; do
-    if ! kill -0 "$pid" 2>/dev/null; then
-      rm -f "$PID_FILE"
-      echo "Dashboard stopped"
-      return 0
-    fi
-    sleep 0.5
-    tries=$((tries + 1))
-  done
+  elif [ "$service" = "systemd" ] && port_in_use; then
+    echo "Stopping systemd service ($SYSTEMD_SERVICE)..."
+    systemctl --user stop "$SYSTEMD_SERVICE" 2>/dev/null || true
+    echo "Dashboard stopped"
+    return 0
 
-  # Force kill
-  echo "Graceful shutdown timed out, sending SIGKILL..."
-  kill -9 "$pid" 2>/dev/null || true
-  rm -f "$PID_FILE"
-  echo "Dashboard killed"
+  else
+    echo "Dashboard is not running"
+    return 0
+  fi
 }
 
 cmd_restart() {
-  cmd_stop
-  sleep 1
-  cmd_start
+  local service
+  service="$(detect_service)"
+
+  case "$service" in
+    launchd)
+      echo "Restarting launchd service ($LAUNCHD_LABEL)..."
+      launchctl stop "$LAUNCHD_LABEL" 2>/dev/null || true
+      sleep 1
+      launchctl start "$LAUNCHD_LABEL"
+      echo "Dashboard restarted via launchd"
+      ;;
+    systemd)
+      echo "Restarting systemd service ($SYSTEMD_SERVICE)..."
+      systemctl --user restart "$SYSTEMD_SERVICE"
+      echo "Dashboard restarted via systemd"
+      ;;
+    *)
+      cmd_stop
+      sleep 1
+      cmd_start
+      ;;
+  esac
 }
 
 cmd_status() {
@@ -418,7 +465,7 @@ Usage: dashctl.sh <command> [options]
 Commands:
   start                Start the dashboard server in background
   stop                 Stop the dashboard server gracefully
-  restart              Stop then start the server
+  restart              Restart the server (service-aware: uses launchctl/systemctl when installed)
   status               Show server status, PID, port, uptime
   logs [-n N] [-f]     Tail the log file (default: last 50 lines)
   fresh [--clear-sessions]  Stop, optionally clear sessions, start
