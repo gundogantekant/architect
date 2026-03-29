@@ -11,8 +11,10 @@ const BASE = 'http://127.0.0.1:3777';
 
 export async function api(path, opts = {}) {
   const url = `${BASE}/api/${path}`;
+  const workerId = process.env.TEST_WORKER_INDEX;
+  const workerHeader = workerId !== undefined ? { 'x-test-worker-id': String(workerId) } : {};
   const resp = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...opts.headers },
+    headers: { 'Content-Type': 'application/json', ...workerHeader, ...opts.headers },
     ...opts,
   });
   if (!resp.ok) {

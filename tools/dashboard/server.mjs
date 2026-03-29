@@ -1993,6 +1993,7 @@ const routes = [
   [/^\/api\/terminal$/, 'POST', async (_m, req, res) => {
     const body = await parseBody(req);
     const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode, agentType: bodyAgentType } = body;
+    const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
 
     if (!project_key) return err(res, 'project_key is required', 400);
 
@@ -2170,6 +2171,7 @@ const routes = [
       _accumulated: '',
       _pendingPrompt: agentType === 'claude' ? prompt : null,
       _readyForPrompt: agentType !== 'claude', // shell is immediately ready
+      _testWorkerId,
       started_at: new Date().toISOString(),
       exited_at: null,
     };
@@ -2292,9 +2294,11 @@ const routes = [
   }],
 
   // List active terminals
-  [/^\/api\/terminal\/active$/, 'GET', async (_m, _req, res) => {
+  [/^\/api\/terminal\/active$/, 'GET', async (_m, req, res) => {
+    const workerId = req.headers['x-test-worker-id'];
     const list = [];
     for (const [id, t] of terminals) {
+      if (workerId !== undefined && t._testWorkerId !== workerId) continue;
       list.push({
         id,
         type: t.type || 'claude',
@@ -2318,9 +2322,11 @@ const routes = [
   }],
 
   // Kill all terminals (must be before :id route)
-  [/^\/api\/terminal\/all$/, 'DELETE', async (_m, _req, res) => {
+  [/^\/api\/terminal\/all$/, 'DELETE', async (_m, req, res) => {
+    const workerId = req.headers['x-test-worker-id'];
     let killed = 0;
     for (const [, terminal] of terminals) {
+      if (workerId !== undefined && terminal._testWorkerId !== workerId) continue;
       if (terminal.status !== 'running') continue;
       if (terminal.ptyProcess) {
         try { terminal.ptyProcess.kill('SIGHUP'); } catch {}
@@ -2755,26 +2761,47 @@ const routes = [
   }],
 
   // Purge all sessions from memory AND DB (for test isolation)
-  [/^\/api\/test\/purge-all$/, 'POST', async (_m, _req, res) => {
-    for (const [id, d] of dispatches) {
-      if (d.process) try { d.process.kill('SIGKILL'); } catch {}
-      if (d._tailInterval) clearInterval(d._tailInterval);
-      if (d.logStream) try { d.logStream.end(); } catch {}
-      broadcastDispatchDone(d);
-      db.deleteDispatch(id);
-    }
-    for (const [id, t] of terminals) {
-      if (t.ptyProcess) try { t.ptyProcess.kill('SIGHUP'); } catch {}
-      if (t.tmux_session && TMUX_AVAILABLE) try { execFileSync('tmux', ['kill-session', '-t', t.tmux_session], { stdio: 'ignore' }); } catch {}
-      if (t.eventStream) {
-        for (const [, sub] of t.eventStream.subscribers) { try { sub.ws.close(); } catch {} }
-        t.eventStream.subscribers.clear();
+  [/^\/api\/test\/purge-all$/, 'POST', async (_m, req, res) => {
+    const workerId = req.headers['x-test-worker-id'];
+
+    if (workerId === undefined) {
+      // Global purge — no worker header means global-setup.mjs or manual call; clear everything.
+      for (const [id, d] of dispatches) {
+        if (d.process) try { d.process.kill('SIGKILL'); } catch {}
+        if (d._tailInterval) clearInterval(d._tailInterval);
+        if (d.logStream) try { d.logStream.end(); } catch {}
+        broadcastDispatchDone(d);
+        db.deleteDispatch(id);
       }
-      db.deleteTerminal(id);
+      for (const [id, t] of terminals) {
+        if (t.ptyProcess) try { t.ptyProcess.kill('SIGHUP'); } catch {}
+        if (t.tmux_session && TMUX_AVAILABLE) try { execFileSync('tmux', ['kill-session', '-t', t.tmux_session], { stdio: 'ignore' }); } catch {}
+        if (t.eventStream) {
+          for (const [, sub] of t.eventStream.subscribers) { try { sub.ws.close(); } catch {} }
+          t.eventStream.subscribers.clear();
+        }
+        db.deleteTerminal(id);
+      }
+      dispatches.clear();
+      terminals.clear();
+      cliSessions.clear();
+    } else {
+      // Worker-scoped purge — only delete terminals belonging to this worker.
+      const toDelete = [];
+      for (const [id, t] of terminals) {
+        if (t._testWorkerId !== workerId) continue;
+        if (t.ptyProcess) try { t.ptyProcess.kill('SIGHUP'); } catch {}
+        if (t.tmux_session && TMUX_AVAILABLE) try { execFileSync('tmux', ['kill-session', '-t', t.tmux_session], { stdio: 'ignore' }); } catch {}
+        if (t.eventStream) {
+          for (const [, sub] of t.eventStream.subscribers) { try { sub.ws.close(); } catch {} }
+          t.eventStream.subscribers.clear();
+        }
+        db.deleteTerminal(id);
+        toDelete.push(id);
+      }
+      for (const id of toDelete) terminals.delete(id);
     }
-    dispatches.clear();
-    terminals.clear();
-    cliSessions.clear();
+
     json(res, { purged: true });
   }],
 
@@ -2799,7 +2826,8 @@ const routes = [
   [/^\/api\/test\/seed-terminal$/, 'POST', async (_m, req, res) => {
     const body = await parseBody(req);
     const { scrollback, status, claude_session_id, lines, withFakeContent, withInjectionEvents, ansiColors } = body;
-    const id = body.id || `T-${Date.now()}`;
+    const workerId = req.headers['x-test-worker-id'];
+    const id = body.id || (workerId !== undefined ? `T-${Date.now()}-${workerId}` : `T-${Date.now()}`);
 
     await mkdir(LOGS_DIR, { recursive: true });
     const eventStream = new EventStream(id);
@@ -2852,6 +2880,7 @@ const routes = [
       ptyProcess: null,
       // In-memory flag: skip auto-cleanup for test-seeded running terminals (no real PTY/pid/tmux)
       _skipAutoCleanup: terminalStatus === 'running',
+      _testWorkerId: workerId ?? null,
       eventStream,
       wsClients: eventStream.subscribers,
       cols: 80,
