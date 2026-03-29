@@ -2,6 +2,10 @@
   "name": "architect-dashboard",
   "private": true,
   "type": "module",
+  "scripts": {
+    "test": "npx playwright test",
+    "test:fast": "npx playwright test --grep @fast"
+  },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
     "node-pty": "1.2.0-beta.12",

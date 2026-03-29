@@ -22,7 +22,7 @@ const CLAUDE_BIN = (() => {
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
 const PORTFOLIO = join(ROOT, 'portfolio');
-const WORK = join(ROOT, 'work');
+const WORK = process.env.WORK_DIR || join(ROOT, 'work');
 const LOGS_DIR = join(WORK, 'logs');
 const ARCHITECT_KEY = '\u2013/architect/\u2013';
 

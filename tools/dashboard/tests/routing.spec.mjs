@@ -6,7 +6,7 @@
  * If any fail, the bug must be investigated before the W-128 refactor proceeds.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures.mjs';
 import {
   purgeAll,
   seedTerminal,
@@ -16,7 +16,8 @@ import {
   waitForTerminalContent,
 } from './helpers.mjs';
 
-const BASE = 'http://127.0.0.1:3777';
+import { SPEC_FILES } from './global-setup.mjs';
+const BASE = `http://127.0.0.1:${3778 + (parseInt(process.env.TEST_WORKER_INDEX ?? '0') % SPEC_FILES.length)}`;
 
 test.beforeEach(async () => { await purgeAll(); });
 

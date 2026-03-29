@@ -8,10 +8,11 @@
  * Prerequisite: dashboard server running at http://127.0.0.1:3777
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures.mjs';
 import { purgeAll, seedDispatch } from './helpers.mjs';
 
-const BASE = 'http://127.0.0.1:3777';
+import { SPEC_FILES } from './global-setup.mjs';
+const BASE = `http://127.0.0.1:${3778 + (parseInt(process.env.TEST_WORKER_INDEX ?? '0') % SPEC_FILES.length)}`;
 
 // Global purge before the suite: clears real claude processes left by prior test files
 // (worker-scoped purgeAll cannot kill dispatches that have live process handles)
@@ -149,9 +150,9 @@ test('DP-10: focus popup shows dispatch ID in content', async ({ page }) => {
  */
 async function registerCliSession(title) {
   // Fetch server PID from the status endpoint — it is always alive during tests
-  const statusRes = await fetch('http://127.0.0.1:3777/api/server/status');
+  const statusRes = await fetch(`${BASE}/api/server/status`);
   const { pid } = await statusRes.json();
-  const res = await fetch('http://127.0.0.1:3777/api/sessions/register', {
+  const res = await fetch(`${BASE}/api/sessions/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, pid, project_key: 'ticari/architect/main' }),

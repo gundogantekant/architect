@@ -7,10 +7,11 @@
  * Prerequisite: dashboard server running at http://127.0.0.1:3777
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures.mjs';
 import { purgeAll, seedWorkItem, seedEpic } from './helpers.mjs';
 
-const BASE = 'http://127.0.0.1:3777';
+import { SPEC_FILES } from './global-setup.mjs';
+const BASE = `http://127.0.0.1:${3778 + (parseInt(process.env.TEST_WORKER_INDEX ?? '0') % SPEC_FILES.length)}`;
 
 test.beforeEach(async () => { await purgeAll(); });
 

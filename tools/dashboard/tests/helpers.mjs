@@ -3,7 +3,10 @@
  * All API helpers communicate with the live dashboard at BASE.
  */
 
-const BASE = 'http://127.0.0.1:3777';
+import { SPEC_FILES } from './global-setup.mjs';
+
+const _wi = parseInt(process.env.TEST_WORKER_INDEX ?? '0');
+const BASE = `http://127.0.0.1:${3778 + (_wi % SPEC_FILES.length)}`;
 
 // ============================================================
 // API helpers

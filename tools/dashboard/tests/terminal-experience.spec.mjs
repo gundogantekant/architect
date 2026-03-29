@@ -10,7 +10,7 @@
  * Prerequisite: dashboard server must be running (dashctl.sh start).
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures.mjs';
 import {
   purgeAll,
   seedTerminal,
@@ -28,7 +28,8 @@ import {
   compareXtermBuffers,
 } from './helpers.mjs';
 
-const BASE = 'http://127.0.0.1:3777';
+import { SPEC_FILES } from './global-setup.mjs';
+const BASE = `http://127.0.0.1:${3778 + (parseInt(process.env.TEST_WORKER_INDEX ?? '0') % SPEC_FILES.length)}`;
 
 // ============================================================
 // Suite 1: Single Terminal Core Behaviors
