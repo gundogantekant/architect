@@ -2,7 +2,7 @@
  * Regression Test Suite
  *
  * Each test explicitly names the bug it guards against.
- * Tests run against a live dashboard at http://127.0.0.1:3777.
+ * Tests run against an isolated test server started automatically by globalSetup.
  *
  * Prerequisite: dashboard server must be running (dashctl.sh start).
  */

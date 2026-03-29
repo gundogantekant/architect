@@ -4,7 +4,7 @@
  * These tests define the behavioral contract for the createDispatchOverlay factory.
  * 3 tests per modal × 6 modals = 18 tests.
  *
- * Prerequisite: dashboard server running at http://127.0.0.1:3777
+ * Test server started automatically by globalSetup on an isolated port
  */
 
 import { test, expect } from './fixtures.mjs';

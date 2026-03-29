@@ -5,7 +5,7 @@
  * They are expected to pass after the factory is implemented.
  * Some tests may already pass on unmodified code if the existing behavior matches.
  *
- * Prerequisite: dashboard server running at http://127.0.0.1:3777
+ * Test server started automatically by globalSetup on an isolated port
  */
 
 import { test, expect } from './fixtures.mjs';

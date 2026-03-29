@@ -6,7 +6,7 @@
  * session pipeline. All seeded terminals use generateSeedContent(1000) via the
  * server's withFakeContent flag.
  *
- * Tests run against a live dashboard at http://127.0.0.1:3777.
+ * Tests run against an isolated test server started automatically by globalSetup.
  * Prerequisite: dashboard server must be running (dashctl.sh start).
  */
 

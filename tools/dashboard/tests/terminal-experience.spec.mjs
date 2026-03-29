@@ -6,7 +6,7 @@
  * For named bug guards (preventing regression of specific failure modes), see
  * regression.spec.mjs. For scroll integrity at scale, see scroll-behavior.spec.mjs.
  *
- * Tests run against a live dashboard at http://127.0.0.1:3777.
+ * Tests run against an isolated test server started automatically by globalSetup.
  * Prerequisite: dashboard server must be running (dashctl.sh start).
  */
 
