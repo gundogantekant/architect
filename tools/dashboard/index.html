@@ -1876,6 +1876,7 @@ function createSessionPanel(type, info) {
         <span class="cli-meta">${elapsed}</span>
         <button class="minimize-btn" data-minimize-cli="${esc(id)}">▼</button>
       </div>
+      <div class="cli-session-body"></div>
     `;
     const panelKey = `cli:${id}`;
     sessionPanels.set(panelKey, panel);

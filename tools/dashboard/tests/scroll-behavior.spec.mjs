@@ -412,8 +412,8 @@ test.describe('Suite D: Session Pipeline', () => {
   test('S-11. Terminal panel shows agent and permission-mode badges', async ({ page }) => {
     test.setTimeout(60_000);
 
-    // seed-terminal creates with agent_type:'claude', permission_mode:'plan'
-    const t = await seedTerminal({ withFakeContent: true, lines: 50 });
+    // seed-terminal defaults to agent_type:'shell'; using 'claude' here for badge assertion
+    const t = await seedTerminal({ withFakeContent: true, lines: 50, agentType: 'claude' });
 
     await page.goto('/#terminals');
     await waitForTerminalLive(page, t.id);

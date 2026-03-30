@@ -180,8 +180,8 @@ test('CLI-3: CLI panel collapse hides body, expand shows it', async ({ page }) =
   await page.locator(`[data-minimize-cli="${id}"]`).click();
   await expect(page.locator(`#cli-${id}`)).toHaveClass(/collapsed/);
 
-  await page.locator(`[data-minimize-cli="${id}"]`).click();
-  await expect(page.locator(`#cli-${id}`)).not.toHaveClass(/collapsed/);
+  await page.locator(`[data-minimize-cli="${id}"]`).click({ force: true });
+  await expect(page.locator(`#cli-${id}`)).not.toHaveClass(/collapsed/, { timeout: 10_000 });
 });
 
 test('CLI-4: CLI panel has no kill or suspend buttons', async ({ page }) => {

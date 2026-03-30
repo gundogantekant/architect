@@ -138,6 +138,7 @@ test.describe('Suite 1: Single Terminal Core', () => {
       withFakeContent: true,
       status: 'running',
       claude_session_id: sessionId,
+      agentType: 'claude',
     });
     await page.goto('/');
     await waitForTerminalLive(page, t.id);
@@ -154,6 +155,7 @@ test.describe('Suite 1: Single Terminal Core', () => {
       withFakeContent: true,
       status: 'running',
       withInjectionEvents: true,
+      agentType: 'claude',
     });
     await page.goto('/');
     await waitForTerminalLive(page, t.id);
@@ -165,11 +167,19 @@ test.describe('Suite 1: Single Terminal Core', () => {
   });
 
   test('9. agent badge shows correct label', async ({ page }) => {
-    const t = await seedTerminal({ lines: 20, status: 'running', withFakeContent: true });
+    // Default agent type is shell
+    const t1 = await seedTerminal({ lines: 20, status: 'running', withFakeContent: true });
     await page.goto('/');
-    await page.waitForSelector(`#terminal-${t.id} .agent-badge`, { timeout: 10_000 });
-    const badge = await page.locator(`#terminal-${t.id} .agent-badge`).textContent();
-    expect(badge?.toLowerCase()).toContain('claude');
+    await page.waitForSelector(`#terminal-${t1.id} .agent-badge`, { timeout: 10_000 });
+    const badge1 = await page.locator(`#terminal-${t1.id} .agent-badge`).textContent();
+    expect(badge1?.toLowerCase()).toContain('shell');
+
+    // Claude agent type when explicit
+    const t2 = await seedTerminal({ lines: 20, status: 'running', withFakeContent: true, agentType: 'claude' });
+    await page.goto('/');
+    await page.waitForSelector(`#terminal-${t2.id} .agent-badge`, { timeout: 10_000 });
+    const badge2 = await page.locator(`#terminal-${t2.id} .agent-badge`).textContent();
+    expect(badge2?.toLowerCase()).toContain('claude');
   });
 });
 
@@ -625,6 +635,9 @@ test.describe('Suite 5: Input and Control', () => {
     // Submit a command to create history
     await typeIntoTerminal(page, terminal_id, 'echo arrow-history-test\n');
     await waitForTextInXterm(page, terminal_id, 'arrow-history-test', 5_000);
+
+    // Allow the shell to stabilize (return to prompt) before sending history navigation
+    await page.waitForTimeout(500);
 
     // Press up arrow to recall the last command
     await page.evaluate((id) => {

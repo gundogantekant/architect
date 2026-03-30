@@ -2844,7 +2844,8 @@ const routes = [
   // Seed a terminal with EventStream content (no real PTY)
   [/^\/api\/test\/seed-terminal$/, 'POST', async (_m, req, res) => {
     const body = await parseBody(req);
-    const { scrollback, status, claude_session_id, lines, withFakeContent, withInjectionEvents, ansiColors } = body;
+    const { scrollback, status, claude_session_id, lines, withFakeContent, withInjectionEvents, ansiColors, agentType: bodyAgentType } = body;
+    const agentType = bodyAgentType || 'shell';
     const workerId = req.headers['x-test-worker-id'];
     const id = body.id || (workerId !== undefined ? `T-${Date.now()}-${workerId}` : `T-${Date.now()}`);
 
@@ -2883,8 +2884,8 @@ const routes = [
     const terminalStatus = status || 'completed';
     const terminal = {
       id,
-      type: 'claude',
-      agent_type: 'claude',
+      type: agentType,
+      agent_type: agentType,
       work_item_id: null,
       epic_id: null,
       project_key: 'test/test/main',
