@@ -3,17 +3,17 @@
  * All API helpers communicate with the live dashboard at BASE.
  */
 
-import { SPEC_FILES } from './global-setup.mjs';
-
-const _wi = parseInt(process.env.TEST_WORKER_INDEX ?? '0');
-const BASE = `http://127.0.0.1:${3778 + (_wi % SPEC_FILES.length)}`;
+const getBase = () =>
+  process.env.TEST_SERVER_PORT
+    ? `http://127.0.0.1:${process.env.TEST_SERVER_PORT}`
+    : 'http://127.0.0.1:3777';
 
 // ============================================================
 // API helpers
 // ============================================================
 
 export async function api(path, opts = {}) {
-  const url = `${BASE}/api/${path}`;
+  const url = `${getBase()}/api/${path}`;
   const workerId = process.env.TEST_WORKER_INDEX;
   const workerHeader = workerId !== undefined ? { 'x-test-worker-id': String(workerId) } : {};
   const resp = await fetch(url, {

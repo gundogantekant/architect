@@ -42,7 +42,7 @@ test.describe('Error paths @behavioral', () => {
   });
 
   test('EP-4: POST work-item without title returns 4xx not 5xx', async () => {
-    const BASE = `http://127.0.0.1:${3778 + (parseInt(process.env.TEST_WORKER_INDEX ?? '0') % 9)}`;
+    const BASE = `http://127.0.0.1:${process.env.TEST_SERVER_PORT || 3778}`;
     const resp = await fetch(`${BASE}/api/work-items`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

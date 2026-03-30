@@ -28,8 +28,7 @@ import {
   compareXtermBuffers,
 } from './helpers.mjs';
 
-import { SPEC_FILES } from './global-setup.mjs';
-const BASE = `http://127.0.0.1:${3778 + (parseInt(process.env.TEST_WORKER_INDEX ?? '0') % SPEC_FILES.length)}`;
+const getTestBase = () => `http://127.0.0.1:${process.env.TEST_SERVER_PORT || 3778}`;
 
 // ============================================================
 // Suite 1: Single Terminal Core Behaviors
@@ -42,14 +41,14 @@ test.describe('Suite 1: Single Terminal Core', () => {
 
   test('1. terminal panel appears with loading overlay', async ({ page }) => {
     const t = await seedTerminal({ lines: 200, withFakeContent: true, status: 'running' });
-    await page.goto(BASE);
+    await page.goto('/');
     await page.waitForSelector(`#terminal-${t.id}`, { timeout: 10_000 });
     await expect(page.locator(`#term-container-${t.id}`)).toBeVisible();
   });
 
   test('2. seed content (200 lines) visible in xterm after stream-live', async ({ page }) => {
     const t = await seedTerminal({ lines: 200, withFakeContent: true, status: 'running' });
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, t.id);
     await waitForTerminalContent(page, t.id, 20);
     const lines = await getXtermBufferLines(page, t.id, 0, 30);
@@ -59,7 +58,7 @@ test.describe('Suite 1: Single Terminal Core', () => {
 
   test('3. terminal is scrollable after seed content', async ({ page }) => {
     const t = await seedTerminal({ lines: 300, withFakeContent: true, status: 'running' });
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, t.id);
     await waitForTerminalContent(page, t.id, 50);
     const metrics = await getXtermScrollMetrics(page, t.id);
@@ -69,7 +68,7 @@ test.describe('Suite 1: Single Terminal Core', () => {
 
   test('4. terminal width uses container width, not fixed 80 cols', async ({ page }) => {
     const t = await seedTerminal({ lines: 50, withFakeContent: true, status: 'running' });
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, t.id);
     // Wait for xterm to be initialized (fitAddon.fit() sets the actual cols)
     await waitForTerminalContent(page, t.id, 5);
@@ -82,7 +81,7 @@ test.describe('Suite 1: Single Terminal Core', () => {
 
   test('5. scroll up shows old content, scroll down shows latest, no content loss', async ({ page }) => {
     const t = await seedTerminal({ lines: 300, withFakeContent: true, status: 'running' });
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, t.id);
     await waitForTerminalContent(page, t.id, 50);
 
@@ -113,7 +112,7 @@ test.describe('Suite 1: Single Terminal Core', () => {
 
   test('6. resize: terminal re-fits, content preserved', async ({ page }) => {
     const t = await seedTerminal({ lines: 100, withFakeContent: true, status: 'running' });
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, t.id);
     await waitForTerminalContent(page, t.id, 20);
 
@@ -140,7 +139,7 @@ test.describe('Suite 1: Single Terminal Core', () => {
       status: 'running',
       claude_session_id: sessionId,
     });
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, t.id);
     await waitForFooterSessionId(page, t.id);
     const footerText = await page
@@ -156,7 +155,7 @@ test.describe('Suite 1: Single Terminal Core', () => {
       status: 'running',
       withInjectionEvents: true,
     });
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, t.id);
     await page.waitForTimeout(500);
     const indicatorText = await page
@@ -167,7 +166,7 @@ test.describe('Suite 1: Single Terminal Core', () => {
 
   test('9. agent badge shows correct label', async ({ page }) => {
     const t = await seedTerminal({ lines: 20, status: 'running', withFakeContent: true });
-    await page.goto(BASE);
+    await page.goto('/');
     await page.waitForSelector(`#terminal-${t.id} .agent-badge`, { timeout: 10_000 });
     const badge = await page.locator(`#terminal-${t.id} .agent-badge`).textContent();
     expect(badge?.toLowerCase()).toContain('claude');
@@ -191,7 +190,7 @@ test.describe('Suite 2: Multi-Browser Consistency', () => {
     const page1 = await ctx1.newPage();
     const page2 = await ctx2.newPage();
 
-    await Promise.all([page1.goto(BASE), page2.goto(BASE)]);
+    await Promise.all([page1.goto('/'), page2.goto('/')]);
     await Promise.all([
       waitForTerminalLive(page1, t.id),
       waitForTerminalLive(page2, t.id),
@@ -230,7 +229,7 @@ test.describe('Suite 2: Multi-Browser Consistency', () => {
       browser.newContext(),
     ]);
     const pages = await Promise.all(contexts.map((ctx) => ctx.newPage()));
-    await Promise.all(pages.map((p) => p.goto(BASE)));
+    await Promise.all(pages.map((p) => p.goto('/')));
 
     // Wait for all 9 combinations (3 pages × 3 terminals) to reach LIVE
     await Promise.all(
@@ -258,14 +257,14 @@ test.describe('Suite 2: Multi-Browser Consistency', () => {
 
     const ctx1 = await browser.newContext();
     const page1 = await ctx1.newPage();
-    await page1.goto(BASE);
+    await page1.goto('/');
     await waitForTerminalLive(page1, t.id);
     await waitForTerminalContent(page1, t.id, 30);
 
     // Second browser opens after first is already LIVE
     const ctx2 = await browser.newContext();
     const page2 = await ctx2.newPage();
-    await page2.goto(BASE);
+    await page2.goto('/');
     await waitForTerminalLive(page2, t.id);
     await waitForTerminalContent(page2, t.id, 30);
 
@@ -282,7 +281,7 @@ test.describe('Suite 2: Multi-Browser Consistency', () => {
     test.setTimeout(45_000);
 
     const t = await seedTerminal({ lines: 200, withFakeContent: true, status: 'completed' });
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, t.id);
     // Wait for substantial content so baseline is meaningful
     await waitForTerminalContent(page, t.id, 30);
@@ -319,7 +318,7 @@ test.describe('Suite 3: Session Reconnection', () => {
   test('14. fresh page load: running terminals reappear with content', async ({ page }) => {
     const t1 = await seedTerminal({ lines: 100, withFakeContent: true, status: 'running' });
     const t2 = await seedTerminal({ lines: 100, withFakeContent: true, status: 'running' });
-    await page.goto(BASE);
+    await page.goto('/');
     await Promise.all([
       waitForTerminalLive(page, t1.id),
       waitForTerminalLive(page, t2.id),
@@ -334,7 +333,7 @@ test.describe('Suite 3: Session Reconnection', () => {
 
   test('15. completed terminal reappears with content after page refresh', async ({ page }) => {
     const t = await seedTerminal({ lines: 150, withFakeContent: true, status: 'completed' });
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, t.id);
     await waitForTerminalContent(page, t.id, 20);
     const baseYBefore = (await getXtermScrollMetrics(page, t.id)).baseY;
@@ -354,12 +353,12 @@ test.describe('Suite 3: Session Reconnection', () => {
     const ctx1 = await browser.newContext();
     const ctx2 = await browser.newContext();
     const page1 = await ctx1.newPage();
-    await page1.goto(BASE);
+    await page1.goto('/');
     await waitForTerminalLive(page1, t.id);
     await waitForTerminalContent(page1, t.id, 20);
 
     const page2 = await ctx2.newPage();
-    await page2.goto(BASE);
+    await page2.goto('/');
     await waitForTerminalLive(page2, t.id);
     await waitForTerminalContent(page2, t.id, 20);
 
@@ -373,7 +372,7 @@ test.describe('Suite 3: Session Reconnection', () => {
   test('17. WS reconnect: state returns to LIVE after simulated close', async ({ page }) => {
     const t = await seedTerminal({ lines: 100, withFakeContent: true, status: 'running' });
     await pumpTerminal(t.id, { linesPerSecond: 2, duration: 10 });
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, t.id);
 
     // Simulate unexpected WS close with a non-1000 code
@@ -408,7 +407,7 @@ test.describe('Suite 4: Content Integrity', () => {
 
   test('18. line integrity: 79-char lines have no phantom wrapping', async ({ page }) => {
     const t = await seedTerminal({ lines: 50, withFakeContent: true, status: 'running' });
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, t.id);
     await waitForTerminalContent(page, t.id, 10);
     const lines = await getXtermBufferLines(page, t.id, 0, 20);
@@ -423,7 +422,7 @@ test.describe('Suite 4: Content Integrity', () => {
 
   test('19. scroll position preserved during resize', async ({ page }) => {
     const t = await seedTerminal({ lines: 300, withFakeContent: true, status: 'running' });
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, t.id);
     await waitForTerminalContent(page, t.id, 50);
 
@@ -452,7 +451,7 @@ test.describe('Suite 4: Content Integrity', () => {
 
   test('20. no excessive blank lines in buffer after replay', async ({ page }) => {
     const t = await seedTerminal({ lines: 200, withFakeContent: true, status: 'running' });
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, t.id);
     await waitForTerminalContent(page, t.id, 30);
 
@@ -477,7 +476,7 @@ test.describe('Suite 4: Content Integrity', () => {
       ansiColors: true,
       status: 'running',
     });
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, t.id);
     await waitForTerminalContent(page, t.id, 20);
 
@@ -505,7 +504,7 @@ test.describe('Suite 5: Input and Control', () => {
     test.setTimeout(60_000);
 
     const workerIdx = process.env.TEST_WORKER_INDEX;
-    const resp = await fetch(`${BASE}/api/terminal`, {
+    const resp = await fetch(`${getTestBase()}/api/terminal`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -520,7 +519,7 @@ test.describe('Suite 5: Input and Control', () => {
     });
     const { terminal_id } = await resp.json();
 
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, terminal_id, 30_000);
 
     await typeIntoTerminal(page, terminal_id, 'echo hello-test-123\n');
@@ -531,7 +530,7 @@ test.describe('Suite 5: Input and Control', () => {
     test.setTimeout(60_000);
 
     const workerIdx = process.env.TEST_WORKER_INDEX;
-    const resp = await fetch(`${BASE}/api/terminal`, {
+    const resp = await fetch(`${getTestBase()}/api/terminal`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -545,7 +544,7 @@ test.describe('Suite 5: Input and Control', () => {
       }),
     });
     const { terminal_id } = await resp.json();
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, terminal_id, 30_000);
 
     // Start a blocking command
@@ -568,7 +567,7 @@ test.describe('Suite 5: Input and Control', () => {
     test.setTimeout(60_000);
 
     const workerIdx = process.env.TEST_WORKER_INDEX;
-    const resp = await fetch(`${BASE}/api/terminal`, {
+    const resp = await fetch(`${getTestBase()}/api/terminal`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -582,7 +581,7 @@ test.describe('Suite 5: Input and Control', () => {
       }),
     });
     const { terminal_id } = await resp.json();
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, terminal_id, 30_000);
 
     // Send 50 characters in rapid succession via the WS manager
@@ -605,7 +604,7 @@ test.describe('Suite 5: Input and Control', () => {
     test.setTimeout(60_000);
 
     const workerIdx = process.env.TEST_WORKER_INDEX;
-    const resp = await fetch(`${BASE}/api/terminal`, {
+    const resp = await fetch(`${getTestBase()}/api/terminal`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -619,7 +618,7 @@ test.describe('Suite 5: Input and Control', () => {
       }),
     });
     const { terminal_id } = await resp.json();
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, terminal_id, 30_000);
 
     // Submit a command to create history
@@ -651,7 +650,7 @@ test.describe('Suite 6: Corner Cases', () => {
 
   test('26. empty terminal: xterm visible with no content', async ({ page }) => {
     const t = await seedTerminal({ lines: 0, status: 'running' });
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, t.id);
     const containerVisible = await page
       .locator(`#term-container-${t.id}`)
@@ -664,7 +663,7 @@ test.describe('Suite 6: Corner Cases', () => {
     page.on('pageerror', (err) => errors.push(err.message));
 
     const t = await seedTerminal({ lines: 5, status: 'running', withFakeContent: false });
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, t.id);
 
     // No terminal/xterm/pty-related page errors should have occurred
@@ -675,7 +674,7 @@ test.describe('Suite 6: Corner Cases', () => {
 
   test('28. collapse and expand panel: content retained', async ({ page }) => {
     const t = await seedTerminal({ lines: 100, withFakeContent: true, status: 'running' });
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, t.id);
     await waitForTerminalContent(page, t.id, 20);
 
@@ -693,11 +692,11 @@ test.describe('Suite 6: Corner Cases', () => {
 
   test('29. kill terminal: panel shows non-running status', async ({ page }) => {
     const t = await seedTerminal({ lines: 50, withFakeContent: true, status: 'running' });
-    await page.goto(BASE);
+    await page.goto('/');
     await waitForTerminalLive(page, t.id);
 
     // Kill via API
-    await fetch(`${BASE}/api/terminal/${t.id}`, { method: 'DELETE' });
+    await fetch(`${getTestBase()}/api/terminal/${t.id}`, { method: 'DELETE' });
     await page.waitForTimeout(2_000);
 
     const panel = page.locator(`#terminal-${t.id}`);
@@ -717,7 +716,7 @@ test.describe('Suite 6: Corner Cases', () => {
   test('30. two running terminals: both have independent content', async ({ page }) => {
     const t1 = await seedTerminal({ lines: 100, withFakeContent: true, status: 'running' });
     const t2 = await seedTerminal({ lines: 100, withFakeContent: true, status: 'running' });
-    await page.goto(BASE);
+    await page.goto('/');
     await Promise.all([
       waitForTerminalLive(page, t1.id),
       waitForTerminalLive(page, t2.id),

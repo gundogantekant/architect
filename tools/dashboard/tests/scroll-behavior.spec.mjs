@@ -22,8 +22,7 @@ import {
   getEventStream,
 } from './helpers.mjs';
 
-import { SPEC_FILES } from './global-setup.mjs';
-const BASE = `http://127.0.0.1:${3778 + (parseInt(process.env.TEST_WORKER_INDEX ?? '0') % SPEC_FILES.length)}`;
+const getTestBase = () => `http://127.0.0.1:${process.env.TEST_SERVER_PORT || 3778}`;
 
 // generateSeedContent(1000): 7-line cycle, 143 empty lines at i%7===3 → 857 non-empty.
 const SEED_LINES = 1000;
@@ -41,7 +40,7 @@ test.describe('Suite A: Large Content', () => {
 
     const t = await seedTerminal({ withFakeContent: true, lines: SEED_LINES });
 
-    await page.goto(`${BASE}/#terminals`);
+    await page.goto('/#terminals');
     await waitForTerminalLive(page, t.id);
 
     // Must render at least SEED_MIN non-empty lines
@@ -58,7 +57,7 @@ test.describe('Suite A: Large Content', () => {
 
     const t = await seedTerminal({ withFakeContent: true, lines: SEED_LINES });
 
-    await page.goto(`${BASE}/#terminals`);
+    await page.goto('/#terminals');
     await waitForTerminalLive(page, t.id);
     await waitForTerminalContent(page, t.id, SEED_MIN, 60_000);
 
@@ -86,7 +85,7 @@ test.describe('Suite A: Large Content', () => {
 
     const t = await seedTerminal({ withFakeContent: true, lines: SEED_LINES });
 
-    await page.goto(`${BASE}/#terminals`);
+    await page.goto('/#terminals');
     await waitForTerminalLive(page, t.id);
     await waitForTerminalContent(page, t.id, SEED_MIN, 60_000);
 
@@ -108,7 +107,7 @@ test.describe('Suite A: Large Content', () => {
 
     const t = await seedTerminal({ withFakeContent: true, lines: SEED_LINES });
 
-    await page.goto(`${BASE}/#terminals`);
+    await page.goto('/#terminals');
     await waitForTerminalLive(page, t.id);
     await waitForTerminalContent(page, t.id, SEED_MIN, 60_000);
 
@@ -143,7 +142,7 @@ test.describe('Suite B: Multi-Pump Content Growth', () => {
     // Terminal must be running to accept pump events
     const t = await seedTerminal({ withFakeContent: true, lines: SEED_LINES, status: 'running' });
 
-    await page.goto(`${BASE}/#terminals`);
+    await page.goto('/#terminals');
     await waitForTerminalLive(page, t.id);
     // Wait for EventQueue to fully drain — more reliable than counting non-empty lines
     // because it avoids iterating the full buffer at polling frequency (RAF starvation).
@@ -189,7 +188,7 @@ test.describe('Suite B: Multi-Pump Content Growth', () => {
 
     const t = await seedTerminal({ withFakeContent: true, lines: SEED_LINES, status: 'running' });
 
-    await page.goto(`${BASE}/#terminals`);
+    await page.goto('/#terminals');
     await waitForTerminalLive(page, t.id);
     // Wait for EventQueue to fully drain before capturing baseline
     await page.waitForFunction((id) => {
@@ -229,7 +228,7 @@ test.describe('Suite B: Multi-Pump Content Growth', () => {
 
     const t = await seedTerminal({ withFakeContent: true, lines: SEED_LINES, status: 'running' });
 
-    await page.goto(`${BASE}/#terminals`);
+    await page.goto('/#terminals');
     await waitForTerminalLive(page, t.id);
     await waitForTerminalContent(page, t.id, SEED_MIN, 60_000);
 
@@ -282,8 +281,8 @@ test.describe('Suite C: Multi-Browser Scroll Independence', () => {
     try {
       // Both browsers load the terminal
       await Promise.all([
-        page1.goto(`${BASE}/#terminals`),
-        page2.goto(`${BASE}/#terminals`),
+        page1.goto('/#terminals'),
+        page2.goto('/#terminals'),
       ]);
       await Promise.all([
         waitForTerminalLive(page1, t.id),
@@ -335,7 +334,7 @@ test.describe('Suite C: Multi-Browser Scroll Independence', () => {
     const page2 = await ctx2.newPage();
 
     try {
-      await page1.goto(`${BASE}/#terminals`);
+      await page1.goto('/#terminals');
       await waitForTerminalLive(page1, t.id);
       await waitForTerminalContent(page1, t.id, SEED_MIN, 60_000);
 
@@ -353,7 +352,7 @@ test.describe('Suite C: Multi-Browser Scroll Independence', () => {
       expect(metrics1Before.atBottom).toBe(false);
 
       // Browser2 joins now
-      await page2.goto(`${BASE}/#terminals`);
+      await page2.goto('/#terminals');
       await waitForTerminalLive(page2, t.id);
       await waitForTerminalContent(page2, t.id, SEED_MIN, 60_000);
 
@@ -380,14 +379,14 @@ test.describe('Suite C: Multi-Browser Scroll Independence', () => {
     const page2 = await ctx2.newPage();
 
     try {
-      await page1.goto(`${BASE}/#terminals`);
+      await page1.goto('/#terminals');
       await waitForTerminalLive(page1, t.id);
       await waitForTerminalContent(page1, t.id, SEED_MIN, 60_000);
 
       const metrics1 = await getXtermScrollMetrics(page1, t.id);
 
       // Browser2 connects after browser1 has fully loaded
-      await page2.goto(`${BASE}/#terminals`);
+      await page2.goto('/#terminals');
       await waitForTerminalLive(page2, t.id);
       await waitForTerminalContent(page2, t.id, SEED_MIN, 60_000);
 
@@ -416,7 +415,7 @@ test.describe('Suite D: Session Pipeline', () => {
     // seed-terminal creates with agent_type:'claude', permission_mode:'plan'
     const t = await seedTerminal({ withFakeContent: true, lines: 50 });
 
-    await page.goto(`${BASE}/#terminals`);
+    await page.goto('/#terminals');
     await waitForTerminalLive(page, t.id);
 
     const panel = page.locator(`#terminal-${t.id}`);
@@ -442,7 +441,7 @@ test.describe('Suite D: Session Pipeline', () => {
 
     let baseY1;
     try {
-      await page1.goto(`${BASE}/#terminals`);
+      await page1.goto('/#terminals');
       await waitForTerminalLive(page1, t.id);
       await waitForTerminalContent(page1, t.id, SEED_MIN, 60_000);
 
@@ -458,7 +457,7 @@ test.describe('Suite D: Session Pipeline', () => {
     const page2 = await ctx2.newPage();
 
     try {
-      await page2.goto(`${BASE}/#terminals`);
+      await page2.goto('/#terminals');
       await waitForTerminalLive(page2, t.id);
       await waitForTerminalContent(page2, t.id, SEED_MIN, 60_000);
 

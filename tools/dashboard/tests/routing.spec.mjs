@@ -16,15 +16,14 @@ import {
   waitForTerminalContent,
 } from './helpers.mjs';
 
-import { SPEC_FILES } from './global-setup.mjs';
-const BASE = `http://127.0.0.1:${3778 + (parseInt(process.env.TEST_WORKER_INDEX ?? '0') % SPEC_FILES.length)}`;
+const getTestBase = () => `http://127.0.0.1:${process.env.TEST_SERVER_PORT || 3778}`;
 
 test.beforeEach(async () => { await purgeAll(); });
 
 test('R-NAV-1: navigate away while terminal LIVE, back, xterm content intact and state LIVE', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   const { terminal_id: id } = await seedTerminal({ withFakeContent: true, lines: 200 });
-  await page.goto(BASE + '/');
+  await page.goto('/');
   await waitForTerminalLive(page, id, 20_000);
   await waitForTerminalContent(page, id, 30);
 
@@ -59,7 +58,7 @@ test('R-NAV-1: navigate away while terminal LIVE, back, xterm content intact and
 test('R-NAV-2: navigate away while dispatch panel present, back, panel still in DOM', async ({ page }) => {
   const dispatchId = `D-nav-test-${Date.now()}`;
   await seedDispatch({ id: dispatchId, status: 'running', title: 'Nav test dispatch' });
-  await page.goto(BASE + '/');
+  await page.goto('/');
   await expect(page.locator(`#dispatch-${dispatchId}`)).toBeVisible({ timeout: 5000 });
 
   // Navigate away
@@ -77,7 +76,7 @@ test('R-NAV-2: navigate away while dispatch panel present, back, panel still in 
 test('R-NAV-3: navigate #settings then back, terminal FitAddon re-fires and cols > 80', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   const { terminal_id: id } = await seedTerminal({ withFakeContent: true, lines: 20 });
-  await page.goto(BASE + '/');
+  await page.goto('/');
   await waitForTerminalLive(page, id, 20_000);
 
   // Navigate to settings

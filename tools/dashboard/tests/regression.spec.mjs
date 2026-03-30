@@ -19,8 +19,7 @@ import {
   getXtermScrollMetrics,
 } from './helpers.mjs';
 
-import { SPEC_FILES } from './global-setup.mjs';
-const BASE = `http://127.0.0.1:${3778 + (parseInt(process.env.TEST_WORKER_INDEX ?? '0') % SPEC_FILES.length)}`;
+const getTestBase = () => `http://127.0.0.1:${process.env.TEST_SERVER_PORT || 3778}`;
 
 test.beforeEach(purgeAll);
 
@@ -35,7 +34,7 @@ test('R-1. No blank render on first load', async ({ page }) => {
 
   const t = await seedTerminal({ withFakeContent: true, lines: 50 });
 
-  await page.goto(`${BASE}/#terminals`);
+  await page.goto('/#terminals');
   await waitForTerminalLive(page, t.id);
   await waitForTerminalContent(page, t.id, 10);
 
@@ -57,7 +56,7 @@ test('R-2. Scrollback history intact at buffer[0] after WS reconnect', async ({ 
 
   const t = await seedTerminal({ withFakeContent: true, lines: 200, status: 'running' });
 
-  await page.goto(`${BASE}/#terminals`);
+  await page.goto('/#terminals');
   await waitForTerminalLive(page, t.id);
   await waitForTerminalContent(page, t.id, 30);
 
@@ -106,7 +105,7 @@ test('R-3. No duplicate lines on WS reconnect', async ({ page }) => {
 
   const t = await seedTerminal({ withFakeContent: true, lines: 50, status: 'running' });
 
-  await page.goto(`${BASE}/#terminals`);
+  await page.goto('/#terminals');
   await waitForTerminalLive(page, t.id);
   await waitForTerminalContent(page, t.id, 30);
 
@@ -156,7 +155,7 @@ test('R-4. Event ordering preserved under rapid server-side writes', async ({ pa
 
   const t = await seedTerminal({ status: 'running' });
 
-  await page.goto(`${BASE}/#terminals`);
+  await page.goto('/#terminals');
   await waitForTerminalLive(page, t.id);
 
   // Pump 60 lines at 20 lines/sec (3 seconds of rapid output)
@@ -189,7 +188,7 @@ test('R-5. Terminal cols match container width (not hardcoded 80)', async ({ pag
 
   const t = await seedTerminal({ withFakeContent: true, lines: 30 });
 
-  await page.goto(`${BASE}/#terminals`);
+  await page.goto('/#terminals');
   await waitForTerminalLive(page, t.id);
   await waitForTerminalContent(page, t.id, 10);
 
@@ -212,7 +211,7 @@ test('R-6. No blank-line run artifacts after initial replay', async ({ page }) =
 
   const t = await seedTerminal({ withFakeContent: true, lines: 200 });
 
-  await page.goto(`${BASE}/#terminals`);
+  await page.goto('/#terminals');
   await waitForTerminalLive(page, t.id);
   await waitForTerminalContent(page, t.id, 30);
 
@@ -244,7 +243,7 @@ test('R-7. Badge decrements immediately when dispatch killed (syncSessionState)'
   // Fixed by: syncSessionState() called from all dispatch termination paths
 
   const { dispatch_id: id } = await seedDispatch({ status: 'running' });
-  await page.goto(`${BASE}/`);
+  await page.goto('/');
 
   // Wait for badge to show at least 1 (one running session)
   await expect(page.locator('#dispatch-badge:not(.empty)')).toBeVisible({ timeout: 5000 });
@@ -256,7 +255,7 @@ test('R-7. Badge decrements immediately when dispatch killed (syncSessionState)'
   await expect(page.locator(`#dispatch-${id}`)).toBeVisible({ timeout: 5000 });
 
   // Kill via API (not via UI kill button — tests that syncSessionState is called by WS/finalize path)
-  await fetch(`${BASE}/api/dispatch/${id}`, { method: 'DELETE' });
+  await fetch(`${getTestBase()}/api/dispatch/${id}`, { method: 'DELETE' });
 
   // Badge must decrement within 2s (well before the 10s poll interval).
   // Uses count comparison (not === 0) to be robust in multi-worker environments

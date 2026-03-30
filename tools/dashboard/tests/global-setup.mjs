@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..', '..', '..');
+const ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..', '..');
 const SERVER = join(ROOT, 'tools', 'dashboard', 'server.mjs');
 
 export const SPEC_FILES = [
@@ -35,7 +35,7 @@ export default async function globalSetup() {
     procs.push({ port, pid: proc.pid });
   }
   await Promise.all(procs.map(({ port }) => waitReady(`http://127.0.0.1:${port}/api/server/status`)));
-  process.env._TEST_SERVER_PIDS = procs.map(p => p.pid).join(',');
+  writeFileSync(join(ROOT, 'tmp', 'test-server.pids'), procs.map(p => p.pid).join(','), 'utf8');
 }
 
 async function waitReady(url, attempts = 40, delayMs = 250) {
