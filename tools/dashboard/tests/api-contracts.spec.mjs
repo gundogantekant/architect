@@ -8,7 +8,7 @@
  */
 
 import { test, expect } from './fixtures.mjs';
-import { getBase, seedWorkItem, api } from './helpers.mjs';
+import { getBase, seedWorkItem, seedEpic, seedDispatch, api } from './helpers.mjs';
 
 test.describe('API contracts @fast', () => {
 
@@ -73,6 +73,408 @@ test.describe('API contracts @fast', () => {
   test('AC-10: DELETE nonexistent work item returns 404', async () => {
     // api() throws on non-ok status, so we call fetch directly
     const resp = await fetch(`${getBase()}/api/work-items/nonexistent-id-99999`, { method: 'DELETE' });
+    expect(resp.status).toBe(404);
+  });
+
+  // --- Work item advanced routes ---
+
+  test('AC-11: GET /api/sequences/next returns next IDs', async () => {
+    const result = await api('sequences/next');
+    expect(result).toHaveProperty('next_work_item_id');
+    expect(result).toHaveProperty('next_epic_id');
+  });
+
+  test('AC-12: GET /api/work-items/:id returns single item', async () => {
+    const item = await seedWorkItem({ title: 'AC-12 item' });
+    const fetched = await api(`work-items/${item.id}`);
+    expect(fetched.id).toBe(item.id);
+    expect(fetched.title).toBe('AC-12 item');
+  });
+
+  test('AC-13: GET /api/work-items/:id returns 404 for unknown id', async () => {
+    const resp = await fetch(`${getBase()}/api/work-items/W-99999999`);
+    expect(resp.status).toBe(404);
+  });
+
+  test('AC-14: POST /api/work-items/:id/depend adds dependency', async () => {
+    const itemA = await seedWorkItem({ title: 'AC-14 dep source' });
+    const itemB = await seedWorkItem({ title: 'AC-14 dep target' });
+    const updated = await api(`work-items/${itemA.id}/depend`, {
+      method: 'POST',
+      body: JSON.stringify({ targets: [itemB.id] }),
+    });
+    expect(updated.depends_on).toContain(itemB.id);
+  });
+
+  test('AC-15: DELETE /api/work-items/:id/depend removes dependency', async () => {
+    const itemA = await seedWorkItem({ title: 'AC-15 dep source' });
+    const itemB = await seedWorkItem({ title: 'AC-15 dep target' });
+    await api(`work-items/${itemA.id}/depend`, {
+      method: 'POST',
+      body: JSON.stringify({ targets: [itemB.id] }),
+    });
+    const updated = await fetch(`${getBase()}/api/work-items/${itemA.id}/depend`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targets: [itemB.id] }),
+    });
+    const body = await updated.json();
+    expect(body.depends_on).not.toContain(itemB.id);
+  });
+
+  test('AC-16: GET /api/work-items/:id/plan returns plain text', async () => {
+    const item = await seedWorkItem({ title: 'AC-16 plan' });
+    const resp = await fetch(`${getBase()}/api/work-items/${item.id}/plan`);
+    expect(resp.ok).toBe(true);
+    const content = await resp.text();
+    expect(typeof content).toBe('string');
+  });
+
+  test('AC-17: PUT /api/work-items/:id/plan saves plan content', async () => {
+    const item = await seedWorkItem({ title: 'AC-17 plan' });
+    const saved = await api(`work-items/${item.id}/plan`, {
+      method: 'PUT',
+      body: JSON.stringify({ content: '# Plan for AC-17' }),
+    });
+    expect(saved.saved).toBe(true);
+    const resp = await fetch(`${getBase()}/api/work-items/${item.id}/plan`);
+    const content = await resp.text();
+    expect(content).toContain('AC-17');
+  });
+
+  test('AC-18: GET /api/work-items/:id/doc returns plain text', async () => {
+    const item = await seedWorkItem({ title: 'AC-18 doc' });
+    const resp = await fetch(`${getBase()}/api/work-items/${item.id}/doc`);
+    expect(resp.ok).toBe(true);
+    const content = await resp.text();
+    expect(typeof content).toBe('string');
+  });
+
+  test('AC-19: PUT /api/work-items/:id/doc saves doc content', async () => {
+    const item = await seedWorkItem({ title: 'AC-19 doc' });
+    const saved = await api(`work-items/${item.id}/doc`, {
+      method: 'PUT',
+      body: JSON.stringify({ content: '# Doc for AC-19' }),
+    });
+    expect(saved.saved).toBe(true);
+    const resp = await fetch(`${getBase()}/api/work-items/${item.id}/doc`);
+    const content = await resp.text();
+    expect(content).toContain('AC-19');
+  });
+
+  test('AC-20: GET /api/work-items/:id/artifacts returns files array', async () => {
+    const item = await seedWorkItem({ title: 'AC-20 artifacts' });
+    const result = await api(`work-items/${item.id}/artifacts`);
+    expect(result).toHaveProperty('files');
+    expect(Array.isArray(result.files)).toBe(true);
+  });
+
+  test('AC-21: PUT /api/work-items/:id/artifacts/:file saves artifact', async () => {
+    const item = await seedWorkItem({ title: 'AC-21 artifact write' });
+    const saved = await api(`work-items/${item.id}/artifacts/notes.md`, {
+      method: 'PUT',
+      body: JSON.stringify({ content: '# Artifact AC-21' }),
+    });
+    expect(saved.saved).toBe(true);
+  });
+
+  test('AC-22: GET /api/work-items/:id/artifacts/:file returns artifact content', async () => {
+    const item = await seedWorkItem({ title: 'AC-22 artifact read' });
+    await api(`work-items/${item.id}/artifacts/notes.md`, {
+      method: 'PUT',
+      body: JSON.stringify({ content: '# AC-22 content' }),
+    });
+    const resp = await fetch(`${getBase()}/api/work-items/${item.id}/artifacts/notes.md`);
+    expect(resp.ok).toBe(true);
+    const content = await resp.text();
+    expect(content).toContain('AC-22 content');
+  });
+
+  test('AC-23: DELETE /api/work-items/:id/artifacts/:file deletes artifact', async () => {
+    const item = await seedWorkItem({ title: 'AC-23 artifact delete' });
+    await api(`work-items/${item.id}/artifacts/notes.md`, {
+      method: 'PUT',
+      body: JSON.stringify({ content: '# to delete' }),
+    });
+    const deleted = await api(`work-items/${item.id}/artifacts/notes.md`, { method: 'DELETE' });
+    expect(deleted.deleted).toBe('notes.md');
+    const resp = await fetch(`${getBase()}/api/work-items/${item.id}/artifacts/notes.md`);
+    expect(resp.status).toBe(404);
+  });
+
+  // --- Epic CRUD routes ---
+
+  test('AC-24: POST /api/epics creates an epic', async () => {
+    const epic = await api('epics', {
+      method: 'POST',
+      body: JSON.stringify({ title: 'AC-24 epic', status: 'active', priority: 'high' }),
+    });
+    expect(epic.id).toMatch(/^E-\d+$/);
+    expect(epic.title).toBe('AC-24 epic');
+  });
+
+  test('AC-25: GET /api/epics/:id returns epic with items and progress', async () => {
+    const epic = await seedEpic({ title: 'AC-25 epic' });
+    const fetched = await api(`epics/${epic.id}`);
+    expect(fetched.id).toBe(epic.id);
+    expect(fetched).toHaveProperty('progress');
+  });
+
+  test('AC-26: GET /api/epics/:id returns 404 for unknown epic', async () => {
+    const resp = await fetch(`${getBase()}/api/epics/E-99999999`);
+    expect(resp.status).toBe(404);
+  });
+
+  test('AC-27: PATCH /api/epics/:id updates epic fields', async () => {
+    const epic = await seedEpic({ title: 'AC-27 epic' });
+    const updated = await api(`epics/${epic.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ title: 'AC-27 updated' }),
+    });
+    expect(updated.title).toBe('AC-27 updated');
+  });
+
+  test('AC-28: DELETE /api/epics/:id deletes epic', async () => {
+    const epic = await seedEpic({ title: 'AC-28 epic' });
+    const result = await api(`epics/${epic.id}`, { method: 'DELETE' });
+    expect(result.archived).toBe(epic.id);
+  });
+
+  test('AC-29: POST /api/epics/:id/archive returns 400 for active epic', async () => {
+    const epic = await seedEpic({ title: 'AC-29 active epic', status: 'active' });
+    const resp = await fetch(`${getBase()}/api/epics/${epic.id}/archive`, { method: 'POST' });
+    expect(resp.status).toBe(400);
+  });
+
+  test('AC-30: POST /api/epics/:id/archive succeeds for done epic', async () => {
+    const epic = await seedEpic({ title: 'AC-30 done epic' });
+    // createEpic always sets status to draft; patch to done first
+    await api(`epics/${epic.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'done' }),
+    });
+    const result = await api(`epics/${epic.id}/archive`, { method: 'POST' });
+    expect(result).toBeDefined();
+    expect(result.status).toBe('archived');
+  });
+
+  test('AC-31: POST /api/epics/:id/unlink unlinks work item from epic', async () => {
+    const epic = await seedEpic({ title: 'AC-31 epic' });
+    const item = await seedWorkItem({ title: 'AC-31 item' });
+    await api(`epics/${epic.id}/link`, {
+      method: 'POST',
+      body: JSON.stringify({ work_item_ids: [item.id] }),
+    });
+    const result = await api(`epics/${epic.id}/unlink`, {
+      method: 'POST',
+      body: JSON.stringify({ work_item_id: item.id }),
+    });
+    expect(result.unlinked).toBe(item.id);
+    expect(result.epic_id).toBe(epic.id);
+  });
+
+  test('AC-32: GET /api/epics/:id/plan returns plain text', async () => {
+    const epic = await seedEpic({ title: 'AC-32 plan' });
+    const resp = await fetch(`${getBase()}/api/epics/${epic.id}/plan`);
+    expect(resp.ok).toBe(true);
+    const content = await resp.text();
+    expect(typeof content).toBe('string');
+  });
+
+  test('AC-33: PUT /api/epics/:id/plan saves plan', async () => {
+    const epic = await seedEpic({ title: 'AC-33 plan' });
+    const saved = await api(`epics/${epic.id}/plan`, {
+      method: 'PUT',
+      body: JSON.stringify({ content: '# Epic plan AC-33' }),
+    });
+    expect(saved.saved).toBe(true);
+    const resp = await fetch(`${getBase()}/api/epics/${epic.id}/plan`);
+    const content = await resp.text();
+    expect(content).toContain('AC-33');
+  });
+
+  test('AC-34: GET /api/epics/:id/doc returns plain text', async () => {
+    const epic = await seedEpic({ title: 'AC-34 doc' });
+    const resp = await fetch(`${getBase()}/api/epics/${epic.id}/doc`);
+    expect(resp.ok).toBe(true);
+    const content = await resp.text();
+    expect(typeof content).toBe('string');
+  });
+
+  test('AC-35: PUT /api/epics/:id/doc saves doc', async () => {
+    const epic = await seedEpic({ title: 'AC-35 doc' });
+    const saved = await api(`epics/${epic.id}/doc`, {
+      method: 'PUT',
+      body: JSON.stringify({ content: '# Epic doc AC-35' }),
+    });
+    expect(saved.saved).toBe(true);
+    const resp = await fetch(`${getBase()}/api/epics/${epic.id}/doc`);
+    const content = await resp.text();
+    expect(content).toContain('AC-35');
+  });
+
+  // --- Dispatch advanced routes ---
+
+  test('AC-36: GET /api/dispatch/:id/log returns plain text for seeded dispatch', async () => {
+    const { dispatch_id } = await seedDispatch({ output: ['line one', 'line two'] });
+    const resp = await fetch(`${getBase()}/api/dispatch/${dispatch_id}/log`);
+    expect(resp.ok).toBe(true);
+    expect(resp.headers.get('content-type')).toContain('text/plain');
+    const body = await resp.text();
+    expect(typeof body).toBe('string');
+  });
+
+  test('AC-37: DELETE /api/dispatch/all returns killed count', async () => {
+    const result = await api('dispatch/all', { method: 'DELETE' });
+    expect(result).toHaveProperty('killed');
+    expect(typeof result.killed).toBe('number');
+  });
+
+  test('AC-38: POST /api/dispatch/:id/suspend returns 400 for non-running dispatch', async () => {
+    const { dispatch_id } = await seedDispatch({ status: 'completed' });
+    const resp = await fetch(`${getBase()}/api/dispatch/${dispatch_id}/suspend`, { method: 'POST' });
+    expect(resp.status).toBe(400);
+  });
+
+  test('AC-39: POST /api/dispatch/:id/suspend returns 400 when no claude_session_id', async () => {
+    const { dispatch_id } = await seedDispatch({ status: 'running', claude_session_id: null });
+    const resp = await fetch(`${getBase()}/api/dispatch/${dispatch_id}/suspend`, { method: 'POST' });
+    expect(resp.status).toBe(400);
+  });
+
+  // --- Terminal routes ---
+
+  test('AC-40: DELETE /api/terminal/all returns killed count', async () => {
+    const result = await api('terminal/all', { method: 'DELETE' });
+    expect(result).toHaveProperty('killed');
+    expect(typeof result.killed).toBe('number');
+  });
+
+  // --- Session routes ---
+
+  test('AC-41: GET /api/sessions/active returns array', async () => {
+    const result = await api('sessions/active');
+    expect(Array.isArray(result)).toBe(true);
+  });
+
+  test('AC-42: DELETE /api/sessions/:id returns 404 for unknown session', async () => {
+    const resp = await fetch(`${getBase()}/api/sessions/C-0000000000`, { method: 'DELETE' });
+    expect(resp.status).toBe(404);
+  });
+
+  // --- Server management routes ---
+
+  test('AC-43: GET /api/projects returns projects map', async () => {
+    const result = await api('projects');
+    expect(typeof result).toBe('object');
+  });
+
+  test('AC-44: POST /api/projects/sync returns synced count', async () => {
+    const result = await api('projects/sync', { method: 'POST' });
+    expect(result).toHaveProperty('synced');
+    expect(typeof result.synced).toBe('number');
+  });
+
+  test('AC-45: GET /api/server/config returns port and paths', async () => {
+    const result = await api('server/config');
+    expect(typeof result.port).toBe('number');
+    expect(result).toHaveProperty('log_file');
+    expect(result).toHaveProperty('pid_file');
+    expect(result).toHaveProperty('database_file');
+  });
+
+  test('AC-46: GET /api/server/logs returns text', async () => {
+    const resp = await fetch(`${getBase()}/api/server/logs`);
+    expect(resp.ok).toBe(true);
+    const content = await resp.text();
+    expect(typeof content).toBe('string');
+  });
+
+  test('AC-47: GET /api/session-history returns array', async () => {
+    const result = await api('session-history');
+    expect(Array.isArray(result)).toBe(true);
+  });
+
+  test('AC-48: GET /api/time-report returns today and overall breakdowns', async () => {
+    const result = await api('time-report');
+    expect(result).toHaveProperty('today');
+    expect(result).toHaveProperty('overall');
+    expect(result).toHaveProperty('today_total');
+    expect(result).toHaveProperty('overall_total');
+  });
+
+  test('AC-49: GET /api/settings/preferences returns object', async () => {
+    const result = await api('settings/preferences');
+    expect(typeof result).toBe('object');
+  });
+
+  test('AC-50: PUT /api/settings/preferences saves preference', async () => {
+    const result = await api('settings/preferences', {
+      method: 'PUT',
+      body: JSON.stringify({ test_pref_ac50: 'true' }),
+    });
+    expect(typeof result).toBe('object');
+  });
+
+  // --- Portfolio routes ---
+
+  test('AC-51: GET /api/orgs returns array of org names', async () => {
+    const result = await api('orgs');
+    expect(Array.isArray(result)).toBe(true);
+  });
+
+  test('AC-52: POST /api/work-items/:id/depend returns 400 when targets missing', async () => {
+    const item = await seedWorkItem({ title: 'AC-52 dep missing' });
+    const resp = await fetch(`${getBase()}/api/work-items/${item.id}/depend`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targets: [] }),
+    });
+    expect(resp.status).toBe(400);
+  });
+
+  test('AC-53: GET /api/dispatch/:id/log returns 404 for unknown dispatch', async () => {
+    const resp = await fetch(`${getBase()}/api/dispatch/D-nonexistent-9999/log`);
+    expect(resp.ok).toBe(false);
+  });
+
+  test('AC-54: PUT /api/epics/:id/plan saves empty content without error', async () => {
+    const epic = await seedEpic({ title: 'AC-54 empty plan' });
+    const saved = await api(`epics/${epic.id}/plan`, {
+      method: 'PUT',
+      body: JSON.stringify({ content: '' }),
+    });
+    expect(saved.saved).toBe(true);
+  });
+
+  test('AC-55: PUT /api/work-items/:id/artifacts/:file with unsupported extension returns 404', async () => {
+    const item = await seedWorkItem({ title: 'AC-55 artifact ext' });
+    const resp = await fetch(`${getBase()}/api/work-items/${item.id}/artifacts/notes.txt`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'test' }),
+    });
+    // Route only matches .md files — non-matching returns 404
+    expect(resp.status).toBe(404);
+  });
+
+  test('AC-56: POST /api/epics/:id/archive returns 404 for unknown epic', async () => {
+    const resp = await fetch(`${getBase()}/api/epics/E-99999999/archive`, { method: 'POST' });
+    expect(resp.status).toBe(404);
+  });
+
+  test('AC-57: GET /api/work-items/:id/artifacts/:file returns 404 when artifact absent', async () => {
+    const item = await seedWorkItem({ title: 'AC-57 no artifact' });
+    const resp = await fetch(`${getBase()}/api/work-items/${item.id}/artifacts/absent.md`);
+    expect(resp.status).toBe(404);
+  });
+
+  test('AC-58: PATCH /api/epics/:id returns 404 for unknown epic', async () => {
+    const resp = await fetch(`${getBase()}/api/epics/E-99999999`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'nope' }),
+    });
     expect(resp.status).toBe(404);
   });
 });

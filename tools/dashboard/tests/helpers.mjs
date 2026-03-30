@@ -3,10 +3,12 @@
  * All API helpers communicate with the live dashboard at BASE.
  */
 
-export const getBase = () =>
-  process.env.TEST_SERVER_PORT
-    ? `http://127.0.0.1:${process.env.TEST_SERVER_PORT}`
-    : 'http://127.0.0.1:3777';
+export const getBase = () => {
+  if (!process.env.TEST_SERVER_PORT) {
+    throw new Error('TEST_SERVER_PORT not set — refusing to fall back to port 3777 (real server). Tests must run through Playwright.');
+  }
+  return `http://127.0.0.1:${process.env.TEST_SERVER_PORT}`;
+};
 
 // ============================================================
 // API helpers
