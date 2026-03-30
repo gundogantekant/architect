@@ -3,7 +3,7 @@
  * All API helpers communicate with the live dashboard at BASE.
  */
 
-const getBase = () =>
+export const getBase = () =>
   process.env.TEST_SERVER_PORT
     ? `http://127.0.0.1:${process.env.TEST_SERVER_PORT}`
     : 'http://127.0.0.1:3777';
@@ -265,6 +265,34 @@ export async function getDispatchPanelState(page, id) {
       lineCount: logEl ? logEl.querySelectorAll('.log-line, .log-entry, div').length : 0,
     };
   }, id);
+}
+
+/**
+ * Wait for the terminal's EventQueue to fully drain (ready, not draining, empty queue).
+ */
+export async function waitForEventQueueDrain(page, terminalId, timeout = 60_000) {
+  await page.waitForFunction((id) => {
+    const eq = window._termSessions?.get(id)?._eventQueue;
+    return eq && eq._ready && !eq._draining && eq._queue.length === 0;
+  }, terminalId, { timeout, polling: 500 });
+}
+
+/**
+ * Pump lines into a running terminal and wait until all events are processed by xterm.
+ * Uses server headSeq + client lastSeq to avoid starting the next pump while the
+ * previous pump's events are still draining through the EventQueue.
+ */
+export async function pumpAndWait(page, terminalId, opts = {}) {
+  const lps = opts.linesPerSecond || 30;
+  const duration = opts.duration || 10;
+  const { head_seq: seqBefore } = await getEventStream(terminalId);
+  await pumpTerminal(terminalId, { linesPerSecond: lps, duration });
+  const targetSeq = seqBefore + (lps * duration);
+  await page.waitForFunction(
+    ({ id, seq }) => (window._termSessions?.get(id)?._wsManager?.lastSeq ?? 0) >= seq,
+    { id: terminalId, seq: targetSeq },
+    { timeout: 60_000, polling: 500 },
+  );
 }
 
 /**

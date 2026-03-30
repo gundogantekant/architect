@@ -9,17 +9,13 @@
  */
 
 import { test, expect } from './fixtures.mjs';
-import { purgeAll, seedDispatch } from './helpers.mjs';
-
-const getTestBase = () => `http://127.0.0.1:${process.env.TEST_SERVER_PORT || 3778}`;
+import { getBase, seedDispatch } from './helpers.mjs';
 
 // Global purge before the suite: clears real claude processes left by prior test files
 // (worker-scoped purgeAll cannot kill dispatches that have live process handles)
 test.beforeAll(async () => {
-  await fetch(`${getTestBase()}/api/test/purge-all`, { method: 'POST' });
+  await fetch(`${getBase()}/api/test/purge-all`, { method: 'POST' });
 });
-
-test.beforeEach(async () => { await purgeAll(); });
 
 // ============================================================
 // Suite A: Dispatch Panels (DP-1 to DP-10)
@@ -149,9 +145,9 @@ test('DP-10: focus popup shows dispatch ID in content', async ({ page }) => {
  */
 async function registerCliSession(title) {
   // Fetch server PID from the status endpoint — it is always alive during tests
-  const statusRes = await fetch(`${getTestBase()}/api/server/status`);
+  const statusRes = await fetch(`${getBase()}/api/server/status`);
   const { pid } = await statusRes.json();
-  const res = await fetch(`${getTestBase()}/api/sessions/register`, {
+  const res = await fetch(`${getBase()}/api/sessions/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, pid, project_key: 'ticari/architect/main' }),

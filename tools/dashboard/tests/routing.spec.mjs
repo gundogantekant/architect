@@ -8,17 +8,12 @@
 
 import { test, expect } from './fixtures.mjs';
 import {
-  purgeAll,
   seedTerminal,
   seedDispatch,
   waitForTerminalLive,
   getXtermScrollMetrics,
   waitForTerminalContent,
 } from './helpers.mjs';
-
-const getTestBase = () => `http://127.0.0.1:${process.env.TEST_SERVER_PORT || 3778}`;
-
-test.beforeEach(async () => { await purgeAll(); });
 
 test('R-NAV-1: navigate away while terminal LIVE, back, xterm content intact and state LIVE', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });

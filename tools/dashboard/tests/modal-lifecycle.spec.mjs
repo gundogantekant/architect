@@ -8,11 +8,7 @@
  */
 
 import { test, expect } from './fixtures.mjs';
-import { purgeAll, seedWorkItem, seedEpic } from './helpers.mjs';
-
-const getBase = () => `http://127.0.0.1:${process.env.TEST_SERVER_PORT || 3778}`;
-
-test.beforeEach(async () => { await purgeAll(); });
+import { seedWorkItem, seedEpic } from './helpers.mjs';
 
 // ============================================================
 // Modal 1: showDiscussModal
@@ -20,7 +16,7 @@ test.beforeEach(async () => { await purgeAll(); });
 // ============================================================
 
 test('M-1-1: showDiscussModal opens on trigger click', async ({ page }) => {
-  await page.goto(`${getBase()}/#component/ticari/architect/main`);
+  await page.goto('/#component/ticari/architect/main');
   await page.waitForSelector('#discuss-agent', { timeout: 15000 });
   await page.click('#discuss-agent');
   await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
@@ -28,7 +24,7 @@ test('M-1-1: showDiscussModal opens on trigger click', async ({ page }) => {
 });
 
 test('M-1-2: showDiscussModal cancel closes without creating session', async ({ page }) => {
-  await page.goto(`${getBase()}/#component/ticari/architect/main`);
+  await page.goto('/#component/ticari/architect/main');
   await page.waitForSelector('#discuss-agent', { timeout: 15000 });
   await page.click('#discuss-agent');
   await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
@@ -53,7 +49,7 @@ test('M-1-2: showDiscussModal cancel closes without creating session', async ({ 
 });
 
 test('M-1-3: showDiscussModal submit creates session and closes modal', async ({ page }) => {
-  await page.goto(`${getBase()}/#component/ticari/architect/main`);
+  await page.goto('/#component/ticari/architect/main');
   await page.waitForSelector('#discuss-agent', { timeout: 15000 });
   await page.click('#discuss-agent');
   await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
@@ -71,7 +67,7 @@ test('M-1-3: showDiscussModal submit creates session and closes modal', async ({
 // ============================================================
 
 test('M-2-1: showReviewModal opens on trigger click', async ({ page }) => {
-  await page.goto(`${getBase()}/#component/ticari/architect/main`);
+  await page.goto('/#component/ticari/architect/main');
   await page.waitForSelector('#review-prs', { timeout: 15000 });
   await page.click('#review-prs');
   await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
@@ -79,7 +75,7 @@ test('M-2-1: showReviewModal opens on trigger click', async ({ page }) => {
 });
 
 test('M-2-2: showReviewModal cancel closes without creating session', async ({ page }) => {
-  await page.goto(`${getBase()}/#component/ticari/architect/main`);
+  await page.goto('/#component/ticari/architect/main');
   await page.waitForSelector('#review-prs', { timeout: 15000 });
   await page.click('#review-prs');
   await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
@@ -104,7 +100,7 @@ test('M-2-2: showReviewModal cancel closes without creating session', async ({ p
 });
 
 test('M-2-3: showReviewModal submit creates session and closes modal', async ({ page }) => {
-  await page.goto(`${getBase()}/#component/ticari/architect/main`);
+  await page.goto('/#component/ticari/architect/main');
   await page.waitForSelector('#review-prs', { timeout: 15000 });
   await page.click('#review-prs');
   await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
@@ -126,7 +122,7 @@ test('M-2-3: showReviewModal submit creates session and closes modal', async ({ 
 
 test('M-3-1: dispatchWorkItem modal opens on dispatch button click', async ({ page }) => {
   await seedWorkItem({ title: 'Modal lifecycle test item', status: 'open' });
-  await page.goto(`${getBase()}/#component/ticari/architect/main`);
+  await page.goto('/#component/ticari/architect/main');
   await page.waitForSelector('.dispatch-btn[data-wi-idx]', { timeout: 15000 });
   await page.click('.dispatch-btn[data-wi-idx]');
   await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
@@ -135,7 +131,7 @@ test('M-3-1: dispatchWorkItem modal opens on dispatch button click', async ({ pa
 
 test('M-3-2: dispatchWorkItem cancel closes without creating session', async ({ page }) => {
   await seedWorkItem({ title: 'Modal lifecycle test item', status: 'open' });
-  await page.goto(`${getBase()}/#component/ticari/architect/main`);
+  await page.goto('/#component/ticari/architect/main');
   await page.waitForSelector('.dispatch-btn[data-wi-idx]', { timeout: 15000 });
   await page.click('.dispatch-btn[data-wi-idx]');
   await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
@@ -161,7 +157,7 @@ test('M-3-2: dispatchWorkItem cancel closes without creating session', async ({ 
 
 test('M-3-3: dispatchWorkItem submit creates session and closes modal', async ({ page }) => {
   await seedWorkItem({ title: 'Modal lifecycle test item', status: 'open' });
-  await page.goto(`${getBase()}/#component/ticari/architect/main`);
+  await page.goto('/#component/ticari/architect/main');
   await page.waitForSelector('.dispatch-btn[data-wi-idx]', { timeout: 15000 });
   await page.click('.dispatch-btn[data-wi-idx]');
   await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
@@ -181,7 +177,7 @@ test('M-3-3: dispatchWorkItem submit creates session and closes modal', async ({
 test('M-4-1: showEpicDiscussModal opens on discuss button click', async ({ page }) => {
   const epic = await seedEpic({ title: 'Modal lifecycle epic' });
   const epicId = epic.id;
-  await page.goto(`${getBase()}/#epics`);
+  await page.goto('/#epics');
   const trigger = page.locator(`[data-epic-discuss="${epicId}"]`);
   await expect(trigger).toBeVisible({ timeout: 15000 });
   await trigger.click();
@@ -192,7 +188,7 @@ test('M-4-1: showEpicDiscussModal opens on discuss button click', async ({ page 
 test('M-4-2: showEpicDiscussModal cancel closes without creating session', async ({ page }) => {
   const epic = await seedEpic({ title: 'Modal lifecycle epic' });
   const epicId = epic.id;
-  await page.goto(`${getBase()}/#epics`);
+  await page.goto('/#epics');
   const trigger = page.locator(`[data-epic-discuss="${epicId}"]`);
   await expect(trigger).toBeVisible({ timeout: 15000 });
   await trigger.click();
@@ -213,7 +209,7 @@ test('M-4-2: showEpicDiscussModal cancel closes without creating session', async
 test('M-4-3: showEpicDiscussModal submit creates session and closes modal', async ({ page }) => {
   const epic = await seedEpic({ title: 'Modal lifecycle epic' });
   const epicId = epic.id;
-  await page.goto(`${getBase()}/#epics`);
+  await page.goto('/#epics');
   const trigger = page.locator(`[data-epic-discuss="${epicId}"]`);
   await expect(trigger).toBeVisible({ timeout: 15000 });
   await trigger.click();
@@ -235,7 +231,7 @@ test('M-4-3: showEpicDiscussModal submit creates session and closes modal', asyn
 test('M-5-1: showEpicDispatchModal opens on dispatch button click', async ({ page }) => {
   const epic = await seedEpic({ title: 'Modal lifecycle epic dispatch' });
   const epicId = epic.id;
-  await page.goto(`${getBase()}/#epics`);
+  await page.goto('/#epics');
   const trigger = page.locator(`[data-epic-dispatch="${epicId}"]`);
   await expect(trigger).toBeVisible({ timeout: 15000 });
   await trigger.click();
@@ -246,7 +242,7 @@ test('M-5-1: showEpicDispatchModal opens on dispatch button click', async ({ pag
 test('M-5-2: showEpicDispatchModal cancel closes without creating session', async ({ page }) => {
   const epic = await seedEpic({ title: 'Modal lifecycle epic dispatch' });
   const epicId = epic.id;
-  await page.goto(`${getBase()}/#epics`);
+  await page.goto('/#epics');
   const trigger = page.locator(`[data-epic-dispatch="${epicId}"]`);
   await expect(trigger).toBeVisible({ timeout: 15000 });
   await trigger.click();
@@ -276,7 +272,7 @@ test('M-5-3: showEpicDispatchModal submit creates session and closes modal', asy
   const epicId = epic.id;
   // Dismiss any alert dialogs (e.g. "no project key" error)
   page.on('dialog', async dialog => { await dialog.dismiss(); });
-  await page.goto(`${getBase()}/#epics`);
+  await page.goto('/#epics');
   const trigger = page.locator(`[data-epic-dispatch="${epicId}"]`);
   await expect(trigger).toBeVisible({ timeout: 15000 });
   await trigger.click();
@@ -302,7 +298,7 @@ test('M-5-3: showEpicDispatchModal submit creates session and closes modal', asy
 // ============================================================
 
 test('M-6-1: showQuickDispatchModal opens on quick dispatch button click', async ({ page }) => {
-  await page.goto(`${getBase()}/#agents`);
+  await page.goto('/#agents');
   await page.waitForSelector('#agents-quick-dispatch', { timeout: 15000 });
   await page.click('#agents-quick-dispatch');
   await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
@@ -310,7 +306,7 @@ test('M-6-1: showQuickDispatchModal opens on quick dispatch button click', async
 });
 
 test('M-6-2: showQuickDispatchModal cancel closes without creating session', async ({ page }) => {
-  await page.goto(`${getBase()}/#agents`);
+  await page.goto('/#agents');
   await page.waitForSelector('#agents-quick-dispatch', { timeout: 15000 });
   await page.click('#agents-quick-dispatch');
   await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
@@ -341,7 +337,7 @@ test('M-6-2: showQuickDispatchModal cancel closes without creating session', asy
 });
 
 test('M-6-3: showQuickDispatchModal submit creates session and closes modal', async ({ page }) => {
-  await page.goto(`${getBase()}/#agents`);
+  await page.goto('/#agents');
   await page.waitForSelector('#agents-quick-dispatch', { timeout: 15000 });
   await page.click('#agents-quick-dispatch');
   await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });

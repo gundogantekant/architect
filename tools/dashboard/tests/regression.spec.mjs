@@ -9,7 +9,7 @@
 
 import { test, expect } from './fixtures.mjs';
 import {
-  purgeAll,
+  getBase,
   seedTerminal,
   seedDispatch,
   pumpTerminal,
@@ -17,11 +17,8 @@ import {
   waitForTerminalContent,
   getXtermBufferLines,
   getXtermScrollMetrics,
+  waitForEventQueueDrain,
 } from './helpers.mjs';
-
-const getTestBase = () => `http://127.0.0.1:${process.env.TEST_SERVER_PORT || 3778}`;
-
-test.beforeEach(purgeAll);
 
 // ============================================================
 // R-1: No blank render on first load
@@ -62,10 +59,7 @@ test('R-2. Scrollback history intact at buffer[0] after WS reconnect', async ({ 
 
   // Capture first line before reconnect
   // Wait for EventQueue to fully drain before capturing baseline
-  await page.waitForFunction((id) => {
-    const eq = window._termSessions?.get(id)?._eventQueue;
-    return eq && eq._ready && !eq._draining && eq._queue.length === 0;
-  }, t.id, { timeout: 10_000 });
+  await waitForEventQueueDrain(page, t.id, 10_000);
 
   const linesBefore = await getXtermBufferLines(page, t.id, 0, 1);
   expect(linesBefore[0].trim()).toBeTruthy();
@@ -110,10 +104,7 @@ test('R-3. No duplicate lines on WS reconnect', async ({ page }) => {
   await waitForTerminalContent(page, t.id, 30);
 
   // Wait for EventQueue to fully drain — lastSeq must be stable before force-close
-  await page.waitForFunction((id) => {
-    const eq = window._termSessions?.get(id)?._eventQueue;
-    return eq && eq._ready && !eq._draining && eq._queue.length === 0;
-  }, t.id, { timeout: 10_000 });
+  await waitForEventQueueDrain(page, t.id, 10_000);
 
   const metricsBefore = await getXtermScrollMetrics(page, t.id);
   expect(metricsBefore).not.toBeNull();
@@ -255,7 +246,7 @@ test('R-7. Badge decrements immediately when dispatch killed (syncSessionState)'
   await expect(page.locator(`#dispatch-${id}`)).toBeVisible({ timeout: 5000 });
 
   // Kill via API (not via UI kill button — tests that syncSessionState is called by WS/finalize path)
-  await fetch(`${getTestBase()}/api/dispatch/${id}`, { method: 'DELETE' });
+  await fetch(`${getBase()}/api/dispatch/${id}`, { method: 'DELETE' });
 
   // Badge must decrement within 2s (well before the 10s poll interval).
   // Uses count comparison (not === 0) to be robust in multi-worker environments

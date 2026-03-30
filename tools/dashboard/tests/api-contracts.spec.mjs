@@ -8,10 +8,9 @@
  */
 
 import { test, expect } from './fixtures.mjs';
-import { purgeAll, seedWorkItem, api } from './helpers.mjs';
+import { getBase, seedWorkItem, api } from './helpers.mjs';
 
 test.describe('API contracts @fast', () => {
-  test.beforeEach(async () => { await purgeAll(); });
 
   test('AC-1: GET /api/registry returns 200', async () => {
     const result = await api('registry');
@@ -73,8 +72,7 @@ test.describe('API contracts @fast', () => {
 
   test('AC-10: DELETE nonexistent work item returns 404', async () => {
     // api() throws on non-ok status, so we call fetch directly
-    const BASE = `http://127.0.0.1:${process.env.TEST_SERVER_PORT || 3778}`;
-    const resp = await fetch(`${BASE}/api/work-items/nonexistent-id-99999`, { method: 'DELETE' });
+    const resp = await fetch(`${getBase()}/api/work-items/nonexistent-id-99999`, { method: 'DELETE' });
     expect(resp.status).toBe(404);
   });
 });

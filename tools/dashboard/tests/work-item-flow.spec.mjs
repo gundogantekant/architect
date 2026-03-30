@@ -8,10 +8,9 @@
  */
 
 import { test, expect } from './fixtures.mjs';
-import { purgeAll, seedWorkItem, seedEpic, seedDispatch, api } from './helpers.mjs';
+import { seedWorkItem, seedEpic, seedDispatch, api } from './helpers.mjs';
 
 test.describe('Work item lifecycle @behavioral', () => {
-  test.beforeEach(async () => { await purgeAll(); });
 
   test('WF-1: work item appears in component view after creation', async ({ page }) => {
     await seedWorkItem({ title: 'Test task', status: 'open', project_key: 'ticari/architect/main' });

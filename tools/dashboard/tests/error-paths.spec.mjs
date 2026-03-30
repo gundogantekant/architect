@@ -8,10 +8,9 @@
  */
 
 import { test, expect } from './fixtures.mjs';
-import { purgeAll, seedDispatch, api } from './helpers.mjs';
+import { getBase, seedDispatch, api } from './helpers.mjs';
 
 test.describe('Error paths @behavioral', () => {
-  test.beforeEach(async () => { await purgeAll(); });
 
   test('EP-1: navigating to nonexistent terminal does not crash', async ({ page }) => {
     const errors = [];
@@ -42,8 +41,7 @@ test.describe('Error paths @behavioral', () => {
   });
 
   test('EP-4: POST work-item without title returns 4xx not 5xx', async () => {
-    const BASE = `http://127.0.0.1:${process.env.TEST_SERVER_PORT || 3778}`;
-    const resp = await fetch(`${BASE}/api/work-items`, {
+    const resp = await fetch(`${getBase()}/api/work-items`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'open' }), // missing title

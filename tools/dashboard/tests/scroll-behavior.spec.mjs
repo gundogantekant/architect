@@ -12,23 +12,19 @@
 
 import { test, expect } from './fixtures.mjs';
 import {
-  purgeAll,
   seedTerminal,
   pumpTerminal,
   waitForTerminalLive,
   waitForTerminalContent,
   getXtermBufferLines,
   getXtermScrollMetrics,
-  getEventStream,
+  waitForEventQueueDrain,
+  pumpAndWait,
 } from './helpers.mjs';
-
-const getTestBase = () => `http://127.0.0.1:${process.env.TEST_SERVER_PORT || 3778}`;
 
 // generateSeedContent(1000): 7-line cycle, 143 empty lines at i%7===3 → 857 non-empty.
 const SEED_LINES = 1000;
 const SEED_MIN = 850; // safe threshold below 857 non-empty lines
-
-test.beforeEach(purgeAll);
 
 // ============================================================
 // Suite A: Large Content (1 000 lines)
@@ -146,39 +142,22 @@ test.describe('Suite B: Multi-Pump Content Growth', () => {
     await waitForTerminalLive(page, t.id);
     // Wait for EventQueue to fully drain — more reliable than counting non-empty lines
     // because it avoids iterating the full buffer at polling frequency (RAF starvation).
-    await page.waitForFunction((id) => {
-      const eq = window._termSessions?.get(id)?._eventQueue;
-      return eq && eq._ready && !eq._draining && eq._queue.length === 0;
-    }, t.id, { timeout: 60_000, polling: 500 });
+    await waitForEventQueueDrain(page, t.id);
 
     const metricsBase = await getXtermScrollMetrics(page, t.id);
 
-    // pumpAndWait: fire a pump then wait until ALL pump events are processed by xterm.
-    // Uses server headSeq + client lastSeq to avoid starting the next pump while the
-    // previous pump's events are still draining through the EventQueue.
-    const pumpAndWait = async () => {
-      const { head_seq: seqBefore } = await getEventStream(t.id);
-      await pumpTerminal(t.id, { linesPerSecond: 30, duration: 10 });
-      const targetSeq = seqBefore + 300; // 30 lines/sec × 10 s
-      await page.waitForFunction(
-        ({ id, seq }) => (window._termSessions?.get(id)?._wsManager?.lastSeq ?? 0) >= seq,
-        { id: t.id, seq: targetSeq },
-        { timeout: 60_000, polling: 500 },
-      );
-    };
-
     // Pump 1: 300 lines
-    await pumpAndWait();
+    await pumpAndWait(page, t.id);
     const metricsAfterPump1 = await getXtermScrollMetrics(page, t.id);
     expect(metricsAfterPump1.baseY).toBeGreaterThan(metricsBase.baseY);
 
     // Pump 2: another 300 lines
-    await pumpAndWait();
+    await pumpAndWait(page, t.id);
     const metricsAfterPump2 = await getXtermScrollMetrics(page, t.id);
     expect(metricsAfterPump2.baseY).toBeGreaterThan(metricsAfterPump1.baseY);
 
     // Pump 3: another 300 lines
-    await pumpAndWait();
+    await pumpAndWait(page, t.id);
     const metricsAfterPump3 = await getXtermScrollMetrics(page, t.id);
     expect(metricsAfterPump3.baseY).toBeGreaterThan(metricsAfterPump2.baseY);
   });
@@ -191,32 +170,15 @@ test.describe('Suite B: Multi-Pump Content Growth', () => {
     await page.goto('/#terminals');
     await waitForTerminalLive(page, t.id);
     // Wait for EventQueue to fully drain before capturing baseline
-    await page.waitForFunction((id) => {
-      const eq = window._termSessions?.get(id)?._eventQueue;
-      return eq && eq._ready && !eq._draining && eq._queue.length === 0;
-    }, t.id, { timeout: 60_000, polling: 500 });
+    await waitForEventQueueDrain(page, t.id);
 
     // Capture the top 5 lines as the immutable baseline
     const topLinesBefore = await getXtermBufferLines(page, t.id, 0, 5);
     expect(topLinesBefore.filter((l) => l.trim()).length).toBeGreaterThanOrEqual(3);
 
-    // pumpAndWait: fire a pump then wait until ALL pump events are processed by xterm.
-    // Uses server headSeq + client lastSeq to avoid starting the next pump while the
-    // previous pump's events are still draining through the EventQueue.
-    const pumpAndWait = async () => {
-      const { head_seq: seqBefore } = await getEventStream(t.id);
-      await pumpTerminal(t.id, { linesPerSecond: 30, duration: 10 });
-      const targetSeq = seqBefore + 300; // 30 lines/sec × 10 s
-      await page.waitForFunction(
-        ({ id, seq }) => (window._termSessions?.get(id)?._wsManager?.lastSeq ?? 0) >= seq,
-        { id: t.id, seq: targetSeq },
-        { timeout: 60_000, polling: 500 },
-      );
-    };
-
-    await pumpAndWait();
-    await pumpAndWait();
-    await pumpAndWait();
+    await pumpAndWait(page, t.id);
+    await pumpAndWait(page, t.id);
+    await pumpAndWait(page, t.id);
 
     // Top lines must be identical — appends must not corrupt historical content
     const topLinesAfter = await getXtermBufferLines(page, t.id, 0, 5);

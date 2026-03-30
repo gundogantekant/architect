@@ -12,7 +12,7 @@
 
 import { test, expect } from './fixtures.mjs';
 import {
-  purgeAll,
+  getBase,
   seedTerminal,
   pumpTerminal,
   getEventStream,
@@ -28,16 +28,11 @@ import {
   compareXtermBuffers,
 } from './helpers.mjs';
 
-const getTestBase = () => `http://127.0.0.1:${process.env.TEST_SERVER_PORT || 3778}`;
-
 // ============================================================
 // Suite 1: Single Terminal Core Behaviors
 // ============================================================
 
 test.describe('Suite 1: Single Terminal Core', () => {
-  test.beforeEach(async () => {
-    await purgeAll();
-  });
 
   test('1. terminal panel appears with loading overlay', async ({ page }) => {
     const t = await seedTerminal({ lines: 200, withFakeContent: true, status: 'running' });
@@ -188,9 +183,6 @@ test.describe('Suite 1: Single Terminal Core', () => {
 // ============================================================
 
 test.describe('Suite 2: Multi-Browser Consistency', () => {
-  test.beforeEach(async () => {
-    await purgeAll();
-  });
 
   test('10. two browsers, 1 terminal: identical content, neither blanks', async ({ browser }) => {
     const t = await seedTerminal({ lines: 200, withFakeContent: true, status: 'running' });
@@ -321,9 +313,6 @@ test.describe('Suite 2: Multi-Browser Consistency', () => {
 // ============================================================
 
 test.describe('Suite 3: Session Reconnection', () => {
-  test.beforeEach(async () => {
-    await purgeAll();
-  });
 
   test('14. fresh page load: running terminals reappear with content', async ({ page }) => {
     const t1 = await seedTerminal({ lines: 100, withFakeContent: true, status: 'running' });
@@ -412,9 +401,6 @@ test.describe('Suite 3: Session Reconnection', () => {
 // ============================================================
 
 test.describe('Suite 4: Content Integrity', () => {
-  test.beforeEach(async () => {
-    await purgeAll();
-  });
 
   test('18. line integrity: 79-char lines have no phantom wrapping', async ({ page }) => {
     const t = await seedTerminal({ lines: 50, withFakeContent: true, status: 'running' });
@@ -507,15 +493,12 @@ test.describe('Suite 4: Content Integrity', () => {
 // ============================================================
 
 test.describe('Suite 5: Input and Control', () => {
-  test.beforeEach(async () => {
-    await purgeAll();
-  });
 
   test('22. keyboard input echoes via PTY (shell)', async ({ page }) => {
     test.setTimeout(60_000);
 
     const workerIdx = process.env.TEST_WORKER_INDEX;
-    const resp = await fetch(`${getTestBase()}/api/terminal`, {
+    const resp = await fetch(`${getBase()}/api/terminal`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -541,7 +524,7 @@ test.describe('Suite 5: Input and Control', () => {
     test.setTimeout(60_000);
 
     const workerIdx = process.env.TEST_WORKER_INDEX;
-    const resp = await fetch(`${getTestBase()}/api/terminal`, {
+    const resp = await fetch(`${getBase()}/api/terminal`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -578,7 +561,7 @@ test.describe('Suite 5: Input and Control', () => {
     test.setTimeout(60_000);
 
     const workerIdx = process.env.TEST_WORKER_INDEX;
-    const resp = await fetch(`${getTestBase()}/api/terminal`, {
+    const resp = await fetch(`${getBase()}/api/terminal`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -615,7 +598,7 @@ test.describe('Suite 5: Input and Control', () => {
     test.setTimeout(60_000);
 
     const workerIdx = process.env.TEST_WORKER_INDEX;
-    const resp = await fetch(`${getTestBase()}/api/terminal`, {
+    const resp = await fetch(`${getBase()}/api/terminal`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -658,9 +641,6 @@ test.describe('Suite 5: Input and Control', () => {
 // ============================================================
 
 test.describe('Suite 6: Corner Cases', () => {
-  test.beforeEach(async () => {
-    await purgeAll();
-  });
 
   test('26. empty terminal: xterm visible with no content', async ({ page }) => {
     const t = await seedTerminal({ lines: 0, status: 'running' });
@@ -710,7 +690,7 @@ test.describe('Suite 6: Corner Cases', () => {
     await waitForTerminalLive(page, t.id);
 
     // Kill via API
-    await fetch(`${getTestBase()}/api/terminal/${t.id}`, { method: 'DELETE' });
+    await fetch(`${getBase()}/api/terminal/${t.id}`, { method: 'DELETE' });
     await page.waitForTimeout(2_000);
 
     const panel = page.locator(`#terminal-${t.id}`);
