@@ -8,7 +8,7 @@ export const test = base.extend({
     // Project name is "${specName}/chromium" or "${specName}/firefox"
     const specName = workerInfo.project.name.replace(/\/(chromium|firefox)$/, '');
     const idx = SPEC_FILES.indexOf(specName);
-    const port = 3778 + (idx >= 0 ? idx : 0);
+    const port = 3800 + (idx >= 0 ? idx : 0);
     process.env.TEST_SERVER_PORT = String(port);
     await use(port);
   }, { scope: 'worker', auto: true }],

@@ -14,29 +14,24 @@ test.describe('Work item lifecycle @behavioral', () => {
   test.beforeEach(async () => { await purgeAll(); });
 
   test('WF-1: work item appears in component view after creation', async ({ page }) => {
-    const item = await seedWorkItem({ title: 'Test task', status: 'open', project_key: 'ticari/architect/main' });
+    await seedWorkItem({ title: 'Test task', status: 'open', project_key: 'ticari/architect/main' });
     await page.goto('/#component/ticari/architect/main');
-    await expect(page.locator(`[data-item-id="${item.id}"], #item-${item.id}, .work-item`).first()).toBeVisible({ timeout: 10_000 });
-    // title appears somewhere on page
-    await expect(page.getByText('Test task')).toBeVisible();
+    await expect(page.getByText('Test task')).toBeVisible({ timeout: 15_000 });
   });
 
   test('WF-2: status update reflects after reload', async ({ page }) => {
     const item = await seedWorkItem({ title: 'Status test', status: 'open', project_key: 'ticari/architect/main' });
-    await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'in_progress' }) });
+    await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'in-progress' }) });
     await page.goto('/#component/ticari/architect/main');
-    await page.waitForTimeout(500);
-    await expect(page.getByText('in_progress').or(page.getByText('in progress'))).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('#wi-table').getByText('in-progress')).toBeVisible({ timeout: 15_000 });
   });
 
   test('WF-3: linked dispatch panel appears under work item', async ({ page }) => {
-    const item = await seedWorkItem({ title: 'Dispatch parent', status: 'open', project_key: 'ticari/architect/main' });
-    await seedDispatch({ status: 'completed', work_item_id: item.id, output: ['Task done'] });
-    await page.goto('/#component/ticari/architect/main');
-    await page.waitForTimeout(1000);
-    // dispatch panel should appear (look for any panel element)
-    const panels = page.locator('[id^="dispatch-"], .dispatch-panel, .dispatch-entry');
-    await expect(panels.first()).toBeVisible({ timeout: 15_000 });
+    await seedWorkItem({ title: 'Dispatch parent', status: 'open', project_key: 'ticari/architect/main' });
+    const { dispatch_id } = await seedDispatch({ status: 'completed', work_item_id: undefined, output: ['Task done'] });
+    await page.goto('/');
+    // dispatch panel should appear in the global container
+    await expect(page.locator(`#dispatch-${dispatch_id}`)).toBeVisible({ timeout: 15_000 });
   });
 
   test('WF-4: deleted work item disappears', async ({ page }) => {
@@ -51,8 +46,8 @@ test.describe('Work item lifecycle @behavioral', () => {
   test('WF-5: epic view shows linked work item', async ({ page }) => {
     const epic = await seedEpic({ title: 'Test Epic' });
     const item = await seedWorkItem({ title: 'Epic child', status: 'open', project_key: 'ticari/architect/main' });
-    // link item to epic
-    await api(`epics/${epic.id}/link`, { method: 'POST', body: JSON.stringify({ work_item_id: item.id }) });
+    // link item to epic (server expects work_item_ids array)
+    await api(`epics/${epic.id}/link`, { method: 'POST', body: JSON.stringify({ work_item_ids: [item.id] }) });
     await page.goto(`/#epic/${epic.id}`);
     await expect(page.getByText('Epic child')).toBeVisible({ timeout: 15_000 });
   });

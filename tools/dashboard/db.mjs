@@ -649,7 +649,7 @@ export function hardDeleteAllTestData() {
   // Real work items and epics are days/weeks old; test seeds are always recent.
   const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
   db.pragma('foreign_keys = OFF');
-  db.prepare("DELETE FROM epic_logs WHERE created_at > ?").run(cutoff);
+  db.prepare("DELETE FROM epic_logs WHERE logged_at > ?").run(cutoff);
   db.prepare("DELETE FROM work_items WHERE created_at > ?").run(cutoff);
   db.prepare("DELETE FROM epics WHERE created_at > ?").run(cutoff);
   db.pragma('foreign_keys = ON');

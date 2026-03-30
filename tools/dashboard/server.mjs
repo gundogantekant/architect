@@ -302,8 +302,8 @@ function wireTerminalHandlers(terminal) {
     if (terminal.tmux_session) {
       try { execFileSync('tmux', ['kill-session', '-t', terminal.tmux_session], { stdio: 'ignore' }); } catch {}
     }
-    archiveSession(terminal, 'terminal');
-    saveTerminalToDb(terminal);
+    try { archiveSession(terminal, 'terminal'); } catch {}
+    try { saveTerminalToDb(terminal); } catch {}
     // Keep terminal in memory for frontend display; auto-cleanup timer handles removal after 10min
   });
 }

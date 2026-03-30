@@ -29,7 +29,11 @@ export async function api(path, opts = {}) {
 }
 
 export async function purgeAll() {
-  await api('test/purge-all', { method: 'POST' });
+  // No worker ID header → global purge: kills all sessions and deletes all test data.
+  // Each spec runs on a dedicated isolated server, so global purge is always safe here.
+  const url = `${getBase()}/api/test/purge-all`;
+  const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+  if (!resp.ok) throw new Error(`purge-all failed: ${resp.status}`);
 }
 
 export async function seedTerminal(opts = {}) {

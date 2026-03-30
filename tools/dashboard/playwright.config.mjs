@@ -1,7 +1,7 @@
 import { defineConfig } from '@playwright/test';
 import { SPEC_FILES } from './tests/global-setup.mjs';
 
-const BASE_PORT = 3778;
+const BASE_PORT = 3800;
 
 // One Playwright project per spec file per browser.
 // Each spec file has its own isolated server on a dedicated port (see global-setup.mjs).
