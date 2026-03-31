@@ -11,6 +11,7 @@ export const SPEC_FILES = [
   'regression',
   'scroll-behavior',
   'scroll-wheel',
+  'cursor-scroll-independence',
   'terminal-experience',
   'panel-lifecycle',
   'modal-lifecycle',

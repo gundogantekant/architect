@@ -263,6 +263,8 @@
   .terminal-header .terminal-meta { font-size: 11px; color: var(--text-light); }
   .terminal-container { height: 400px; background: #1e1e2e; overscroll-behavior: contain; overflow: hidden; position: relative; }
   .terminal-container.terminal-light { background: #f8f8f8; }
+  .terminal-container .scroll-to-bottom-btn { display: none; position: absolute; bottom: 10px; right: 14px; z-index: 10; background: var(--accent, #7c3aed); color: #fff; border: none; border-radius: 12px; padding: 3px 10px; font-size: 11px; cursor: pointer; opacity: 0.85; pointer-events: auto; }
+  .terminal-container .scroll-to-bottom-btn.visible { display: block; }
   .terminal-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #999; font-size: 12px; font-family: Menlo, Monaco, 'Courier New', monospace; z-index: 1; gap: 8px; }
   .terminal-loading::before { content: ''; display: inline-block; width: 12px; height: 12px; border: 2px solid #555; border-top-color: #aaa; border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -1454,6 +1456,7 @@ async function initSession(terminalInfo) {
             fontFamily: 'Menlo, Monaco, "Courier New", monospace',
             theme,
             scrollback: 50000,
+            scrollOnUserInput: false,
           });
 
           term.loadAddon(fitAddon);
@@ -1505,16 +1508,45 @@ async function initSession(terminalInfo) {
           resizeObserver.observe(containerEl);
           sessionState._resizeObserver = resizeObserver;
 
-          // Scroll containment: intercept wheel events, prevent page scroll,
-          // and route to xterm's scrollLines API for reliable scrollback navigation.
+          // Scroll containment: intercept wheel events in capture phase so this
+          // handler runs before xterm's own listener (attached during term.open()).
+          // stopImmediatePropagation prevents xterm's handler from also firing,
+          // ensuring scroll only moves the viewport — never the cursor.
           containerEl.addEventListener('wheel', (e) => {
             e.preventDefault();
             e.stopPropagation();
+            e.stopImmediatePropagation();
             if (term) {
               const lines = Math.round(e.deltaY / 25) || (e.deltaY > 0 ? 1 : -1);
               term.scrollLines(lines);
             }
-          }, { passive: false });
+          }, { passive: false, capture: true });
+
+          // Click while scrolled up returns the viewport to the input area.
+          // This is the intentional gesture for "take me back to where I was typing."
+          containerEl.addEventListener('click', () => {
+            if (term) {
+              const buf = term.buffer.active;
+              if (buf.viewportY < buf.baseY) {
+                term.scrollToBottom();
+              }
+            }
+          });
+
+          // "Return to input" badge: visible when scrolled up, hidden at bottom.
+          const scrollBtn = document.createElement('button');
+          scrollBtn.className = 'scroll-to-bottom-btn';
+          scrollBtn.setAttribute('aria-label', 'Return to input');
+          scrollBtn.textContent = '↓ input';
+          containerEl.appendChild(scrollBtn);
+          scrollBtn.addEventListener('click', (e) => {
+            e.stopPropagation(); // prevent the click handler above from double-firing
+            if (term) term.scrollToBottom();
+          });
+          term.onScroll(() => {
+            const buf = term.buffer.active;
+            scrollBtn.classList.toggle('visible', buf.viewportY < buf.baseY);
+          });
 
           // Mark queue ready
           eventQueue.markReady(term, fitAddon, containerEl);

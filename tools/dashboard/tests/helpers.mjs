@@ -162,6 +162,25 @@ export async function getXtermScrollMetrics(page, terminalId) {
 }
 
 /**
+ * Return the cursor's buffer position from the xterm active buffer.
+ * absoluteY = buf.baseY + buf.cursorY — the cursor's absolute position in the
+ * full scrollback buffer. Scroll operations must NOT change this value.
+ */
+export async function getXtermCursorPosition(page, terminalId) {
+  return page.evaluate((id) => {
+    const sess = window._termSessions?.get(id);
+    if (!sess?._term) return null;
+    const term = sess._term;
+    const buf = term.buffer.active;
+    return {
+      cursorX:   buf.cursorX,
+      cursorY:   buf.cursorY,
+      absoluteY: buf.baseY + buf.cursorY,
+    };
+  }, terminalId);
+}
+
+/**
  * Focus the xterm terminal and type text via keyboard events.
  * Waits for _term to be initialized before attempting to focus.
  */
