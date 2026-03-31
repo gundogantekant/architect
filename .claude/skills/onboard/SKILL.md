@@ -1,6 +1,7 @@
 ---
 name: onboard
 description: Scan a project and register it in the architect portfolio
+execution: dispatch
 user_invocable: true
 arguments:
   - name: path

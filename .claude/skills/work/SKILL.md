@@ -1,6 +1,7 @@
 ---
 name: work
 description: Track work items across sessions
+execution: inline
 user_invocable: true
 arguments:
   - name: subcommand

@@ -1,6 +1,6 @@
 # Architect
 
-**22 AI agents. 17 slash commands. One SDLC.**
+**24 AI agents. 17 slash commands. One SDLC.**
 
 A complete software development lifecycle system built on [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Architect gives you specialized agents for every phase of development — from triage to deployment — orchestrated through simple slash commands, with persistent context across projects and sessions.
 
@@ -16,7 +16,7 @@ A complete software development lifecycle system built on [Claude Code](https://
 | **Persistence** | Work items lost between sessions | Backlog, epics, and dependencies survive restarts |
 | **Workflows** | Manual prompt chaining | Pre-built pipelines: scout → plan → code → test → review |
 | **Multi-project** | One project at a time | Portfolio registry with org/project/component hierarchy |
-| **Orchestration** | Single agent, single task | 22 specialized agents with parallel fan-out |
+| **Orchestration** | Single agent, single task | 24 specialized agents with parallel fan-out |
 
 ## Quick Start
 
@@ -64,19 +64,20 @@ Clean Architecture with four layers. Dependencies point inward only.
 
 ## Agents
 
-Model key: **O** = Opus, **S** = Sonnet, **H** = Haiku, **I** = Inherit (caller's model)
+Model key: **O** = Opus, **S** = Sonnet, **H** = Haiku
 
 | Agent | Category | Model | Purpose |
 |-------|----------|-------|---------|
-| pm | Orchestration | S | Triage requests and produce dispatch plans |
+| classifier | Orchestration | H | Fast request triage |
+| coordinator | Orchestration | S | Detailed dispatch planning |
 | scout | Discovery | H | Scan a project's tech stack and structure |
 | profiler | Discovery | S | Deep project analysis and CLAUDE.md generation |
 | strategist | Planning | O | Strategic evaluation of complex requests |
 | planner | Planning | O | Architecture and design decisions |
-| coder | Implementation | I | General-purpose code implementation |
-| coder-frontend | Implementation | I | Frontend and UI work |
-| coder-backend | Implementation | I | Backend and API work |
-| coder-mobile | Implementation | I | Mobile development |
+| coder | Implementation | S | General-purpose code implementation |
+| coder-frontend | Implementation | S | Frontend and UI work |
+| coder-backend | Implementation | S | Backend and API work |
+| coder-mobile | Implementation | S | Mobile development |
 | coder-infra | Implementation | S | Infrastructure and DevOps |
 | tester | Quality | S | Write and run tests |
 | reviewer | Quality | S | Code review (read-only) |
@@ -88,6 +89,7 @@ Model key: **O** = Opus, **S** = Sonnet, **H** = Haiku, **I** = Inherit (caller'
 | api-designer | Design | S | API design and schema definition |
 | dependency-manager | Maintenance | H | Dependency updates and compatibility (read-only) |
 | tracker | Tracking | H | Work item and backlog management |
+| git-ops | Operations | H | Git operations (branching, merging, worktrees) |
 | refactorer | Implementation | S | Systematic, scoped refactoring |
 | browser | Automation | S | Browser automation via Playwright (E2E, visual, web) |
 
@@ -242,7 +244,7 @@ Architect is designed to be extended. Each contribution type is a markdown or JS
 ```
 architect/
 ├── .claude/
-│   ├── agents/          # 22 agent prompt files
+│   ├── agents/          # 24 agent prompt files
 │   └── skills/          # 17 slash command definitions
 ├── domain/
 │   ├── entities.md      # canonical schemas

@@ -6,7 +6,7 @@ When the user says "architect" in conversation, it primarily refers to **this pr
 
 ## Overview
 
-This project provides 22 specialized Claude Code subagents and 17 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack.
+This project provides 24 specialized Claude Code subagents and 18 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack. The main thread acts as a strict orchestrator/PM — it reads, plans, dispatches, and tracks, but delegates all implementation and git operations to specialized agents.
 
 ## Architecture
 
@@ -25,17 +25,18 @@ See `docs/architecture.md` for layer boundaries and dependency rules.
 
 ### When to use which agent
 
-| Task | Agent | Model |
-|------|-------|-------|
-| Triage and dispatch planning | pm | sonnet |
+| Task | Agent | Default Model |
+|------|-------|---------------|
+| Fast request triage | classifier | haiku |
+| Detailed dispatch planning | coordinator | sonnet |
 | Scan a project's tech stack | scout | haiku |
 | Project analysis and CLAUDE.md generation | profiler | sonnet |
 | Strategic evaluation of a request | strategist | opus |
 | Architecture/design decisions | planner | opus |
-| General code implementation | coder | inherit |
-| Frontend/UI work | coder-frontend | inherit |
-| Backend/API work | coder-backend | inherit |
-| Mobile development | coder-mobile | inherit |
+| General code implementation | coder | sonnet |
+| Frontend/UI work | coder-frontend | sonnet |
+| Backend/API work | coder-backend | sonnet |
+| Mobile development | coder-mobile | sonnet |
 | Infrastructure/DevOps | coder-infra | sonnet |
 | Write/run tests | tester | sonnet |
 | Code review | reviewer | sonnet |
@@ -49,25 +50,33 @@ See `docs/architecture.md` for layer boundaries and dependency rules.
 | Work item tracking | tracker | haiku |
 | Systematic refactoring | refactorer | sonnet |
 | Browser automation (E2E, visual, web tasks) | browser | sonnet |
+| Git operations (commit, push, PR, branch, worktree) | git-ops | haiku |
+
+Default models are overridden dynamically by the orchestrator based on task complexity. See `domain/rules.md` → Model Selection Rules.
+
+### Orchestrator Behavior
+
+The main thread is strictly an orchestrator/PM. It reads, plans, dispatches, and tracks — but does not implement code (except single-line trivial fixes like typos). Git operations are delegated to the git-ops agent. See `domain/rules.md` → Orchestrator Behavior Rules for the full dispatch decision flow.
 
 ### Coordination Patterns
 
 The main Claude conversation acts as orchestrator. Subagents cannot spawn subagents.
 
-**PM-Guided Dispatch** (non-trivial work requests):
+**Classifier + Coordinator Dispatch** (non-trivial work requests):
 ```
-pm (triage) → follow execution plan: scout → [strategist] → planner → coders → tester → reviewer
+classifier (haiku, fast triage) → [coordinator (sonnet, detailed plan)] → follow execution plan
 ```
+For simple cases (trivial/small, high confidence), the orchestrator skips the coordinator and constructs a dispatch plan directly from the classifier output.
 
 **Sequential Pipeline** (new features):
 ```
-scout → [strategist] → planner → coder → tester → reviewer
+scout → [strategist] → planner → coder → tester → reviewer → git-ops (commit)
 ```
 
 **Parallel Fan-Out** (full-stack features):
 ```
 Spawn in parallel: coder-frontend + coder-backend + coder-infra
-Then: tester → reviewer
+Then: tester → reviewer → git-ops (commit)
 ```
 
 **Plan-Then-Execute** (large features):
@@ -77,10 +86,10 @@ planner (produces task list with parallel batches) → dispatch batches concurre
 
 **Investigate-Then-Fix** (bug fixing):
 ```
-debugger/scout → coder (fix) → tester (verify)
+debugger/scout → coder (fix) → tester (verify) → git-ops (commit)
 ```
 
-See `domain/rules.md` for PM dispatch rules, workflow selection matrix, and agent inclusion rules.
+See `domain/rules.md` for triage dispatch rules, workflow selection matrix, agent inclusion rules, model selection rules, and role-scoped context injection.
 
 ## Project Portfolio
 
@@ -126,7 +135,10 @@ Use `/work list --org <name>` to scope work items to a specific organization. Se
 - Include the Coding Standards Brief (from `domain/rules.md` → Coding Standards Brief) in every implementation agent dispatch prompt. Sub-agents do not inherit standards automatically.
 - When dispatching multiple agents or tasks, apply `domain/rules.md` → Parallelization Rules: evaluate independence criteria, dispatch independent work concurrently, fall back to sequential only when independence is not provable. This applies to all workflow patterns, not only parallel-fan-out.
 - Read-only agents do not modify code (see `domain/rules.md` → Agent Permission Model)
-- Implementation agents (coder-*) use acceptEdits permission mode
+- Implementation agents (coder-*, git-ops) use acceptEdits permission mode
+- The orchestrator delegates all git operations (commit, push, PR, branch, worktree) to the git-ops agent. The orchestrator only runs read-only git commands (status, log, diff) directly.
+- Apply role-scoped context injection when dispatching agents — see `domain/rules.md` → Role-Scoped Context Injection for the tier mapping per agent role
+- Use dynamic model selection per dispatch — see `domain/rules.md` → Model Selection Rules for complexity-to-model mapping
 - All work on portfolio projects uses a git worktree by default — create one before making any code changes. Exception: projects with `worktree_mode: "explicit"` in their portfolio entry work in-place; worktrees are created only on explicit request. Skip only when the user explicitly opts out. See `domain/rules.md` → Worktree Rules.
 - Follow git standards defined in `domain/rules.md`
 - Before using Playwright MCP tools directly in the main session, follow Model Affinity Rules in `domain/rules.md` to prompt model switching
@@ -156,7 +168,7 @@ The dashboard supports dispatching Claude Code agents directly from work items:
 - **Contextual placement**: session panels appear under their associated work item row in component/epic views. Standalone sessions fall back to a global container at the top.
 - **Permission modes**: dispatch modal includes permission mode selector ("Plan only", "Accept edits") and a separate "Skip permissions" checkbox (`--dangerously-skip-permissions`). Panels show `[plan]` badge for plan mode and `[skip-perms]` badge when skip permissions is enabled. Both settings have independent defaults configurable in `#settings`.
 - **Grouped sidebar**: sessions sidebar groups entries by epic, with standalone sessions below. Clicking navigates to the session's context view.
-- **Architect-awareness**: dispatched agents receive `ARCHITECT_ROOT` env var, a `# Architect System` section (portfolio entry path, guides, domain rules pointers), full portfolio context (complete brief, custom_rules, ci_cd, testing, doc_paths, portfolio guide contents), and `# Environment` / `# Tracking` sections with dashboard API endpoints for status updates and log entries.
+- **Architect-awareness**: dispatched agents receive `ARCHITECT_ROOT` env var, a `# Architect System` section (portfolio entry path, guides, domain rules pointers), role-scoped portfolio context (filtered by agent tier per `domain/rules.md` → Role-Scoped Context Injection), a `# Context Tiers` section for sub-agent dispatches, and `# Environment` / `# Tracking` sections with dashboard API endpoints for status updates and log entries.
 - **CLI session registration**: external CLI sessions can register as read-only entries via `POST /api/sessions/register`. The dashboard shows them with a `[CLI]` badge, teal left border, and no kill/focus buttons. PID liveness is checked every 60s; exited CLI sessions are auto-cleaned after 10min. Persisted in `work/sessions.json` under `cli_sessions`. See `domain/entities.md` → CliSession for schema.
 
 Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/log` (plain text JSONL), `GET /api/dispatch/:id/stream` (SSE, supports `?after=N`), `GET /api/dispatch/active`, `DELETE /api/dispatch/:id`, `DELETE /api/dispatch/all`. Terminal endpoints: `POST /api/terminal`, `GET /api/terminal/active`, `DELETE /api/terminal/:id`, `DELETE /api/terminal/all`, `WS /api/terminal/:id/ws`. CLI session endpoints: `POST /api/sessions/register`, `GET /api/sessions/active`, `DELETE /api/sessions/:id`. Server management endpoints: `GET /api/server/status`, `GET /api/server/config`, `POST /api/server/action`, `GET /api/server/logs`. Epic endpoints: `GET/POST /api/epics`, `GET/PATCH/DELETE /api/epics/:id`, `POST /api/epics/:id/link`, `POST /api/epics/:id/unlink`, `GET/PUT /api/epics/:id/plan`, `GET/PUT /api/epics/:id/doc`. Work item artifact endpoints: `GET/PUT /api/work-items/:id/plan`, `GET/PUT /api/work-items/:id/doc`, `GET /api/work-items/:id/artifacts`, `GET/PUT/DELETE /api/work-items/:id/artifacts/:filename`. Preferences endpoints: `GET/PUT /api/settings/preferences`.

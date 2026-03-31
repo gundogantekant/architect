@@ -14,21 +14,85 @@ export async function resolveProjectPath(projectKey) {
   return null;
 }
 
-export async function loadPortfolioContext(projectKey) {
+// Context tier mapping: agent name → tier
+// See domain/rules.md → Role-Scoped Context Injection
+const AGENT_CONTEXT_TIERS = {
+  'git-ops': 'none',
+  classifier: 'minimal', scout: 'minimal', tracker: 'minimal',
+  'dependency-manager': 'minimal', browser: 'minimal',
+  coder: 'standard', 'coder-frontend': 'standard', 'coder-backend': 'standard',
+  'coder-mobile': 'standard', 'coder-infra': 'standard', coordinator: 'standard',
+  planner: 'standard', debugger: 'standard', documenter: 'standard',
+  'api-designer': 'standard', refactorer: 'standard', strategist: 'standard',
+  profiler: 'standard',
+  tester: 'full', reviewer: 'full', 'security-auditor': 'full',
+  'ci-cd': 'full', performance: 'full',
+};
+
+export function getContextTier(agentName) {
+  return AGENT_CONTEXT_TIERS[agentName] || 'standard';
+}
+
+export function filterByTier(entry, tier) {
+  if (!entry || tier === 'none') return null;
+  if (tier === 'full') return entry;
+
+  const filtered = {};
+  // Minimal: stack_summary, scout_report.language, scout_report.framework
+  if (entry.guidance?.stack_summary) {
+    filtered.guidance = { stack_summary: entry.guidance.stack_summary };
+  }
+  if (entry.scout_report) {
+    filtered.scout_report = {
+      language: entry.scout_report.language,
+      framework: entry.scout_report.framework,
+    };
+  }
+  if (tier === 'minimal') return filtered;
+
+  // Standard: minimal + structure, conventions, custom_rules, dispatch_notes, brief subset, doc_paths, portfolio_guides
+  if (entry.guidance) {
+    filtered.guidance = {
+      ...(filtered.guidance || {}),
+      structure: entry.guidance.structure,
+      conventions: entry.guidance.conventions,
+    };
+  }
+  if (entry.custom_rules) filtered.custom_rules = entry.custom_rules;
+  if (entry.agents?.dispatch_notes) {
+    filtered.agents = { dispatch_notes: entry.agents.dispatch_notes };
+  }
+  if (entry.brief) {
+    filtered.brief = {
+      purpose: entry.brief.purpose,
+      domain: entry.brief.domain,
+      users: entry.brief.users,
+    };
+  }
+  if (entry.doc_paths) filtered.doc_paths = entry.doc_paths;
+  if (entry.portfolio_guides) filtered.portfolio_guides = entry.portfolio_guides;
+  if (entry.interfaces) filtered.interfaces = entry.interfaces;
+  return filtered;
+}
+
+export async function loadPortfolioContext(projectKey, tier = 'full') {
+  if (tier === 'none') return null;
   const [org, project, component] = projectKey.split('/');
   if (!org || !project || !component) return null;
-  const [entry, orgData] = await Promise.all([
+  const [rawEntry, orgData] = await Promise.all([
     readJson(join(PORTFOLIO, org, project, component + '.json')).catch(() => null),
     readJson(join(PORTFOLIO, org, 'organization.json')).catch(() => null),
   ]);
-  if (!entry && !orgData) return null;
+  if (!rawEntry && !orgData) return null;
 
-  // Load portfolio guide markdown files from disk
+  const entry = filterByTier(rawEntry, tier);
+
+  // Load portfolio guide markdown files (standard+ tiers only)
   let guides = null;
-  if (entry?.portfolio_guides?.length) {
+  if (tier !== 'minimal' && rawEntry?.portfolio_guides?.length) {
     const guideDir = join(PORTFOLIO, org, project);
     guides = (await Promise.all(
-      entry.portfolio_guides.map(async filename => {
+      rawEntry.portfolio_guides.map(async filename => {
         try {
           const content = await readFile(join(guideDir, filename), 'utf8');
           return { filename, content };
@@ -86,7 +150,7 @@ export async function loadEpicPlanSnippet(epicId) {
 }
 
 export async function selectAgentsForDispatch({ workItem, portfolio }) {
-  const always = ['pm', 'scout', 'planner', 'coder', 'tester', 'reviewer'];
+  const always = ['classifier', 'coordinator', 'scout', 'planner', 'coder', 'tester', 'reviewer', 'git-ops'];
   const conditional = {
     'coder-frontend': /front.?end|ui|css|react|vue|angular|svelte|html|component|layout|responsive|tailwind/i,
     'coder-backend': /back.?end|api|server|endpoint|database|graphql|rest|middleware|auth/i,
@@ -145,7 +209,7 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     '**Responsibilities**:',
     '- Triage the assigned work item: assess complexity, identify risks, select the right workflow',
     '- Plan before implementing — do not jump straight to code for non-trivial work',
-    '- Dispatch specialized sub-agents (pm, planner, tester, reviewer, etc.) as needed',
+    '- Dispatch specialized sub-agents (classifier, coordinator, planner, tester, reviewer, git-ops, etc.) as needed',
     '- Track progress via the dashboard API',
     '- Be critical — if the work item is vague or the approach seems suboptimal, document your assessment and propose alternatives before implementing',
     '',
@@ -182,8 +246,8 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     '',
     '- You act as the orchestrator. Dispatch sub-agents using the Agent tool.',
     '- Sub-agents cannot spawn their own sub-agents — only you orchestrate.',
-    '- Read-only agents (reviewer, security-auditor, scout, debugger, pm, strategist) do not modify code.',
-    '- Implementation agents (coder, coder-frontend, coder-backend, coder-infra, coder-mobile) modify code.',
+    '- Read-only agents (reviewer, security-auditor, scout, debugger, classifier, coordinator, strategist) do not modify code.',
+    '- Implementation agents (coder, coder-frontend, coder-backend, coder-infra, coder-mobile) modify code. git-ops handles git commands.',
     '- Run scout or load portfolio context before dispatching implementation agents on a new project.',
     '- Use parallel fan-out when tasks are independent; sequential pipeline when output feeds the next step.',
     '- When dispatching sub-agents, include the Coding Standards block from this prompt in the Agent tool\'s prompt parameter. Sub-agents do not inherit it automatically.',
@@ -425,6 +489,19 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     '- Avoid OWASP Top 10 vulnerabilities. Consider Linux compatibility.',
     '',
     '**Sub-agent propagation**: When you dispatch sub-agents via the Agent tool, include the above coding standards block in the prompt parameter. Sub-agents do not automatically inherit these standards.',
+  ].join('\n'));
+
+  // --- Context Tiers (guide for sub-agent dispatches) ---
+  sections.push([
+    '# Context Tiers',
+    '',
+    'When dispatching sub-agents, apply role-scoped context injection per `domain/rules.md` → Role-Scoped Context Injection:',
+    '- **none**: git-ops (branch + path only)',
+    '- **minimal**: classifier, scout, tracker, dependency-manager, browser (stack_summary, language, framework)',
+    '- **standard**: coders, planner, coordinator, debugger, documenter, api-designer, refactorer, strategist, profiler (+ structure, conventions, brief subset, guides)',
+    '- **full**: tester, reviewer, security-auditor, ci-cd, performance (complete context)',
+    '',
+    'Organization conventions are always included. Use `domain/rules.md` → Model Selection Rules for dynamic model selection per dispatch.',
   ].join('\n'));
 
   // --- Environment (always included) ---

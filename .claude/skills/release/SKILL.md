@@ -1,6 +1,7 @@
 ---
 name: release
 description: Version bump, changelog generation, git tag, optional GitHub release
+execution: dispatch
 user_invocable: true
 arguments:
   - name: version

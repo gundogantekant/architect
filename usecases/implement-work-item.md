@@ -16,8 +16,9 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 - Dashboard must be running at `http://127.0.0.1:3777`
 
 ## Agent(s)
-- **coder** (model: inherit) — implementation and commit
+- **coder** (model: sonnet) — implementation
 - **tester** (model: sonnet) — test verification
+- **git-ops** (model: haiku) — commit and branch operations
 - **tracker** (model: haiku, data-write) — status update
 
 ## Steps
@@ -40,7 +41,7 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 
 8. **Run tests**: Dispatch tester agent in the worktree. Run existing test suite if available. Write new tests if new code warrants them and the project has test infrastructure. If tests fail: dispatch coder to fix, then re-run tester (max 2 iterations). If no test framework is detected, skip and note it in the output.
 
-9. **Commit**: Dispatch coder to commit in the worktree. Message format: `<W-XXX>: <concise description of changes>`. Commit only relevant files. No Claude attribution per project rules.
+9. **Commit**: Dispatch git-ops to commit in the worktree. Message format: `<W-XXX>: <concise description of changes>`. Commit only relevant files. No Claude attribution per project rules.
 
 10. **Log progress**: `POST /api/work-items/<id>/log` with `{"message": "Implemented: <summary>. Branch: <branch-name>"}`.
 

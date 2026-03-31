@@ -59,7 +59,7 @@ Two tasks are **independent** when ALL of the following hold:
 
 | Actor | Obligation |
 |-------|------------|
-| PM | Populate `parallel_with` on every DispatchPlan step that shares no dependencies with another step. An empty `parallel_with` array means "evaluated, has dependencies" — not "not considered". When the workflow is `plan-then-execute`, note that the planner will refine parallelization at the task level. |
+| Coordinator | Populate `parallel_with` on every DispatchPlan step that shares no dependencies with another step. An empty `parallel_with` array means "evaluated, has dependencies" — not "not considered". When the workflow is `plan-then-execute`, note that the planner will refine parallelization at the task level. |
 | Planner | Group tasks into **parallel batches** — sets of tasks that satisfy all independence criteria. Include a `### Parallel Batches` section in every plan with more than one task. Tasks within a batch run concurrently; batches execute sequentially. |
 | Orchestrator | When dispatching from a PM plan: launch all steps that share the same `parallel_with` group concurrently. When dispatching from a planner plan: launch all tasks within the same parallel batch concurrently. Wait for a batch to complete before starting the next. If the orchestrator identifies additional parallelization not marked by PM or planner, it should exploit it using the independence criteria above. |
 
@@ -79,7 +79,7 @@ These rules apply to ALL workflow patterns, not only `parallel-fan-out`:
 - **plan-then-execute**: Planner must group tasks into parallel batches
 - **parallel-fan-out**: Already parallel by design; rules ensure convergence steps (tester, reviewer) wait for all parallel work
 - **investigate-then-fix**: Investigation is always sequential; fix + test may parallelize if targeting separate components
-- **PM-guided dispatch**: PM applies rules to the execution plan; orchestrator enforces them
+- **Triage-guided dispatch**: Coordinator applies rules to the execution plan; orchestrator enforces them
 
 ## Agent Inclusion Rules
 
@@ -97,9 +97,9 @@ These rules apply to ALL workflow patterns, not only `parallel-fan-out`:
 
 | Category | Agents | Can modify code | Can write data | Can interact with web | Uses worktree |
 |----------|--------|-----------------|----------------|-----------------------|---------------|
-| Read-only | reviewer, security-auditor, performance, strategist, pm, scout, debugger, dependency-manager | No | No | No | No (main tree) |
+| Read-only | reviewer, security-auditor, performance, strategist, classifier, coordinator, scout, debugger, dependency-manager | No | No | No | No (main tree) |
 | Interactive | browser | No | No | Yes | No |
-| Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer | Yes | No | No | Yes (worktree) |
+| Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer, git-ops | Yes | No | No | Yes (worktree) |
 | Onboarding | profiler | No (writes only CLAUDE.md to target project) | No | No | No |
 | Data-write | tracker | No | Yes (dashboard API for work items/epics; `work/epics/E-XXX/*.md`, `work/items/W-XXX/*.md` for artifacts) | No | No |
 
@@ -278,14 +278,22 @@ When PM's classification confidence is below **0.6**, always include clarificati
 - Tracker suggests `blocked` status when unfinished dependencies exist, but does not auto-change status
 - Topological sort (Kahn's algorithm) for display: roots first (no deps), then items whose deps are all listed; within same level, sort by priority desc then ID asc; items with external deps (outside filtered set) appended at end
 
-## PM Dispatch Rules
+## Triage Dispatch Rules
 
-**Invoke PM for**:
+The orchestrator uses a two-stage triage flow: **classifier** (haiku, fast) then optionally **coordinator** (sonnet, detailed).
+
+**Invoke classifier for**:
 - Work requests involving multiple agents or unclear scope
 - Requests where the right workflow pattern is not obvious
 - Unfamiliar projects with no existing scout report
 
-**Skip PM for**:
+**Invoke coordinator after classifier when**:
+- Classifier returns `needs_coordinator: true`
+- Complexity is medium or higher
+- Classifier confidence is below 0.6
+- Workflow requires parallelization planning
+
+**Skip triage entirely for**:
 - Slash commands (`/review`, `/test`, `/deploy`, etc.) — execute the skill directly
 - Direct questions about code or architecture — answer directly
 - Trivial tasks (typo fix, single-line change) — dispatch directly
@@ -409,6 +417,144 @@ Additional inclusion conditions beyond the base Agent Inclusion Rules table.
 | dependency-manager | Package manifest changes (package.json, pubspec.yaml, requirements.txt, etc.) |
 | performance | Changes to hot paths, database queries, or render-heavy components |
 | ci-cd | Workflow file changes (.github/workflows/, .forgejo/workflows/) |
+
+## Model Selection Rules
+
+The orchestrator evaluates task complexity before each dispatch and sets the model explicitly. No agent uses `inherit` — every agent has an explicit default model, and the orchestrator overrides dynamically based on the task at hand.
+
+### Complexity-to-Model Mapping
+
+| Task Complexity | Default Model | Override Condition |
+|-----------------|---------------|--------------------|
+| trivial | haiku | — |
+| small | sonnet | — |
+| medium | sonnet | — |
+| large | sonnet | Escalate to opus if task involves architecture decisions or cross-system design |
+| strategic | opus | — |
+
+### Quota Fallback
+
+When sonnet quota is exhausted, the orchestrator falls back to opus for standard/complex tasks and haiku for trivial tasks.
+
+### Canonical Agent Default Models
+
+Static defaults defined in each agent's frontmatter. The orchestrator overrides these per-dispatch based on the complexity mapping above.
+
+| Agent | Default Model | Role Category |
+|-------|---------------|---------------|
+| classifier | haiku | triage |
+| coordinator | sonnet | dispatch-planning |
+| git-ops | haiku | git-operations |
+| scout | haiku | read-only |
+| tracker | haiku | data-write |
+| dependency-manager | haiku | read-only |
+| coder | sonnet | implementation |
+| coder-frontend | sonnet | implementation |
+| coder-backend | sonnet | implementation |
+| coder-mobile | sonnet | implementation |
+| coder-infra | sonnet | implementation |
+| tester | sonnet | implementation |
+| reviewer | sonnet | read-only |
+| debugger | sonnet | read-only |
+| performance | sonnet | read-only |
+| documenter | sonnet | implementation |
+| api-designer | sonnet | implementation |
+| refactorer | sonnet | implementation |
+| ci-cd | sonnet | implementation |
+| browser | sonnet | interactive |
+| profiler | sonnet | onboarding |
+| planner | opus | read-only |
+| strategist | opus | read-only |
+| security-auditor | opus | read-only |
+
+## Role-Scoped Context Injection
+
+Each agent receives only the context layers relevant to its role. This reduces token waste while ensuring agents have what they need. Organization conventions are always included regardless of role.
+
+### Context Tier Mapping
+
+| Context Tier | Agents | Fields Included |
+|--------------|--------|-----------------|
+| none | git-ops | Branch name and project path only |
+| minimal | classifier, scout, tracker, dependency-manager, browser | `guidance.stack_summary`, `scout_report.language`, `scout_report.framework` |
+| standard | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, coordinator, planner, debugger, documenter, api-designer, refactorer, strategist, profiler | Minimal + `guidance.structure`, `guidance.conventions`, `custom_rules`, `agents.dispatch_notes`, `brief.purpose`, `brief.domain`, `brief.users`, `doc_paths`, `portfolio_guides` |
+| full | tester, reviewer, security-auditor, ci-cd, performance | Standard + `guidance.ci_cd`, `guidance.testing`, complete `brief` (all fields), `doc_paths` |
+
+### Application
+
+- The orchestrator determines the tier from this table before loading context
+- `loadPortfolioContext()` accepts a tier parameter and filters fields accordingly
+- Dashboard dispatches use the same tier mapping (not always full)
+- Portfolio guides are included at standard and full tiers, omitted at minimal and none
+
+## Orchestrator Behavior Rules
+
+The main Claude session acts strictly as an orchestrator: it reads, plans, dispatches, and tracks — but does not implement code (with the trivial exception below).
+
+### Trivial Exception Rule
+
+The orchestrator may handle single-line fixes inline without dispatching an agent:
+- Typo corrections in string literals
+- Single-character fixes
+- Import statement additions
+- Everything beyond this MUST be dispatched to the appropriate agent
+
+### Dispatch Decision Flow
+
+1. Is this a slash command? → Execute the skill directly (inline or dispatch per Skill Execution Policy)
+2. Is this a trivial inline fix? → Handle directly
+3. Is this a direct question? → Answer directly
+4. Otherwise → Dispatch **classifier** (haiku) for fast triage
+5. If classifier returns `needs_coordinator: true` → Dispatch **coordinator** (sonnet) for detailed planning
+6. Follow the dispatch plan from classifier or coordinator
+
+### Git Operations
+
+All git operations (commit, push, PR creation, branch management, worktree operations, merge) are delegated to the **git-ops** agent (haiku). The orchestrator does not run git commands directly except for read-only queries (status, log, diff for context).
+
+## Retry and Feedback Policy
+
+No automatic re-dispatch on failure. The orchestrator receives failure information and makes an informed decision.
+
+### Protocol
+
+1. Agent encounters failure (test failure, build error, implementation error, review rejection)
+2. Agent returns structured failure info: what failed, what was attempted, partial results
+3. Orchestrator receives failure info and decides:
+   - Re-dispatch the same agent with modified approach
+   - Dispatch a different agent (e.g., debugger to investigate a test failure)
+   - Escalate to user with context
+4. Maximum 2 retry attempts before mandatory user escalation
+5. The orchestrator always informs the user of failures — no silent retries
+
+### Contrast with Current Error Recovery
+
+The existing Error Recovery table (above) defines what agents do when they encounter problems. This policy governs the orchestrator's response to agent-level failures. Both apply: agents follow Error Recovery; the orchestrator follows this policy.
+
+## Skill Execution Policy
+
+Skills are classified as **inline** (executed directly by the orchestrator) or **dispatch** (delegated to agents). The threshold: skills that take <30 seconds and do not modify code execute inline.
+
+| Skill | Execution | Reason |
+|-------|-----------|--------|
+| /portfolio | inline | Read-only, fast |
+| /work | inline | API calls only, fast |
+| /status | inline | Read + API, fast |
+| /worktree | inline | Git read commands, fast |
+| /explain | dispatch | Extended analysis |
+| /review | dispatch | Extended code reading |
+| /test | dispatch | Runs tests, may modify |
+| /deploy | dispatch | Side effects |
+| /pr | dispatch | Git + GitHub operations |
+| /diagnose | dispatch | Extended investigation |
+| /secure | dispatch | Extended analysis |
+| /implement | dispatch | Full SDLC cycle |
+| /migrate | dispatch | Extended, modifies code |
+| /release | dispatch | Side effects (git tags) |
+| /refactor | dispatch | Modifies code |
+| /browse | dispatch | Browser interaction |
+| /scaffold | dispatch | Creates files |
+| /onboard | dispatch | Extended scan + writes |
 
 ## External Action Rules
 

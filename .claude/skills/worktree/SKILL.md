@@ -1,6 +1,7 @@
 ---
 name: worktree
 description: List and clean up git worktrees created for implementation isolation
+execution: inline
 user_invocable: true
 arguments:
   - name: action

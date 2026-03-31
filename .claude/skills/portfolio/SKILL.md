@@ -1,6 +1,7 @@
 ---
 name: portfolio
 description: View and manage the project portfolio registry
+execution: inline
 user_invocable: true
 arguments:
   - name: action

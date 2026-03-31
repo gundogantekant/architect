@@ -1,6 +1,7 @@
 ---
 name: browse
 description: Perform a web automation task via Playwright browser agent
+execution: dispatch
 user_invocable: true
 arguments:
   - name: task

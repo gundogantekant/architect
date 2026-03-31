@@ -8,21 +8,25 @@ Canonical schemas for all structured data in the architect system. Agents and sk
 {
   "name": "string",
   "role": "string",
-  "model": "opus|sonnet|haiku|inherit",
+  "model": "opus|sonnet|haiku",
+  "role_category": "triage|dispatch-planning|git-operations|read-only|implementation|interactive|onboarding|data-write",
+  "context_tier": "none|minimal|standard|full",
   "read_only": "boolean",
   "max_turns": "number"
 }
 ```
 
-**Read-only agents**: reviewer, security-auditor, performance, strategist, pm, scout, debugger, dependency-manager
+**Read-only agents**: reviewer, security-auditor, performance, strategist, classifier, coordinator, scout, debugger, dependency-manager
 **Interactive agents**: browser (interacts with web via Playwright, no code/data writes)
-**Implementation agents**: coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer
+**Implementation agents**: coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer, git-ops
 **Onboarding agents**: profiler (writes only CLAUDE.md to the target project)
 **Data-write agents**: tracker (uses dashboard API (http://127.0.0.1:3777/api/...) for work item and epic CRUD; writes work/epics/E-XXX/*.md and work/items/W-XXX/*.md for artifacts)
 
+See `domain/rules.md` → Model Selection Rules for the canonical default model table, and → Role-Scoped Context Injection for tier assignments.
+
 ## RequestClassification
 
-Output by PM when triaging a request.
+Output by the classifier agent when triaging a request.
 
 ```json
 {
@@ -32,6 +36,21 @@ Output by PM when triaging a request.
 }
 ```
 
+## ClassifierOutput
+
+Full output of the classifier agent. Extends RequestClassification with dispatch hints.
+
+```json
+{
+  "classification": { "$ref": "RequestClassification" },
+  "suggested_workflow": "$ref WorkflowPattern",
+  "needs_coordinator": "boolean (true when complexity >= medium or confidence < 0.6)",
+  "suggested_agents": ["string (agent names)"]
+}
+```
+
+**Rules**: When `needs_coordinator` is false, the orchestrator constructs a simple dispatch plan directly from this output. When true, the orchestrator dispatches the coordinator agent with this output as input.
+
 ## WorkflowPattern
 
 ```
@@ -40,7 +59,7 @@ Output by PM when triaging a request.
 
 ## DispatchPlan
 
-Full PM output. References RequestClassification and WorkflowPattern.
+Full coordinator output. References RequestClassification and WorkflowPattern.
 
 ```json
 {
@@ -159,11 +178,27 @@ Stored at `portfolio/<org>/<project>/<component>.json`.
   "worktree_setup": {
     "copy_paths": ["string — relative paths to copy from source to worktree"],
     "post_commands": ["string — shell commands to run in worktree after copy"]
+  },
+  "interfaces": {
+    "provides": [
+      {
+        "name": "string (e.g., 'REST API v2', 'BLE Protocol Service')",
+        "protocol": "rest|grpc|graphql|event|ble|shared-lib",
+        "description": "string"
+      }
+    ],
+    "consumes": [
+      {
+        "name": "string",
+        "provider_project": "string (org/project/component)",
+        "protocol": "rest|grpc|graphql|event|ble|shared-lib"
+      }
+    ]
   }
 }
 ```
 
-**Optional fields**: `brief`, `doc_paths`, `portfolio_guides`, `worktree_mode`, and `worktree_setup` are absent on entries onboarded before the profiler was added or where no setup is needed.
+**Optional fields**: `brief`, `doc_paths`, `portfolio_guides`, `worktree_mode`, `worktree_setup`, and `interfaces` are absent on entries onboarded before the profiler was added or where no setup is needed. The `interfaces` field enables cross-project awareness — the orchestrator and coordinator use `consumes` to identify impact when planning changes that affect APIs or protocols.
 
 ## Organization
 

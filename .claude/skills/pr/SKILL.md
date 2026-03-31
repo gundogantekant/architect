@@ -1,6 +1,7 @@
 ---
 name: pr
 description: Create a pull request with automated review summary
+execution: dispatch
 user_invocable: true
 arguments:
   - name: base-branch
@@ -14,6 +15,7 @@ Create a pull request with an automated review summary.
 
 ## Agents Dispatched
 - **reviewer** (sonnet) — change review and summary
+- **git-ops** (haiku) — push and PR creation
 
 ## Steps
 

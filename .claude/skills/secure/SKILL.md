@@ -1,6 +1,7 @@
 ---
 name: secure
 description: Run a security audit on the project
+execution: dispatch
 user_invocable: true
 ---
 

@@ -1,6 +1,7 @@
 ---
 name: deploy
 description: Local deployment via Docker Compose or Podman
+execution: dispatch
 user_invocable: true
 arguments:
   - name: target

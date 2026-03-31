@@ -1,4 +1,5 @@
 ---
+model: sonnet
 maxTurns: 50
 ---
 

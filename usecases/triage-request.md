@@ -1,32 +1,45 @@
 # Use Case: Triage Request
 
-PM-driven request classification and dispatch planning.
+Two-stage request classification and dispatch planning using classifier (fast) + coordinator (detailed).
 
 ## Input
 - User work request (free-form text)
 - Portfolio context (if available, from `usecases/load-portfolio-context.md`)
 
 ## Output
-- DispatchPlan (see `domain/entities.md` → DispatchPlan)
+- ClassifierOutput (see `domain/entities.md` → ClassifierOutput) for simple cases
+- DispatchPlan (see `domain/entities.md` → DispatchPlan) for complex cases
 
 ## Preconditions
 - Follow `usecases/load-portfolio-context.md` to load project context if a target project is identifiable
 
 ## Agent(s)
-- **pm** (model: sonnet, read-only)
+- **classifier** (model: haiku, read-only) — fast triage, always runs first
+- **coordinator** (model: sonnet, read-only) — detailed planning, only when needed
 
 ## Steps
 
-1. PM reads the user request
-2. PM loads portfolio context (or flags its absence)
-3. PM classifies the request using `domain/rules.md` → Complexity Heuristics
-4. PM checks `domain/rules.md` → Clarification Triggers
-5. PM selects workflow using `domain/rules.md` → Workflow Selection
-6. PM determines agent sequence using `domain/rules.md` → Agent Inclusion Rules
-7. PM evaluates step independence using `domain/rules.md` → Parallelization Rules and populates `parallel_with` on each step
-8. PM outputs a DispatchPlan JSON (see `domain/entities.md` → DispatchPlan)
-9. PM sets `worktree_required: true` in the execution plan when any step uses an Implementation agent (see `domain/entities.md` → DispatchPlan)
-10. If complexity is medium+, PM includes `suggested_work_item` in output
+### Stage 1: Fast Classification
+
+1. Orchestrator dispatches **classifier** (haiku) with the user request and minimal context
+2. Classifier reads the request and outputs ClassifierOutput JSON:
+   - Classifies request type using `domain/rules.md` → Complexity Heuristics
+   - Suggests workflow using `domain/rules.md` → Workflow Selection
+   - Suggests agent list using `domain/rules.md` → Agent Inclusion Rules
+   - Sets `needs_coordinator: true` when complexity >= medium, confidence < 0.6, or parallelization planning is required
+
+### Stage 2: Detailed Planning (conditional)
+
+3. If `needs_coordinator` is **false**: orchestrator constructs a simple DispatchPlan directly from ClassifierOutput — no coordinator needed. The orchestrator maps suggested_agents to ordered steps and skips parallelization analysis for simple workflows.
+
+4. If `needs_coordinator` is **true**: orchestrator dispatches **coordinator** (sonnet) with the ClassifierOutput + portfolio context (standard tier)
+5. Coordinator resolves all five Target Project fields (see `domain/rules.md` → Target Project Identification)
+6. Coordinator validates and potentially adjusts the classifier's assessment
+7. Coordinator checks `domain/rules.md` → Clarification Triggers
+8. Coordinator builds ordered dispatch plan with `parallel_with` per `domain/rules.md` → Parallelization Rules
+9. Coordinator outputs a DispatchPlan JSON (see `domain/entities.md` → DispatchPlan)
+10. Coordinator sets `worktree_required: true` when any step uses an Implementation agent
+11. If complexity is medium+, coordinator includes `suggested_work_item` in output
 
 ## Post-conditions
 - Main conversation follows the execution plan steps

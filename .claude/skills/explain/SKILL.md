@@ -1,6 +1,7 @@
 ---
 name: explain
 description: Codebase walkthrough for onboarding and knowledge transfer
+execution: dispatch
 user_invocable: true
 arguments:
   - name: path

@@ -1,6 +1,7 @@
 ---
 name: implement
 description: Implement a tracked work item end-to-end: investigate, plan, code, test, commit, update status
+execution: dispatch
 user_invocable: true
 arguments:
   - name: id
@@ -13,7 +14,8 @@ arguments:
 Implement a tracked work item through the full cycle: fetch details, investigate, plan with user confirmation, code, test, commit, and update status.
 
 ## Agents Dispatched
-- **coder** (inherit) — implementation and commit
+- **coder** (sonnet) — implementation and commit
+- **git-ops** (haiku) — branch management, commit, push
 - **tester** (sonnet) — test verification
 - **tracker** (haiku) — status update
 

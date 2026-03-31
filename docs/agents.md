@@ -2,14 +2,14 @@
 
 ## Overview
 
-21 specialized agents organized in 6 categories. The main Claude conversation orchestrates them — subagents cannot spawn other subagents.
+24 specialized agents organized in 6 categories. The main Claude conversation orchestrates them — subagents cannot spawn other subagents.
 
 ## Model Tiers
 
 | Tier | Model | Use Case |
 |------|-------|----------|
 | Critical | opus | Judgment-heavy: planning, review, security, API design |
-| Workhorse | inherit | Implementation: uses session's active model |
+| Workhorse | sonnet | Implementation: coder agents use sonnet |
 | Standard | sonnet | Structured tasks: testing, debugging, CI/CD, docs, infra |
 | Fast | haiku | Scanning and lookups: scout, dependency checks |
 
@@ -19,7 +19,8 @@
 
 | Agent | Model | Max Turns | Purpose |
 |-------|-------|-----------|---------|
-| pm | sonnet | 10 | Request classification, dispatch planning |
+| classifier | haiku | 5 | Fast request triage |
+| coordinator | sonnet | 15 | Detailed dispatch planning |
 | scout | haiku | 15 | Project scanning, tech stack detection |
 | strategist | opus | 25 | Strategic evaluation, feasibility, build-vs-buy |
 | planner | opus | 30 | Architecture decisions, task decomposition |
@@ -28,10 +29,10 @@
 
 | Agent | Model | Max Turns | Purpose |
 |-------|-------|-----------|---------|
-| coder | inherit | 50 | General-purpose code implementation |
-| coder-frontend | inherit | 50 | UI, components, styling, client-side logic |
-| coder-backend | inherit | 50 | APIs, database, auth, middleware |
-| coder-mobile | inherit | 50 | Mobile-specific: platform code, device APIs |
+| coder | sonnet | 50 | General-purpose code implementation |
+| coder-frontend | sonnet | 50 | UI, components, styling, client-side logic |
+| coder-backend | sonnet | 50 | APIs, database, auth, middleware |
+| coder-mobile | sonnet | 50 | Mobile-specific: platform code, device APIs |
 | refactorer | sonnet | 40 | Systematic code transformations |
 
 ### Quality
@@ -49,6 +50,7 @@
 | debugger | sonnet | 40 | Bug investigation and fixing |
 | performance | sonnet | 25 | Performance analysis (primarily read-only) |
 | ci-cd | sonnet | 30 | CI/CD pipeline creation and maintenance |
+| git-ops | haiku | 10 | Git operations (branching, merging, worktrees) |
 
 ### Support
 
@@ -75,4 +77,4 @@ Task(subagent_type="scout", model="haiku", prompt="Scan /path/to/project...")
 Task(subagent_type="coder", prompt="Implement feature X based on this plan...")
 ```
 
-Read-only agents (reviewer, security-auditor, performance, strategist, pm) do not modify files — except strategist can write decision documents to `docs/`. The browser agent is interactive (web actions via Playwright) but does not modify code or data files. Implementation agents (coder-*) have file write access.
+Read-only agents (reviewer, security-auditor, performance, strategist, classifier, coordinator) do not modify files — except strategist can write decision documents to `docs/`. The browser agent is interactive (web actions via Playwright) but does not modify code or data files. Implementation agents (coder-*) have file write access.
