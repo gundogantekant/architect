@@ -1226,9 +1226,21 @@ class TerminalEventQueue {
         if (event.seq > batchMaxSeq) batchMaxSeq = event.seq;
       }
 
-      // Flush accumulated data batch
+      // Flush accumulated data batch, preserving scroll position if user scrolled up
       if (batchData && this._term) {
+        const buf = this._term.buffer.active;
+        const userScrolledUp = buf.viewportY < buf.baseY;
+        const savedViewportY = buf.viewportY;
+
         await new Promise(resolve => this._term.write(batchData, resolve));
+
+        // Restore scroll position if user was scrolled up — prevents auto-scroll-to-bottom
+        if (userScrolledUp) {
+          const newBuf = this._term.buffer.active;
+          const delta = savedViewportY - newBuf.viewportY;
+          if (delta !== 0) this._term.scrollLines(delta);
+        }
+
         if (batchMaxSeq && this._sessionState._wsManager) {
           this._sessionState._wsManager.lastSeq = batchMaxSeq;
         }
@@ -1488,11 +1500,15 @@ async function initSession(terminalInfo) {
           resizeObserver.observe(containerEl);
           sessionState._resizeObserver = resizeObserver;
 
-          // Scroll containment
-          const xtermViewport = containerEl.querySelector('.xterm-viewport');
-          if (xtermViewport) xtermViewport.style.overscrollBehavior = 'contain';
+          // Scroll containment: intercept wheel events, prevent page scroll,
+          // and route to xterm's scrollLines API for reliable scrollback navigation.
           containerEl.addEventListener('wheel', (e) => {
+            e.preventDefault();
             e.stopPropagation();
+            if (term) {
+              const lines = Math.round(e.deltaY / 25) || (e.deltaY > 0 ? 1 : -1);
+              term.scrollLines(lines);
+            }
           }, { passive: false });
 
           // Mark queue ready

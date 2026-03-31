@@ -18,6 +18,7 @@ import {
   getXtermBufferLines,
   getXtermScrollMetrics,
   waitForEventQueueDrain,
+  waitForShellReady,
 } from './helpers.mjs';
 
 // ============================================================
@@ -261,4 +262,71 @@ test('R-7. Badge decrements immediately when dispatch killed (syncSessionState)'
     countBefore,
     { timeout: 5000 }
   );
+});
+
+// ============================================================
+// R-8: Terminal exit produces clean state (no shell noise)
+// ============================================================
+
+test('R-8. Terminal exit produces clean state — no shell noise after exit', async ({ page }) => {
+  // Regression: after Claude exits in a tmux-wrapped session, oh-my-zsh or
+  // shell profile commands produce unexpected output (git pack stats, etc.)
+  // instead of a clean exit.
+  // Fixed by: 'exec' prefix in tmux shell command so sh is replaced by Claude;
+  // when Claude exits, the PTY exits immediately with no lingering shell.
+
+  // Spawn a real shell terminal via the real terminal API endpoint
+  const workerIdx = process.env.TEST_WORKER_INDEX;
+  const resp = await fetch(`${getBase()}/api/terminal`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(workerIdx !== undefined ? { 'x-test-worker-id': String(workerIdx) } : {}),
+    },
+    body: JSON.stringify({
+      project_key: '\u2013/architect/\u2013',
+      title: 'exit-noise-test',
+      agentType: 'shell',
+      permission_mode: 'acceptEdits',
+      skip_seed: true,
+    }),
+  });
+  const { terminal_id } = await resp.json();
+
+  await page.goto('/#terminals');
+  await waitForShellReady(page, terminal_id, 20_000);
+
+  // Send exit via WebSocket (more reliable than keyboard)
+  await page.evaluate(({ id }) => {
+    const sess = window._termSessions?.get(id);
+    if (sess?._wsManager) sess._wsManager.send({ type: 'input', data: 'exit\n' });
+  }, { id: terminal_id });
+
+  // Wait for session to reach EXITED state
+  await page.waitForFunction(
+    (id) => window._termSessions?.get(id)?.state === 'EXITED',
+    terminal_id,
+    { timeout: 15_000 },
+  );
+
+  // Read the last 20 lines of the buffer — should not contain git/shell artifacts
+  const metrics = await getXtermScrollMetrics(page, terminal_id);
+  const totalLines = metrics ? metrics.baseY + metrics.rows : 24;
+  const lastLines = await getXtermBufferLines(page, terminal_id, Math.max(0, totalLines - 20), 20);
+
+  // Shell noise patterns: git pack/compaction stats, oh-my-zsh output
+  const noisePatterns = [
+    /pack-objects/i,
+    /compressing objects/i,
+    /Total \d+.*delta/i,
+    /Counting objects/i,
+    /oh-my-zsh/i,
+    /\.zshrc/i,
+  ];
+
+  for (const line of lastLines) {
+    for (const pattern of noisePatterns) {
+      expect(line, `Unexpected shell noise in terminal output: "${line.trim()}"`).not.toMatch(pattern);
+    }
+  }
 });

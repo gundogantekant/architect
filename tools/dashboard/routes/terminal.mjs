@@ -120,8 +120,9 @@ export default function terminalRoutes(deps) {
             if (agentsFile) {
               cliParts.push('--agents', `"$(cat '${agentsFile}')"`);
             }
-            const shellCmd = cliParts.join(' ');
+            const shellCmd = 'exec ' + cliParts.join(' ');
             // Create detached tmux session running claude via shell wrapper
+            // exec replaces sh with claude — when claude exits, the tmux pane exits immediately
             execFileSync('tmux', [
               'new-session', '-d', '-s', tmuxName, '-x', '80', '-y', '24',
               'sh', '-c', shellCmd,
@@ -141,28 +142,24 @@ export default function terminalRoutes(deps) {
           }
         } else if (agentType === 'shell') {
           const shellBin = process.env.SHELL || '/bin/zsh';
+          // Skip shell init scripts (oh-my-zsh, git hooks, mouse reporting plugins)
+          // to prevent scroll interference and post-exit noise. PATH is inherited from process.env.
+          const shellArgs = shellBin.endsWith('zsh') ? ['--no-rcs'] : shellBin.endsWith('bash') ? ['--norc'] : [];
           const shellEnv = { ...process.env, TERM: 'xterm-256color' };
-          if (TMUX_AVAILABLE) {
-            tmuxName = `architect-${id}`;
-            execFileSync('tmux', [
-              'new-session', '-d', '-s', tmuxName, '-x', '80', '-y', '24', shellBin,
-            ], { cwd: projectPath, env: shellEnv });
-            ptyProcess = pty.spawn('tmux', ['attach-session', '-t', tmuxName], {
-              name: 'xterm-256color', cols: 80, rows: 24,
-              cwd: projectPath,
-              env: shellEnv,
-            });
-          } else {
-            ptyProcess = pty.spawn(shellBin, [], {
-              name: 'xterm-256color', cols: 80, rows: 24,
-              cwd: projectPath,
-              env: shellEnv,
-            });
-          }
+          // Shell terminals spawn directly with node-pty (no tmux wrapper).
+          // Tmux uses the alternate screen buffer which disables xterm.js scrollback —
+          // the user can't scroll backwards through terminal history. Since shell terminals
+          // are interactive and don't need tmux's session persistence, we skip it.
+          ptyProcess = pty.spawn(shellBin, shellArgs, {
+            name: 'xterm-256color', cols: 80, rows: 24,
+            cwd: projectPath,
+            env: shellEnv,
+          });
         } else {
           // Other adapters: spawn shell as fallback
           const shellBin = process.env.SHELL || '/bin/zsh';
-          ptyProcess = pty.spawn(shellBin, [], {
+          const shellArgs = shellBin.endsWith('zsh') ? ['--no-rcs'] : shellBin.endsWith('bash') ? ['--norc'] : [];
+          ptyProcess = pty.spawn(shellBin, shellArgs, {
             name: 'xterm-256color', cols: 80, rows: 24,
             cwd: projectPath,
             env: { ...process.env, TERM: 'xterm-256color' },
@@ -470,7 +467,7 @@ export default function terminalRoutes(deps) {
         if (TMUX_AVAILABLE) {
           tmuxName = `architect-${id}`;
           const cliParts = [CLAUDE_BIN, ...ptyArgs.map(a => `'${a.replace(/'/g, "'\\''")}'`)];
-          const shellCmd = cliParts.join(' ');
+          const shellCmd = 'exec ' + cliParts.join(' ');
           execFileSync('tmux', [
             'new-session', '-d', '-s', tmuxName, '-x', '80', '-y', '24',
             'sh', '-c', shellCmd,

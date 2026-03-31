@@ -10,6 +10,7 @@ const BASE_PORT = 3800;
 export const SPEC_FILES = [
   'regression',
   'scroll-behavior',
+  'scroll-wheel',
   'terminal-experience',
   'panel-lifecycle',
   'modal-lifecycle',

@@ -314,6 +314,25 @@ export async function pumpAndWait(page, terminalId, opts = {}) {
 }
 
 /**
+ * Dispatch mouse wheel events over a terminal container.
+ * deltaY < 0 scrolls up, deltaY > 0 scrolls down.
+ * Dispatches the event at the centre of the terminal container bounding box.
+ */
+export async function scrollTerminalWheel(page, terminalId, deltaY, count = 1) {
+  const locator = page.locator(`#term-container-${terminalId}`);
+  await locator.waitFor({ state: 'visible', timeout: 10_000 });
+  const box = await locator.boundingBox();
+  if (!box) throw new Error(`Terminal container not found for ${terminalId}`);
+  // Move mouse to centre of the terminal container first
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  for (let i = 0; i < count; i++) {
+    await page.mouse.wheel(0, deltaY);
+    // Small delay between wheel events so xterm processes each one
+    if (i < count - 1) await page.waitForTimeout(50);
+  }
+}
+
+/**
  * Compare the first lineCount non-empty buffer lines from two terminals on two pages.
  * Returns { match, lines1, lines2 }.
  */
