@@ -10,6 +10,7 @@ export class EventStream {
     this.rawBytes = 0;
     this.snapshot = null;       // string: merged data payload up to snapshotSeq
     this.snapshotSeq = 0;
+    this.liveSnapshot = '';     // always-current concatenation of all data payloads
     this.subscribers = new Map(); // clientId -> {ws, lastSeq}
   }
 
@@ -17,7 +18,10 @@ export class EventStream {
     const seq = ++this.headSeq;
     const event = { seq, type, payload, ts: Date.now(), ...(opts.synthetic ? { synthetic: true } : {}) };
     this.events.push(event);
-    if (type === 'data') this.rawBytes += payload.length;
+    if (type === 'data') {
+      this.rawBytes += payload.length;
+      this.liveSnapshot += payload;
+    }
     // Compact if over threshold
     if (this.events.length > 10000 || this.rawBytes > 5 * 1024 * 1024) {
       this._compact();
@@ -32,6 +36,7 @@ export class EventStream {
     const mergedData = dataEvents.map(e => e.payload).join('');
     this.snapshot = (this.snapshot || '') + mergedData;
     this.snapshotSeq = this.headSeq;
+    this.liveSnapshot = this.snapshot;
     this.events = nonDataEvents.filter(e => e.seq > this.snapshotSeq);
     this.rawBytes = 0;
   }
@@ -44,6 +49,16 @@ export class EventStream {
       snapshot: needSnapshot ? this.snapshot : null,
       snapshotSeq: needSnapshot ? this.snapshotSeq : 0,
       events,
+    };
+  }
+
+  getFullSnapshot() {
+    // Returns the complete terminal state as a single data string + non-data events
+    const nonDataEvents = this.events.filter(e => e.type !== 'data');
+    return {
+      data: this.liveSnapshot,
+      headSeq: this.headSeq,
+      nonDataEvents,
     };
   }
 
@@ -74,19 +89,25 @@ export class EventStream {
     const stream = new EventStream(terminalId);
     if (!str.trim()) return stream;
     const lines = str.trim().split('\n');
+    const dataChunks = [];
     for (const line of lines) {
       try {
         const e = JSON.parse(line);
         if (e.type === '_snapshot') {
           stream.snapshot = e.payload;
           stream.snapshotSeq = e.snapshotSeq;
+          dataChunks.push(e.payload);
           continue;
         }
         stream.events.push(e);
         if (e.seq > stream.headSeq) stream.headSeq = e.seq;
-        if (e.type === 'data') stream.rawBytes += e.payload.length;
+        if (e.type === 'data') {
+          stream.rawBytes += e.payload.length;
+          dataChunks.push(e.payload);
+        }
       } catch {}
     }
+    stream.liveSnapshot = dataChunks.join('');
     return stream;
   }
 }

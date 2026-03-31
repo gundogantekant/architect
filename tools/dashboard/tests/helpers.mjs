@@ -63,9 +63,25 @@ export async function getActiveTerminals() {
   return api('terminal/active');
 }
 
+export async function resetSessions() {
+  return api('test/reset-sessions', { method: 'POST' });
+}
+
 // ============================================================
 // Playwright helpers
 // ============================================================
+
+/**
+ * Wait for a real shell PTY to be ready for input after reaching LIVE state.
+ * Waits for any non-empty content in the xterm buffer, which indicates
+ * the shell has produced its prompt. Best used with skip_seed: true terminals
+ * so there's no seed content to confuse the detection.
+ * Use this instead of waitForTerminalLive when you need to type into a real shell.
+ */
+export async function waitForShellReady(page, terminalId, timeout = 15_000) {
+  await waitForTerminalLive(page, terminalId, timeout);
+  await waitForTerminalContent(page, terminalId, 1, timeout);
+}
 
 /**
  * Wait for the terminal session to reach the LIVE state (or EXITED for completed terminals).

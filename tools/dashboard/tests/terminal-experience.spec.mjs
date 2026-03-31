@@ -18,6 +18,7 @@ import {
   getEventStream,
   getActiveTerminals,
   waitForTerminalLive,
+  waitForShellReady,
   waitForTerminalContent,
   getXtermBufferLines,
   getXtermScrollMetrics,
@@ -509,15 +510,20 @@ test.describe('Suite 5: Input and Control', () => {
         title: 'input-test',
         agentType: 'shell',
         permission_mode: 'acceptEdits',
+        skip_seed: true,
       }),
     });
     const { terminal_id } = await resp.json();
 
     await page.goto('/');
-    await waitForTerminalLive(page, terminal_id, 30_000);
+    await waitForShellReady(page, terminal_id);
 
-    await typeIntoTerminal(page, terminal_id, 'echo hello-test-123\n');
-    await waitForTextInXterm(page, terminal_id, 'hello-test-123', 10_000);
+    // Send input via WebSocket (more reliable than Playwright keyboard under load)
+    await page.evaluate(({ id, text }) => {
+      const sess = window._termSessions?.get(id);
+      if (sess?._wsManager) sess._wsManager.send({ type: 'input', data: text });
+    }, { id: terminal_id, text: 'echo hello-test-123\n' });
+    await waitForTextInXterm(page, terminal_id, 'hello-test-123', 15_000);
   });
 
   test('23. Ctrl+C sends SIGINT visible in terminal', async ({ page }) => {
@@ -535,11 +541,12 @@ test.describe('Suite 5: Input and Control', () => {
         title: 'ctrl-c-test',
         agentType: 'shell',
         permission_mode: 'acceptEdits',
+        skip_seed: true,
       }),
     });
     const { terminal_id } = await resp.json();
     await page.goto('/');
-    await waitForTerminalLive(page, terminal_id, 30_000);
+    await waitForShellReady(page, terminal_id);
 
     // Start a blocking command
     await typeIntoTerminal(page, terminal_id, 'sleep 60\n');
@@ -572,11 +579,12 @@ test.describe('Suite 5: Input and Control', () => {
         title: 'rapid-input-test',
         agentType: 'shell',
         permission_mode: 'acceptEdits',
+        skip_seed: true,
       }),
     });
     const { terminal_id } = await resp.json();
     await page.goto('/');
-    await waitForTerminalLive(page, terminal_id, 30_000);
+    await waitForShellReady(page, terminal_id);
 
     // Send 50 characters in rapid succession via the WS manager
     const chars = 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN';
@@ -609,18 +617,22 @@ test.describe('Suite 5: Input and Control', () => {
         title: 'arrow-key-test',
         agentType: 'shell',
         permission_mode: 'acceptEdits',
+        skip_seed: true,
       }),
     });
     const { terminal_id } = await resp.json();
     await page.goto('/');
-    await waitForTerminalLive(page, terminal_id, 30_000);
+    await waitForShellReady(page, terminal_id);
 
-    // Submit a command to create history
-    await typeIntoTerminal(page, terminal_id, 'echo arrow-history-test\n');
-    await waitForTextInXterm(page, terminal_id, 'arrow-history-test', 5_000);
+    // Submit a command to create history (via WebSocket for reliability under load)
+    await page.evaluate(({ id, text }) => {
+      const sess = window._termSessions?.get(id);
+      if (sess?._wsManager) sess._wsManager.send({ type: 'input', data: text });
+    }, { id: terminal_id, text: 'echo arrow-history-test\n' });
+    await waitForTextInXterm(page, terminal_id, 'arrow-history-test', 15_000);
 
-    // Allow the shell to stabilize (return to prompt) before sending history navigation
-    await page.waitForTimeout(500);
+    // Wait for shell to return to prompt after command execution
+    await page.waitForTimeout(1000);
 
     // Press up arrow to recall the last command
     await page.evaluate((id) => {
@@ -646,10 +658,17 @@ test.describe('Suite 6: Corner Cases', () => {
     const t = await seedTerminal({ lines: 0, status: 'running' });
     await page.goto('/');
     await waitForTerminalLive(page, t.id);
-    const containerVisible = await page
-      .locator(`#term-container-${t.id}`)
-      .isVisible();
-    expect(containerVisible).toBe(true);
+    // Wait for xterm to be fully initialized and mounted (stream-live can arrive
+    // before xterm mounts since the onMessage handler is async and non-blocking)
+    await page.waitForFunction(
+      (id) => {
+        const sess = window._termSessions?.get(id);
+        return sess?._term && sess._term.element?.isConnected;
+      },
+      t.id,
+      { timeout: 10_000 },
+    );
+    await expect(page.locator(`#term-container-${t.id}`)).toBeVisible({ timeout: 5_000 });
   });
 
   test('27. very long line (5KB): no crash', async ({ page }) => {

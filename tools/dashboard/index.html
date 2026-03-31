@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Architect</title>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/+esm">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0/+esm">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0/+esm">
 <style>
   :root {
     --sidebar-w: 260px;
@@ -1211,38 +1214,51 @@ class TerminalEventQueue {
   async _drain() {
     if (this._draining || this._destroyed) return;
     this._draining = true;
+
     while (this._queue.length > 0 && !this._destroyed) {
-      const event = this._queue.shift();
-      await this._writeEvent(event);
+      // Batch consecutive data events into a single term.write() call
+      let batchData = '';
+      let batchMaxSeq = 0;
+
+      while (this._queue.length > 0 && this._queue[0].eventType === 'data') {
+        const event = this._queue.shift();
+        batchData += event.payload;
+        if (event.seq > batchMaxSeq) batchMaxSeq = event.seq;
+      }
+
+      // Flush accumulated data batch
+      if (batchData && this._term) {
+        await new Promise(resolve => this._term.write(batchData, resolve));
+        if (batchMaxSeq && this._sessionState._wsManager) {
+          this._sessionState._wsManager.lastSeq = batchMaxSeq;
+        }
+      }
+
+      // Process next non-data event (if any)
+      if (this._queue.length > 0 && this._queue[0].eventType !== 'data') {
+        const event = this._queue.shift();
+        await this._writeNonDataEvent(event);
+      }
     }
+
     this._draining = false;
   }
 
-  async _writeEvent(event) {
+  async _writeNonDataEvent(event) {
     if (this._destroyed || !this._term) return;
     const { seq, eventType, payload } = event;
 
-    if (eventType === 'data') {
-      // Sequential write using xterm callback
-      await new Promise(resolve => this._term.write(payload, resolve));
-      if (this._sessionState._wsManager) this._sessionState._wsManager.lastSeq = seq;
-
-    } else if (eventType === 'resize') {
+    if (eventType === 'resize') {
       const rect = this._containerEl ? this._containerEl.getBoundingClientRect() : null;
       if (rect && rect.width > 0 && rect.height > 0) {
         fitPreservingScroll(this._term, this._fitAddon);
       } else {
         try { this._term.resize(payload.cols, payload.rows); } catch {}
       }
-      if (this._sessionState._wsManager) this._sessionState._wsManager.lastSeq = seq;
-
     } else if (eventType === 'meta') {
-      if (this._sessionState._wsManager) this._sessionState._wsManager.lastSeq = seq;
-      // Handled by session state — don't write to xterm
       updatePanelMeta(this._sessionState, payload.key, payload.value);
     }
 
-    // Exit is handled by session state machine, not the queue — but update lastSeq
     if (seq && this._sessionState._wsManager) {
       if (this._sessionState._wsManager.lastSeq < seq) this._sessionState._wsManager.lastSeq = seq;
     }
@@ -6179,6 +6195,8 @@ async function route() {
 }
 
 window.addEventListener('hashchange', () => { closeFocusPopup(); route(); });
+// Eagerly preload xterm.js modules so they're cached before first terminal opens
+loadXterm();
 // Start restoring sessions immediately in parallel with tree building so panels
 // appear within the test's 5 s window regardless of how long the sidebar takes.
 const _restorePromise = Promise.all([

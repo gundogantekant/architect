@@ -17,7 +17,7 @@ export default function terminalRoutes(deps) {
     // Create terminal session
     [/^\/api\/terminal$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode, agentType: bodyAgentType } = body;
+      const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode, agentType: bodyAgentType, skip_seed } = body;
       const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
 
       if (!project_key) return err(res, 'project_key is required', 400);
@@ -77,10 +77,14 @@ export default function terminalRoutes(deps) {
       // Create EventStream and inject seed content before PTY starts
       const eventStream = new EventStream(id);
       await mkdir(LOGS_DIR, { recursive: true });
-      const seedLines = generateSeedContent(500);
-      for (const line of seedLines) {
-        const seedEvent = eventStream.append('data', line + '\r\n', { synthetic: true });
-        try { appendFileSync(termEventLogPath(id), JSON.stringify(seedEvent) + '\n'); } catch {}
+      if (!skip_seed) {
+        const seedLines = generateSeedContent(500);
+        const jsonlLines = [];
+        for (const line of seedLines) {
+          const seedEvent = eventStream.append('data', line + '\r\n', { synthetic: true });
+          jsonlLines.push(JSON.stringify(seedEvent));
+        }
+        try { appendFileSync(termEventLogPath(id), jsonlLines.join('\n') + '\n'); } catch {}
       }
 
       // Spawn interactive PTY with claude, optionally wrapped in tmux for restart survival
@@ -137,21 +141,22 @@ export default function terminalRoutes(deps) {
           }
         } else if (agentType === 'shell') {
           const shellBin = process.env.SHELL || '/bin/zsh';
+          const shellEnv = { ...process.env, TERM: 'xterm-256color' };
           if (TMUX_AVAILABLE) {
             tmuxName = `architect-${id}`;
             execFileSync('tmux', [
               'new-session', '-d', '-s', tmuxName, '-x', '80', '-y', '24', shellBin,
-            ], { cwd: projectPath });
+            ], { cwd: projectPath, env: shellEnv });
             ptyProcess = pty.spawn('tmux', ['attach-session', '-t', tmuxName], {
               name: 'xterm-256color', cols: 80, rows: 24,
               cwd: projectPath,
-              env: { ...process.env, TERM: 'xterm-256color' },
+              env: shellEnv,
             });
           } else {
             ptyProcess = pty.spawn(shellBin, [], {
               name: 'xterm-256color', cols: 80, rows: 24,
               cwd: projectPath,
-              env: { ...process.env, TERM: 'xterm-256color' },
+              env: shellEnv,
             });
           }
         } else {
@@ -251,10 +256,12 @@ export default function terminalRoutes(deps) {
       const eventStream = new EventStream(id);
       await mkdir(LOGS_DIR, { recursive: true });
       const seedLines = generateSeedContent(500);
+      const jsonlLines2 = [];
       for (const line of seedLines) {
         const seedEvent = eventStream.append('data', line + '\r\n', { synthetic: true });
-        try { appendFileSync(termEventLogPath(id), JSON.stringify(seedEvent) + '\n'); } catch {}
+        jsonlLines2.push(JSON.stringify(seedEvent));
       }
+      try { appendFileSync(termEventLogPath(id), jsonlLines2.join('\n') + '\n'); } catch {}
 
       let ptyProcess;
       let tmuxName = null;
@@ -488,10 +495,12 @@ export default function terminalRoutes(deps) {
       const resumeEventStream = new EventStream(id);
       await mkdir(LOGS_DIR, { recursive: true });
       const resumeSeedLines = generateSeedContent(500);
+      const jsonlLines3 = [];
       for (const line of resumeSeedLines) {
         const seedEvent = resumeEventStream.append('data', line + '\r\n', { synthetic: true });
-        try { appendFileSync(termEventLogPath(id), JSON.stringify(seedEvent) + '\n'); } catch {}
+        jsonlLines3.push(JSON.stringify(seedEvent));
       }
+      try { appendFileSync(termEventLogPath(id), jsonlLines3.join('\n') + '\n'); } catch {}
 
       const terminal = {
         id,

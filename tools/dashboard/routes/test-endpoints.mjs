@@ -84,8 +84,12 @@ export default function testEndpointRoutes(deps) {
           broadcastDispatchDone(d);
           db.deleteDispatch(id);
         }
+        const ptyExitPromises = [];
         for (const [id, t] of terminals) {
-          if (t.ptyProcess) try { t.ptyProcess.kill('SIGHUP'); } catch {}
+          if (t.ptyProcess) {
+            ptyExitPromises.push(new Promise(r => { t.ptyProcess.onExit(() => r()); setTimeout(r, 2000); }));
+            try { t.ptyProcess.kill('SIGHUP'); } catch {}
+          }
           if (t.tmux_session && TMUX_AVAILABLE) try { execFileSync('tmux', ['kill-session', '-t', t.tmux_session], { stdio: 'ignore' }); } catch {}
           if (t.eventStream) {
             for (const [, sub] of t.eventStream.subscribers) { try { sub.ws.close(); } catch {} }
@@ -93,6 +97,8 @@ export default function testEndpointRoutes(deps) {
           }
           db.deleteTerminal(id);
         }
+        // Wait for PTY processes to fully exit (max 2s) before responding
+        if (ptyExitPromises.length > 0) await Promise.all(ptyExitPromises);
         dispatches.clear();
         terminals.clear();
         // Hard-delete all epics and work items created during tests
@@ -100,9 +106,13 @@ export default function testEndpointRoutes(deps) {
       } else {
         // Worker-scoped purge — delete terminals and dispatches belonging to this worker.
         const toDeleteTerminals = [];
+        const workerPtyExits = [];
         for (const [id, t] of terminals) {
           if (t._testWorkerId !== workerId) continue;
-          if (t.ptyProcess) try { t.ptyProcess.kill('SIGHUP'); } catch {}
+          if (t.ptyProcess) {
+            workerPtyExits.push(new Promise(r => { t.ptyProcess.onExit(() => r()); setTimeout(r, 2000); }));
+            try { t.ptyProcess.kill('SIGHUP'); } catch {}
+          }
           if (t.tmux_session && TMUX_AVAILABLE) try { execFileSync('tmux', ['kill-session', '-t', t.tmux_session], { stdio: 'ignore' }); } catch {}
           if (t.eventStream) {
             for (const [, sub] of t.eventStream.subscribers) { try { sub.ws.close(); } catch {} }
@@ -111,6 +121,7 @@ export default function testEndpointRoutes(deps) {
           db.deleteTerminal(id);
           toDeleteTerminals.push(id);
         }
+        if (workerPtyExits.length > 0) await Promise.all(workerPtyExits);
         for (const id of toDeleteTerminals) terminals.delete(id);
 
         // Worker-scoped dispatch purge — only delete dispatches belonging to this worker.
@@ -254,6 +265,7 @@ export default function testEndpointRoutes(deps) {
         raw_bytes: terminal.eventStream.rawBytes,
         snapshot: terminal.eventStream.snapshot,
         snapshot_seq: terminal.eventStream.snapshotSeq,
+        live_snapshot_length: terminal.eventStream.liveSnapshot.length,
         events: terminal.eventStream.events,
       });
     }],

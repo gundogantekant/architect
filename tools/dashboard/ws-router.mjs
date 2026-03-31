@@ -66,17 +66,49 @@ export function setupWebSocket(server) {
         }));
       } catch {}
 
-      // Replay: snapshot + events from fromSeq
-      const { snapshot, snapshotSeq, events } = terminal.eventStream.replayFrom(fromSeq);
+      // Replay: use full snapshot for fresh connects, batched replay for reconnects
+      if (fromSeq === 0 && terminal.eventStream.headSeq > 0) {
+        // Fresh connect: send entire terminal state as one snapshot message
+        const { data, headSeq, nonDataEvents } = terminal.eventStream.getFullSnapshot();
+        if (data.length > 0) {
+          try { ws.send(JSON.stringify({ type: 'snapshot', data, upToSeq: headSeq })); } catch {}
+        }
+        // Send non-data events (resize, meta) individually — these are few
+        for (const event of nonDataEvents) {
+          try {
+            ws.send(JSON.stringify({ type: 'event', seq: event.seq, eventType: event.type, payload: event.payload, ts: event.ts }));
+          } catch {}
+        }
+      } else {
+        // Reconnect: batch consecutive data events to reduce WS frame count
+        const { snapshot, snapshotSeq, events } = terminal.eventStream.replayFrom(fromSeq);
 
-      if (snapshot) {
-        try { ws.send(JSON.stringify({ type: 'snapshot', data: snapshot, upToSeq: snapshotSeq })); } catch {}
-      }
+        if (snapshot) {
+          try { ws.send(JSON.stringify({ type: 'snapshot', data: snapshot, upToSeq: snapshotSeq })); } catch {}
+        }
 
-      for (const event of events) {
-        try {
-          ws.send(JSON.stringify({ type: 'event', seq: event.seq, eventType: event.type, payload: event.payload, ts: event.ts }));
-        } catch {}
+        let batchData = '';
+        let batchMaxSeq = 0;
+        for (const event of events) {
+          if (event.type === 'data') {
+            batchData += event.payload;
+            batchMaxSeq = event.seq;
+          } else {
+            // Flush accumulated data batch before non-data event
+            if (batchData) {
+              try { ws.send(JSON.stringify({ type: 'event', seq: batchMaxSeq, eventType: 'data', payload: batchData, ts: Date.now() })); } catch {}
+              batchData = '';
+              batchMaxSeq = 0;
+            }
+            try {
+              ws.send(JSON.stringify({ type: 'event', seq: event.seq, eventType: event.type, payload: event.payload, ts: event.ts }));
+            } catch {}
+          }
+        }
+        // Flush remaining data batch
+        if (batchData) {
+          try { ws.send(JSON.stringify({ type: 'event', seq: batchMaxSeq, eventType: 'data', payload: batchData, ts: Date.now() })); } catch {}
+        }
       }
 
       // Send stream-live

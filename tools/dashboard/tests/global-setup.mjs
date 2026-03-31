@@ -17,6 +17,7 @@ export const SPEC_FILES = [
   'work-item-flow',
   'api-contracts',
   'error-paths',
+  'restart-recovery',
 ];
 
 function getLiveDashboardPorts() {
