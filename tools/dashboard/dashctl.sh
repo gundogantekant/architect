@@ -19,10 +19,10 @@ DASHBOARD_DIR="$(dirname "$SCRIPT_PATH")"
 ROOT="$(cd "$DASHBOARD_DIR/../.." && pwd -P)"
 
 SERVER_SCRIPT="$DASHBOARD_DIR/server.mjs"
-PID_FILE="$ROOT/tmp/dashboard.pid"
-LOG_FILE="$ROOT/tmp/dashboard.log"
+PORT="${DASHCTL_PORT:-3777}"
+PID_FILE="${DASHCTL_PID_FILE:-$ROOT/tmp/dashboard.pid}"
+LOG_FILE="${DASHCTL_LOG_FILE:-$ROOT/tmp/dashboard.log}"
 SESSIONS_FILE="$ROOT/work/sessions.json"
-PORT=3777
 
 # Service identifiers
 LAUNCHD_LABEL="com.architect.dashboard"
@@ -69,6 +69,12 @@ port_in_use() {
   fi
 }
 
+get_port_pid() {
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -iTCP:"$PORT" -sTCP:LISTEN -P -n -t 2>/dev/null | head -1
+  fi
+}
+
 health_check() {
   curl -sf "http://127.0.0.1:$PORT/api/server/status" >/dev/null 2>&1
 }
@@ -106,8 +112,14 @@ cmd_start() {
   fi
 
   if port_in_use; then
-    echo "Port $PORT is already in use (possibly service-managed)"
-    echo "Use 'dashctl.sh status' for details"
+    local port_pid
+    port_pid="$(get_port_pid)"
+    if [ -n "$port_pid" ]; then
+      echo "Port $PORT is already in use by PID $port_pid"
+    else
+      echo "Port $PORT is already in use"
+    fi
+    echo "Run 'dashctl.sh stop' to stop it first"
     return 1
   fi
 
@@ -196,7 +208,29 @@ cmd_stop() {
     return 0
 
   else
-    echo "Dashboard is not running"
+    if port_in_use; then
+      local orphan_pid
+      orphan_pid="$(get_port_pid)"
+      if [ -n "$orphan_pid" ]; then
+        echo "Stopping orphaned dashboard process (PID $orphan_pid)..."
+        kill "$orphan_pid" 2>/dev/null || true
+        local tries=0
+        while [ $tries -lt 20 ]; do
+          if ! port_in_use; then
+            echo "Dashboard stopped"
+            return 0
+          fi
+          sleep 0.5
+          tries=$((tries + 1))
+        done
+        kill -9 "$orphan_pid" 2>/dev/null || true
+        echo "Dashboard killed"
+      else
+        echo "Port $PORT is in use but could not identify the process"
+      fi
+    else
+      echo "Dashboard is not running"
+    fi
     return 0
   fi
 }

@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "test": "npx playwright test",
-    "test:fast": "npx playwright test --grep @fast"
+    "test:fast": "npx playwright test --grep @fast",
+    "test:dashctl": "bash tests/dashctl.test.sh"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
