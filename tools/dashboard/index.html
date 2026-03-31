@@ -427,6 +427,27 @@
     color: #9ca3af;
     margin-left: 6px;
   }
+
+  /* Epic grouping in Board view */
+  .epic-group { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+  .epic-group-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: #1e1e2e; cursor: pointer; user-select: none; font-size: 13px; color: #cdd6f4; }
+  .epic-group-header:hover { background: #313244; }
+  .epic-group-toggle { font-size: 10px; transition: transform .15s; display: inline-block; }
+  .epic-group-toggle.open { transform: rotate(90deg); }
+  .epic-group-body { padding: 0; }
+  .epic-group.collapsed .epic-group-body { display: none; }
+  .epic-group-progress { font-size: 11px; color: #6c7086; margin-left: auto; }
+  .board-toggle-bar { display: flex; align-items: center; gap: 12px; margin: 10px 0; font-size: 12px; }
+  .board-toggle-bar label { display: flex; align-items: center; gap: 4px; cursor: pointer; color: var(--text-light); }
+  .orphan-section-label { font-size: 12px; font-weight: 600; color: var(--text-light); margin: 16px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+
+  /* Tighter session panels inside work-item rows */
+  .wi-sessions-container .dispatch-log { max-height: 200px; }
+  .wi-sessions-container .terminal-container { height: 250px; }
+
+  /* Epic global toggle in sidebar */
+  .epic-global-toggle { margin-left: auto; font-size: 10px; cursor: pointer; opacity: 0.6; padding: 2px 6px; border-radius: 3px; }
+  .epic-global-toggle:hover { opacity: 1; background: #45475a; }
 </style>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/css/xterm.min.css">
 </head>
@@ -636,43 +657,69 @@ function epicSignalColor(epic, progress) {
 async function buildEpicTree() {
   const epicTree = document.getElementById('epic-tree');
   epicTree.innerHTML = '';
-  // EPICS label — always visible
+  const globalVisible = window._prefs.board_epics_global_visible !== 'false';
+
+  // EPICS label with global toggle
   const label = document.createElement('div');
   label.className = 'sidebar-section-label';
-  label.textContent = 'EPICS';
-  label.onclick = () => { location.hash = '#epics'; };
+  label.style.display = 'flex';
+  label.style.alignItems = 'center';
+  const labelText = document.createElement('span');
+  labelText.textContent = 'EPICS';
+  labelText.style.cursor = 'pointer';
+  labelText.onclick = () => { location.hash = '#epics'; };
+  label.appendChild(labelText);
+  const globalToggle = document.createElement('span');
+  globalToggle.className = 'epic-global-toggle';
+  globalToggle.textContent = globalVisible ? '[on]' : '[off]';
+  globalToggle.title = 'Toggle epic visibility in Board views and sidebar';
+  globalToggle.onclick = (e) => {
+    e.stopPropagation();
+    const next = !globalVisible;
+    window._prefs.board_epics_global_visible = String(next);
+    fetch('/api/settings/preferences', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ board_epics_global_visible: String(next) }),
+    }).catch(() => {});
+    buildEpicTree();
+    route();
+  };
+  label.appendChild(globalToggle);
   epicTree.appendChild(label);
 
   try {
     const epics = await getEpics();
-    const showCompleted = sessionStorage.getItem('sidebar-show-completed-epics') === 'true';
-    const isInactive = s => s === 'done' || s === 'cancelled' || s === 'archived';
-    const hasCompleted = epics.some(e => isInactive(e.status));
 
-    for (const epic of epics) {
-      const isCompleted = isInactive(epic.status);
-      const item = document.createElement('div');
-      item.className = 'epic-item';
-      item.dataset.epicId = epic.id;
-      if (isCompleted && !showCompleted) item.style.display = 'none';
-      item.dataset.epicStatus = epic.status;
-      const color = epicSignalColor(epic, epic.progress);
-      const p = epic.progress || { done: 0, total: 0 };
-      item.innerHTML = `<span class="signal-dot ${color}"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis">${esc(epic.id)} ${esc(epic.title)}</span><span class="epic-progress">(${p.done}/${p.total})</span>`;
-      item.onclick = () => { location.hash = `#epic/${epic.id}`; };
-      epicTree.appendChild(item);
-    }
+    if (globalVisible) {
+      const showCompleted = sessionStorage.getItem('sidebar-show-completed-epics') === 'true';
+      const isInactive = s => s === 'done' || s === 'cancelled' || s === 'archived';
+      const hasCompleted = epics.some(e => isInactive(e.status));
 
-    if (hasCompleted) {
-      const toggle = document.createElement('div');
-      toggle.style.cssText = 'padding:4px 16px;font-size:10px;color:#6c7086;cursor:pointer;user-select:none;';
-      toggle.textContent = showCompleted ? '▾ Hide completed & archived' : '▸ Show completed & archived';
-      toggle.onclick = () => {
-        const next = sessionStorage.getItem('sidebar-show-completed-epics') !== 'true';
-        sessionStorage.setItem('sidebar-show-completed-epics', next ? 'true' : 'false');
-        buildEpicTree();
-      };
-      epicTree.appendChild(toggle);
+      for (const epic of epics) {
+        const isCompleted = isInactive(epic.status);
+        const item = document.createElement('div');
+        item.className = 'epic-item';
+        item.dataset.epicId = epic.id;
+        if (isCompleted && !showCompleted) item.style.display = 'none';
+        item.dataset.epicStatus = epic.status;
+        const color = epicSignalColor(epic, epic.progress);
+        const p = epic.progress || { done: 0, total: 0 };
+        item.innerHTML = `<span class="signal-dot ${color}"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis">${esc(epic.id)} ${esc(epic.title)}</span><span class="epic-progress">(${p.done}/${p.total})</span>`;
+        item.onclick = () => { location.hash = `#epic/${epic.id}`; };
+        epicTree.appendChild(item);
+      }
+
+      if (hasCompleted) {
+        const toggle = document.createElement('div');
+        toggle.style.cssText = 'padding:4px 16px;font-size:10px;color:#6c7086;cursor:pointer;user-select:none;';
+        toggle.textContent = showCompleted ? '\u25be Hide completed & archived' : '\u25b8 Show completed & archived';
+        toggle.onclick = () => {
+          const next = sessionStorage.getItem('sidebar-show-completed-epics') !== 'true';
+          sessionStorage.setItem('sidebar-show-completed-epics', next ? 'true' : 'false');
+          buildEpicTree();
+        };
+        epicTree.appendChild(toggle);
+      }
     }
   } catch {}
 
@@ -1004,21 +1051,28 @@ function _placeSessionPanelsNow() {
     loadDispatchContent(dispatch);
   }
 
-  // 5. Cross-project minimization: force-collapse panels from other projects
+  // 5. Context-aware auto-minimize: collapse panels not relevant to current view
   const hash = location.hash || '';
   let viewProjectKey = '';
+  let viewEpicId = '';
   const compMatch = hash.match(/^#component\/(.+)$/);
   if (compMatch) viewProjectKey = compMatch[1];
+  const epicMatch = hash.match(/^#epic\/(.+)$/);
+  if (epicMatch) viewEpicId = epicMatch[1];
 
-  if (viewProjectKey) {
-    for (const session of allSessions) {
-      if (session.project_key && session.project_key !== viewProjectKey) {
-        const panel = sessionPanels.get(session.key);
-        if (panel && !panel.classList.contains('collapsed')) {
-          panel.classList.add('collapsed');
-          const minBtn = panel.querySelector('[data-minimize-dispatch], [data-minimize-terminal]');
-          if (minBtn) minBtn.textContent = '▶';
-        }
+  for (const session of allSessions) {
+    let isRelevant = true;
+    if (viewProjectKey) {
+      isRelevant = session.project_key === viewProjectKey;
+    } else if (viewEpicId) {
+      isRelevant = session.epic_id === viewEpicId;
+    }
+    if (!isRelevant) {
+      const panel = sessionPanels.get(session.key);
+      if (panel && !panel.classList.contains('collapsed')) {
+        panel.classList.add('collapsed');
+        const minBtn = panel.querySelector('[data-minimize-dispatch], [data-minimize-terminal]');
+        if (minBtn) minBtn.textContent = '\u25b6';
       }
     }
   }
@@ -1327,9 +1381,13 @@ async function initSession(terminalInfo) {
   // Create container ready promise
   const containerReadyPromise = createContainerReadyPromise(containerEl);
 
-  // Show loading overlay
+  // Show loading overlay — skip if terminal already has content (avoid flash on reconnect)
+  const hasExistingContent = !!sessionState._term;
   let loadingEl = containerEl.querySelector('.terminal-loading');
-  if (!loadingEl) {
+  if (hasExistingContent && loadingEl) {
+    loadingEl.remove();
+    loadingEl = null;
+  } else if (!loadingEl && !hasExistingContent) {
     loadingEl = document.createElement('div');
     loadingEl.className = 'terminal-loading';
     loadingEl.textContent = 'Connecting...';
@@ -2303,11 +2361,116 @@ let currentWorkItems = [];
 let currentProjectKey = '';
 const ARCHITECT_KEY = '\u2013/architect/\u2013';
 
-function renderComponentView(org, proj, comp, data, workItems, files) {
+// Render a work items table — reusable for both flat and epic-grouped modes.
+// `items` = sorted array of work items for this table section.
+// `allWorkItems` = full work items list (for dep resolution and indexing).
+// `tableId` = optional id attribute for the table element.
+function renderWorkItemsTable(items, allWorkItems, tableId) {
+  if (!items.length) return '';
+  let html = `<table${tableId ? ` id="${tableId}"` : ''} class="wi-table"><thead><tr><th data-wi-sort="id" style="cursor:pointer">ID &#8645;</th><th>Title</th><th data-wi-sort="status" style="cursor:pointer">Status &#8645;</th><th data-wi-sort="priority" style="cursor:pointer">Priority &#8645;</th><th>Depends On</th><th>Epic</th><th>Tags</th><th></th></tr></thead><tbody>`;
+  for (const w of items) {
+    const idx = allWorkItems.indexOf(w);
+    const sc = {'done':'done','blocked':'blocked','in-progress':'in-progress','cancelled':'cancelled'}[w.status] || 'open';
+    const canDispatch = w.status === 'open' || w.status === 'in-progress';
+    const depState = isBlockedByDeps(w, allWorkItems);
+    const rowClass = depState.blocked ? ' class="blocked-by-deps"' : '';
+    const depHtml = (w.depends_on || []).length ? w.depends_on.map(d => {
+      const dep = allWorkItems.find(i => i.id === d);
+      const cls = dep && dep.status === 'done' ? 'dep-done' : 'dep-pending';
+      return `<span class="dep-badge ${cls}">${esc(d)}</span>`;
+    }).join('') : '';
+    const depTooltip = depState.blocked ? ` title="Dependencies not yet complete: ${depState.pending.join(', ')}"` : '';
+    html += `<tr${rowClass}${depTooltip} data-wi-row="${idx}" data-wi-status-val="${esc(w.status)}" data-wi-priority-val="${esc(w.priority || 'medium')}" data-wi-epic-val="${esc(w.epic_id || '')}" data-wi-tags-val="${esc((w.tags||[]).join(','))}"><td><code>${esc(w.id)}</code></td><td>${esc(w.title)}</td>`;
+    html += `<td><span class="badge badge-${sc}" data-status-click="${esc(w.id)}" data-current-status="${esc(w.status)}" style="cursor:pointer">${esc(w.status)}</span></td>`;
+    html += `<td><span class="badge badge-${w.priority || 'medium'}">${esc(w.priority || '\u2014')}</span></td>`;
+    html += `<td>${depHtml}</td>`;
+    html += `<td>${w.epic_id ? `<span class="badge badge-epic" data-epic-nav="${esc(w.epic_id)}">${esc(w.epic_id)}</span>` : ''}</td>`;
+    html += `<td>${(w.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
+    html += `<td><button class="expand-btn" data-wi="${idx}">details</button>`;
+    html += `<button class="edit-btn" data-wi-edit="${idx}">edit</button>`;
+    if (canDispatch) html += `<button class="dispatch-btn" data-wi-idx="${idx}">dispatch</button>`;
+    html += `<button class="delete-btn" data-wi-del="${idx}">delete</button>`;
+    html += `</td></tr>`;
+    html += `<tr class="wi-detail" data-wi-detail="${idx}" style="display:none"><td colspan="8">`;
+    if (w.description) html += `<div style="margin-bottom:8px">${esc(w.description)}</div>`;
+    if (w.session_log?.length) {
+      html += `<div class="session-log">`;
+      for (const e of w.session_log) html += `<div class="entry"><span class="date">${fmtDate(e.date)}</span>${esc(e.summary)}</div>`;
+      html += `</div>`;
+    }
+    html += `<div style="margin-top:8px;display:flex;gap:6px;align-items:center">`;
+    html += `<input type="text" class="log-input" data-log-wi="${esc(w.id)}" placeholder="Add log entry..." style="flex:1;padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px" />`;
+    html += `<button class="btn-add-wi" data-log-submit="${esc(w.id)}" style="margin:0;padding:4px 10px;font-size:11px">Add Log</button>`;
+    html += `</div>`;
+    html += `<div style="margin-top:8px;display:flex;gap:6px">`;
+    html += `<button class="btn-add-wi" data-wi-plan="${esc(w.id)}" style="margin:0;padding:4px 10px;font-size:11px">Plan</button>`;
+    html += `<button class="btn-add-wi" data-wi-doc="${esc(w.id)}" style="margin:0;padding:4px 10px;font-size:11px">Docs</button>`;
+    html += `<button class="btn-add-wi" data-wi-files="${esc(w.id)}" style="margin:0;padding:4px 10px;font-size:11px">Files</button>`;
+    html += `</div>`;
+    html += `<div class="wi-artifact-container" data-artifact-for="${esc(w.id)}" style="margin-top:8px"></div>`;
+    html += `</td></tr>`;
+    html += `<tr class="wi-sessions-row" data-wi-sessions="${esc(w.id)}" style="display:none"><td colspan="8"><div class="wi-sessions-container" data-session-slot="${esc(w.id)}"></div></td></tr>`;
+  }
+  html += `</tbody></table>`;
+  return html;
+}
+
+// Render Board tab content with epic grouping.
+// `workItems` = all work items for this project.
+// `epics` = epics associated with this project (from backlog).
+// `projectKey` = current project key for preference scoping.
+function renderEpicGroupedBoard(workItems, epics, projectKey) {
+  const collapsePrefs = JSON.parse(window._prefs.board_epic_collapse || '{}');
+  const epicIds = new Set(epics.map(e => e.id));
+  const byEpic = {};
+  const orphans = [];
+  for (const w of workItems) {
+    if (w.epic_id && epicIds.has(w.epic_id)) {
+      (byEpic[w.epic_id] = byEpic[w.epic_id] || []).push(w);
+    } else {
+      orphans.push(w);
+    }
+  }
+
+  let html = '';
+  for (const epic of epics) {
+    const items = byEpic[epic.id];
+    if (!items || !items.length) continue;
+    const sorted = topoSort(items);
+    const done = items.filter(i => i.status === 'done').length;
+    const collapseKey = `${projectKey}:${epic.id}`;
+    const collapsed = collapsePrefs[collapseKey] === true;
+    const color = epicSignalColor(epic, { done, total: items.length });
+
+    html += `<div class="epic-group${collapsed ? ' collapsed' : ''}" data-epic-group="${esc(epic.id)}">`;
+    html += `<div class="epic-group-header" data-epic-collapse="${esc(epic.id)}">`;
+    html += `<span class="epic-group-toggle${collapsed ? '' : ' open'}">&#9654;</span>`;
+    html += `<span class="signal-dot ${color}"></span>`;
+    html += `<span class="badge badge-epic" data-epic-nav="${esc(epic.id)}" style="pointer-events:auto">${esc(epic.id)}</span>`;
+    html += `<strong>${esc(epic.title)}</strong>`;
+    html += `<span class="badge badge-${epic.status === 'active' ? 'open' : epic.status}">${esc(epic.status)}</span>`;
+    html += `<span class="epic-group-progress">${done}/${items.length} done</span>`;
+    html += `</div>`;
+    html += `<div class="epic-group-body">`;
+    html += renderWorkItemsTable(sorted, workItems);
+    html += `</div></div>`;
+  }
+
+  if (orphans.length) {
+    if (epics.some(e => (byEpic[e.id] || []).length > 0)) {
+      html += `<div class="orphan-section-label">Other Tasks (${orphans.length})</div>`;
+    }
+    html += renderWorkItemsTable(topoSort(orphans), workItems);
+  }
+
+  return html;
+}
+
+function renderComponentView(org, proj, comp, data, workItems, files, projectEpics) {
   currentWorkItems = workItems;
   currentProjectKey = `${org}/${proj}/${comp}`;
 
-  const tabs = ['Tasks', 'Overview', 'Docs'];
+  const tabs = ['Board', 'Overview', 'Docs'];
   let html = `<div class="card"><h2>${esc(data.name || `${proj}/${comp}`)}</h2>`;
   html += `<span class="badge badge-role">${esc(data.role || 'unknown')}</span>`;
   html += `<div class="tabs" id="comp-tabs">`;
@@ -2316,15 +2479,28 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
   });
   html += `</div>`;
 
-  // Tab 0: Tasks
+  // Tab 0: Board
+  const epics = projectEpics || [];
+  const globalEpicsVisible = window._prefs.board_epics_global_visible !== 'false';
+  const groupPrefs = JSON.parse(window._prefs.board_epics_grouped || '{}');
+  const isGrouped = groupPrefs[currentProjectKey] !== false;
+  const showEpicGrouping = globalEpicsVisible && isGrouped && epics.length > 0;
+
   html += `<div class="tab-content active" data-panel="0">`;
   html += `<button class="btn-add-wi" id="add-work-item">+ Add Task</button>`;
   html += `<button class="btn-add-wi" id="discuss-agent" style="background:var(--teal);margin-left:8px">Discuss with Agent</button>`;
   html += `<button class="btn-add-wi" id="review-prs" style="background:var(--blue);margin-left:8px">Review PRs</button>`;
   html += `<a href="#agents?project=${esc(currentProjectKey)}" style="margin-left:8px;font-size:12px;color:var(--accent)">View agents</a>`;
-  if (workItems.length) {
-    const sortedItems = topoSort(workItems);
 
+  // Board toggle bar (only if project has epic-linked items or epics exist)
+  if (epics.length > 0 && globalEpicsVisible) {
+    html += `<div class="board-toggle-bar">`;
+    html += `<label><input type="checkbox" id="board-epic-toggle" ${isGrouped ? 'checked' : ''} /> Group by Epic</label>`;
+    html += `<button class="btn-add-wi" id="create-project-epic" style="margin-left:auto;padding:4px 10px;font-size:11px;background:#7c3aed">+ Create Epic</button>`;
+    html += `</div>`;
+  }
+
+  if (workItems.length) {
     // Collect filter values
     const allStatuses = [...new Set(workItems.map(w => w.status))].sort();
     const allPriorities = [...new Set(workItems.map(w => w.priority || 'medium'))];
@@ -2356,53 +2532,11 @@ function renderComponentView(org, proj, comp, data, workItems, files) {
     html += `<button class="filter-clear" id="wi-filter-clear" style="display:none">Clear filters</button>`;
     html += `</div>`;
 
-    html += `<table id="wi-table"><thead><tr><th data-wi-sort="id" style="cursor:pointer">ID ⇅</th><th>Title</th><th data-wi-sort="status" style="cursor:pointer">Status ⇅</th><th data-wi-sort="priority" style="cursor:pointer">Priority ⇅</th><th>Depends On</th><th>Epic</th><th>Tags</th><th></th></tr></thead><tbody>`;
-    sortedItems.forEach((w) => {
-      const idx = workItems.indexOf(w);
-      const sc = {'done':'done','blocked':'blocked','in-progress':'in-progress','cancelled':'cancelled'}[w.status] || 'open';
-      const canDispatch = w.status === 'open' || w.status === 'in-progress';
-      const depState = isBlockedByDeps(w, workItems);
-      const rowClass = depState.blocked ? ' class="blocked-by-deps"' : '';
-      const depHtml = (w.depends_on || []).length ? w.depends_on.map(d => {
-        const dep = workItems.find(i => i.id === d);
-        const cls = dep && dep.status === 'done' ? 'dep-done' : 'dep-pending';
-        return `<span class="dep-badge ${cls}">${esc(d)}</span>`;
-      }).join('') : '';
-      const depTooltip = depState.blocked ? ` title="Dependencies not yet complete: ${depState.pending.join(', ')}"` : '';
-      html += `<tr${rowClass}${depTooltip} data-wi-row="${idx}" data-wi-status-val="${esc(w.status)}" data-wi-priority-val="${esc(w.priority || 'medium')}" data-wi-epic-val="${esc(w.epic_id || '')}" data-wi-tags-val="${esc((w.tags||[]).join(','))}"><td><code>${esc(w.id)}</code></td><td>${esc(w.title)}</td>`;
-      html += `<td><span class="badge badge-${sc}" data-status-click="${esc(w.id)}" data-current-status="${esc(w.status)}" style="cursor:pointer">${esc(w.status)}</span></td>`;
-      html += `<td><span class="badge badge-${w.priority || 'medium'}">${esc(w.priority || '—')}</span></td>`;
-      html += `<td>${depHtml}</td>`;
-      html += `<td>${w.epic_id ? `<span class="badge badge-epic" data-epic-nav="${esc(w.epic_id)}">${esc(w.epic_id)}</span>` : ''}</td>`;
-      html += `<td>${(w.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
-      html += `<td><button class="expand-btn" data-wi="${idx}">details</button>`;
-      html += `<button class="edit-btn" data-wi-edit="${idx}">edit</button>`;
-      if (canDispatch) html += `<button class="dispatch-btn" data-wi-idx="${idx}">dispatch</button>`;
-      html += `<button class="delete-btn" data-wi-del="${idx}">delete</button>`;
-      html += `</td>`;
-      html += `</tr>`;
-      html += `<tr class="wi-detail" data-wi-detail="${idx}" style="display:none"><td colspan="8">`;
-      if (w.description) html += `<div style="margin-bottom:8px">${esc(w.description)}</div>`;
-      if (w.session_log?.length) {
-        html += `<div class="session-log">`;
-        for (const e of w.session_log) html += `<div class="entry"><span class="date">${fmtDate(e.date)}</span>${esc(e.summary)}</div>`;
-        html += `</div>`;
-      }
-      html += `<div style="margin-top:8px;display:flex;gap:6px;align-items:center">`;
-      html += `<input type="text" class="log-input" data-log-wi="${esc(w.id)}" placeholder="Add log entry..." style="flex:1;padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px" />`;
-      html += `<button class="btn-add-wi" data-log-submit="${esc(w.id)}" style="margin:0;padding:4px 10px;font-size:11px">Add Log</button>`;
-      html += `</div>`;
-      html += `<div style="margin-top:8px;display:flex;gap:6px">`;
-      html += `<button class="btn-add-wi" data-wi-plan="${esc(w.id)}" style="margin:0;padding:4px 10px;font-size:11px">Plan</button>`;
-      html += `<button class="btn-add-wi" data-wi-doc="${esc(w.id)}" style="margin:0;padding:4px 10px;font-size:11px">Docs</button>`;
-      html += `<button class="btn-add-wi" data-wi-files="${esc(w.id)}" style="margin:0;padding:4px 10px;font-size:11px">Files</button>`;
-      html += `</div>`;
-      html += `<div class="wi-artifact-container" data-artifact-for="${esc(w.id)}" style="margin-top:8px"></div>`;
-      html += `</td></tr>`;
-      // Session slot row for this work item
-      html += `<tr class="wi-sessions-row" data-wi-sessions="${esc(w.id)}" style="display:none"><td colspan="8"><div class="wi-sessions-container" data-session-slot="${esc(w.id)}"></div></td></tr>`;
-    });
-    html += `</tbody></table>`;
+    if (showEpicGrouping) {
+      html += renderEpicGroupedBoard(workItems, epics, currentProjectKey);
+    } else {
+      html += renderWorkItemsTable(topoSort(workItems), workItems, 'wi-table');
+    }
   } else {
     html += `<p class="empty">No tasks for this project.</p>`;
   }
@@ -2621,6 +2755,56 @@ function bindTabs() {
 
   // Filter bar
   bindFilterBar();
+
+  // Board epic grouping toggle
+  const epicToggle = document.getElementById('board-epic-toggle');
+  if (epicToggle) {
+    epicToggle.onchange = () => {
+      const prefs = JSON.parse(window._prefs.board_epics_grouped || '{}');
+      prefs[currentProjectKey] = epicToggle.checked;
+      window._prefs.board_epics_grouped = JSON.stringify(prefs);
+      fetch('/api/settings/preferences', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ board_epics_grouped: window._prefs.board_epics_grouped }),
+      }).catch(() => {});
+      backlog = null;
+      route();
+    };
+  }
+
+  // Create Epic button
+  const createEpicBtn = document.getElementById('create-project-epic');
+  if (createEpicBtn) {
+    createEpicBtn.onclick = async () => {
+      await showEpicModal(null);
+      epicCache = null;
+      backlog = null;
+      await buildEpicTree();
+      route();
+    };
+  }
+
+  // Epic group collapse/expand
+  document.querySelectorAll('[data-epic-collapse]').forEach(header => {
+    header.onclick = (e) => {
+      // Don't collapse when clicking epic badge link
+      if (e.target.closest('[data-epic-nav]')) return;
+      const group = header.closest('.epic-group');
+      if (!group) return;
+      group.classList.toggle('collapsed');
+      const toggle = header.querySelector('.epic-group-toggle');
+      if (toggle) toggle.classList.toggle('open');
+      // Persist collapse state
+      const epicId = header.dataset.epicCollapse;
+      const prefs = JSON.parse(window._prefs.board_epic_collapse || '{}');
+      prefs[`${currentProjectKey}:${epicId}`] = group.classList.contains('collapsed');
+      window._prefs.board_epic_collapse = JSON.stringify(prefs);
+      fetch('/api/settings/preferences', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ board_epic_collapse: window._prefs.board_epic_collapse }),
+      }).catch(() => {});
+    };
+  });
 
   // Doc links
   document.querySelectorAll('.file-link').forEach(link => {
@@ -5975,7 +6159,12 @@ async function route() {
         }
       }
 
-      main.innerHTML = renderComponentView(org, proj, comp, data, workItems, files);
+      // Filter epics relevant to this project
+      const projectEpics = (bl.epics || []).filter(e =>
+        (e.project_keys || []).some(k => k.toLowerCase() === projKey)
+      );
+
+      main.innerHTML = renderComponentView(org, proj, comp, data, workItems, files, projectEpics);
       bindTabs();
       setActive(`${org}/${proj}/${comp}`);
     } catch (e) {
