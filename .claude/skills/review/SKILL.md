@@ -1,6 +1,7 @@
 ---
 name: review
 description: Comprehensive code review of staged changes, branch diff, or specific files
+execution: dispatch
 user_invocable: true
 arguments:
   - name: scope

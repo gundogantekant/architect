@@ -29,16 +29,16 @@ Scan a project, profile its purpose and architecture, and register it in the arc
    - Match by provided org name, or by path_root prefix
    - If no match: ask user to create new org or skip org association
 3. Run scout agent to produce ScoutReport (see `domain/entities.md` → ScoutReport)
-4. Run profiler agent to produce ProjectBrief + doc_paths + CLAUDE.md:
-   - Pass project path + ScoutReport from step 3
+4. Derive project and component names from path
+5. Run profiler agent to produce ProjectBrief + doc_paths + CLAUDE.md:
+   - Pass project path + ScoutReport from step 3 + portfolio location (`org/project/component` from steps 2+4)
    - If no README/docs exist: profiler produces minimal brief from package manifests and directory names
    - If CLAUDE.md exists in target project: profiler reads it, asks user whether to merge/overwrite/skip
    - Write CLAUDE.md to target project root (unless user chose skip)
-5. Determine recommended agents based on scout report:
+6. Determine recommended agents based on scout report:
    - All projects: coder, tester, reviewer, debugger, documenter, dependency-manager
    - Frontend → add coder-frontend; Backend → add coder-backend; Mobile → add coder-mobile
    - CI present → add ci-cd; Containers present → add coder-infra
-6. Derive project and component names from path
 7. Build PortfolioEntry (see `domain/entities.md` → PortfolioEntry)
    - Include scout_report, brief, and doc_paths
 8. Present for user approval

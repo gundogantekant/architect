@@ -29,6 +29,16 @@ Investigate bugs through log analysis, reproduction steps, root cause analysis, 
 - **Type coercion**: String/number confusion, truthy/falsy misunderstanding
 - **Environment differences**: Works locally but fails in CI/production
 
+## Project Debugging Guidelines
+
+When project-specific debugging guidance is present in the provided context, follow it strictly. This includes:
+- Preferred debug functions (e.g., `debugPrint()`, custom loggers)
+- Required flags or modes (e.g., `--debug`, `--verbose`)
+- Project-specific debugging tools or utilities
+- Observability infrastructure conventions
+
+Project conventions override generic debugging practices.
+
 ## Coding Standards
 
 See `domain/rules.md` → Coding Standards. Additional agent-specific rules:
@@ -56,3 +66,4 @@ For browser-based bugs, the **browser** agent can reproduce issues in a real bro
 - Do not refactor or improve surrounding code
 - If the fix is risky or affects many code paths, flag it for review
 - If you cannot reproduce or identify the root cause, report what you found and what you need
+- Do not remove debug artifacts injected during investigation — they must persist for coder and tester phases. Cleanup is a separate post-verification step (see `domain/rules.md` → Debug Artifact Rules)

@@ -2,6 +2,27 @@
 
 Business rules, heuristics, and decision logic for the architect system. Agents and skills reference this file instead of embedding rules inline.
 
+## Terminology: Project Knowledge
+
+| Term | Meaning |
+|------|---------|
+| "project files" / "project knowledge base" | Architect portfolio files about a project (`portfolio/<org>/<project>/`) |
+| "target project source files" / "source code" | The actual code in the target repository |
+
+- All project know-how is stored in and retrieved from the architect portfolio — never from the target project itself.
+- When the user says "project files" or "project knowledge base", they mean the architect portfolio entries, not target repo source files.
+- When loading context, prioritize architect-level portfolio data over target project introspection.
+
+## Terminology: Work Items
+
+| Term | Meaning |
+|------|---------|
+| "task" | A work item — used in the dashboard UI and casual conversation |
+| "ticket" | Synonym for task/work item — used interchangeably |
+| "work item" | The formal entity name (W-XXX) — used in domain schemas and API |
+
+All three terms refer to the same entity. The dashboard UI uses "task" for brevity. Internal code and API paths use "work-items". The ID prefix remains `W-XXX`.
+
 ## Complexity Heuristics
 
 | Level | Criteria |
@@ -22,6 +43,44 @@ Business rules, heuristics, and decision logic for the architect system. Agents 
 | Bugfixes | investigate-then-fix — debugger/scout → coder → tester |
 | Vague scope, large initiatives, build-vs-buy | strategic-evaluation — strategist evaluates first |
 
+## Parallelization Rules
+
+Two tasks are **independent** when ALL of the following hold:
+
+| Criterion | Check |
+|-----------|-------|
+| No file overlap | Tasks do not create or modify any of the same files |
+| No data dependency | Neither task's output is an input to the other |
+| No shared state | Tasks do not mutate the same database table, API endpoint schema, or shared configuration |
+| No ordering constraint | The correctness of either task does not depend on the other completing first |
+| Separate work scope | Tasks target different modules, packages, or directories — or touch the same directory but provably disjoint files |
+
+### Enforcement
+
+| Actor | Obligation |
+|-------|------------|
+| Coordinator | Populate `parallel_with` on every DispatchPlan step that shares no dependencies with another step. An empty `parallel_with` array means "evaluated, has dependencies" — not "not considered". When the workflow is `plan-then-execute`, note that the planner will refine parallelization at the task level. |
+| Planner | Group tasks into **parallel batches** — sets of tasks that satisfy all independence criteria. Include a `### Parallel Batches` section in every plan with more than one task. Tasks within a batch run concurrently; batches execute sequentially. |
+| Orchestrator | When dispatching from a PM plan: launch all steps that share the same `parallel_with` group concurrently. When dispatching from a planner plan: launch all tasks within the same parallel batch concurrently. Wait for a batch to complete before starting the next. If the orchestrator identifies additional parallelization not marked by PM or planner, it should exploit it using the independence criteria above. |
+
+### Required vs Optional
+
+| Situation | Rule |
+|-----------|------|
+| Two or more implementation agents (coder-*) with no file or data overlap | **Required** — dispatch in parallel |
+| Read-only agent alongside an implementation agent on a different task | **Required** — read-only agents never conflict |
+| Two implementation agents touching the same module but different files | **Optional** — orchestrator may parallelize if confident in file-level isolation |
+| Any uncertainty about shared state or file overlap | **Sequential** — default to sequential when independence is not provable |
+
+### Scope
+
+These rules apply to ALL workflow patterns, not only `parallel-fan-out`:
+- **sequential**: Check whether any adjacent steps are actually independent and could overlap
+- **plan-then-execute**: Planner must group tasks into parallel batches
+- **parallel-fan-out**: Already parallel by design; rules ensure convergence steps (tester, reviewer) wait for all parallel work
+- **investigate-then-fix**: Investigation is always sequential; fix + test may parallelize if targeting separate components
+- **Triage-guided dispatch**: Coordinator applies rules to the execution plan; orchestrator enforces them
+
 ## Agent Inclusion Rules
 
 | Agent | Include when |
@@ -38,14 +97,28 @@ Business rules, heuristics, and decision logic for the architect system. Agents 
 
 | Category | Agents | Can modify code | Can write data | Can interact with web | Uses worktree |
 |----------|--------|-----------------|----------------|-----------------------|---------------|
-| Read-only | reviewer, security-auditor, performance, strategist, pm, scout, debugger, dependency-manager | No | No | No | No (main tree) |
+| Read-only | reviewer, security-auditor, performance, strategist, classifier, coordinator, scout, debugger, dependency-manager | No | No | No | No (main tree) |
 | Interactive | browser | No | No | Yes | No |
-| Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer | Yes | No | No | Yes (worktree) |
+| Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer, git-ops | Yes | No | No | Yes (worktree) |
 | Onboarding | profiler | No (writes only CLAUDE.md to target project) | No | No | No |
-| Data-write | tracker | No | Yes (`work/backlog.json`, `work/epics/E-XXX/*.md`, `work/items/W-XXX/*.md`) | No | No |
+| Data-write | tracker | No | Yes (dashboard API for work items/epics; `work/epics/E-XXX/*.md`, `work/items/W-XXX/*.md` for artifacts) | No | No |
 
 **Exception**: strategist can write decision docs to `docs/`.
 **Exception**: profiler writes only `CLAUDE.md` to the target project during onboarding.
+
+## Workable Item Rules
+
+A work item's "workable" state is computed at render time — it is never stored.
+
+| Condition | State | Visual |
+|-----------|-------|--------|
+| No dependencies, or all deps have status `done` | Workable | Normal row |
+| Any dependency has status other than `done` | Blocked by deps | Orange left border, tinted background |
+
+Rules:
+- Workable state is purely visual — it does not affect dispatching or status changes
+- When a dependency's status changes, all dependents re-evaluate on next render
+- The dispatch button remains available regardless of workable state
 
 ## Model Affinity Rules
 
@@ -135,7 +208,7 @@ near the top of the plan (immediately after any Context/summary section). Plans 
 omit the target project section are incomplete and must not proceed to execution.
 
 For architect self-changes, use the standard self-reference:
-Organization=–, Project=architect, Component=–.
+Organization=ticari, Project=architect, Component=main.
 
 ### Organization Awareness
 
@@ -192,7 +265,7 @@ When PM's classification confidence is below **0.6**, always include clarificati
 - Epics use `E-XXX` IDs (zero-padded, globally unique, never reused)
 - One epic per work item maximum
 - `project_keys` is auto-derived when items are linked/unlinked — never set manually
-- Status transitions: `draft → active → done` (or `cancelled` from any state)
+- Status transitions: `draft → active → done` (or `cancelled` from any state, `archived` from `done` or `cancelled`)
 - Tracker agent suggests status transitions but does not auto-change them
 - Epic docs stored at `work/epics/E-XXX/` (plan.md, docs.md) — created lazily
 - Work item artifacts stored at `work/items/W-XXX/` (plan.md, docs.md) — created lazily. The `notes` field on WorkItem is deprecated; use file artifacts instead
@@ -205,14 +278,22 @@ When PM's classification confidence is below **0.6**, always include clarificati
 - Tracker suggests `blocked` status when unfinished dependencies exist, but does not auto-change status
 - Topological sort (Kahn's algorithm) for display: roots first (no deps), then items whose deps are all listed; within same level, sort by priority desc then ID asc; items with external deps (outside filtered set) appended at end
 
-## PM Dispatch Rules
+## Triage Dispatch Rules
 
-**Invoke PM for**:
+The orchestrator uses a two-stage triage flow: **classifier** (haiku, fast) then optionally **coordinator** (sonnet, detailed).
+
+**Invoke classifier for**:
 - Work requests involving multiple agents or unclear scope
 - Requests where the right workflow pattern is not obvious
 - Unfamiliar projects with no existing scout report
 
-**Skip PM for**:
+**Invoke coordinator after classifier when**:
+- Classifier returns `needs_coordinator: true`
+- Complexity is medium or higher
+- Classifier confidence is below 0.6
+- Workflow requires parallelization planning
+
+**Skip triage entirely for**:
 - Slash commands (`/review`, `/test`, `/deploy`, etc.) — execute the skill directly
 - Direct questions about code or architecture — answer directly
 - Trivial tasks (typo fix, single-line change) — dispatch directly
@@ -220,16 +301,70 @@ When PM's classification confidence is below **0.6**, always include clarificati
 
 ## Coding Standards
 
-Shared standards enforced by all implementation agents.
+Shared standards enforced by all implementation agents. These rules apply to every line of code written by the system.
 
-- Use definitive variable names
-- Do not write commented-out code
-- Do not write comments in code files (keep TODO and DECISION tags only)
-- Write self-explanatory code
-- Prefer editing existing files over creating new ones
-- Do not over-engineer or add unnecessary abstractions
-- Avoid introducing security vulnerabilities (OWASP Top 10)
-- Consider Linux compatibility
+### Clean Code
+- **Names reveal intent**: `userCount` not `n`, `isAuthenticated` not `flag`, `fetchOrderHistory()` not `getData()`, `filteredActiveUsers` not `rows`
+- **Self-explanatory code**: No comments except `TODO` and `DECISION` tags. If code needs a comment to be understood, rename or restructure it.
+- **No dead code**: Never commit commented-out code, unused imports, or unreachable branches. Delete rather than comment.
+- **Short, single-purpose functions**: One function does one thing. If a function description has "and", split it. ~20 lines max as a guideline.
+- **Prefer editing existing files**: Add to existing modules before creating new files. New files are justified only for genuinely new concepts.
+- **No over-engineering**: No abstractions without two concrete use cases. No factory-of-factory patterns. No premature generalization.
+
+### Clean Architecture
+- **Dependencies point inward**: domain ← usecases ← adapters ← infrastructure. Never import from an outer layer into an inner one.
+  - Do: `usecases/createOrder.ts` imports `domain/Order.ts`
+  - Don't: `domain/Order.ts` imports `infrastructure/database.ts`
+- **Separate business logic from I/O**: Business rules must not contain HTTP calls, file reads, database queries, or UI rendering. Inject dependencies or use ports/adapters.
+- **Domain owns types**: Define types, enums, state values, and schemas in the domain layer. All other layers import from domain — never redefine.
+- **Integrate through existing interfaces**: New code connects via existing APIs, hooks, or extension points. Do not bypass layers or create parallel paths.
+
+### DRY
+- **Check before defining**: Before creating a type, enum, constant, or utility, search the project's domain layer and shared definitions. Import if it exists.
+- **Three occurrences = extract**: The first duplication is noted, the second triggers extraction into a shared utility.
+- **Single source of truth**: If a value is defined in one place, every consumer imports it. Never redefine, copy-paste, or hardcode the same value elsewhere.
+
+### General
+- Avoid OWASP Top 10 vulnerabilities (injection, XSS, broken auth, etc.)
+- Consider Linux compatibility for all file paths and shell commands
+
+### Coding Standards Brief
+
+The following block is the compact form of the above standards. It is embedded directly in agent prompts and dispatch contexts so that sub-agents receive actionable standards without needing to read this file.
+
+```
+CODING STANDARDS — apply to all code you write:
+- Names reveal intent: `userCount` not `n`, `isAuthenticated` not `flag`, `fetchOrderHistory()` not `getData()`
+- No comments except TODO/DECISION tags — if code needs a comment, rename or restructure
+- No dead code: no commented-out code, no unused imports, no unreachable branches
+- Functions: single-purpose, ~20 lines max. If description has "and", split it
+- Dependencies point inward: domain ← usecases ← adapters ← infrastructure. Never import outward.
+- Business logic must not contain I/O (HTTP, DB, file, UI). Use dependency injection or ports/adapters.
+- Domain layer owns all types, enums, state values. Other layers import — never redefine.
+- Before creating any type/enum/constant, search the domain layer first. Import if it exists.
+- Three occurrences = extract to shared utility. Single source of truth — never redefine values.
+- No over-engineering: no abstractions without two concrete use cases.
+- Integrate through existing interfaces — do not bypass layers or create parallel paths.
+- Avoid OWASP Top 10 vulnerabilities. Consider Linux compatibility.
+```
+
+## Domain-First Rule
+
+Before implementing any type, enum, state value, or schema:
+1. Check `domain/entities.md` (for architect itself) or the target project's domain layer for an existing canonical definition
+2. If one exists, import or reference it — do not redefine
+3. If none exists and the concept is shared across layers, define it in the domain layer first, then reference it from implementation code
+
+This applies to all implementation agents and the planner.
+
+## Agent Dispatch Standards
+
+When dispatching any implementation agent via the Agent tool, the orchestrator MUST include the Coding Standards Brief (see above) in the prompt parameter. This applies to:
+- Main session dispatching sub-agents
+- Dashboard-dispatched orchestrators dispatching their own sub-agents
+- Any agent that has the ability to spawn sub-agents
+
+Sub-agents receive their context exclusively from (a) their agent `.md` file and (b) the prompt parameter. File read instructions ("See domain/rules.md") are unreliable because agents may not follow through under turn pressure. The inline brief ensures standards are present regardless.
 
 ## Git Standards
 
@@ -243,7 +378,7 @@ Shared git rules enforced by all implementation agents.
 
 ## Worktree Rules
 
-- **All work on portfolio projects MUST use a worktree by default.** This applies to implementation agents, direct orchestrator edits, and any skill that modifies code in a portfolio project. The only exception is when the user explicitly requests working without a worktree (e.g., "edit in place", "no worktree", "work on main").
+- **All work on portfolio projects MUST use a worktree by default, unless the PortfolioEntry sets `worktree_mode: "explicit"`.** This applies to implementation agents, direct orchestrator edits, and any skill that modifies code in a portfolio project. When `worktree_mode` is `"explicit"`, agents work in-place on the current branch and only create a worktree when the user explicitly requests one. When `worktree_mode` is `"auto"` (the default), the only exception is when the user explicitly requests working without a worktree (e.g., "edit in place", "no worktree", "work on main").
 - Read-only operations (review, audit, diagnosis, scouting) do not require a worktree.
 - Worktrees are sibling directories of the project folder, not inside it
 - Path: `<parent-of-project-dir>/<project-dir-name>-<branch-name>/`
@@ -263,6 +398,15 @@ Shared git rules enforced by all implementation agents.
 | Review finds critical issues | Coder addresses findings, re-review (max 2 iterations) |
 | Scout finds no recognizable stack | Report findings, ask user to clarify project structure |
 
+## Debug Artifact Rules
+
+Rules governing debug artifacts (debug prints, temporary logging, debug flags, breakpoint markers, diagnostic instrumentation) introduced during investigation and fix workflows.
+
+- **Preservation**: Debug artifacts persist through investigation → fix → verification. No agent removes them prematurely — they are needed for coder implementation context and tester verification.
+- **Cleanup**: After tester verification passes, the orchestrator dispatches coder to remove all debug artifacts before the work is marked done. The final commit must not contain debug artifacts introduced during the workflow.
+- **Scope**: Only artifacts introduced during the current workflow are subject to cleanup. Existing project logging, observability, and instrumentation are never touched.
+- **Project guidelines precedence**: When the portfolio entry contains debug-related guidance (`portfolio_guides`, `agents.dispatch_notes.debugger`, debug-relevant `custom_rules`), those conventions take precedence over generic debug practices. Agents must follow project-specific debug functions, flags, and tools when specified.
+
 ## Expanded Agent Inclusion Rules
 
 Additional inclusion conditions beyond the base Agent Inclusion Rules table.
@@ -273,3 +417,145 @@ Additional inclusion conditions beyond the base Agent Inclusion Rules table.
 | dependency-manager | Package manifest changes (package.json, pubspec.yaml, requirements.txt, etc.) |
 | performance | Changes to hot paths, database queries, or render-heavy components |
 | ci-cd | Workflow file changes (.github/workflows/, .forgejo/workflows/) |
+
+## Model Selection Rules
+
+The orchestrator evaluates task complexity before each dispatch and sets the model explicitly. No agent uses `inherit` — every agent has an explicit default model, and the orchestrator overrides dynamically based on the task at hand.
+
+### Complexity-to-Model Mapping
+
+| Task Complexity | Default Model | Override Condition |
+|-----------------|---------------|--------------------|
+| trivial | haiku | — |
+| small | sonnet | — |
+| medium | sonnet | — |
+| large | sonnet | Escalate to opus if task involves architecture decisions or cross-system design |
+| strategic | opus | — |
+
+### Quota Fallback
+
+When sonnet quota is exhausted, the orchestrator falls back to opus for standard/complex tasks and haiku for trivial tasks.
+
+### Canonical Agent Default Models
+
+Static defaults defined in each agent's frontmatter. The orchestrator overrides these per-dispatch based on the complexity mapping above.
+
+| Agent | Default Model | Role Category |
+|-------|---------------|---------------|
+| classifier | haiku | triage |
+| coordinator | sonnet | dispatch-planning |
+| git-ops | haiku | git-operations |
+| scout | haiku | read-only |
+| tracker | haiku | data-write |
+| dependency-manager | haiku | read-only |
+| coder | sonnet | implementation |
+| coder-frontend | sonnet | implementation |
+| coder-backend | sonnet | implementation |
+| coder-mobile | sonnet | implementation |
+| coder-infra | sonnet | implementation |
+| tester | sonnet | implementation |
+| reviewer | sonnet | read-only |
+| debugger | sonnet | read-only |
+| performance | sonnet | read-only |
+| documenter | sonnet | implementation |
+| api-designer | sonnet | implementation |
+| refactorer | sonnet | implementation |
+| ci-cd | sonnet | implementation |
+| browser | sonnet | interactive |
+| profiler | sonnet | onboarding |
+| planner | opus | read-only |
+| strategist | opus | read-only |
+| security-auditor | opus | read-only |
+
+## Role-Scoped Context Injection
+
+Each agent receives only the context layers relevant to its role. This reduces token waste while ensuring agents have what they need. Organization conventions are always included regardless of role.
+
+### Context Tier Mapping
+
+| Context Tier | Agents | Fields Included |
+|--------------|--------|-----------------|
+| none | git-ops | Branch name and project path only |
+| minimal | classifier, scout, tracker, dependency-manager, browser | `guidance.stack_summary`, `scout_report.language`, `scout_report.framework` |
+| standard | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, coordinator, planner, debugger, documenter, api-designer, refactorer, strategist, profiler | Minimal + `guidance.structure`, `guidance.conventions`, `custom_rules`, `agents.dispatch_notes`, `brief.purpose`, `brief.domain`, `brief.users`, `doc_paths`, `portfolio_guides` |
+| full | tester, reviewer, security-auditor, ci-cd, performance | Standard + `guidance.ci_cd`, `guidance.testing`, complete `brief` (all fields), `doc_paths` |
+
+### Application
+
+- The orchestrator determines the tier from this table before loading context
+- `loadPortfolioContext()` accepts a tier parameter and filters fields accordingly
+- Dashboard dispatches use the same tier mapping (not always full)
+- Portfolio guides are included at standard and full tiers, omitted at minimal and none
+
+## Orchestrator Behavior Rules
+
+The main Claude session acts strictly as an orchestrator: it reads, plans, dispatches, and tracks — but does not implement code (with the trivial exception below).
+
+### Trivial Exception Rule
+
+The orchestrator may handle single-line fixes inline without dispatching an agent:
+- Typo corrections in string literals
+- Single-character fixes
+- Import statement additions
+- Everything beyond this MUST be dispatched to the appropriate agent
+
+### Dispatch Decision Flow
+
+1. Is this a slash command? → Execute the skill directly (inline or dispatch per Skill Execution Policy)
+2. Is this a trivial inline fix? → Handle directly
+3. Is this a direct question? → Answer directly
+4. Otherwise → Dispatch **classifier** (haiku) for fast triage
+5. If classifier returns `needs_coordinator: true` → Dispatch **coordinator** (sonnet) for detailed planning
+6. Follow the dispatch plan from classifier or coordinator
+
+### Git Operations
+
+All git operations (commit, push, PR creation, branch management, worktree operations, merge) are delegated to the **git-ops** agent (haiku). The orchestrator does not run git commands directly except for read-only queries (status, log, diff for context).
+
+## Retry and Feedback Policy
+
+No automatic re-dispatch on failure. The orchestrator receives failure information and makes an informed decision.
+
+### Protocol
+
+1. Agent encounters failure (test failure, build error, implementation error, review rejection)
+2. Agent returns structured failure info: what failed, what was attempted, partial results
+3. Orchestrator receives failure info and decides:
+   - Re-dispatch the same agent with modified approach
+   - Dispatch a different agent (e.g., debugger to investigate a test failure)
+   - Escalate to user with context
+4. Maximum 2 retry attempts before mandatory user escalation
+5. The orchestrator always informs the user of failures — no silent retries
+
+### Contrast with Current Error Recovery
+
+The existing Error Recovery table (above) defines what agents do when they encounter problems. This policy governs the orchestrator's response to agent-level failures. Both apply: agents follow Error Recovery; the orchestrator follows this policy.
+
+## Skill Execution Policy
+
+Skills are classified as **inline** (executed directly by the orchestrator) or **dispatch** (delegated to agents). The threshold: skills that take <30 seconds and do not modify code execute inline.
+
+| Skill | Execution | Reason |
+|-------|-----------|--------|
+| /portfolio | inline | Read-only, fast |
+| /work | inline | API calls only, fast |
+| /status | inline | Read + API, fast |
+| /worktree | inline | Git read commands, fast |
+| /explain | dispatch | Extended analysis |
+| /review | dispatch | Extended code reading |
+| /test | dispatch | Runs tests, may modify |
+| /deploy | dispatch | Side effects |
+| /pr | dispatch | Git + GitHub operations |
+| /diagnose | dispatch | Extended investigation |
+| /secure | dispatch | Extended analysis |
+| /implement | dispatch | Full SDLC cycle |
+| /migrate | dispatch | Extended, modifies code |
+| /release | dispatch | Side effects (git tags) |
+| /refactor | dispatch | Modifies code |
+| /browse | dispatch | Browser interaction |
+| /scaffold | dispatch | Creates files |
+| /onboard | dispatch | Extended scan + writes |
+
+## External Action Rules
+
+- **Never post comments, reviews, or any content to GitHub pull requests unless the user explicitly requests it.** This applies to all agents, skills, and orchestrator actions. Read-only operations (fetching PR diffs, viewing comments, reading PR metadata) are always allowed. The restriction covers `gh pr comment`, `gh pr review`, and any GitHub API call that writes to a PR.

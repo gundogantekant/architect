@@ -1,6 +1,7 @@
 ---
 name: scaffold
 description: Create a new project from a template
+execution: dispatch
 user_invocable: true
 arguments:
   - name: type

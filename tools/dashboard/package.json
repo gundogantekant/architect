@@ -2,8 +2,17 @@
   "name": "architect-dashboard",
   "private": true,
   "type": "module",
+  "scripts": {
+    "test": "npx playwright test",
+    "test:fast": "npx playwright test --grep @fast",
+    "test:dashctl": "bash tests/dashctl.test.sh"
+  },
   "dependencies": {
+    "better-sqlite3": "^11.0.0",
     "node-pty": "1.2.0-beta.12",
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
   }
 }

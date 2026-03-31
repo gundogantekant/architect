@@ -14,9 +14,10 @@ Shared precondition for all skills that need project context. Eliminates duplica
 
 | Tier | Fields from PortfolioEntry | Used by |
 |------|---------------------------|---------|
-| minimal | `guidance.stack_summary` + `scout_report.language` + `scout_report.framework` | dependency-manager, tracker, work, portfolio |
-| standard | minimal + `guidance.structure` + `guidance.conventions` + `agents.dispatch_notes` + `brief.purpose` + `brief.domain` + `brief.users` + `doc_paths` + `portfolio_guides` | coders, planner, debugger, documenter, onboard |
-| full | standard + `guidance.ci_cd` + `guidance.testing` + `custom_rules` + complete `brief` object + `doc_paths` | tester, ci-cd, reviewer, security-auditor, deploy, migrate, status, secure |
+| none | Branch name and project path only | git-ops |
+| minimal | `guidance.stack_summary` + `scout_report.language` + `scout_report.framework` | classifier, scout, tracker, dependency-manager, browser, work, portfolio |
+| standard | minimal + `guidance.structure` + `guidance.conventions` + `custom_rules` + `agents.dispatch_notes` + `brief.purpose` + `brief.domain` + `brief.users` + `doc_paths` + `portfolio_guides` | coders, coordinator, planner, debugger, documenter, api-designer, refactorer, strategist, profiler, onboard |
+| full | standard + `guidance.ci_cd` + `guidance.testing` + complete `brief` object + `doc_paths` | tester, ci-cd, reviewer, security-auditor, performance, deploy, migrate, status, secure |
 
 Organization conventions (`organization.json`) are always loaded regardless of tier.
 
@@ -80,6 +81,16 @@ When a WorktreeContext is active (see `domain/entities.md` → WorktreeContext):
 - If a task spans multiple project keys, verify they belong to the same org unless explicitly cross-org (e.g., an epic)
 - Agents receiving org context must apply org-level rules as baseline constraints
 
+## Dashboard Dispatch
+
+The dashboard (`tools/dashboard/prompt-builder.mjs` → `buildDispatchPrompt()`) applies **role-scoped context injection** for all dispatched agents. The orchestrator determines the appropriate tier from `domain/rules.md` → Role-Scoped Context Injection based on the agent's role, and `loadPortfolioContext()` accepts a tier parameter to filter fields accordingly. Organization conventions are always included. Agents dispatched from the dashboard also receive an explicit Architect System section declaring their portfolio location and knowledge base pointers, plus a Context Tiers section guiding sub-agent dispatch.
+
 ## Post-conditions
 - All subsequent agents receive context filtered to the requested depth
 - Context includes: stack info, conventions, recommended agents, dispatch notes (based on tier)
+
+## Knowledge Isolation
+
+- "Project files" in user requests refers to architect portfolio entries (`portfolio/<org>/<project>/`), not target project source files.
+- Context loading always sources from the portfolio as the authoritative knowledge base.
+- Portfolio guides and component profiles are the canonical project knowledge; target project files are raw material, not the knowledge base.

@@ -1,6 +1,7 @@
 ---
 name: diagnose
 description: Debug an issue by analyzing logs, tracing, and reproducing
+execution: dispatch
 user_invocable: true
 arguments:
   - name: issue

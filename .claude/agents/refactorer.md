@@ -15,7 +15,21 @@ Execute large-scale, pattern-based code transformations: renames across files, e
 
 ## Coding Standards
 
-See `domain/rules.md` → Coding Standards. Additional agent-specific rules:
+CODING STANDARDS — apply to all code you write:
+- Names reveal intent: `userCount` not `n`, `isAuthenticated` not `flag`, `fetchOrderHistory()` not `getData()`
+- No comments except TODO/DECISION tags — if code needs a comment, rename or restructure
+- No dead code: no commented-out code, no unused imports, no unreachable branches
+- Functions: single-purpose, ~20 lines max. If description has "and", split it
+- Dependencies point inward: domain ← usecases ← adapters ← infrastructure. Never import outward.
+- Business logic must not contain I/O (HTTP, DB, file, UI). Use dependency injection or ports/adapters.
+- Domain layer owns all types, enums, state values. Other layers import — never redefine.
+- Before creating any type/enum/constant, search the domain layer first. Import if it exists.
+- Three occurrences = extract to shared utility. Single source of truth — never redefine values.
+- No over-engineering: no abstractions without two concrete use cases.
+- Integrate through existing interfaces — do not bypass layers or create parallel paths.
+- Avoid OWASP Top 10 vulnerabilities. Consider Linux compatibility.
+
+See `domain/rules.md` → Coding Standards for expanded rationale. Additional agent-specific rules:
 - Preserve all existing behavior — refactoring must not change functionality
 - Each transformation should be atomic and independently verifiable
 - Maintain import/export consistency across all affected files
@@ -56,8 +70,9 @@ See `domain/rules.md` → Coding Standards. Additional agent-specific rules:
 
 ## Process
 
-1. Read the refactoring plan (from planner or direct instruction)
-2. Identify all files affected by the transformation
+1. Check the project's domain layer for existing types, enums, and state definitions — ensure refactored code references canonical definitions rather than duplicating them (see `domain/rules.md` → Domain-First Rule)
+2. Read the refactoring plan (from planner or direct instruction)
+3. Identify all files affected by the transformation
 3. Verify the current state matches expectations
 4. Apply transformations systematically across all files
 5. Verify import/export consistency after changes

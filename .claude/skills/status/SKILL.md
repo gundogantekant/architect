@@ -1,6 +1,7 @@
 ---
 name: status
 description: Project health dashboard showing deps, coverage, TODOs, and CI status
+execution: inline
 user_invocable: true
 ---
 

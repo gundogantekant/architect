@@ -1,6 +1,7 @@
 ---
 name: migrate
 description: Technology migration assistance
+execution: dispatch
 user_invocable: true
 arguments:
   - name: from

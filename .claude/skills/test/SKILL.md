@@ -1,6 +1,7 @@
 ---
 name: test
 description: Run existing tests, generate missing tests, and report coverage
+execution: dispatch
 user_invocable: true
 arguments:
   - name: scope

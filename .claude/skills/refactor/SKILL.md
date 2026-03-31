@@ -1,6 +1,7 @@
 ---
 name: refactor
 description: Systematic refactoring with decomposition, execution, and verification
+execution: dispatch
 user_invocable: true
 arguments:
   - name: scope

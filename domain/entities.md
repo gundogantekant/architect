@@ -8,21 +8,25 @@ Canonical schemas for all structured data in the architect system. Agents and sk
 {
   "name": "string",
   "role": "string",
-  "model": "opus|sonnet|haiku|inherit",
+  "model": "opus|sonnet|haiku",
+  "role_category": "triage|dispatch-planning|git-operations|read-only|implementation|interactive|onboarding|data-write",
+  "context_tier": "none|minimal|standard|full",
   "read_only": "boolean",
   "max_turns": "number"
 }
 ```
 
-**Read-only agents**: reviewer, security-auditor, performance, strategist, pm, scout, debugger, dependency-manager
+**Read-only agents**: reviewer, security-auditor, performance, strategist, classifier, coordinator, scout, debugger, dependency-manager
 **Interactive agents**: browser (interacts with web via Playwright, no code/data writes)
-**Implementation agents**: coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer
+**Implementation agents**: coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer, git-ops
 **Onboarding agents**: profiler (writes only CLAUDE.md to the target project)
-**Data-write agents**: tracker (writes only `work/backlog.json`, `work/epics/E-XXX/*.md`, and `work/items/W-XXX/*.md`)
+**Data-write agents**: tracker (uses dashboard API (http://127.0.0.1:3777/api/...) for work item and epic CRUD; writes work/epics/E-XXX/*.md and work/items/W-XXX/*.md for artifacts)
+
+See `domain/rules.md` → Model Selection Rules for the canonical default model table, and → Role-Scoped Context Injection for tier assignments.
 
 ## RequestClassification
 
-Output by PM when triaging a request.
+Output by the classifier agent when triaging a request.
 
 ```json
 {
@@ -32,6 +36,21 @@ Output by PM when triaging a request.
 }
 ```
 
+## ClassifierOutput
+
+Full output of the classifier agent. Extends RequestClassification with dispatch hints.
+
+```json
+{
+  "classification": { "$ref": "RequestClassification" },
+  "suggested_workflow": "$ref WorkflowPattern",
+  "needs_coordinator": "boolean (true when complexity >= medium or confidence < 0.6)",
+  "suggested_agents": ["string (agent names)"]
+}
+```
+
+**Rules**: When `needs_coordinator` is false, the orchestrator constructs a simple dispatch plan directly from this output. When true, the orchestrator dispatches the coordinator agent with this output as input.
+
 ## WorkflowPattern
 
 ```
@@ -40,7 +59,7 @@ Output by PM when triaging a request.
 
 ## DispatchPlan
 
-Full PM output. References RequestClassification and WorkflowPattern.
+Full coordinator output. References RequestClassification and WorkflowPattern.
 
 ```json
 {
@@ -155,14 +174,31 @@ Stored at `portfolio/<org>/<project>/<component>.json`.
   },
   "custom_rules": ["string"],
   "portfolio_guides": ["string — filenames of markdown guides in the same portfolio directory to auto-load"],
+  "worktree_mode": "auto|explicit (default: auto — 'auto' creates worktrees by default, 'explicit' only when user explicitly requests)",
   "worktree_setup": {
     "copy_paths": ["string — relative paths to copy from source to worktree"],
     "post_commands": ["string — shell commands to run in worktree after copy"]
+  },
+  "interfaces": {
+    "provides": [
+      {
+        "name": "string (e.g., 'REST API v2', 'BLE Protocol Service')",
+        "protocol": "rest|grpc|graphql|event|ble|shared-lib",
+        "description": "string"
+      }
+    ],
+    "consumes": [
+      {
+        "name": "string",
+        "provider_project": "string (org/project/component)",
+        "protocol": "rest|grpc|graphql|event|ble|shared-lib"
+      }
+    ]
   }
 }
 ```
 
-**Optional fields**: `brief`, `doc_paths`, `portfolio_guides`, and `worktree_setup` are absent on entries onboarded before the profiler was added or where no setup is needed.
+**Optional fields**: `brief`, `doc_paths`, `portfolio_guides`, `worktree_mode`, `worktree_setup`, and `interfaces` are absent on entries onboarded before the profiler was added or where no setup is needed. The `interfaces` field enables cross-project awareness — the orchestrator and coordinator use `consumes` to identify impact when planning changes that affect APIs or protocols.
 
 ## Organization
 
@@ -203,12 +239,13 @@ Stored in `work/backlog.json` under `projects[key].items`. The project key (`org
   "priority": "low|medium|high|critical",
   "description": "string",
   "epic_id": "string (E-XXX or empty, optional)",
-  "created": "YYYY-MM-DD",
-  "updated": "YYYY-MM-DD",
+  "project_key": "string (org/project/component) — derived from storage location, included in API responses",
+  "created_at": "string (ISO 8601)",
+  "updated_at": "string (ISO 8601)",
   "depends_on": ["string (W-XXX)"],
   "tags": ["string"],
   "session_log": [
-    { "date": "YYYY-MM-DD", "summary": "string" }
+    { "date": "string (ISO 8601)", "summary": "string" }
   ]
 }
 ```
@@ -229,18 +266,18 @@ Top-level entity in `work/backlog.json` under the `epics` array. Epics group wor
 {
   "id": "string (E-XXX format, zero-padded)",
   "title": "string",
-  "status": "draft|active|done|cancelled",
+  "status": "draft|active|done|cancelled|archived",
   "priority": "low|medium|high|critical",
   "description": "string",
   "acceptance_criteria": "string (markdown, optional)",
   "target_date": "YYYY-MM-DD (optional, empty string if unset)",
-  "project_keys": ["string (org/project/component) — auto-derived from linked items"],
-  "work_item_ids": ["string (W-XXX)"],
+  "project_keys": ["string (org/project/component) — derived via SQL query from linked items, not stored as array"],
+  "work_item_ids": ["string (W-XXX) — derived via SQL query, not stored as array"],
   "tags": ["string"],
-  "created": "YYYY-MM-DD",
-  "updated": "YYYY-MM-DD",
+  "created_at": "string (ISO 8601)",
+  "updated_at": "string (ISO 8601)",
   "session_log": [
-    { "date": "YYYY-MM-DD", "summary": "string" }
+    { "date": "string (ISO 8601)", "summary": "string" }
   ]
 }
 ```
@@ -250,14 +287,14 @@ Status semantics:
 - `active` — at least one linked item is open/in-progress
 - `done` — all linked items done (or manually closed)
 - `cancelled` — abandoned
+- `archived` — completed or cancelled and hidden from active views; preserves all links
 
 ## WorkBacklog
 
-Top-level structure of `work/backlog.json`. Items are grouped under project keys. Epics are top-level (cross-project).
+Backed by SQLite at `work/architect.db`. Migrations handle versioning. The API still returns this shape for backward compatibility.
 
 ```json
 {
-  "version": 5,
   "next_id": "number",
   "next_epic_id": "number",
   "epics": [{ "$ref": "Epic" }],
@@ -284,7 +321,7 @@ Tracks an active worktree created for implementation isolation.
 
 ## DispatchRequest
 
-Record created when the dashboard dispatches a Claude agent for a work item. Persisted to `work/sessions.json` (excluding process handles and listeners). Previously-running sessions are marked `interrupted` on server restart.
+Record created when the dashboard dispatches a Claude agent for a work item. Persisted to SQLite `dispatches` table (excluding process handles and listeners). Output streamed to `work/logs/D-xxx.jsonl`. On restart, sessions with live PIDs are reconnected via log file tailing; others are marked `interrupted`.
 
 ```json
 {
@@ -294,18 +331,21 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "project_key": "string (org/project/component)",
   "project_path": "string (absolute path)",
   "additional_instructions": "string (optional)",
-  "skip_permissions": "boolean (true if dispatched with --dangerously-skip-permissions)",
-  "status": "running|completed|failed|killed|interrupted",
+  "permission_mode": "string (plan|acceptEdits)",
+  "skip_permissions": "boolean (default false, adds --dangerously-skip-permissions flag)",
+  "status": "running|completed|failed|killed|interrupted|suspended",
   "started_at": "string (ISO 8601)",
   "completed_at": "string (ISO 8601, optional)",
-  "session_id": "string (Claude session ID, optional)",
-  "cost_usd": "number (total cost, optional)"
+  "session_id": "string (Claude session ID, optional — legacy field)",
+  "claude_session_id": "string (Claude CLI session UUID, optional — captured from stream-json init event, used for resume)",
+  "cost_usd": "number (total cost, optional)",
+  "pid": "number (OS process ID, optional — stored for restart survival)"
 }
 ```
 
 ## TerminalSession
 
-Record for an interactive PTY terminal session spawned from the dashboard. Persisted to `work/sessions.json` (excluding ptyProcess, scrollback, wsClients). Previously-running sessions are marked `interrupted` on server restart.
+Record for an interactive PTY terminal session spawned from the dashboard. Persisted to SQLite `terminals` table (excluding ptyProcess, scrollback, wsClients). When tmux is available, terminals are wrapped in tmux sessions for restart survival. On restart, tmux sessions are re-attached; PID-only sessions are marked as detached; dead sessions are marked `interrupted`.
 
 ```json
 {
@@ -315,27 +355,65 @@ Record for an interactive PTY terminal session spawned from the dashboard. Persi
   "project_key": "string (org/project/component)",
   "project_path": "string (absolute path)",
   "title": "string",
-  "skip_permissions": "boolean (true if dispatched with --dangerously-skip-permissions)",
-  "status": "running|completed|failed|killed|interrupted",
+  "permission_mode": "string (plan|acceptEdits)",
+  "skip_permissions": "boolean (default false, adds --dangerously-skip-permissions flag)",
+  "status": "running|completed|failed|killed|interrupted|suspended",
   "started_at": "string (ISO 8601)",
+  "exited_at": "string (ISO 8601, null while running)",
+  "pid": "number (OS process ID, optional — stored for restart survival)",
+  "tmux_session": "string (tmux session name, optional — e.g. architect-T-xxx)",
+  "claude_session_id": "string (Claude CLI session UUID, optional — pre-assigned via --session-id at spawn, used for resume)"
+}
+```
+
+## CliSession
+
+Record for a CLI session registered externally via the dashboard API. Read-only from the dashboard's perspective — no kill, no output streaming. PID liveness is checked periodically to detect exit.
+
+```json
+{
+  "id": "string (C-<timestamp>)",
+  "project_key": "string (org/project/component)",
+  "work_item_id": "string (W-XXX or null)",
+  "epic_id": "string (E-XXX or null)",
+  "title": "string",
+  "pid": "number (OS process ID)",
+  "status": "running|exited",
+  "registered_at": "string (ISO 8601)",
   "exited_at": "string (ISO 8601, null while running)"
 }
 ```
 
 ## SessionsFile
 
-Persisted session state at `work/sessions.json`. Written by the dashboard server on every state change (debounced 500ms). On startup, any `running` sessions are re-marked as `interrupted`.
+Sessions are persisted in SQLite tables (`dispatches`, `terminals`, `cli_sessions`) in `work/architect.db`. Dispatch output is logged to `work/logs/D-xxx.jsonl` files. On startup, sessions with live PIDs (or tmux sessions) are reconnected; legacy sessions without PIDs are marked `interrupted`. The API returns this shape for backward compatibility:
 
 ```json
 {
   "dispatches": {
-    "D-xxx": { "$ref": "DispatchRequest (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, completed_at, session_id, cost_usd, skip_permissions)" }
+    "D-xxx": { "$ref": "DispatchRequest (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, completed_at, session_id, cost_usd, permission_mode, skip_permissions)" }
   },
   "terminals": {
-    "T-xxx": { "$ref": "TerminalSession (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, exited_at, skip_permissions)" }
+    "T-xxx": { "$ref": "TerminalSession (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, exited_at, permission_mode, skip_permissions)" }
+  },
+  "cli_sessions": {
+    "C-xxx": { "$ref": "CliSession" }
   }
 }
 ```
+
+## DashboardPreferences
+
+Key-value pairs stored in the `preferences` table in SQLite. Used for dashboard-wide settings.
+
+```json
+{
+  "default_permission_mode": "plan|acceptEdits",
+  "default_skip_permissions": "true|false"
+}
+```
+
+Accessed via `GET/PUT /api/settings/preferences`.
 
 ## RegistryEntry
 
