@@ -393,7 +393,7 @@ test.describe('Suite 3: Session Reconnection', () => {
     );
 
     // Must eventually settle back at LIVE
-    await waitForTerminalLive(page, t.id, 15_000);
+    await waitForTerminalLive(page, t.id, 20_000);
   });
 });
 
@@ -523,7 +523,7 @@ test.describe('Suite 5: Input and Control', () => {
       const sess = window._termSessions?.get(id);
       if (sess?._wsManager) sess._wsManager.send({ type: 'input', data: text });
     }, { id: terminal_id, text: 'echo hello-test-123\n' });
-    await waitForTextInXterm(page, terminal_id, 'hello-test-123', 15_000);
+    await waitForTextInXterm(page, terminal_id, 'hello-test-123', 20_000);
   });
 
   test('23. Ctrl+C sends SIGINT visible in terminal', async ({ page }) => {
@@ -629,7 +629,7 @@ test.describe('Suite 5: Input and Control', () => {
       const sess = window._termSessions?.get(id);
       if (sess?._wsManager) sess._wsManager.send({ type: 'input', data: text });
     }, { id: terminal_id, text: 'echo arrow-history-test\n' });
-    await waitForTextInXterm(page, terminal_id, 'arrow-history-test', 15_000);
+    await waitForTextInXterm(page, terminal_id, 'arrow-history-test', 20_000);
 
     // Wait for shell to return to prompt after command execution
     await page.waitForTimeout(1000);

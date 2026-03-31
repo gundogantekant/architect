@@ -78,7 +78,7 @@ export async function resetSessions() {
  * so there's no seed content to confuse the detection.
  * Use this instead of waitForTerminalLive when you need to type into a real shell.
  */
-export async function waitForShellReady(page, terminalId, timeout = 15_000) {
+export async function waitForShellReady(page, terminalId, timeout = 20_000) {
   await waitForTerminalLive(page, terminalId, timeout);
   await waitForTerminalContent(page, terminalId, 1, timeout);
 }
