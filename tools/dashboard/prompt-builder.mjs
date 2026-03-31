@@ -1,0 +1,464 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { ROOT, PORTFOLIO, WORK, ARCHITECT_KEY, port } from './constants.mjs';
+import * as db from './db.mjs';
+import { readJson } from './utils.mjs';
+
+export async function resolveProjectPath(projectKey) {
+  if (projectKey === ARCHITECT_KEY) return ROOT;
+  const registry = await readJson(join(PORTFOLIO, 'registry.json'));
+  for (const [path, entry] of Object.entries(registry.entries)) {
+    const key = `${entry.org}/${entry.project}/${entry.component}`;
+    if (key === projectKey) return path;
+  }
+  return null;
+}
+
+export async function loadPortfolioContext(projectKey) {
+  const [org, project, component] = projectKey.split('/');
+  if (!org || !project || !component) return null;
+  const [entry, orgData] = await Promise.all([
+    readJson(join(PORTFOLIO, org, project, component + '.json')).catch(() => null),
+    readJson(join(PORTFOLIO, org, 'organization.json')).catch(() => null),
+  ]);
+  if (!entry && !orgData) return null;
+
+  // Load portfolio guide markdown files from disk
+  let guides = null;
+  if (entry?.portfolio_guides?.length) {
+    const guideDir = join(PORTFOLIO, org, project);
+    guides = (await Promise.all(
+      entry.portfolio_guides.map(async filename => {
+        try {
+          const content = await readFile(join(guideDir, filename), 'utf8');
+          return { filename, content };
+        } catch { return null; }
+      })
+    )).filter(Boolean);
+    if (!guides.length) guides = null;
+  }
+
+  return { entry, org: orgData, guides };
+}
+
+export function loadWorkItem(workItemId) {
+  return db.getWorkItemFull(workItemId);
+}
+
+
+export function topoSort(items) {
+  const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+  const itemMap = new Map(items.map(i => [i.id, i]));
+  const inDegree = new Map(items.map(i => [i.id, 0]));
+  for (const item of items) {
+    for (const dep of (item.depends_on || [])) {
+      if (itemMap.has(dep)) {
+        inDegree.set(item.id, (inDegree.get(item.id) || 0) + 1);
+      }
+    }
+  }
+  const queue = items.filter(i => inDegree.get(i.id) === 0)
+    .sort((a, b) => (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2) || a.id.localeCompare(b.id));
+  const sorted = [];
+  const processed = new Set();
+  while (queue.length) {
+    const item = queue.shift();
+    sorted.push(item);
+    processed.add(item.id);
+    const next = items.filter(i => !processed.has(i.id) && (i.depends_on || []).every(d => !itemMap.has(d) || processed.has(d)))
+      .sort((a, b) => (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2) || a.id.localeCompare(b.id));
+    for (const n of next) {
+      if (!processed.has(n.id) && !queue.includes(n)) queue.push(n);
+    }
+  }
+  const remaining = items.filter(i => !processed.has(i.id));
+  return [...sorted, ...remaining];
+}
+
+
+export async function loadEpicPlanSnippet(epicId) {
+  try {
+    const content = await readFile(join(WORK, 'epics', epicId, 'plan.md'), 'utf8');
+    return content.slice(0, 500);
+  } catch {
+    return '';
+  }
+}
+
+export async function selectAgentsForDispatch({ workItem, portfolio }) {
+  const always = ['pm', 'scout', 'planner', 'coder', 'tester', 'reviewer'];
+  const conditional = {
+    'coder-frontend': /front.?end|ui|css|react|vue|angular|svelte|html|component|layout|responsive|tailwind/i,
+    'coder-backend': /back.?end|api|server|endpoint|database|graphql|rest|middleware|auth/i,
+    'coder-infra': /infra|docker|k8s|kubernetes|terraform|ci.?cd|deploy|devops|aws|gcp|azure|pipeline/i,
+    'coder-mobile': /mobile|ios|android|flutter|react.native|swift|kotlin/i,
+    'security-auditor': /secur|auth|token|secret|credential|permission|access.?control|encrypt|vulnerab/i,
+    'refactorer': /refactor|restructur|reorganiz|clean.?up|technical.?debt|migration/i,
+    'debugger': /bug|debug|fix|crash|error|broken|regression|investig|diagnos/i,
+    'documenter': /document|readme|changelog|api.?doc|jsdoc|typedoc/i,
+    'ci-cd': /ci.?cd|pipeline|github.?action|deploy|release|build.?system/i,
+  };
+
+  // Build search text from work item + stack
+  const textParts = [];
+  if (workItem) {
+    textParts.push(workItem.title || '', workItem.description || '', (workItem.tags || []).join(' '));
+  }
+  if (portfolio?.entry?.guidance?.stack_summary) textParts.push(portfolio.entry.guidance.stack_summary);
+  const searchText = textParts.join(' ');
+
+  const selected = [...always];
+  for (const [agent, pattern] of Object.entries(conditional)) {
+    if (pattern.test(searchText)) selected.push(agent);
+  }
+
+  // Cap at 10
+  const capped = selected.slice(0, 10);
+
+  // Read agent .md files, strip frontmatter, build --agents JSON
+  const agents = [];
+  for (const name of capped) {
+    try {
+      let content = await readFile(join(ROOT, '.claude', 'agents', `${name}.md`), 'utf8');
+      // Strip YAML frontmatter
+      if (content.startsWith('---')) {
+        const endIdx = content.indexOf('---', 3);
+        if (endIdx !== -1) content = content.slice(endIdx + 3).trim();
+      }
+      agents.push({ name, prompt: content });
+    } catch {
+      // Agent file not found, skip
+    }
+  }
+  return agents;
+}
+
+export function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInstructions, portfolio, epicContext, relatedProjects }) {
+  const sections = [];
+
+  // --- Identity ---
+  sections.push([
+    '# Identity',
+    '',
+    'You are an **architect SDLC agent** — a full software development lifecycle orchestrator, not a simple task worker.',
+    '',
+    '**Responsibilities**:',
+    '- Triage the assigned work item: assess complexity, identify risks, select the right workflow',
+    '- Plan before implementing — do not jump straight to code for non-trivial work',
+    '- Dispatch specialized sub-agents (pm, planner, tester, reviewer, etc.) as needed',
+    '- Track progress via the dashboard API',
+    '- Be critical — if the work item is vague or the approach seems suboptimal, document your assessment and propose alternatives before implementing',
+    '',
+    'You are not limited to writing code. You can perform planning, architecture review, security audit, testing strategy, documentation, and project management.',
+  ].join('\n'));
+
+  // --- SDLC Guide ---
+  sections.push([
+    '# SDLC Guide',
+    '',
+    '## Workflow Selection',
+    '',
+    '| Condition | Workflow |',
+    '|-----------|----------|',
+    '| Trivial tasks | direct — dispatch a single coder agent |',
+    '| Small features | sequential — scout → planner → coder → tester → reviewer |',
+    '| Full-stack work (independent FE/BE/infra) | parallel-fan-out — split then converge at tester → reviewer |',
+    '| Medium/large features | plan-then-execute — planner decomposes, then dispatch coders per task |',
+    '| Bugfixes | investigate-then-fix — debugger/scout → coder → tester |',
+    '| Vague scope, strategic decisions | strategic-evaluation — strategist evaluates first |',
+    '',
+    '## Agent Inclusion Rules',
+    '',
+    '| Agent | Include when |',
+    '|-------|-------------|',
+    '| scout | No portfolio entry exists for the target project |',
+    '| strategist | Large/vague/strategic requests, build-vs-buy decisions |',
+    '| planner | Medium+ complexity (skip for small/trivial) |',
+    '| tester | All code changes except trivial |',
+    '| reviewer | All code changes except trivial |',
+    '| security-auditor | Auth, secrets, input validation, or external data involved |',
+    '',
+    '## Coordination Rules',
+    '',
+    '- You act as the orchestrator. Dispatch sub-agents using the Agent tool.',
+    '- Sub-agents cannot spawn their own sub-agents — only you orchestrate.',
+    '- Read-only agents (reviewer, security-auditor, scout, debugger, pm, strategist) do not modify code.',
+    '- Implementation agents (coder, coder-frontend, coder-backend, coder-infra, coder-mobile) modify code.',
+    '- Run scout or load portfolio context before dispatching implementation agents on a new project.',
+    '- Use parallel fan-out when tasks are independent; sequential pipeline when output feeds the next step.',
+    '- When dispatching sub-agents, include the Coding Standards block from this prompt in the Agent tool\'s prompt parameter. Sub-agents do not inherit it automatically.',
+    '',
+    '## Process for Any Work Item',
+    '',
+    '1. Assess complexity (trivial / small / medium / large / strategic)',
+    '2. Select workflow from the table above',
+    '3. Plan if needed (medium+ complexity)',
+    '4. Dispatch agents per the workflow',
+    '5. Test (dispatch tester for all non-trivial code changes)',
+    '6. Review (dispatch reviewer)',
+    '7. Log results via the dashboard API',
+  ].join('\n'));
+
+  // --- Available Skills ---
+  sections.push([
+    '# Available Skills',
+    '',
+    'These workflows can be followed by reading use-case files from `$ARCHITECT_ROOT/usecases/`:',
+    '',
+    '| Command | Purpose |',
+    '|---------|---------|',
+    '| /onboard | Scan and register project in portfolio |',
+    '| /portfolio | View and manage project portfolio |',
+    '| /scaffold | Create new project from template |',
+    '| /review | Comprehensive code review |',
+    '| /test | Run and generate tests |',
+    '| /deploy | Local deployment |',
+    '| /pr | Create PR with review summary |',
+    '| /diagnose | Debug an issue |',
+    '| /secure | Security audit |',
+    '| /status | Project health check |',
+    '| /work | Track work items across sessions |',
+    '| /migrate | Technology migration |',
+    '| /explain | Codebase walkthrough |',
+    '| /release | Version bump, changelog, git tag |',
+    '| /refactor | Systematic refactoring |',
+    '| /browse | Web automation via browser agent |',
+    '| /worktree | Manage git worktrees |',
+  ].join('\n'));
+
+  // --- Scope ---
+  const scopeLines = ['# Scope', ''];
+  const org = projectKey.split('/')[0];
+  if (org && org !== '–') scopeLines.push(`- **Organization**: ${org}`);
+  scopeLines.push(`- **Project**: ${projectKey}`);
+  if (workItem) scopeLines.push(`- **Work Item**: ${workItem.id}`);
+  if (epicContext) scopeLines.push(`- **Epic**: ${epicContext.id}`);
+  sections.push(scopeLines.join('\n'));
+
+  // --- Architect System (awareness section) ---
+  {
+    const awareLines = ['# Architect System', ''];
+    awareLines.push('You are managed by the **architect SDLC system**. Your project has a knowledge base in the architect portfolio.');
+    awareLines.push('');
+    const [pOrg, pProject, pComponent] = (projectKey || '').split('/');
+    if (pOrg && pProject && pComponent) {
+      awareLines.push(`- **Portfolio entry**: \`$ARCHITECT_ROOT/portfolio/${pOrg}/${pProject}/${pComponent}.json\``);
+      if (portfolio?.guides?.length) {
+        awareLines.push(`- **Portfolio guides**: ${portfolio.guides.map(g => g.filename).join(', ')} (in \`$ARCHITECT_ROOT/portfolio/${pOrg}/${pProject}/\`)`);
+      }
+    }
+    awareLines.push(`- **Domain rules**: \`$ARCHITECT_ROOT/domain/rules.md\` — business rules and constraints`);
+    awareLines.push(`- **Entity schemas**: \`$ARCHITECT_ROOT/domain/entities.md\``);
+    awareLines.push(`- **Use-case workflows**: \`$ARCHITECT_ROOT/usecases/\``);
+    awareLines.push('');
+    awareLines.push('When you need deeper context about the project, read from the portfolio entry or guides. For cross-project context, query the dashboard API.');
+    sections.push(awareLines.join('\n'));
+  }
+
+  // --- Layer 1: Project Context (first — stack, structure, conventions, org rules) ---
+  if (portfolio && portfolio.entry) {
+    const e = portfolio.entry;
+    const lines = ['# Project Context', ''];
+    if (e.guidance?.stack_summary) lines.push(`**Stack**: ${e.guidance.stack_summary}`);
+    if (e.guidance?.structure && e.guidance.structure.length) {
+      lines.push('', '**Structure**:');
+      for (const s of e.guidance.structure) lines.push(`- ${s}`);
+    }
+    if (e.guidance?.conventions && e.guidance.conventions.length) {
+      lines.push('', '**Conventions**:');
+      for (const c of e.guidance.conventions) lines.push(`- ${c}`);
+    }
+    if (e.agents?.dispatch_notes && Object.keys(e.agents.dispatch_notes).length) {
+      lines.push('', '**Agent Notes**:');
+      for (const [agent, note] of Object.entries(e.agents.dispatch_notes)) {
+        lines.push(`- ${agent}: ${note}`);
+      }
+    }
+    if (e.brief?.purpose) lines.push(`\n**Purpose**: ${e.brief.purpose}`);
+    if (e.brief?.domain) lines.push(`**Domain**: ${e.brief.domain}`);
+    if (e.brief?.users) lines.push(`**Users**: ${e.brief.users}`);
+    if (e.brief?.key_entities?.length) lines.push(`**Key Entities**: ${e.brief.key_entities.join(', ')}`);
+    if (e.brief?.data_flow) lines.push(`**Data Flow**: ${e.brief.data_flow}`);
+    if (e.brief?.architecture_rationale) lines.push(`**Architecture Rationale**: ${e.brief.architecture_rationale}`);
+    if (e.brief?.constraints?.length) {
+      lines.push('', '**Constraints**:');
+      for (const c of e.brief.constraints) lines.push(`- ${c}`);
+    }
+    if (e.brief?.environments?.length) {
+      lines.push('', '**Environments**:');
+      for (const env of e.brief.environments) lines.push(`- ${env}`);
+    }
+    if (e.brief?.external_dependencies?.length) {
+      lines.push('', '**External Dependencies**:');
+      for (const dep of e.brief.external_dependencies) lines.push(`- ${dep}`);
+    }
+    if (e.guidance?.ci_cd?.length) {
+      lines.push('', '**CI/CD**:');
+      for (const c of e.guidance.ci_cd) lines.push(`- ${c}`);
+    }
+    if (e.guidance?.testing?.length) {
+      lines.push('', '**Testing**:');
+      for (const t of e.guidance.testing) lines.push(`- ${t}`);
+    }
+    if (e.custom_rules?.length) {
+      lines.push('', '**Project Rules**:');
+      for (const r of e.custom_rules) lines.push(`- ${r}`);
+    }
+    if (e.doc_paths?.length) {
+      lines.push('', '**Documentation** (files in target project):');
+      for (const d of e.doc_paths) lines.push(`- ${d}`);
+    }
+    sections.push(lines.join('\n'));
+  }
+
+  if (portfolio && portfolio.org) {
+    const o = portfolio.org;
+    const lines = ['# Organization Conventions', ''];
+    if (o.conventions?.branch_prefix) lines.push(`- Branch prefix: ${o.conventions.branch_prefix}`);
+    if (o.conventions?.pr_title_pattern) lines.push(`- PR title pattern: ${o.conventions.pr_title_pattern}`);
+    if (o.rules && o.rules.length) {
+      lines.push('', '**Rules**:');
+      for (const r of o.rules) lines.push(`- ${r}`);
+    }
+    sections.push(lines.join('\n'));
+  }
+
+  // Related projects (cross-project awareness for epic dispatches)
+  if (relatedProjects && relatedProjects.length) {
+    const lines = ['# Related Projects', ''];
+    for (const rp of relatedProjects) {
+      lines.push(`## ${rp.key}`);
+      if (rp.entry?.guidance?.stack_summary) lines.push(`- Stack: ${rp.entry.guidance.stack_summary}`);
+      if (rp.entry?.brief?.purpose) lines.push(`- Purpose: ${rp.entry.brief.purpose}`);
+      lines.push('');
+    }
+    sections.push(lines.join('\n'));
+  }
+
+  // --- Portfolio Guides (deep project knowledge from markdown files) ---
+  if (portfolio?.guides?.length) {
+    const guideLines = ['# Portfolio Guides', '',
+      'Deep project knowledge from the architect portfolio. Follow these when relevant to your task.', ''];
+    let totalLen = 0;
+    const MAX_GUIDE_CHARS = 20000;
+    const [pOrg, pProject] = (projectKey || '').split('/');
+    for (const g of portfolio.guides) {
+      if (totalLen + g.content.length > MAX_GUIDE_CHARS) {
+        guideLines.push(`## ${g.filename}`, '',
+          `(truncated — read full file at \`$ARCHITECT_ROOT/portfolio/${pOrg}/${pProject}/${g.filename}\`)`, '',
+          g.content.slice(0, MAX_GUIDE_CHARS - totalLen), '');
+        break;
+      }
+      guideLines.push(`## ${g.filename}`, '', g.content, '');
+      totalLen += g.content.length;
+    }
+    sections.push(guideLines.join('\n'));
+  }
+
+  // --- Layer 2: Task Context (second — work item details, description, session log) ---
+  if (workItem) {
+    sections.push(`# Task\n\nWork on backlog item ${workItem.id}: ${workItem.title}`);
+
+    const lines = ['# Work Item', ''];
+    lines.push(`- **Status**: ${workItem.status}`);
+    lines.push(`- **Priority**: ${workItem.priority}`);
+    if (workItem.tags && workItem.tags.length) lines.push(`- **Tags**: ${workItem.tags.join(', ')}`);
+    if (workItem.depends_on && workItem.depends_on.length) lines.push(`- **Depends on**: ${workItem.depends_on.join(', ')}`);
+    if (workItem.description) lines.push(`- **Description**: ${workItem.description}`);
+    if (workItem.session_log && workItem.session_log.length) {
+      lines.push('', '**Session Log**:');
+      for (const entry of workItem.session_log) {
+        lines.push(`- ${entry.date}: ${entry.summary}`);
+      }
+    }
+    sections.push(lines.join('\n'));
+  } else if (additionalInstructions) {
+    sections.push(`# Task\n\n${additionalInstructions}`);
+  }
+
+  // --- Layer 3: Epic Context (third — lightweight: title, status, progress, plan snippet, AC) ---
+  if (epicContext) {
+    const lines = ['# Epic Context', ''];
+    lines.push(`- **Epic**: ${epicContext.id} — ${epicContext.title}`);
+    lines.push(`- **Status**: ${epicContext.status}`);
+    lines.push(`- **Progress**: ${epicContext.progress}`);
+    if (epicContext.acceptance_criteria) lines.push(`- **Acceptance Criteria**: ${epicContext.acceptance_criteria}`);
+    if (epicContext.items && epicContext.items.length) {
+      lines.push('', '**Linked Items**:');
+      for (const item of epicContext.items) {
+        lines.push(`- ${item.id} [${item.status}] (${item.project_key}): ${item.title}`);
+      }
+    }
+    if (epicContext.plan_snippet) {
+      lines.push('', '**Plan (excerpt)**:', epicContext.plan_snippet);
+    }
+    sections.push(lines.join('\n'));
+  }
+
+  // --- Constraints ---
+  if (workItem && additionalInstructions) {
+    sections.push(`# Constraints\n\n${additionalInstructions}`);
+  }
+
+  // --- Coding Standards (inline brief — self-contained, no file read required) ---
+  sections.push([
+    '# Coding Standards',
+    '',
+    'Read `domain/rules.md` → Coding Standards for full details. Key principles:',
+    '- **Domain-First**: Before defining types, enums, or state values, check the domain layer for existing canonical definitions. Import, do not redefine.',
+    '- **DRY**: Three occurrences = extract. Single source of truth for all shared definitions.',
+    '- **Clean Architecture**: Dependencies point inward. Separate business logic from I/O and frameworks.',
+    '- **Clean Code**: Short single-purpose functions. Self-explanatory names. No commented-out code.',
+    '',
+    'CODING STANDARDS — apply to all code you write:',
+    '- Names reveal intent: `userCount` not `n`, `isAuthenticated` not `flag`, `fetchOrderHistory()` not `getData()`',
+    '- No comments except TODO/DECISION tags — if code needs a comment, rename or restructure',
+    '- No dead code: no commented-out code, no unused imports, no unreachable branches',
+    '- Functions: single-purpose, ~20 lines max. If description has "and", split it',
+    '- Dependencies point inward: domain ← usecases ← adapters ← infrastructure. Never import outward.',
+    '- Business logic must not contain I/O (HTTP, DB, file, UI). Use dependency injection or ports/adapters.',
+    '- Domain layer owns all types, enums, state values. Other layers import — never redefine.',
+    '- Before creating any type/enum/constant, search the domain layer first. Import if it exists.',
+    '- Three occurrences = extract to shared utility. Single source of truth — never redefine values.',
+    '- No over-engineering: no abstractions without two concrete use cases.',
+    '- Integrate through existing interfaces — do not bypass layers or create parallel paths.',
+    '- Avoid OWASP Top 10 vulnerabilities. Consider Linux compatibility.',
+    '',
+    '**Sub-agent propagation**: When you dispatch sub-agents via the Agent tool, include the above coding standards block in the prompt parameter. Sub-agents do not automatically inherit these standards.',
+  ].join('\n'));
+
+  // --- Environment (always included) ---
+  {
+    const envLines = ['# Environment', ''];
+    envLines.push(`You are running in the target project directory: ${projectPath || '(unknown)'}`);
+    envLines.push(`The architect project (portfolio, backlog, domain rules) is at: ${ROOT}`);
+    envLines.push(`- Backlog: SQLite at ${ROOT}/work/architect.db (use dashboard API)`);
+    envLines.push(`- Dashboard API: http://127.0.0.1:${port}`);
+    envLines.push('');
+    envLines.push('Use the architect project to look up cross-project context, related tasks, domain rules, or use-case workflows when needed. Your primary work should happen in the current directory (the target project).');
+    sections.push(envLines.join('\n'));
+  }
+
+  // --- Tracking (only when workItem is present) ---
+  if (workItem) {
+    const trackLines = ['# Tracking', ''];
+    const epicLine = epicContext ? ` (part of ${epicContext.id}: ${epicContext.title})` : '';
+    trackLines.push(`You were dispatched for ${workItem.id}: ${workItem.title}${epicLine}.`);
+    trackLines.push('');
+    trackLines.push(`- Reference this work item in commit messages (e.g. "[${workItem.id}] ...")`);
+    trackLines.push(`- When your work is complete, add a session log entry:`);
+    trackLines.push(`  curl -s -X POST http://127.0.0.1:${port}/api/work-items/${workItem.id}/log \\`);
+    trackLines.push(`    -H 'Content-Type: application/json' -d '{"summary": "..."}'`);
+    trackLines.push(`- If you complete the task fully, update its status:`);
+    trackLines.push(`  curl -s -X PATCH http://127.0.0.1:${port}/api/work-items/${workItem.id} \\`);
+    trackLines.push(`    -H 'Content-Type: application/json' -d '{"status": "done"}'`);
+    trackLines.push('- Focus primarily on this work item\'s goals. If you discover adjacent work, log it as a new backlog item via the dashboard API rather than expanding scope silently.');
+    trackLines.push('- Be critical about the approach — if the work item description is vague or the approach seems suboptimal, document your assessment and propose alternatives before implementing.');
+    trackLines.push(`- To create a new work item for adjacent work discovered:`);
+    trackLines.push(`  curl -s -X POST http://127.0.0.1:${port}/api/work-items \\`);
+    trackLines.push(`    -H 'Content-Type: application/json' -d '{"project_key": "${projectKey}", "title": "...", "description": "...", "priority": "medium", "tags": []}'`);
+    sections.push(trackLines.join('\n'));
+  }
+
+  return sections.join('\n\n');
+}

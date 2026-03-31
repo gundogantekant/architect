@@ -1,0 +1,108 @@
+import { readFile, readdir } from 'node:fs/promises';
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { LOGS_DIR } from './constants.mjs';
+
+export function json(res, data, status = 200) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(data));
+}
+
+export function text(res, data, mime = 'text/plain', status = 200) {
+  res.writeHead(status, { 'Content-Type': mime });
+  res.end(data);
+}
+
+export function err(res, msg, status = 404) { json(res, { error: msg }, status); }
+
+export function safe(segment) {
+  return !segment.includes('..') && !segment.includes('/') && !segment.includes('\\');
+}
+
+export async function readJson(path) {
+  return JSON.parse(await readFile(path, 'utf8'));
+}
+
+export async function listDirs(base) {
+  const entries = await readdir(base, { withFileTypes: true });
+  return entries.filter(e => e.isDirectory()).map(e => e.name);
+}
+
+export async function listFiles(base) {
+  const entries = await readdir(base, { withFileTypes: true });
+  return entries.filter(e => e.isFile()).map(e => e.name);
+}
+
+export async function parseBody(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  return JSON.parse(Buffer.concat(chunks).toString());
+}
+
+export function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function tmuxSessionExists(name) {
+  try {
+    execFileSync('tmux', ['has-session', '-t', name], { stdio: 'ignore' });
+    return true;
+  } catch { return false; }
+}
+
+export function captureTmuxScrollback(name) {
+  try {
+    return execFileSync('tmux', ['capture-pane', '-t', name, '-p', '-e', '-S', '-1000'], { encoding: 'utf8' });
+  } catch { return ''; }
+}
+
+/** Clean tmux capture-pane plain text output: strip trailing whitespace, collapse blank runs, trim */
+export function cleanTmuxCapture(text) {
+  const lines = text.split('\n').map(l => l.trimEnd());
+  const result = [];
+  let blankCount = 0;
+  for (const line of lines) {
+    if (line === '') {
+      blankCount++;
+      if (blankCount <= 2) result.push(line);
+    } else {
+      blankCount = 0;
+      result.push(line);
+    }
+  }
+  while (result.length && result[0] === '') result.shift();
+  while (result.length && result[result.length - 1] === '') result.pop();
+  // Use \r\n so xterm.js moves cursor to column 0 on each new line
+  // (xterm's convertEol is false by default — \n alone only moves down, not to col 0)
+  return result.join('\r\n') + '\r\n';
+}
+
+export function termEventLogPath(id) {
+  return join(LOGS_DIR, `T-${id}.events.jsonl`);
+}
+
+export function generateSeedContent(n = 500) {
+  const lines = [];
+  const commits = ['a1b2c3d', 'e4f5g6h', '7i8j9k0', 'l1m2n3o', 'p4q5r6s'];
+  const files = ['src/index.mjs', 'src/db.mjs', 'tools/dashboard/server.mjs', 'domain/entities.md', 'portfolio/registry.json'];
+
+  for (let i = 0; i < n; i++) {
+    const r = i % 7;
+    if (r === 0) lines.push(`\x1b[33mcommit ${commits[i % commits.length]}def${i}\x1b[0m`);
+    else if (r === 1) lines.push(`Author: dev <dev@example.com>  Date: 2026-03-${(i % 28) + 1}`);
+    else if (r === 2) lines.push(`    feat: update ${files[i % files.length]} (line ${i})`);
+    else if (r === 3) lines.push('');
+    else if (r === 4) lines.push(`\x1b[36m${files[i % files.length]}\x1b[0m  ${(i * 13) % 512} bytes`);
+    else if (r === 5) lines.push(`\x1b[32m\u2713\x1b[0m compiled ${files[i % files.length]} in ${(i % 200) + 10}ms`);
+    else lines.push(`${'─'.repeat(60)} [${i}/${n}]`);
+  }
+  return lines;
+}
+
+export function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
