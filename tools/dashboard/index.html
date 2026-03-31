@@ -112,7 +112,7 @@
 
   /* Modal */
   .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 100; }
-  .modal { background: #fff; border-radius: 10px; padding: 28px; max-width: 560px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.18); }
+  .modal { background: #fff; border-radius: 10px; padding: 28px; max-width: 560px; width: 90%; max-height: 90vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.18); }
   .modal h3 { margin-top: 0; margin-bottom: 12px; font-size: 18px; color: var(--text); }
   .modal .field { margin-bottom: 14px; }
   .modal label { display: block; font-size: 12px; font-weight: 600; color: var(--text-light); margin-bottom: 4px; text-transform: uppercase; }
@@ -1389,8 +1389,13 @@ async function initSession(terminalInfo) {
   const sessionState = terminalInfo._sessionState;
   sessionState.state = 'CONNECTING';
 
-  const panel = document.getElementById(`terminal-${terminalInfo.id}`);
-  if (!panel) return;
+  let panel = document.getElementById(`terminal-${terminalInfo.id}`);
+  if (!panel) {
+    // Panel not in DOM yet — placeSessionPanels() defers insertion via requestAnimationFrame
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    panel = document.getElementById(`terminal-${terminalInfo.id}`);
+    if (!panel) return;
+  }
   const containerEl = panel.querySelector(`#term-container-${terminalInfo.id}`);
   if (!containerEl) return;
 
@@ -6213,6 +6218,14 @@ async function route() {
 window.addEventListener('hashchange', () => { closeFocusPopup(); route(); });
 // Eagerly preload xterm.js modules so they're cached before first terminal opens
 loadXterm();
+// Test hook: expose dispatch sequence for Playwright tests (module-scoped functions are inaccessible)
+window.__testDispatchTerminal = async (info) => {
+  activeTerminals.push(info);
+  syncSessionState();
+  createTerminalPanel(info);
+  placeSessionPanels();
+  await initSession(info);
+};
 // Start restoring sessions immediately in parallel with tree building so panels
 // appear within the test's 5 s window regardless of how long the sidebar takes.
 const _restorePromise = Promise.all([

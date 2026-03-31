@@ -12,6 +12,7 @@ import {
   getBase,
   seedTerminal,
   seedDispatch,
+  seedWorkItem,
   pumpTerminal,
   waitForTerminalLive,
   waitForTerminalContent,
@@ -329,4 +330,124 @@ test('R-8. Terminal exit produces clean state — no shell noise after exit', as
       expect(line, `Unexpected shell noise in terminal output: "${line.trim()}"`).not.toMatch(pattern);
     }
   }
+});
+
+// ============================================================
+// R-9: Modal scrollable when content exceeds viewport
+// ============================================================
+
+test('R-9. Modal scrollable when content exceeds viewport', async ({ page }) => {
+  // Regression: modal content taller than viewport makes submit button unreachable
+  // Failure mode: .modal has no max-height or overflow-y; content extends past viewport bottom
+  // Fixed by: adding max-height: 90vh; overflow-y: auto to .modal CSS
+
+  await seedWorkItem({ title: 'Overflow test item', status: 'open' });
+  await page.goto('/#component/ticari/architect/main');
+  await page.waitForSelector('.dispatch-btn[data-wi-idx]', { timeout: 15000 });
+  await page.click('.dispatch-btn[data-wi-idx]');
+  await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
+
+  // Inject tall content to force overflow
+  await page.evaluate(() => {
+    const modal = document.querySelector('.modal');
+    const filler = document.createElement('div');
+    filler.style.height = '200vh';
+    filler.textContent = 'filler';
+    modal.querySelector('.modal-actions').before(filler);
+  });
+
+  // Assert modal constrains height and allows scroll
+  const modalBox = await page.evaluate(() => {
+    const modal = document.querySelector('.modal');
+    const style = getComputedStyle(modal);
+    return {
+      overflowY: style.overflowY,
+      scrollHeight: modal.scrollHeight,
+      clientHeight: modal.clientHeight,
+      overflows: modal.scrollHeight > modal.clientHeight,
+    };
+  });
+
+  expect(modalBox.overflowY).toMatch(/auto|scroll/);
+  expect(modalBox.overflows).toBe(true);
+
+  // Scroll to bottom and verify dispatch button is reachable
+  await page.evaluate(() => {
+    const modal = document.querySelector('.modal');
+    modal.scrollTop = modal.scrollHeight;
+  });
+
+  await expect(page.locator('.modal [data-modal-submit]')).toBeInViewport({ timeout: 2000 });
+});
+
+// ============================================================
+// R-10: Modal fits within viewport on small screen
+// ============================================================
+
+test('R-10. Modal fits within viewport on small screen', async ({ page }) => {
+  // Regression: on short viewports, modal extends past screen bottom
+  // Failure mode: no max-height constraint — modal grows unbounded
+  // Fixed by: max-height: 90vh on .modal
+
+  await page.setViewportSize({ width: 800, height: 400 });
+  await seedWorkItem({ title: 'Small viewport test', status: 'open' });
+  await page.goto('/#component/ticari/architect/main');
+  await page.waitForSelector('.dispatch-btn[data-wi-idx]', { timeout: 15000 });
+  await page.click('.dispatch-btn[data-wi-idx]');
+  await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
+
+  const modalRect = await page.evaluate(() => {
+    const modal = document.querySelector('.modal');
+    const rect = modal.getBoundingClientRect();
+    return { bottom: rect.bottom, viewportHeight: window.innerHeight };
+  });
+
+  // Modal bottom must not extend beyond viewport
+  expect(modalRect.bottom).toBeLessThanOrEqual(modalRect.viewportHeight);
+});
+
+// ============================================================
+// R-11: Fresh dispatch connects terminal without page refresh
+// ============================================================
+
+test('R-11. Fresh dispatch connects terminal without page refresh', async ({ page }) => {
+  // Regression: "Connecting" spinner stuck on fresh dispatch
+  // Failure mode: placeSessionPanels() defers DOM insertion via RAF, but initSession()
+  //   runs immediately and getElementById() returns null → silently bails, no WS connection
+  // Fixed by: initSession() awaits one RAF if panel not found in DOM, then retries
+
+  // Navigate first — restoreTerminals runs on page load with an empty state
+  await page.goto('/#terminals');
+  await page.waitForLoadState('domcontentloaded');
+
+  // Seed a terminal server-side AFTER page load (simulates dispatch creating PTY)
+  const t = await seedTerminal({ withFakeContent: true, lines: 20 });
+
+  // Simulate the exact dispatch flow on the client — same as dispatch modals:
+  // createTerminalPanel → placeSessionPanels → initSession (no RAF wait between)
+  // Uses window.__testDispatchTerminal hook (module-scoped functions are inaccessible)
+  await page.evaluate(async (info) => {
+    await window.__testDispatchTerminal({
+      id: info.id,
+      type: 'shell',
+      agent_type: 'shell',
+      work_item_id: null,
+      project_key: 'ticari/architect/main',
+      title: 'Dispatch spinner test',
+      permission_mode: 'acceptEdits',
+      skip_permissions: false,
+      status: 'running',
+      started_at: new Date().toISOString(),
+    });
+  }, { id: t.id });
+
+  // Assert: terminal must reach LIVE state and show content — without a page refresh
+  await waitForTerminalLive(page, t.id, 10_000);
+
+  // Verify xterm is rendered and loading spinner is gone
+  const hasXterm = await page.locator(`#term-container-${t.id} .xterm`).isVisible({ timeout: 5_000 });
+  expect(hasXterm).toBe(true);
+
+  const loadingGone = await page.locator(`#term-container-${t.id} .terminal-loading`).isHidden({ timeout: 1_000 });
+  expect(loadingGone).toBe(true);
 });
