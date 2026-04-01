@@ -166,18 +166,46 @@ test('W-3. Wheel scroll does not trigger shell history navigation', async ({ pag
     return sess._term.buffer.active.baseY > 0;
   }, terminal_id, { timeout: 15_000 });
 
+  // Wait for terminal to fully stabilize — baseY must stop changing for 1500ms.
+  // After `seq 1 500` the shell writes its prompt and xterm may still be rendering
+  // buffered output. If we scroll before all PTY data is flushed, xterm auto-scrolls
+  // to bottom on the next write, undoing our scroll.
+  await page.waitForFunction((id) => {
+    const sess = window._termSessions?.get(id);
+    if (!sess?._term) return false;
+    const baseY = sess._term.buffer.active.baseY;
+    if (baseY !== window.__w3_lastBaseY) {
+      window.__w3_lastBaseY = baseY;
+      window.__w3_stableAt = Date.now();
+      return false;
+    }
+    return Date.now() - (window.__w3_stableAt || 0) > 1500;
+  }, terminal_id, { timeout: 30_000, polling: 100 });
+
   // Capture buffer state before wheel scroll
   const metricsBefore = await getXtermScrollMetrics(page, terminal_id);
   expect(metricsBefore.baseY).toBeGreaterThan(0);
   const lineCountBefore = metricsBefore.baseY + metricsBefore.rows;
 
-  // Scroll up with mouse wheel
-  await scrollTerminalWheel(page, terminal_id, -200, 5);
-  await page.waitForTimeout(1000);
+  // Dispatch wheel events via JS rather than Playwright's page.mouse.wheel().
+  // Chromium's compositor consumes CDP-dispatched wheel events on xterm's
+  // scrollable .xterm-viewport before they become DOM WheelEvents, so our
+  // capture-phase handler on containerEl never fires. JS-dispatched events
+  // go through the full DOM capture/bubble cycle and are intercepted correctly.
+  await page.evaluate(({ id }) => {
+    const container = document.getElementById(`term-container-${id}`);
+    for (let i = 0; i < 5; i++) {
+      container.dispatchEvent(new WheelEvent('wheel', {
+        deltaY: -200, bubbles: true, cancelable: true, composed: true,
+      }));
+    }
+  }, { id: terminal_id });
+  await page.waitForTimeout(500);
+
+  const metricsAfter = await getXtermScrollMetrics(page, terminal_id);
 
   // Verify scroll moved up
-  const metricsAfter = await getXtermScrollMetrics(page, terminal_id);
-  expect(metricsAfter.atBottom).toBe(false);
+  expect(metricsAfter.viewportY).toBeLessThan(metricsBefore.baseY);
 
   // The buffer should NOT have grown significantly — no new commands were executed.
   // If wheel triggered history navigation (arrow up), zsh would show a previous
