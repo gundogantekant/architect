@@ -632,6 +632,53 @@ export function getTimeReportMonthly(months = 6) {
   `).all(d.toISOString());
 }
 
+// --- Time report: org-level grouping ---
+
+export function getTimeReportByOrg(todayStart) {
+  const today = db.prepare(`
+    SELECT p.org, p.org AS project_key,
+      COUNT(*) AS sessions, COALESCE(SUM(sh.duration_seconds), 0) AS time_seconds, COALESCE(SUM(sh.cost_usd), 0) AS cost_usd
+    FROM session_history sh JOIN projects p ON sh.project_key = p.key
+    WHERE sh.ended_at >= ? GROUP BY p.org ORDER BY time_seconds DESC
+  `).all(todayStart);
+  const overall = db.prepare(`
+    SELECT org, org AS project_key,
+      SUM(session_count) AS sessions, SUM(total_time_seconds) AS time_seconds, SUM(total_cost_usd) AS cost_usd
+    FROM projects WHERE session_count > 0 GROUP BY org ORDER BY time_seconds DESC
+  `).all();
+  return { today, overall };
+}
+
+export function getTimeReportDailyByOrg(days = 14) {
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  return db.prepare(`
+    SELECT p.org, p.org AS project_key,
+      date(sh.ended_at) AS day,
+      COALESCE(SUM(sh.duration_seconds), 0) AS time_seconds,
+      COALESCE(SUM(sh.cost_usd), 0) AS cost_usd
+    FROM session_history sh JOIN projects p ON sh.project_key = p.key
+    WHERE sh.ended_at >= ?
+    GROUP BY p.org, day
+    ORDER BY day ASC, time_seconds DESC
+  `).all(since);
+}
+
+export function getTimeReportMonthlyByOrg(months = 6) {
+  const d = new Date();
+  d.setMonth(d.getMonth() - months);
+  d.setDate(1); d.setHours(0, 0, 0, 0);
+  return db.prepare(`
+    SELECT p.org, p.org AS project_key,
+      strftime('%Y-%m', sh.ended_at) AS month,
+      COALESCE(SUM(sh.duration_seconds), 0) AS time_seconds,
+      COALESCE(SUM(sh.cost_usd), 0) AS cost_usd
+    FROM session_history sh JOIN projects p ON sh.project_key = p.key
+    WHERE sh.ended_at >= ?
+    GROUP BY p.org, month
+    ORDER BY month ASC, time_seconds DESC
+  `).all(d.toISOString());
+}
+
 export function getProjectStats(key) {
   return db.prepare('SELECT * FROM project_stats WHERE project_key = ?').get(key);
 }
@@ -652,5 +699,9 @@ export function hardDeleteAllTestData() {
   db.prepare("DELETE FROM epic_logs WHERE logged_at > ?").run(cutoff);
   db.prepare("DELETE FROM work_items WHERE created_at > ?").run(cutoff);
   db.prepare("DELETE FROM epics WHERE created_at > ?").run(cutoff);
+  db.prepare("DELETE FROM session_history WHERE ended_at > ?").run(cutoff);
+  // Reset project counters for test-seeded projects (those with no real sessions left)
+  db.prepare(`UPDATE projects SET session_count = 0, total_time_seconds = 0, total_cost_usd = 0
+    WHERE key NOT IN (SELECT DISTINCT project_key FROM session_history)`).run();
   db.pragma('foreign_keys = ON');
 }

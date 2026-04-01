@@ -145,6 +145,31 @@ export default function testEndpointRoutes(deps) {
       json(res, { terminal_id: id, status: terminal.status, project_path: projectPath, prompt });
     }],
 
+    // Seed a session_history entry (for time report tests)
+    [/^\/api\/test\/seed-session-history$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { project_key, duration_seconds, cost_usd, started_at, ended_at } = body;
+      if (!project_key) return err(res, 'project_key is required', 400);
+      const end = ended_at || new Date().toISOString();
+      const dur = duration_seconds || 300;
+      const start = started_at || new Date(new Date(end).getTime() - dur * 1000).toISOString();
+      const id = `SH-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      db.recordSessionHistory({
+        id,
+        type: 'test',
+        project_key,
+        work_item_id: null,
+        epic_id: null,
+        title: 'Test session',
+        status: 'completed',
+        permission_mode: 'plan',
+        started_at: start,
+        ended_at: end,
+        cost_usd: cost_usd ?? 0,
+      });
+      json(res, { ok: true, id });
+    }],
+
     // Purge all sessions from memory AND DB (for test isolation)
     [/^\/api\/test\/purge-all$/, 'POST', async (_m, req, res) => {
       const workerId = req.headers['x-test-worker-id'];

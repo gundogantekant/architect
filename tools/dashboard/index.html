@@ -2304,19 +2304,44 @@ async function buildTree() {
     const group = document.createElement('div');
     group.className = 'org-group';
 
+    const orgPrefKey = `org_visible_${org}`;
+    const orgVisible = window._prefs[orgPrefKey] !== 'false';
+
     const header = document.createElement('div');
     header.className = 'org-name';
-    header.innerHTML = `<span class="arrow open">&#9654;</span> ${esc(orgData.name || org)} <span style="font-size:11px;color:#888">(${projects.length})</span>`;
-    header.onclick = () => {
+    header.style.display = 'flex';
+    header.style.alignItems = 'center';
+    const headerLabel = document.createElement('span');
+    headerLabel.style.flex = '1';
+    headerLabel.style.cursor = 'pointer';
+    headerLabel.innerHTML = `<span class="arrow${orgVisible ? ' open' : ''}">&#9654;</span> ${esc(orgData.name || org)} <span style="font-size:11px;color:#888">(${projects.length})</span>`;
+    headerLabel.onclick = () => {
       location.hash = `#org/${org}`;
-      const arrow = header.querySelector('.arrow');
+      const arrow = headerLabel.querySelector('.arrow');
       const list = group.querySelector('.project-list');
       const open = arrow.classList.toggle('open');
       list.style.display = open ? '' : 'none';
     };
+    header.appendChild(headerLabel);
+    const orgToggle = document.createElement('span');
+    orgToggle.className = 'epic-global-toggle';
+    orgToggle.textContent = orgVisible ? '[on]' : '[off]';
+    orgToggle.title = 'Toggle org visibility in sidebar';
+    orgToggle.onclick = (e) => {
+      e.stopPropagation();
+      const next = !orgVisible;
+      window._prefs[orgPrefKey] = String(next);
+      fetch('/api/settings/preferences', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [orgPrefKey]: String(next) }),
+      }).catch(() => {});
+      buildTree();
+    };
+    header.appendChild(orgToggle);
 
     const list = document.createElement('div');
     list.className = 'project-list';
+    if (!orgVisible) list.style.display = 'none';
 
     // Collect components, then sort by open work item count
     const componentEntries = [];
@@ -3648,7 +3673,7 @@ function renderEpicListView(epics) {
       html += `<td>${p.done}/${p.total} (${pct}%)</td>`;
       html += `<td>${(epic.project_keys || []).map(k => `<span class="tag">${esc(k)}</span>`).join('')}</td>`;
       html += `<td>${epic.target_date || '—'}</td>`;
-      html += `<td><button class="dispatch-btn" data-epic-dispatch="${esc(epic.id)}">dispatch</button><button class="dispatch-btn" data-epic-discuss="${esc(epic.id)}" style="background:var(--teal);margin-left:4px">discuss</button>${canArchive ? `<button class="dispatch-btn" data-epic-archive="${esc(epic.id)}" style="background:#94a3b8;margin-left:4px">archive</button>` : ''}</td>`;
+      html += `<td><button class="dispatch-btn" data-epic-edit="${esc(epic.id)}" style="background:var(--accent)">edit</button><button class="dispatch-btn" data-epic-delete="${esc(epic.id)}" style="background:var(--red);margin-left:4px">delete</button><button class="dispatch-btn" data-epic-dispatch="${esc(epic.id)}" style="margin-left:4px">dispatch</button><button class="dispatch-btn" data-epic-discuss="${esc(epic.id)}" style="background:var(--teal);margin-left:4px">discuss</button>${canArchive ? `<button class="dispatch-btn" data-epic-archive="${esc(epic.id)}" style="background:#94a3b8;margin-left:4px">archive</button>` : ''}</td>`;
       html += `</tr>`;
     }
     html += `</tbody></table>`;
@@ -3671,6 +3696,26 @@ function bindEpicListEvents() {
       row.style.display = showDone.checked ? '' : 'none';
     });
   };
+  document.querySelectorAll('[data-epic-edit]').forEach(btn => {
+    btn.onclick = async () => {
+      const epic = await api(`epics/${btn.dataset.epicEdit}`);
+      showEpicModal(epic);
+    };
+  });
+  document.querySelectorAll('[data-epic-delete]').forEach(btn => {
+    btn.onclick = async () => {
+      const eid = btn.dataset.epicDelete;
+      if (!confirm(`Delete epic ${eid}? This will unlink all work items and mark it as cancelled.`)) return;
+      try {
+        await fetch(`/api/epics/${eid}`, { method: 'DELETE' });
+        backlog = null; epicCache = null;
+        await buildEpicTree();
+        route();
+      } catch (e) {
+        alert('Error: ' + e.message);
+      }
+    };
+  });
   document.querySelectorAll('[data-epic-dispatch]').forEach(btn => {
     btn.onclick = () => showEpicDispatchModal(btn.dataset.epicDispatch);
   });
@@ -5766,22 +5811,26 @@ function renderPivotTable(data, periodKey, labelFn) {
   return html;
 }
 
-function renderTimeReport(report) {
+function renderTimeReport(report, groupBy) {
+  groupBy = groupBy || 'project';
+  const isOrg = groupBy === 'org';
   const todayStr = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const entityLabel = isOrg ? 'Organization' : 'Project';
 
   function renderTable(rows, totals) {
     if (!rows.length) return '<p style="color:var(--text-light);font-size:13px">No sessions recorded yet.</p>';
     let html = `<table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead><tr style="border-bottom:2px solid var(--border);text-align:left">
-        <th style="padding:8px 12px">Project</th>
+        <th style="padding:8px 12px">${entityLabel}</th>
         <th style="padding:8px 12px;text-align:right">Sessions</th>
         <th style="padding:8px 12px;text-align:right">Time</th>
         <th style="padding:8px 12px;text-align:right">Cost</th>
       </tr></thead><tbody>`;
     for (const r of rows) {
-      const label = r.component ? `${r.project} / ${r.component}` : r.project_key;
+      const label = isOrg ? (r.org || r.project_key) : (r.component ? `${r.project} / ${r.component}` : r.project_key);
+      const orgPrefix = isOrg ? '' : `<span style="color:var(--text-light);font-size:11px">${esc(r.org || '')}</span> `;
       html += `<tr style="border-bottom:1px solid var(--border)">
-        <td style="padding:8px 12px"><span style="color:var(--text-light);font-size:11px">${esc(r.org || '')}</span> ${esc(label)}</td>
+        <td style="padding:8px 12px">${orgPrefix}${esc(label)}</td>
         <td style="padding:8px 12px;text-align:right">${r.sessions}</td>
         <td style="padding:8px 12px;text-align:right;font-weight:600">${formatDuration(r.time_seconds)}</td>
         <td style="padding:8px 12px;text-align:right">${formatCost(r.cost_usd)}</td>
@@ -5847,8 +5896,13 @@ function renderTimeReport(report) {
   const monthlyMatrix = monthlyProjects.map(p => monthlyCols.map(c => monthlyLookup.get(`${p.key}|${c}`) || 0));
   const monthlyColLabels = monthlyCols.map(m => { const [y, mo] = m.split('-'); return new Date(+y, +mo - 1).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }); });
 
+  const groupToggle = `<div style="display:inline-flex;gap:0;border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:12px;margin-left:12px;vertical-align:middle">
+    <span data-tr-group="project" style="padding:4px 10px;cursor:pointer;${!isOrg ? 'background:var(--accent);color:#fff' : 'color:var(--text-light)'}">By Project</span>
+    <span data-tr-group="org" style="padding:4px 10px;cursor:pointer;border-left:1px solid var(--border);${isOrg ? 'background:var(--accent);color:#fff' : 'color:var(--text-light)'}">By Organization</span>
+  </div>`;
+
   return `<div class="card">
-    <h2 style="margin-bottom:4px">Time Report</h2>
+    <h2 style="margin-bottom:4px">Time Report ${groupToggle}</h2>
     <p style="color:var(--text-light);font-size:13px;margin-bottom:16px">${todayStr}</p>
     <div class="tabs" id="tr-tabs">
       <div class="tab active" data-tab="0">Today</div>
@@ -5862,7 +5916,7 @@ function renderTimeReport(report) {
     </div>
     <div class="tab-content" data-panel="1">
       <div style="margin-bottom:20px">${renderDonutChart(allTimeDonut, formatDuration(report.overall_total.time_seconds))}</div>
-      <h3 style="font-size:14px;margin:20px 0 10px;color:var(--accent)">By Project</h3>
+      <h3 style="font-size:14px;margin:20px 0 10px;color:var(--accent)">By ${entityLabel}</h3>
       <div style="margin-bottom:20px">${renderBarChart(allTimeBar)}</div>
       ${renderTable(report.overall, report.overall_total)}
     </div>
@@ -5888,6 +5942,15 @@ function bindTimeReportTabs() {
       const card = document.querySelector('#tr-tabs').closest('.card');
       card.querySelectorAll('.tab-content').forEach(p => p.classList.remove('active'));
       card.querySelector(`.tab-content[data-panel="${tab.dataset.tab}"]`).classList.add('active');
+    };
+  });
+}
+
+function bindTimeReportGroupToggle() {
+  document.querySelectorAll('[data-tr-group]').forEach(el => {
+    el.onclick = () => {
+      sessionStorage.setItem('time-report-group', el.dataset.trGroup);
+      route();
     };
   });
 }
@@ -6228,9 +6291,11 @@ async function route() {
 
   if (parts[0] === 'time-report') {
     try {
-      const report = await api('time-report');
-      main.innerHTML = renderTimeReport(report);
+      const groupBy = sessionStorage.getItem('time-report-group') || 'project';
+      const report = await api(`time-report${groupBy === 'org' ? '?group=org' : ''}`);
+      main.innerHTML = renderTimeReport(report, groupBy);
       bindTimeReportTabs();
+      bindTimeReportGroupToggle();
     } catch (e) {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading time report: ${esc(String(e))}</p></div>`;
     }

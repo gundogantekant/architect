@@ -247,6 +247,23 @@ export async function getSessionState(page, terminalId) {
   }, terminalId);
 }
 
+export async function seedSessionHistory(opts = {}) {
+  const now = new Date();
+  const ended_at = opts.ended_at || now.toISOString();
+  const duration_seconds = opts.duration_seconds || 300;
+  const started_at = opts.started_at || new Date(new Date(ended_at).getTime() - duration_seconds * 1000).toISOString();
+  return api('test/seed-session-history', {
+    method: 'POST',
+    body: JSON.stringify({
+      project_key: opts.project_key || 'testorg/testproj/main',
+      duration_seconds,
+      cost_usd: opts.cost_usd ?? 1.50,
+      started_at,
+      ended_at,
+    }),
+  });
+}
+
 export async function seedWorkItem(opts = {}) {
   return api('work-items', {
     method: 'POST',
