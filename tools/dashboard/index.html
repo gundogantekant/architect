@@ -866,18 +866,19 @@ async function loadDispatchContent(dispatch) {
       if (msg.type === 'data') {
         const text = extractStreamText(msg.data);
         if (text) {
-          const visible = logEl.offsetParent !== null;
-          if (visible) {
-            const nearBottom = (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight) < 50;
-            logEl.textContent += text;
-            if (nearBottom) logEl.scrollTop = logEl.scrollHeight;
+          const savedScrollTop = logEl.scrollTop;
+          const nearBottom = (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight) < 5;
+          logEl.appendChild(document.createTextNode(text));
+          if (nearBottom) {
+            logEl.scrollTop = logEl.scrollHeight;
           } else {
-            logEl.textContent += text;
+            logEl.scrollTop = savedScrollTop;
           }
         }
       } else if (msg.type === 'replay-end') {
         dispatch._contentLoaded = true;
         logEl.scrollTop = logEl.scrollHeight;
+        logEl.dataset.replayDone = '1';
       } else if (msg.type === 'done') {
         dispatch.status = msg.status || 'completed';
         dispatch._ws = null;

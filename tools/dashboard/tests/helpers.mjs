@@ -307,6 +307,19 @@ export async function seedDispatch(opts = {}) {
   return { dispatch_id: id, ...res };
 }
 
+export async function getDispatchLogScrollMetrics(page, id) {
+  return page.evaluate((id) => {
+    const logEl = document.getElementById(`log-${id}`);
+    if (!logEl) return null;
+    return {
+      scrollTop: logEl.scrollTop,
+      scrollHeight: logEl.scrollHeight,
+      clientHeight: logEl.clientHeight,
+      atBottom: (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight) < 50,
+    };
+  }, id);
+}
+
 export async function getDispatchPanelState(page, id) {
   return page.evaluate((id) => {
     const panel = document.getElementById(`dispatch-${id}`);

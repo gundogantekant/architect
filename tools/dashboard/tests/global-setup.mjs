@@ -21,6 +21,7 @@ export const SPEC_FILES = [
   'error-paths',
   'restart-recovery',
   'org-dispatch',
+  'dispatch-scroll',
 ];
 
 function getLiveDashboardPorts() {
