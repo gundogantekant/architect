@@ -5,6 +5,7 @@ export default function testEndpointRoutes(deps) {
     dispatches, terminals, cliSessions,
     wireTerminalHandlers,
     broadcastDispatchLine, broadcastDispatchDone,
+    buildDispatchPrompt, resolveOrgPath, loadOrgContext,
     saveDispatchToDb, saveTerminalToDb,
     restoreSessions,
     termEventLogPath, generateSeedContent,
@@ -69,6 +70,79 @@ export default function testEndpointRoutes(deps) {
       terminals.clear();
       restoreSessions(wireTerminalHandlers);
       json(res, { dispatches: dispatches.size, terminals: terminals.size });
+    }],
+
+    // Build org dispatch prompt without spawning PTY (for contract tests)
+    [/^\/api\/test\/build-org-prompt$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { org_key, additional_instructions } = body;
+      if (!org_key) return err(res, 'org_key required', 400);
+      const projectPath = await resolveOrgPath(org_key);
+      if (!projectPath) return err(res, `Could not resolve org: ${org_key}`, 400);
+      const orgContext = await loadOrgContext(org_key);
+      const prompt = buildDispatchPrompt({
+        workItem: null,
+        projectKey: `${org_key}/*`,
+        projectPath,
+        additionalInstructions: additional_instructions || '',
+        portfolio: null,
+        epicContext: null,
+        orgContext,
+      });
+      json(res, { prompt, project_path: projectPath });
+    }],
+
+    // Seed a terminal with org_key support (no real PTY)
+    [/^\/api\/test\/seed-org-terminal$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { org_key, additional_instructions, status: reqStatus } = body;
+      if (!org_key) return err(res, 'org_key required', 400);
+      const projectPath = await resolveOrgPath(org_key);
+      if (!projectPath) return err(res, `Could not resolve org: ${org_key}`, 400);
+      const orgContext = await loadOrgContext(org_key);
+      const prompt = buildDispatchPrompt({
+        workItem: null,
+        projectKey: `${org_key}/*`,
+        projectPath,
+        additionalInstructions: additional_instructions || '',
+        portfolio: null,
+        epicContext: null,
+        orgContext,
+      });
+
+      const id = `T-${Date.now()}`;
+      await mkdir(LOGS_DIR, { recursive: true });
+      const eventStream = new EventStream(id);
+      const termStatus = reqStatus || 'completed';
+      const terminal = {
+        id,
+        type: 'claude',
+        agent_type: 'claude',
+        work_item_id: null,
+        epic_id: null,
+        project_key: `${org_key}/*`,
+        org_key,
+        project_path: projectPath,
+        prompt,
+        title: additional_instructions?.slice(0, 60) || 'Org session',
+        status: termStatus,
+        started_at: new Date().toISOString(),
+        exited_at: termStatus !== 'running' ? new Date().toISOString() : null,
+        permission_mode: 'plan',
+        skip_permissions: false,
+        claude_session_id: null,
+        ptyProcess: null,
+        _skipAutoCleanup: termStatus === 'running',
+        _testWorkerId: req.headers['x-test-worker-id'] ?? null,
+        eventStream,
+        wsClients: eventStream.subscribers,
+        cols: 80,
+        rows: 24,
+        tmux_session: null,
+      };
+      terminals.set(id, terminal);
+      saveTerminalToDb(terminal);
+      json(res, { terminal_id: id, status: terminal.status, project_path: projectPath, prompt });
     }],
 
     // Purge all sessions from memory AND DB (for test isolation)

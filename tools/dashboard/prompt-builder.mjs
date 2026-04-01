@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ROOT, PORTFOLIO, WORK, ARCHITECT_KEY, port } from './constants.mjs';
 import * as db from './db.mjs';
@@ -12,6 +12,39 @@ export async function resolveProjectPath(projectKey) {
     if (key === projectKey) return path;
   }
   return null;
+}
+
+export async function resolveOrgPath(orgKey) {
+  const orgData = await readJson(join(PORTFOLIO, orgKey, 'organization.json')).catch(() => null);
+  return orgData?.path_root || null;
+}
+
+export async function loadOrgContext(orgKey) {
+  const orgData = await readJson(join(PORTFOLIO, orgKey, 'organization.json')).catch(() => null);
+  if (!orgData) return null;
+
+  // Read all project directories under this org
+  const projectMap = [];
+  try {
+    const entries = await readdir(join(PORTFOLIO, orgKey), { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const projectName = entry.name;
+      // Try to read main.json (default component)
+      const componentData = await readJson(join(PORTFOLIO, orgKey, projectName, 'main.json')).catch(() => null);
+      if (!componentData) continue;
+      projectMap.push({
+        key: `${orgKey}/${projectName}/main`,
+        name: componentData.name || projectName,
+        role: componentData.role || 'unknown',
+        purpose: componentData.brief?.purpose || '',
+        stack: componentData.guidance?.stack_summary || '',
+        path: componentData.path || '',
+      });
+    }
+  } catch { /* org dir listing failed */ }
+
+  return { org: orgData, projectMap };
 }
 
 // Context tier mapping: agent name → tier
@@ -197,7 +230,7 @@ export async function selectAgentsForDispatch({ workItem, portfolio }) {
   return agents;
 }
 
-export function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInstructions, portfolio, epicContext, relatedProjects }) {
+export function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInstructions, portfolio, epicContext, relatedProjects, orgContext }) {
   const sections = [];
 
   // --- Identity ---
@@ -292,9 +325,14 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
 
   // --- Scope ---
   const scopeLines = ['# Scope', ''];
-  const org = projectKey.split('/')[0];
-  if (org && org !== '–') scopeLines.push(`- **Organization**: ${org}`);
-  scopeLines.push(`- **Project**: ${projectKey}`);
+  if (orgContext) {
+    scopeLines.push(`- **Organization**: ${orgContext.org?.name || 'unknown'}`);
+    scopeLines.push(`- **Scope**: Organization-wide (all projects)`);
+  } else {
+    const org = projectKey.split('/')[0];
+    if (org && org !== '–') scopeLines.push(`- **Organization**: ${org}`);
+    scopeLines.push(`- **Project**: ${projectKey}`);
+  }
   if (workItem) scopeLines.push(`- **Work Item**: ${workItem.id}`);
   if (epicContext) scopeLines.push(`- **Epic**: ${epicContext.id}`);
   sections.push(scopeLines.join('\n'));
@@ -317,6 +355,62 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     awareLines.push('');
     awareLines.push('When you need deeper context about the project, read from the portfolio entry or guides. For cross-project context, query the dashboard API.');
     sections.push(awareLines.join('\n'));
+  }
+
+  // --- Organization Context (org-level dispatch only) ---
+  if (orgContext) {
+    const o = orgContext.org;
+    const lines = ['# Organization Context', ''];
+    if (o.name) lines.push(`**Name**: ${o.name}`);
+    if (o.path_root) lines.push(`**Root Path**: ${o.path_root}`);
+    if (o.conventions) {
+      lines.push('', '**Conventions**:');
+      for (const [k, v] of Object.entries(o.conventions)) {
+        if (v) lines.push(`- ${k}: ${v}`);
+      }
+    }
+    if (o.rules?.length) {
+      lines.push('', '**Rules**:');
+      for (const r of o.rules) lines.push(`- ${r}`);
+    }
+    if (o.cloud_environments) {
+      lines.push('', '**Cloud Environments**:');
+      for (const [name, env] of Object.entries(o.cloud_environments)) {
+        const parts = [`${name}`];
+        if (env.account_id) parts.push(`account=${env.account_id}`);
+        if (env.profile) parts.push(`profile=${env.profile}`);
+        if (env.region) parts.push(`region=${env.region}`);
+        lines.push(`- ${parts.join(', ')}`);
+      }
+    }
+    if (o.design_systems) {
+      lines.push('', '**Design Systems**:');
+      for (const [name, ds] of Object.entries(o.design_systems)) {
+        lines.push(`- **${name}** (${ds.type || 'unknown'}): ${ds.description || ''}`);
+        if (ds.depends_on?.length) lines.push(`  Used by: ${ds.depends_on.join(', ')}`);
+      }
+    }
+    sections.push(lines.join('\n'));
+  }
+
+  // --- Project Map (org-level dispatch only) ---
+  if (orgContext?.projectMap?.length) {
+    const lines = ['# Project Map', '',
+      'All projects in this organization:', '',
+      '| Project | Role | Stack | Purpose |',
+      '|---------|------|-------|---------|',
+    ];
+    for (const p of orgContext.projectMap) {
+      const purpose = (p.purpose || '').slice(0, 80);
+      const stack = (p.stack || '').slice(0, 60);
+      lines.push(`| ${p.name} | ${p.role} | ${stack} | ${purpose} |`);
+    }
+    lines.push('', '**Navigation**:');
+    lines.push(`- Your working directory is the organization root: \`${projectPath || orgContext.org?.path_root || '(unknown)'}\``);
+    lines.push('- To work on a specific project, cd into its subdirectory');
+    lines.push(`- For detailed project context, read \`$ARCHITECT_ROOT/portfolio/<org>/<project>/main.json\` or query \`GET http://127.0.0.1:${port}/api/component/<org>/<project>/main\` on the dashboard API`);
+    lines.push('- You have cross-project awareness — use it to answer questions about the organization as a whole');
+    sections.push(lines.join('\n'));
   }
 
   // --- Layer 1: Project Context (first — stack, structure, conventions, org rules) ---

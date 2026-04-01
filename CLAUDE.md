@@ -142,6 +142,7 @@ Use `/work list --org <name>` to scope work items to a specific organization. Se
 - All work on portfolio projects uses a git worktree by default — create one before making any code changes. Exception: projects with `worktree_mode: "explicit"` in their portfolio entry work in-place; worktrees are created only on explicit request. Skip only when the user explicitly opts out. See `domain/rules.md` → Worktree Rules.
 - Follow git standards defined in `domain/rules.md`
 - Before using Playwright MCP tools directly in the main session, follow Model Affinity Rules in `domain/rules.md` to prompt model switching
+- Plans that introduce new API endpoints, UI interactions, or dispatch flows must include contract tests written before implementation. See `domain/rules.md` → Contract-First Planning Rules.
 
 ## Dashboard (`tools/dashboard/`)
 

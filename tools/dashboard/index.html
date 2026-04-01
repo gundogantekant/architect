@@ -977,9 +977,9 @@ function _placeSessionPanelsNow() {
 
   // 2. Build active session list
   const allSessions = [
-    ...activeDispatches.map(d => ({ key: `dispatch:${d.id}`, work_item_id: d.work_item_id, epic_id: d.epic_id, project_key: d.project_key })),
-    ...activeTerminals.map(t => ({ key: `terminal:${t.id}`, work_item_id: t.work_item_id, epic_id: t.epic_id, project_key: t.project_key })),
-    ...activeCliSessions.map(c => ({ key: `cli:${c.id}`, work_item_id: c.work_item_id, epic_id: c.epic_id, project_key: c.project_key })),
+    ...activeDispatches.map(d => ({ key: `dispatch:${d.id}`, work_item_id: d.work_item_id, epic_id: d.epic_id, project_key: d.project_key, org_key: d.org_key })),
+    ...activeTerminals.map(t => ({ key: `terminal:${t.id}`, work_item_id: t.work_item_id, epic_id: t.epic_id, project_key: t.project_key, org_key: t.org_key })),
+    ...activeCliSessions.map(c => ({ key: `cli:${c.id}`, work_item_id: c.work_item_id, epic_id: c.epic_id, project_key: c.project_key, org_key: c.org_key })),
   ];
   const activeKeys = new Set(allSessions.map(s => s.key));
 
@@ -1016,6 +1016,12 @@ function _placeSessionPanelsNow() {
         const section = projSlot.closest('.context-sessions-section');
         if (section) section.classList.remove('hidden');
       }
+    }
+
+    // Tier 3.5: org-level slot
+    if (!targetSlot && session.org_key) {
+      const orgSlot = document.querySelector(`[data-session-slot-org="${session.org_key}"]`);
+      if (orgSlot) targetSlot = orgSlot;
     }
 
     // Tier 4: global fallback
@@ -2347,6 +2353,8 @@ async function buildTree() {
 // --- Views ---
 function renderOrgView(org, data, orgSessions) {
   let html = `<div class="card"><h2>${esc(data.name || org)}</h2>`;
+  html += `<button class="btn-add-wi" id="discuss-org-agent" style="background:var(--teal);margin-bottom:12px">Discuss with Agent</button>`;
+  html += `<a href="#agents?org=${esc(org)}" style="margin-left:8px;font-size:12px;color:var(--accent)">View agents</a>`;
   html += `<dl class="kv"><dt>Path Root</dt><dd><code>${esc(data.path_root || '—')}</code></dd></dl>`;
 
   if (data.conventions) {
@@ -2420,6 +2428,9 @@ function renderOrgView(org, data, orgSessions) {
       html += `</tbody></table>`;
     }
   }
+
+  // Org-level session slot for terminal panels
+  html += `<div data-session-slot-org="${esc(org)}" style="margin-top:16px"></div>`;
 
   html += `</div>`;
   return html;
@@ -3294,6 +3305,83 @@ function showDiscussModal() {
         work_item_id: null,
         project_key: currentProjectKey,
         project_path: projectPath,
+        title: instructions.slice(0, 60) + (instructions.length > 60 ? '...' : ''),
+        permission_mode: permMode,
+        skip_permissions: skipPerms,
+        status: 'running',
+        started_at: new Date().toISOString(),
+      };
+      activeTerminals.push(terminalInfo);
+      syncSessionState();
+      createTerminalPanel(terminalInfo);
+      placeSessionPanels();
+      await initSession(terminalInfo);
+    },
+  });
+}
+
+// --- Org Discuss Modal ---
+function showOrgDiscussModal(orgName) {
+  createDispatchOverlay({
+    title: 'Discuss with Agent',
+    cancelId: 'discuss-org-cancel',
+    submitId: 'discuss-org-submit',
+    buildFields: () => `
+      <div class="field">
+        <label>Organization</label>
+        <div style="font-size:13px"><code>${esc(orgName)}</code></div>
+      </div>
+      <div class="field">
+        <label>Prompt / Instructions *</label>
+        <textarea id="discuss-org-instructions" placeholder="What would you like to discuss? e.g., cross-project dependencies, organization overview, architecture decisions..."></textarea>
+      </div>
+      <div class="field">
+        <label for="discuss-org-agent-type">Agent</label>
+        <select id="discuss-org-agent-type">
+          <option value="claude" selected>Claude</option>
+          <option value="shell">Shell</option>
+          <option value="codex">Codex</option>
+          <option value="gemini">Gemini</option>
+        </select>
+      </div>
+      ${permissionModeSelect('discuss-org-perm-mode')}
+      ${skipPermissionsCheckbox('discuss-org-skip-perms')}
+    `,
+    onSubmit: async (overlay) => {
+      const instructions = overlay.querySelector('#discuss-org-instructions').value.trim();
+      if (!instructions) { throw new Error('Instructions are required'); }
+      const agentType = overlay.querySelector('#discuss-org-agent-type')?.value || 'claude';
+      const permMode = getPermissionMode(overlay, 'discuss-org-perm-mode');
+      const skipPerms = overlay.querySelector('#discuss-org-skip-perms').checked;
+
+      const body = {
+        org_key: orgName,
+        additional_instructions: instructions,
+        permission_mode: permMode,
+        skip_permissions: skipPerms,
+        agentType,
+      };
+      const resp = await fetch('/api/terminal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
+
+      let orgPath = '';
+      try {
+        const orgData = orgCache[orgName] || await api(`org/${orgName}`);
+        orgPath = orgData.path_root || '';
+      } catch {}
+
+      const terminalInfo = {
+        id: result.terminal_id,
+        agent_type: agentType,
+        work_item_id: null,
+        project_key: `${orgName}/*`,
+        org_key: orgName,
+        project_path: orgPath,
         title: instructions.slice(0, 60) + (instructions.length > 60 ? '...' : ''),
         permission_mode: permMode,
         skip_permissions: skipPerms,
@@ -6187,10 +6275,10 @@ async function route() {
     try {
       const data = orgCache[org] || await api(`org/${org}`);
       orgCache[org] = data;
-      // Compute org sessions from active dispatches + terminals
+      // Compute org sessions from active dispatches + terminals (project-scoped + org-scoped)
       const orgSessions = [
-        ...activeDispatches.filter(d => d.project_key && d.project_key.startsWith(org + '/')).map(d => ({ type: 'dispatch', id: d.id, status: d.status, title: d.work_item_id || d.title || d.id, work_item_id: d.work_item_id, project_key: d.project_key, started_at: d.started_at })),
-        ...activeTerminals.filter(t => t.project_key && t.project_key.startsWith(org + '/')).map(t => ({ type: 'terminal', id: t.id, status: t.status, title: t.title || t.id, work_item_id: t.work_item_id, project_key: t.project_key, started_at: t.started_at })),
+        ...activeDispatches.filter(d => (d.project_key && d.project_key.startsWith(org + '/')) || d.org_key === org).map(d => ({ type: 'dispatch', id: d.id, status: d.status, title: d.work_item_id || d.title || d.id, work_item_id: d.work_item_id, project_key: d.project_key, org_key: d.org_key, started_at: d.started_at })),
+        ...activeTerminals.filter(t => (t.project_key && t.project_key.startsWith(org + '/')) || t.org_key === org).map(t => ({ type: 'terminal', id: t.id, status: t.status, title: t.title || t.id, work_item_id: t.work_item_id, project_key: t.project_key, org_key: t.org_key, started_at: t.started_at })),
       ];
       main.innerHTML = renderOrgView(org, data, orgSessions);
       // Bind focus buttons in org agents table
@@ -6200,6 +6288,9 @@ async function route() {
           openFocusPopup(type, id);
         };
       });
+      // Bind org discuss button
+      const orgDiscussBtn = document.getElementById('discuss-org-agent');
+      if (orgDiscussBtn) orgDiscussBtn.onclick = () => showOrgDiscussModal(org);
     } catch (e) {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
     }

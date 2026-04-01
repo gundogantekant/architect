@@ -4,7 +4,7 @@ export default function terminalRoutes(deps) {
     ROOT, LOGS_DIR, CLAUDE_BIN, TMUX_AVAILABLE,
     terminals,
     wireTerminalHandlers, injectPrompt,
-    buildDispatchPrompt, resolveProjectPath, loadPortfolioContext, loadWorkItem, selectAgentsForDispatch, loadEpicPlanSnippet,
+    buildDispatchPrompt, resolveProjectPath, resolveOrgPath, loadPortfolioContext, loadOrgContext, loadWorkItem, selectAgentsForDispatch, loadEpicPlanSnippet,
     saveTerminalToDb, archiveSession,
     termEventLogPath, generateSeedContent, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture,
     EventStream, getAdapter,
@@ -17,10 +17,10 @@ export default function terminalRoutes(deps) {
     // Create terminal session
     [/^\/api\/terminal$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode, agentType: bodyAgentType, skip_seed } = body;
+      const { work_item_id, epic_id, project_key, org_key, title, description, additional_instructions, skip_permissions, permission_mode, agentType: bodyAgentType, skip_seed } = body;
       const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
 
-      if (!project_key) return err(res, 'project_key is required', 400);
+      if (!project_key && !org_key) return err(res, 'project_key or org_key is required', 400);
 
       const agentType = bodyAgentType || 'claude';
       let adapter;
@@ -30,16 +30,22 @@ export default function terminalRoutes(deps) {
         return err(res, e.message, 400);
       }
 
-      const projectPath = await resolveProjectPath(project_key);
-      if (!projectPath) return err(res, `Could not resolve path for project: ${project_key}`, 400);
+      // Resolve path and context — org-level or project-level
+      let projectPath, portfolio = null, orgContext = null;
+      if (org_key && !project_key) {
+        projectPath = await resolveOrgPath(org_key);
+        if (!projectPath) return err(res, `Could not resolve path for organization: ${org_key}`, 400);
+        orgContext = await loadOrgContext(org_key);
+      } else {
+        projectPath = await resolveProjectPath(project_key);
+        if (!projectPath) return err(res, `Could not resolve path for project: ${project_key}`, 400);
+        portfolio = await loadPortfolioContext(project_key);
+      }
 
       const id = `T-${Date.now()}`;
 
       // Build prompt same as dispatch
-      const [portfolio, workItem] = await Promise.all([
-        loadPortfolioContext(project_key),
-        work_item_id ? loadWorkItem(work_item_id) : null,
-      ]);
+      const workItem = work_item_id ? await loadWorkItem(work_item_id) : null;
 
       let epicContext = null;
       if (epic_id) {
@@ -60,11 +66,12 @@ export default function terminalRoutes(deps) {
 
       const prompt = buildDispatchPrompt({
         workItem: effectiveTermWorkItem,
-        projectKey: project_key,
+        projectKey: project_key || `${org_key}/*`,
         projectPath,
         additionalInstructions: additional_instructions,
         portfolio,
         epicContext,
+        orgContext,
       });
 
       // Select sub-agents for terminal session
@@ -177,8 +184,10 @@ export default function terminalRoutes(deps) {
         agent_type: agentType,
         work_item_id: work_item_id || null,
         epic_id: epic_id || null,
-        project_key,
+        project_key: project_key || (org_key ? `${org_key}/*` : null),
+        org_key: org_key || null,
         project_path: projectPath,
+        prompt,
         title: title || additional_instructions?.slice(0, 60) || 'Interactive session',
         permission_mode: resolvedTermPermMode,
         skip_permissions: resolvedTermSkipPerms,
@@ -343,6 +352,8 @@ export default function terminalRoutes(deps) {
           last_output: [],
           permission_mode: t.permission_mode || 'acceptEdits',
           skip_permissions: t.skip_permissions || false,
+          org_key: t.org_key || null,
+          prompt: t.prompt || null,
           claude_session_id: t.claude_session_id || null,
           head_seq: t.eventStream ? t.eventStream.headSeq : 0,
         });

@@ -23,7 +23,7 @@ export function saveDispatchToDb(d) {
 export function saveTerminalToDb(t) {
   db.saveTerminal({
     id: t.id, type: t.type || 'claude', work_item_id: t.work_item_id, epic_id: t.epic_id,
-    project_key: t.project_key, project_path: t.project_path,
+    project_key: t.project_key, project_path: t.project_path, org_key: t.org_key || null,
     title: t.title, permission_mode: t.permission_mode || 'acceptEdits',
     skip_permissions: t.skip_permissions || false,
     status: t.status, started_at: t.started_at, exited_at: t.exited_at,

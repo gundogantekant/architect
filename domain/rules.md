@@ -556,6 +556,16 @@ Skills are classified as **inline** (executed directly by the orchestrator) or *
 | /scaffold | dispatch | Creates files |
 | /onboard | dispatch | Extended scan + writes |
 
+## Contract-First Planning Rules
+
+Every plan that introduces new API endpoints, UI interactions, or agent dispatch flows must define a contract test before implementation begins.
+
+1. **Write contract tests first**: Create an E2E or integration test spec that encodes the expected behavior (API response shapes, UI element presence, prompt content). These tests must fail (red) before any implementation code is written.
+2. **Implementation makes tests pass**: The implementation is considered complete only when all contract tests pass (green) and no existing tests regress.
+3. **Test placement**: Dashboard contracts go in `tools/dashboard/tests/`. Other projects use their own test infrastructure. Test files follow the naming convention `<feature>.spec.mjs`.
+4. **Contract scope**: At minimum, cover the API layer (request/response contracts), the UI layer (element rendering, user interactions), and any prompt/context assembly (content verification).
+5. **Exemptions**: Trivial changes (typo fixes, single-line edits, documentation-only) are exempt. If in doubt, write the contract.
+
 ## External Action Rules
 
 - **Never post comments, reviews, or any content to GitHub pull requests unless the user explicitly requests it.** This applies to all agents, skills, and orchestrator actions. Read-only operations (fetching PR diffs, viewing comments, reading PR metadata) are always allowed. The restriction covers `gh pr comment`, `gh pr review`, and any GitHub API call that writes to a PR.
