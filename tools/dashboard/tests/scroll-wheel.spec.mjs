@@ -7,6 +7,12 @@
  *  - Wheel scroll works in the focus popup (W-2)
  *  - Wheel scroll does not trigger shell history navigation (W-3)
  *  - Scrolling back to bottom re-enables auto-follow (W-4)
+ *  - TS-1: SGR mouse wheel sent in alternate screen (scroll up)
+ *  - TS-2: SGR mouse wheel sent in alternate screen (scroll down)
+ *  - TS-3: Normal screen still uses scrollLines (no SGR sent)
+ *  - TS-5: Transition from alternate to normal restores scroll behavior
+ *  - TS-6: Wheel count clamped to [1, 10]
+ *  - TS-7: Page scroll prevented in all modes
  *
  * Tests run against an isolated test server started automatically by globalSetup.
  */
@@ -254,4 +260,237 @@ test('W-4. Scroll back to bottom re-enables auto-follow', async ({ page }) => {
 
   const metricsAfterPump = await getXtermScrollMetrics(page, t.id);
   expect(metricsAfterPump.atBottom).toBe(true);
+});
+
+// ============================================================
+// Alternate Screen Scroll Contracts (TS-*)
+// ============================================================
+
+/**
+ * Helper: switch xterm to alternate screen buffer and install a
+ * wsManager.send interceptor to capture input messages.
+ */
+async function setupAlternateScreen(page, terminalId) {
+  await page.evaluate((id) => {
+    const sess = window._termSessions?.get(id);
+    if (!sess?._term) throw new Error('session not found');
+    // Switch to alternate screen
+    sess._term.write('\x1b[?1049h');
+    // Intercept wsManager.send to capture input data
+    sess._wsManager._sentInputs = [];
+    const orig = sess._wsManager.send.bind(sess._wsManager);
+    sess._wsManager._origSend = orig;
+    sess._wsManager.send = (msg) => {
+      if (msg.type === 'input') sess._wsManager._sentInputs.push(msg.data);
+      orig(msg);
+    };
+  }, terminalId);
+  await page.waitForTimeout(200);
+  // Verify alternate screen is active
+  const bufType = await page.evaluate((id) => {
+    return window._termSessions?.get(id)?._term?.buffer?.active?.type;
+  }, terminalId);
+  expect(bufType).toBe('alternate');
+}
+
+async function getSentInputs(page, terminalId) {
+  return page.evaluate((id) => {
+    return window._termSessions?.get(id)?._wsManager?._sentInputs || [];
+  }, terminalId);
+}
+
+async function clearSentInputs(page, terminalId) {
+  await page.evaluate((id) => {
+    const sess = window._termSessions?.get(id);
+    if (sess?._wsManager) sess._wsManager._sentInputs = [];
+  }, terminalId);
+}
+
+// TS-1: SGR mouse wheel sent in alternate screen (scroll up)
+test('TS-1. SGR mouse wheel sent in alternate screen (scroll up)', async ({ page }) => {
+  test.setTimeout(90_000);
+  const t = await seedTerminal({ withFakeContent: true, lines: SEED_LINES, status: 'running' });
+  await page.goto('/#terminals');
+  await waitForTerminalLive(page, t.id);
+  await waitForTerminalContent(page, t.id, SEED_MIN, 60_000);
+
+  await setupAlternateScreen(page, t.id);
+
+  // Dispatch wheel event (scroll up)
+  await page.evaluate(({ id }) => {
+    const container = document.getElementById(`term-container-${id}`);
+    container.dispatchEvent(new WheelEvent('wheel', {
+      deltaY: -200, bubbles: true, cancelable: true, composed: true,
+    }));
+  }, { id: t.id });
+  await page.waitForTimeout(300);
+
+  const inputs = await getSentInputs(page, t.id);
+  expect(inputs.length).toBeGreaterThan(0);
+  const sent = inputs.join('');
+  // Must contain SGR scroll-up sequences (button 64), NOT arrow keys
+  expect(sent).toContain('\x1b[<64;1;1M');
+  expect(sent).not.toContain('\x1b[A');
+});
+
+// TS-2: SGR mouse wheel sent in alternate screen (scroll down)
+test('TS-2. SGR mouse wheel sent in alternate screen (scroll down)', async ({ page }) => {
+  test.setTimeout(90_000);
+  const t = await seedTerminal({ withFakeContent: true, lines: SEED_LINES, status: 'running' });
+  await page.goto('/#terminals');
+  await waitForTerminalLive(page, t.id);
+  await waitForTerminalContent(page, t.id, SEED_MIN, 60_000);
+
+  await setupAlternateScreen(page, t.id);
+
+  await page.evaluate(({ id }) => {
+    const container = document.getElementById(`term-container-${id}`);
+    container.dispatchEvent(new WheelEvent('wheel', {
+      deltaY: +150, bubbles: true, cancelable: true, composed: true,
+    }));
+  }, { id: t.id });
+  await page.waitForTimeout(300);
+
+  const inputs = await getSentInputs(page, t.id);
+  expect(inputs.length).toBeGreaterThan(0);
+  const sent = inputs.join('');
+  // Must contain SGR scroll-down sequences (button 65)
+  expect(sent).toContain('\x1b[<65;1;1M');
+  expect(sent).not.toContain('\x1b[B');
+});
+
+// TS-3: Normal screen still uses scrollLines (no SGR sent)
+test('TS-3. Normal screen still uses scrollLines (no SGR sent)', async ({ page }) => {
+  test.setTimeout(90_000);
+  const t = await seedTerminal({ withFakeContent: true, lines: SEED_LINES, status: 'running' });
+  await page.goto('/#terminals');
+  await waitForTerminalLive(page, t.id);
+  await waitForTerminalContent(page, t.id, SEED_MIN, 60_000);
+
+  // Install interceptor WITHOUT switching to alternate screen
+  await page.evaluate((id) => {
+    const sess = window._termSessions?.get(id);
+    if (sess?._wsManager) {
+      sess._wsManager._sentInputs = [];
+      const orig = sess._wsManager.send.bind(sess._wsManager);
+      sess._wsManager.send = (msg) => {
+        if (msg.type === 'input') sess._wsManager._sentInputs.push(msg.data);
+        orig(msg);
+      };
+    }
+  }, t.id);
+
+  const metricsBefore = await getXtermScrollMetrics(page, t.id);
+  expect(metricsBefore.atBottom).toBe(true);
+
+  // Dispatch wheel event (scroll up) in normal screen
+  await page.evaluate(({ id }) => {
+    const container = document.getElementById(`term-container-${id}`);
+    container.dispatchEvent(new WheelEvent('wheel', {
+      deltaY: -200, bubbles: true, cancelable: true, composed: true,
+    }));
+  }, { id: t.id });
+  await page.waitForTimeout(300);
+
+  // Viewport should have scrolled up via scrollLines
+  const metricsAfter = await getXtermScrollMetrics(page, t.id);
+  expect(metricsAfter.viewportY).toBeLessThan(metricsBefore.baseY);
+
+  // No WebSocket input should have been sent
+  const inputs = await getSentInputs(page, t.id);
+  expect(inputs.length).toBe(0);
+});
+
+// TS-5: Transition from alternate to normal restores scroll behavior
+test('TS-5. Transition from alternate to normal restores scroll behavior', async ({ page }) => {
+  test.setTimeout(90_000);
+  const t = await seedTerminal({ withFakeContent: true, lines: SEED_LINES, status: 'running' });
+  await page.goto('/#terminals');
+  await waitForTerminalLive(page, t.id);
+  await waitForTerminalContent(page, t.id, SEED_MIN, 60_000);
+
+  await setupAlternateScreen(page, t.id);
+
+  // Exit alternate screen
+  await page.evaluate((id) => {
+    const sess = window._termSessions?.get(id);
+    if (sess?._term) sess._term.write('\x1b[?1049l');
+  }, t.id);
+  await page.waitForTimeout(200);
+
+  const bufType = await page.evaluate((id) => {
+    return window._termSessions?.get(id)?._term?.buffer?.active?.type;
+  }, t.id);
+  expect(bufType).toBe('normal');
+
+  await clearSentInputs(page, t.id);
+
+  // Wheel event should use scrollLines now (normal mode)
+  await page.evaluate(({ id }) => {
+    const container = document.getElementById(`term-container-${id}`);
+    container.dispatchEvent(new WheelEvent('wheel', {
+      deltaY: -200, bubbles: true, cancelable: true, composed: true,
+    }));
+  }, { id: t.id });
+  await page.waitForTimeout(300);
+
+  // No SGR sequences should be sent
+  const inputs = await getSentInputs(page, t.id);
+  expect(inputs.length).toBe(0);
+
+  // Viewport should have scrolled
+  const metrics = await getXtermScrollMetrics(page, t.id);
+  expect(metrics.viewportY).toBeLessThan(metrics.baseY);
+});
+
+// TS-6: Wheel count clamped to [1, 10]
+test('TS-6. Wheel count clamped to [1, 10]', async ({ page }) => {
+  test.setTimeout(90_000);
+  const t = await seedTerminal({ withFakeContent: true, lines: SEED_LINES, status: 'running' });
+  await page.goto('/#terminals');
+  await waitForTerminalLive(page, t.id);
+  await waitForTerminalContent(page, t.id, SEED_MIN, 60_000);
+
+  await setupAlternateScreen(page, t.id);
+
+  // Send a very large deltaY (fast trackpad gesture)
+  await page.evaluate(({ id }) => {
+    const container = document.getElementById(`term-container-${id}`);
+    container.dispatchEvent(new WheelEvent('wheel', {
+      deltaY: -5000, bubbles: true, cancelable: true, composed: true,
+    }));
+  }, { id: t.id });
+  await page.waitForTimeout(300);
+
+  const inputs = await getSentInputs(page, t.id);
+  const sent = inputs.join('');
+  // SGR scroll-up sequence is 11 chars: \x1b[<64;1;1M
+  // Count occurrences — should be exactly 10 (clamped)
+  const matches = sent.match(/\x1b\[<64;1;1M/g) || [];
+  expect(matches.length).toBe(10);
+});
+
+// TS-7: Page scroll prevented in all modes
+test('TS-7. Page scroll prevented in all modes', async ({ page }) => {
+  test.setTimeout(90_000);
+  const t = await seedTerminal({ withFakeContent: true, lines: SEED_LINES, status: 'running' });
+  await page.goto('/#terminals');
+  await waitForTerminalLive(page, t.id);
+  await waitForTerminalContent(page, t.id, SEED_MIN, 60_000);
+
+  await setupAlternateScreen(page, t.id);
+
+  const scrollBefore = await page.evaluate(() => window.scrollY);
+
+  // Wheel event in alternate screen
+  await page.evaluate(({ id }) => {
+    const container = document.getElementById(`term-container-${id}`);
+    container.dispatchEvent(new WheelEvent('wheel', {
+      deltaY: -500, bubbles: true, cancelable: true, composed: true,
+    }));
+  }, { id: t.id });
+  await page.waitForTimeout(200);
+
+  const scrollAfter = await page.evaluate(() => window.scrollY);
+  expect(scrollAfter).toBe(scrollBefore);
 });

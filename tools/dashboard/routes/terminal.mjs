@@ -134,6 +134,8 @@ export default function terminalRoutes(deps) {
               'new-session', '-d', '-s', tmuxName, '-x', '80', '-y', '24',
               'sh', '-c', shellCmd,
             ], { cwd: projectPath, env: { ...process.env, ARCHITECT_ROOT: ROOT } });
+            // Enable mouse support so SGR wheel sequences reach the inner application
+            try { execFileSync('tmux', ['set-option', '-t', tmuxName, '-g', 'mouse', 'on']); } catch {}
             // Attach node-pty to the tmux session for WebSocket streaming
             ptyProcess = pty.spawn('tmux', ['attach-session', '-t', tmuxName], {
               name: 'xterm-256color', cols: 80, rows: 24,
@@ -207,6 +209,8 @@ export default function terminalRoutes(deps) {
         _accumulated: '',
         _pendingPrompt: agentType === 'claude' ? prompt : null,
         _readyForPrompt: agentType !== 'claude', // shell is immediately ready
+        _permissionMode: resolvedTermPermMode,
+        _skipPermissions: resolvedTermSkipPerms,
         _testWorkerId,
         started_at: new Date().toISOString(),
         exited_at: null,

@@ -4,6 +4,8 @@
  * These tests define the behavioral contract for the createDispatchOverlay factory.
  * 3 tests per modal × 6 modals = 18 tests.
  *
+ * MX-* tests: Context-aware field visibility based on agent type selection.
+ *
  * Test server started automatically by globalSetup on an isolated port
  */
 
@@ -347,4 +349,57 @@ test('M-6-3: showQuickDispatchModal submit creates session and closes modal', as
 
   await expect(page.locator('.modal-overlay')).not.toBeVisible({ timeout: 8000 });
   await expect(page.locator('.terminal-panel, .dispatch-panel').first()).toBeVisible({ timeout: 8000 });
+});
+
+// ============================================================
+// MX-*: Context-Aware Modal Field Visibility
+// ============================================================
+
+test('MX-1: Discuss modal hides permission fields when shell selected', async ({ page }) => {
+  await page.goto('/#component/ticari/architect/main');
+  await page.waitForSelector('#discuss-agent', { timeout: 15000 });
+  await page.click('#discuss-agent');
+  await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
+
+  // Initially (claude selected), permission fields should be visible
+  await expect(page.locator('#discuss-perm-mode')).toBeVisible();
+
+  // Switch to shell
+  await page.selectOption('#discuss-agent-type', 'shell');
+  await page.waitForTimeout(200);
+
+  // Permission field parent (.field) should be hidden
+  const permHidden = await page.evaluate(() => {
+    const el = document.getElementById('discuss-perm-mode');
+    const field = el?.closest('.field');
+    return field ? field.style.display === 'none' : false;
+  });
+  expect(permHidden).toBe(true);
+});
+
+test('MX-2: Discuss modal shows permission fields when switching back to claude', async ({ page }) => {
+  await page.goto('/#component/ticari/architect/main');
+  await page.waitForSelector('#discuss-agent', { timeout: 15000 });
+  await page.click('#discuss-agent');
+  await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
+
+  // Switch to shell, then back to claude
+  await page.selectOption('#discuss-agent-type', 'shell');
+  await page.waitForTimeout(200);
+  await page.selectOption('#discuss-agent-type', 'claude');
+  await page.waitForTimeout(200);
+
+  // Permission fields should be visible again
+  await expect(page.locator('#discuss-perm-mode')).toBeVisible();
+});
+
+test('MX-3: Claude is default agent type with visible permission fields', async ({ page }) => {
+  await page.goto('/#component/ticari/architect/main');
+  await page.waitForSelector('#discuss-agent', { timeout: 15000 });
+  await page.click('#discuss-agent');
+  await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
+
+  const agentType = await page.locator('#discuss-agent-type').inputValue();
+  expect(agentType).toBe('claude');
+  await expect(page.locator('#discuss-perm-mode')).toBeVisible();
 });

@@ -18,8 +18,13 @@ export default {
     return args;
   },
 
-  detectReadiness(_accumulated, chunk) {
-    return chunk.length > 0;
+  detectReadiness(accumulated, chunk) {
+    // Wait for Claude's TUI to enter the alternate screen buffer before
+    // injecting the prompt. The sequence \x1b[?1049h signals that the TUI
+    // is rendering and ready to accept input. Falls back to the server-side
+    // timeout (5-8s) if the sequence is never seen.
+    const combined = (accumulated || '') + chunk;
+    return combined.includes('\x1b[?1049h');
   },
 
   extractSessionId(_accumulated, chunk) {

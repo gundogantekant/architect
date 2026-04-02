@@ -574,8 +574,23 @@ function getPermissionMode(overlay, selectId) {
   return overlay.querySelector('#' + selectId).value;
 }
 
+/** Wire an agent-type dropdown to show/hide permission fields for non-Claude agents. */
+function wireAgentTypeToggle(overlay, agentTypeId, permModeId, skipPermsId) {
+  const agentSelect = overlay.querySelector('#' + agentTypeId);
+  const permField = overlay.querySelector('#' + permModeId)?.closest('.field');
+  const skipField = overlay.querySelector('#' + skipPermsId)?.closest('.interactive-toggle');
+  if (!agentSelect) return;
+  const toggle = () => {
+    const show = agentSelect.value !== 'shell';
+    if (permField) permField.style.display = show ? '' : 'none';
+    if (skipField) skipField.style.display = show ? '' : 'none';
+  };
+  agentSelect.addEventListener('change', toggle);
+  toggle(); // Set initial state
+}
+
 function createDispatchOverlay(opts) {
-  const { title, buildFields, onSubmit, submitLabel = 'Dispatch', cancelId, submitId } = opts;
+  const { title, buildFields, onSubmit, submitLabel = 'Dispatch', cancelId, submitId, afterMount } = opts;
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -618,6 +633,7 @@ function createDispatchOverlay(opts) {
   };
 
   document.body.appendChild(overlay);
+  if (afterMount) afterMount(overlay);
   return { overlay, close };
 }
 
@@ -1517,28 +1533,32 @@ async function initSession(terminalInfo) {
 
           // Scroll containment: intercept wheel events in capture phase so this
           // handler runs before xterm's own listener (attached during term.open()).
-          // stopImmediatePropagation prevents xterm's handler from also firing,
-          // ensuring scroll only moves the viewport — never the cursor.
           containerEl.addEventListener('wheel', (e) => {
-            e.preventDefault();
+            e.preventDefault(); // Always prevent page scroll
+            if (!term) return;
+
+            if (term.buffer.active.type === 'alternate') {
+              // Alternate screen (TUI apps like Claude Code): no scrollback in
+              // xterm, so scrollLines() would be a no-op. Send SGR-encoded mouse
+              // wheel sequences instead — the TUI interprets these for native
+              // scroll. Safe: if the app has no mouse tracking, sequences are
+              // silently ignored. Button 64 = scroll-up, 65 = scroll-down.
+              const button = e.deltaY < 0 ? 64 : 65;
+              const count = Math.max(1, Math.min(10, Math.abs(Math.round(e.deltaY / 25)) || 1));
+              const seq = `\x1b[<${button};1;1M`;
+              if (sessionState.state === 'LIVE') {
+                wsManager.send({ type: 'input', data: seq.repeat(count) });
+              }
+              return;
+            }
+
+            // Normal buffer: use custom scroll logic.
+            // stopImmediatePropagation prevents xterm's handler from also firing,
+            // ensuring scroll only moves the viewport — never the cursor.
             e.stopPropagation();
             e.stopImmediatePropagation();
-            if (term) {
-              if (term.buffer.active.type === 'alternate') {
-                // Alternate screen buffer (TUI apps like Claude Code): no scrollback
-                // available, so term.scrollLines() would do nothing. Instead, send
-                // arrow key escape sequences to the running application — mimics
-                // iTerm2's "scroll wheel sends arrow keys in alternate screen buffer."
-                const count = Math.max(1, Math.min(10, Math.abs(Math.round(e.deltaY / 25)) || 1));
-                const arrow = e.deltaY < 0 ? '\x1b[A' : '\x1b[B';
-                if (sessionState.state === 'LIVE') {
-                  wsManager.send({ type: 'input', data: arrow.repeat(count) });
-                }
-              } else {
-                const lines = Math.round(e.deltaY / 25) || (e.deltaY > 0 ? 1 : -1);
-                term.scrollLines(lines);
-              }
-            }
+            const lines = Math.round(e.deltaY / 25) || (e.deltaY > 0 ? 1 : -1);
+            term.scrollLines(lines);
           }, { passive: false, capture: true });
 
           // Click while scrolled up returns the viewport to the input area.
@@ -2118,6 +2138,7 @@ async function dispatchWorkItem(workItem, projectKey) {
         ${permissionModeSelect('dispatch-perm-mode')}
         ${skipPermissionsCheckbox('dispatch-skip-perms')}
       `,
+      afterMount: (o) => wireAgentTypeToggle(o, 'dispatch-agent-type', 'dispatch-perm-mode', 'dispatch-skip-perms'),
       onSubmit: async (overlay) => {
         const instructions = overlay.querySelector('#dispatch-instructions').value.trim();
         const plainTerminal = !overlay.querySelector('#dispatch-claude-agent').checked;
@@ -3300,6 +3321,7 @@ function showDiscussModal() {
       ${permissionModeSelect('discuss-perm-mode')}
       ${skipPermissionsCheckbox('discuss-skip-perms')}
     `,
+    afterMount: (o) => wireAgentTypeToggle(o, 'discuss-agent-type', 'discuss-perm-mode', 'discuss-skip-perms'),
     onSubmit: async (overlay) => {
       const instructions = overlay.querySelector('#discuss-instructions').value.trim();
       if (!instructions) { throw new Error('Instructions are required'); }
@@ -3385,6 +3407,7 @@ function showOrgDiscussModal(orgName) {
       ${permissionModeSelect('discuss-org-perm-mode')}
       ${skipPermissionsCheckbox('discuss-org-skip-perms')}
     `,
+    afterMount: (o) => wireAgentTypeToggle(o, 'discuss-org-agent-type', 'discuss-org-perm-mode', 'discuss-org-skip-perms'),
     onSubmit: async (overlay) => {
       const instructions = overlay.querySelector('#discuss-org-instructions').value.trim();
       if (!instructions) { throw new Error('Instructions are required'); }
@@ -3597,6 +3620,7 @@ async function showEpicDiscussModal(epicId) {
       ${permissionModeSelect('epic-discuss-perm-mode')}
       ${skipPermissionsCheckbox('epic-discuss-skip-perms')}
     `,
+    afterMount: (o) => wireAgentTypeToggle(o, 'epic-discuss-agent-type', 'epic-discuss-perm-mode', 'epic-discuss-skip-perms'),
     onSubmit: async (overlay) => {
       const instructions = overlay.querySelector('#epic-discuss-instructions').value.trim();
       if (!instructions) { throw new Error('Instructions are required'); }
@@ -5596,6 +5620,7 @@ async function showQuickDispatchModal() {
       ${permissionModeSelect('qd-perm-mode')}
       ${skipPermissionsCheckbox('qd-skip-perms')}
     `,
+    afterMount: (o) => wireAgentTypeToggle(o, 'qd-agent-type', 'qd-perm-mode', 'qd-skip-perms'),
     onSubmit: async (overlay) => {
       const pk = overlay.querySelector('#qd-project').value;
       const wid = overlay.querySelector('#qd-work-item').value.trim() || null;
