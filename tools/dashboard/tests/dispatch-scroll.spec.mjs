@@ -6,6 +6,10 @@
  *  - DS-1: Small scroll up near bottom disengages auto-follow
  *  - DS-2: Scroll position preserved while new data streams in (far scroll)
  *  - DS-3: Auto-scroll resumes when user returns to bottom
+ *  - DS-4: Scrollbar appears when dispatch content exceeds inline container height
+ *  - DS-5: Scrollbar appears in focus popup with long content
+ *  - DS-6: Continuous rapid streaming preserves scroll position
+ *  - DS-7: Scrollbar appears in work-item session slot (200px container)
  *
  * Test server started automatically by globalSetup on an isolated port.
  */
@@ -14,6 +18,7 @@ import { test, expect } from './fixtures.mjs';
 import {
   getBase,
   seedDispatch,
+  seedWorkItem,
   getDispatchLogScrollMetrics,
 } from './helpers.mjs';
 
@@ -206,4 +211,207 @@ test('DS-3. Auto-scroll resumes when user returns to bottom', async ({ page }) =
 
   const metricsAfter = await getDispatchLogScrollMetrics(page, id);
   expect(metricsAfter.atBottom).toBe(true);
+});
+
+// ============================================================
+// DS-4: Scrollbar appears when dispatch content exceeds inline container height
+// ============================================================
+
+test('DS-4. Scrollbar appears when dispatch content exceeds inline container height', async ({ page }) => {
+  // Failure mode: dispatch-log container grows unboundedly with content,
+  // so overflow-y: auto never triggers a scrollbar. The user sees content
+  // accumulating but cannot scroll.
+  // At 12px font / 1.6 line-height (~19px/line), 200 lines ≈ 3800px,
+  // far exceeding the 350px max-height constraint.
+  test.setTimeout(60_000);
+
+  const { dispatch_id: id } = await seedDispatch({
+    status: 'running',
+    output: makeOutputLines(200, 'Planning'),
+  });
+
+  await page.goto('/');
+  const logLocator = page.locator(`#log-${id}`);
+  await expect(logLocator).toBeVisible({ timeout: 15_000 });
+  await waitForDispatchLogReady(page, id);
+
+  const metrics = await page.evaluate((id) => {
+    const el = document.getElementById(`log-${id}`);
+    if (!el) return null;
+    const style = window.getComputedStyle(el);
+    return {
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+      overflowY: style.overflowY,
+    };
+  }, id);
+
+  // Content must overflow the container
+  expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight);
+  // Container must be constrained by max-height (350px + padding tolerance)
+  expect(metrics.clientHeight).toBeLessThanOrEqual(400);
+  // overflow-y must be auto (or scroll) so browser renders scrollbar
+  expect(['auto', 'scroll']).toContain(metrics.overflowY);
+});
+
+// ============================================================
+// DS-5: Scrollbar appears in focus popup with long content
+// ============================================================
+
+test('DS-5. Scrollbar appears in focus popup with long content', async ({ page }) => {
+  // Failure mode: in the focus popup, .dispatch-log has max-height: none
+  // and flex: 1. Without min-height: 0 on the flex chain, the container
+  // grows to fit all content instead of being constrained by the 85vh popup.
+  test.setTimeout(60_000);
+
+  const { dispatch_id: id } = await seedDispatch({
+    status: 'running',
+    output: makeOutputLines(200, 'FocusPlan'),
+  });
+
+  await page.goto('/');
+  const logLocator = page.locator(`#log-${id}`);
+  await expect(logLocator).toBeVisible({ timeout: 15_000 });
+  await waitForDispatchLogReady(page, id);
+
+  // Open focus popup
+  await page.click(`[data-focus-dispatch="${id}"]`);
+  await expect(page.locator('.focus-overlay')).toBeVisible({ timeout: 5_000 });
+  await page.waitForTimeout(300);
+
+  const metrics = await page.evaluate((id) => {
+    const el = document.getElementById(`log-${id}`);
+    if (!el) return null;
+    return {
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+      windowHeight: window.innerHeight,
+    };
+  }, id);
+
+  // Content must overflow
+  expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight);
+  // Container must be constrained by popup (85vh minus header/footer), not growing unboundedly
+  expect(metrics.clientHeight).toBeLessThan(metrics.windowHeight * 0.85);
+
+  // Verify user can scroll up and the position sticks
+  await page.evaluate((id) => {
+    const el = document.getElementById(`log-${id}`);
+    if (el) el.scrollTop = 0;
+  }, id);
+  await page.waitForTimeout(200);
+
+  const scrollTop = await page.evaluate((id) => {
+    return document.getElementById(`log-${id}`)?.scrollTop ?? -1;
+  }, id);
+  expect(scrollTop).toBe(0);
+});
+
+// ============================================================
+// DS-6: Continuous rapid streaming preserves scroll position
+// ============================================================
+
+test('DS-6. Continuous rapid streaming preserves scroll position', async ({ page }) => {
+  // Failure mode: rapid content_block_delta events override the user's
+  // scroll position because savedScrollTop is read between browser
+  // scroll event processing and the next WS message.
+  test.setTimeout(60_000);
+
+  const { dispatch_id: id } = await seedDispatch({
+    status: 'running',
+    output: makeOutputLines(SEED_LINES),
+  });
+
+  await page.goto('/');
+  const logLocator = page.locator(`#log-${id}`);
+  await expect(logLocator).toBeVisible({ timeout: 15_000 });
+  await waitForDispatchLogReady(page, id);
+
+  // Scroll to top
+  await page.evaluate((id) => {
+    const el = document.getElementById(`log-${id}`);
+    if (el) el.scrollTop = 0;
+  }, id);
+  await page.waitForTimeout(200);
+
+  // Rapidly append 50 lines — simulates fast Claude plan streaming
+  await appendDispatchOutput(id, makeOutputLines(50, 'Rapid'));
+
+  await page.waitForFunction(
+    (id) => {
+      const el = document.getElementById(`log-${id}`);
+      return el && el.textContent.includes('Rapid line 49');
+    },
+    id,
+    { timeout: 10_000 },
+  );
+  await page.waitForTimeout(300);
+
+  // User must still be at the top
+  const metricsAfter = await getDispatchLogScrollMetrics(page, id);
+  expect(metricsAfter.atBottom).toBe(false);
+  expect(metricsAfter.scrollTop).toBeLessThan(30);
+});
+
+// ============================================================
+// DS-7: Scrollbar appears in work-item session slot (200px container)
+// ============================================================
+
+test('DS-7. Scrollbar appears in work-item session slot', async ({ page }) => {
+  // Failure mode: dispatch-log inside .wi-sessions-container has
+  // max-height: 200px but scrollbar doesn't appear due to parent
+  // overflow: hidden on .dispatch-panel interfering.
+  test.setTimeout(60_000);
+
+  // Create a work item first, then link a dispatch to it
+  const wi = await seedWorkItem({
+    title: 'Scroll test item',
+    status: 'open',
+    project_key: 'ticari/architect/main',
+  });
+  const workItemId = wi.id;
+
+  const { dispatch_id: id } = await seedDispatch({
+    status: 'running',
+    output: makeOutputLines(100, 'WiPlan'),
+    work_item_id: workItemId,
+    project_key: 'ticari/architect/main',
+  });
+
+  // Navigate to the component view where work items are listed
+  await page.goto('/#ticari/architect/main');
+  await page.waitForTimeout(500);
+
+  // The dispatch panel should appear somewhere on the page
+  const logLocator = page.locator(`#log-${id}`);
+  await expect(logLocator).toBeVisible({ timeout: 15_000 });
+
+  // Wait for content to load
+  await page.waitForFunction(
+    (id) => {
+      const el = document.getElementById(`log-${id}`);
+      return el && el.dataset.replayDone === '1' && el.scrollHeight > 0;
+    },
+    id,
+    { timeout: 20_000, polling: 200 },
+  );
+  await page.waitForTimeout(200);
+
+  const metrics = await page.evaluate((id) => {
+    const el = document.getElementById(`log-${id}`);
+    if (!el) return null;
+    const inWiSlot = !!el.closest('.wi-sessions-container');
+    return {
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+      inWiSlot,
+    };
+  }, id);
+
+  // If placed inside wi-sessions-container, the 200px constraint applies;
+  // otherwise the default 350px applies. Either way, it must be constrained.
+  const maxExpected = metrics.inWiSlot ? 220 : 400;
+  expect(metrics.clientHeight).toBeLessThanOrEqual(maxExpected);
+  // Content must overflow, proving scrollbar is present
+  expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight);
 });
