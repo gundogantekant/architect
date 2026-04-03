@@ -3,10 +3,28 @@
  * Owns the SQLite connection, WAL mode, migrations, and all domain queries.
  */
 import Database from 'better-sqlite3';
-import { readdirSync, existsSync } from 'node:fs';
+import { readdirSync, existsSync, copyFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 let db = null;
+
+// --- Backup ---
+
+export function backupDatabase(workDir, backupDir) {
+  const dbPath = join(workDir, 'architect.db');
+  if (!existsSync(dbPath)) return null;
+
+  const tmp = new Database(dbPath, { readonly: true });
+  try { tmp.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* ok if no WAL */ }
+  tmp.close();
+
+  mkdirSync(backupDir, { recursive: true });
+  const ts = new Date().toISOString().replace(/:/g, '-').replace(/\.\d+Z$/, '');
+  const dest = join(backupDir, `architect-${ts}.db`);
+  copyFileSync(dbPath, dest);
+  console.log(`Database backup: ${dest}`);
+  return dest;
+}
 
 // --- Init & migrations ---
 

@@ -10,7 +10,7 @@ import * as db from './db.mjs';
 import { EventStream } from './event-stream.mjs';
 import { getAdapter } from './adapters/index.mjs';
 
-import { CLAUDE_BIN, ROOT, PORTFOLIO, WORK, LOGS_DIR, ARCHITECT_KEY, port, VALID_WORK_ITEM_STATUSES, VALID_EPIC_STATUSES, VALID_PRIORITIES, SERVER_START_TIME, DASHCTL_PATH, PID_FILE, LOG_FILE, MIGRATIONS_DIR, TMUX_AVAILABLE } from './constants.mjs';
+import { CLAUDE_BIN, ROOT, PORTFOLIO, WORK, LOGS_DIR, ARCHITECT_KEY, port, VALID_WORK_ITEM_STATUSES, VALID_EPIC_STATUSES, VALID_PRIORITIES, SERVER_START_TIME, DASHCTL_PATH, PID_FILE, LOG_FILE, MIGRATIONS_DIR, TMUX_AVAILABLE, BACKUP_DIR } from './constants.mjs';
 import { json, text, err, safe, readJson, listDirs, listFiles, parseBody, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture, termEventLogPath, generateSeedContent, sleep } from './utils.mjs';
 
 import { dispatches, terminals, cliSessions, saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession } from './state.mjs';
@@ -170,6 +170,9 @@ process.on('SIGTERM', () => { shutdownFlush(); process.exit(0); });
 process.on('SIGINT', () => { shutdownFlush(); process.exit(0); });
 
 async function main() {
+  // Phase 0: Backup database
+  db.backupDatabase(WORK, BACKUP_DIR);
+
   // Phase 1: Database
   try {
     await db.initDatabaseAsync(WORK, MIGRATIONS_DIR);

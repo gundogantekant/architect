@@ -34,6 +34,7 @@ export const PID_FILE = join(ROOT, 'tmp', 'dashboard.pid');
 export const LOG_FILE = join(ROOT, 'tmp', 'dashboard.log');
 
 export const MIGRATIONS_DIR = join(import.meta.dirname, 'migrations');
+export const BACKUP_DIR = join(ROOT, 'assets', 'backups');
 
 export const TMUX_AVAILABLE = (() => {
   try {
