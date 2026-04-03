@@ -107,6 +107,7 @@ dashctl_env() {
   env DASHCTL_PORT="$TEST_PORT" \
       DASHCTL_PID_FILE="$pid_file" \
       DASHCTL_LOG_FILE="$log_file" \
+      DASHCTL_LAUNCHD_PLIST="/tmp/dashctl-test-nonexistent.plist" \
       bash "$DASHCTL" "$@"
 }
 
@@ -206,6 +207,77 @@ test_start_blocked_shows_pid() {
   assert_not_contains "no service-managed message" "service-managed" "$output"
 }
 
+test_stale_pid_status_not_running() {
+  local pid_file log_file output
+  pid_file="$(mktemp /tmp/dashctl-test-XXXXXX.pid)"
+  log_file="$(mktemp /tmp/dashctl-test-XXXXXX.log)"
+  trap 'rm -f "$pid_file" "$log_file"' RETURN
+
+  # Write current shell PID — alive but not a dashboard process
+  echo "$$" > "$pid_file"
+
+  output="$(dashctl_env "$pid_file" "$log_file" status 2>&1)"
+
+  assert_contains "reports stopped" "Stopped" "$output"
+  assert_not_contains "not running" "Running" "$output"
+  # PID file should be cleaned up
+  [ ! -f "$pid_file" ] || [ -z "$(cat "$pid_file" 2>/dev/null)" ] || {
+    echo "  ASSERT FAIL: stale PID file not cleaned up"
+    return 1
+  }
+}
+
+test_stale_pid_start_recovers() {
+  local pid_file log_file output exit_code
+  pid_file="$(mktemp /tmp/dashctl-test-XXXXXX.pid)"
+  log_file="$(mktemp /tmp/dashctl-test-XXXXXX.log)"
+  trap 'rm -f "$pid_file" "$log_file"; lsof -iTCP:'"$TEST_PORT"' -sTCP:LISTEN -P -n -t 2>/dev/null | xargs -r kill 2>/dev/null || true' RETURN
+
+  # Write current shell PID — alive but not dashboard
+  echo "$$" > "$pid_file"
+
+  output="$(dashctl_env "$pid_file" "$log_file" start 2>&1)"
+  exit_code=$?
+
+  assert_exit "start exit code" 0 "$exit_code"
+  assert_port_in_use "port in use after start"
+
+  # Clean up
+  dashctl_env "$pid_file" "$log_file" stop >/dev/null 2>&1
+  wait_for_port_free "$TEST_PORT"
+}
+
+test_stale_pid_restart_recovers() {
+  local pid_file log_file output exit_code real_pid
+  pid_file="$(mktemp /tmp/dashctl-test-XXXXXX.pid)"
+  log_file="$(mktemp /tmp/dashctl-test-XXXXXX.log)"
+  rm -f "$pid_file"
+  trap 'rm -f "$pid_file" "$log_file"; lsof -iTCP:'"$TEST_PORT"' -sTCP:LISTEN -P -n -t 2>/dev/null | xargs -r kill 2>/dev/null || true' RETURN
+
+  # Start normally
+  dashctl_env "$pid_file" "$log_file" start >/dev/null 2>&1
+  wait_for_port "$TEST_PORT"
+  real_pid="$(cat "$pid_file")"
+
+  # Simulate crash: kill the process, leave stale PID file
+  kill "$real_pid" 2>/dev/null || true
+  wait_for_port_free "$TEST_PORT"
+  # PID file still exists with the now-dead PID
+  echo "$real_pid" > "$pid_file"
+
+  # Restart should recover
+  output="$(dashctl_env "$pid_file" "$log_file" restart 2>&1)"
+  exit_code=$?
+
+  assert_exit "restart exit code" 0 "$exit_code"
+  wait_for_port "$TEST_PORT"
+  assert_port_in_use "port in use after restart"
+
+  # Clean up
+  dashctl_env "$pid_file" "$log_file" stop >/dev/null 2>&1
+  wait_for_port_free "$TEST_PORT"
+}
+
 # --- Main ---
 
 echo ""
@@ -216,6 +288,9 @@ run_test "orphan: stop kills unmanaged process" test_orphan_stop
 run_test "orphan: stop then start recovers" test_orphan_stop_then_start
 run_test "normal: start then stop lifecycle" test_normal_start_stop
 run_test "blocked start: shows occupying PID" test_start_blocked_shows_pid
+run_test "stale PID: status reports stopped" test_stale_pid_status_not_running
+run_test "stale PID: start recovers" test_stale_pid_start_recovers
+run_test "stale PID: restart recovers" test_stale_pid_restart_recovers
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
