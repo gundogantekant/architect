@@ -22,6 +22,7 @@ export const SPEC_FILES = [
   'restart-recovery',
   'org-dispatch',
   'dispatch-scroll',
+  'auto-dismiss',
 ];
 
 function getLiveDashboardPorts() {

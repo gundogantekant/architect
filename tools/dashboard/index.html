@@ -250,6 +250,7 @@
   .dismiss-btn:hover { background: #fee2e2; color: var(--red); border-color: var(--red); }
   .dismiss-all-btn { cursor: pointer; color: var(--text-light); font-size: 11px; border: 1px solid var(--border); background: none; padding: 4px 12px; border-radius: 4px; margin-bottom: 8px; margin-left: 8px; }
   .dismiss-all-btn:hover { background: #fee2e2; color: var(--red); border-color: var(--red); }
+  .auto-dismiss-bar { height: 3px; background: var(--red); opacity: 0.5; width: 100%; border-radius: 0 0 8px 8px; transition: width linear; }
 
   /* Terminal panels */
   .terminal-panel { background: var(--bg-card); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; margin-bottom: 16px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06); transition: box-shadow 0.2s; }
@@ -827,7 +828,63 @@ function createDispatchPanel(dispatch) {
   return createSessionPanel('dispatch', dispatch);
 }
 
+const AUTO_DISMISS_MS = 8000;
+
+function scheduleAutoDismiss(panelType, id, infoObj) {
+  const panel = document.getElementById(`${panelType}-${id}`);
+  if (!panel || infoObj._autoDismissTimer) return;
+
+  const bar = document.createElement('div');
+  bar.className = 'auto-dismiss-bar';
+  panel.appendChild(bar);
+
+  requestAnimationFrame(() => {
+    bar.style.transitionDuration = `${AUTO_DISMISS_MS}ms`;
+    bar.style.width = '0%';
+  });
+
+  let remaining = AUTO_DISMISS_MS;
+  let startedAt = Date.now();
+
+  const dismiss = async () => {
+    infoObj._autoDismissTimer = null;
+    if (panelType === 'dispatch') {
+      await dismissDispatchPanel(id);
+    } else {
+      await dismissTerminalPanel(id);
+    }
+    syncSessionState();
+  };
+
+  infoObj._autoDismissTimer = setTimeout(dismiss, AUTO_DISMISS_MS);
+
+  panel.addEventListener('mouseenter', () => {
+    if (!infoObj._autoDismissTimer) return;
+    clearTimeout(infoObj._autoDismissTimer);
+    infoObj._autoDismissTimer = null;
+    remaining -= (Date.now() - startedAt);
+    if (remaining <= 0) { dismiss(); return; }
+    const computed = bar.getBoundingClientRect().width;
+    const parentWidth = panel.getBoundingClientRect().width;
+    bar.style.transitionDuration = '0ms';
+    bar.style.width = `${(computed / parentWidth) * 100}%`;
+  });
+
+  panel.addEventListener('mouseleave', () => {
+    if (infoObj._autoDismissTimer || remaining <= 0) return;
+    startedAt = Date.now();
+    infoObj._autoDismissTimer = setTimeout(dismiss, remaining);
+    requestAnimationFrame(() => {
+      bar.style.transitionDuration = `${remaining}ms`;
+      bar.style.width = '0%';
+    });
+  });
+}
+
+
 async function dismissDispatchPanel(id) {
+  const d = activeDispatches.find(d => d.id === id);
+  if (d?._autoDismissTimer) { clearTimeout(d._autoDismissTimer); d._autoDismissTimer = null; }
   try { await fetch(`/api/dispatch/${id}`, { method: 'DELETE' }); } catch {}
   const idx = activeDispatches.findIndex(d => d.id === id);
   if (idx !== -1) activeDispatches.splice(idx, 1);
@@ -856,6 +913,9 @@ function finalizeDispatchPanel(dispatch) {
     if (dismissBtn) dismissBtn.style.display = '';
   }
   syncSessionState();
+  if (dispatch.status !== 'running' && dispatch.status !== 'suspended') {
+    scheduleAutoDismiss('dispatch', dispatch.id, dispatch);
+  }
 }
 
 async function loadDispatchContent(dispatch) {
@@ -943,6 +1003,8 @@ async function dismissAllCompleted() {
   const staleDispatches = activeDispatches.filter(d => d.status !== 'running');
   const staleTerminals = activeTerminals.filter(t => t.status !== 'running');
   if (!staleDispatches.length && !staleTerminals.length) return;
+  for (const d of staleDispatches) { if (d._autoDismissTimer) { clearTimeout(d._autoDismissTimer); d._autoDismissTimer = null; } }
+  for (const t of staleTerminals) { if (t._autoDismissTimer) { clearTimeout(t._autoDismissTimer); t._autoDismissTimer = null; } }
   const deletes = [
     ...staleDispatches.map(d => fetch(`/api/dispatch/${d.id}`, { method: 'DELETE' }).catch(() => {})),
     ...staleTerminals.map(t => fetch(`/api/terminal/${t.id}`, { method: 'DELETE' }).catch(() => {})),
@@ -1717,6 +1779,8 @@ function togglePanelCollapse(key, panel, btn) {
 }
 
 async function dismissTerminalPanel(id) {
+  const t = activeTerminals.find(t => t.id === id);
+  if (t?._autoDismissTimer) { clearTimeout(t._autoDismissTimer); t._autoDismissTimer = null; }
   try { await fetch(`/api/terminal/${id}`, { method: 'DELETE' }); } catch {}
   const terminalInfo = activeTerminals.find(t => t.id === id);
   if (terminalInfo) {
@@ -1746,6 +1810,9 @@ function finalizeTerminalPanel(terminalInfo) {
   const dismissBtn = panel.querySelector(`[data-dismiss-terminal="${terminalInfo.id}"]`);
   if (dismissBtn) dismissBtn.style.display = '';
   syncSessionState();
+  if (terminalInfo.status !== 'running' && terminalInfo.status !== 'suspended') {
+    scheduleAutoDismiss('terminal', terminalInfo.id, terminalInfo);
+  }
 }
 
 function createTerminalPanel(terminalInfo) {
@@ -1870,6 +1937,7 @@ function createSessionPanel(type, info) {
         const dismissBtn = panel.querySelector(`[data-dismiss-dispatch="${id}"]`);
         if (dismissBtn) dismissBtn.style.display = '';
         syncSessionState();
+        scheduleAutoDismiss('dispatch', id, dispatch);
       } catch {}
     };
     panel.querySelector(`[data-suspend-dispatch="${id}"]`).onclick = async (e) => {
@@ -1976,6 +2044,7 @@ function createSessionPanel(type, info) {
         const dismissBtn = panel.querySelector(`[data-dismiss-terminal="${id}"]`);
         if (dismissBtn) dismissBtn.style.display = '';
         syncSessionState();
+        scheduleAutoDismiss('terminal', id, terminalInfo);
       } catch {}
     };
     panel.querySelector(`[data-suspend-terminal="${id}"]`).onclick = async (e) => {
