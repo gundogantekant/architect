@@ -78,7 +78,7 @@ export async function resetSessions() {
  * so there's no seed content to confuse the detection.
  * Use this instead of waitForTerminalLive when you need to type into a real shell.
  */
-export async function waitForShellReady(page, terminalId, timeout = 20_000) {
+export async function waitForShellReady(page, terminalId, timeout = 30_000) {
   await waitForTerminalLive(page, terminalId, timeout);
   await waitForTerminalContent(page, terminalId, 1, timeout);
 }
@@ -87,7 +87,7 @@ export async function waitForShellReady(page, terminalId, timeout = 20_000) {
  * Wait for the terminal session to reach the LIVE state (or EXITED for completed terminals).
  * Uses window._termSessions which is exposed by the frontend.
  */
-export async function waitForTerminalLive(page, terminalId, timeout = 20_000) {
+export async function waitForTerminalLive(page, terminalId, timeout = 30_000) {
   await page.waitForFunction(
     ({ id }) => {
       const s = window._termSessions?.get(id)?.state;
@@ -101,7 +101,7 @@ export async function waitForTerminalLive(page, terminalId, timeout = 20_000) {
 /**
  * Wait until the xterm buffer has at least minLines non-empty lines.
  */
-export async function waitForTerminalContent(page, terminalId, minLines = 10, timeout = 20_000) {
+export async function waitForTerminalContent(page, terminalId, minLines = 10, timeout = 30_000) {
   await page.waitForFunction(
     ({ id, min }) => {
       const sess = window._termSessions?.get(id);

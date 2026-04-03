@@ -1,3 +1,9 @@
+const MIME_TYPES = {
+  '.mjs': 'application/javascript',
+  '.js': 'application/javascript',
+  '.css': 'text/css',
+};
+
 export default function staticRoutes(deps) {
   const { readFile, stat, join, __dirname } = deps;
   return [
@@ -12,6 +18,27 @@ export default function staticRoutes(deps) {
         'ETag': `"${mtime.toString(36)}"`,
       });
       res.end(html);
+    }],
+
+    // Static: /vendor/ files (xterm.js bundles, immutable cache)
+    [/^\/vendor\/([a-zA-Z0-9._-]+)$/, 'GET', async (m, _req, res) => {
+      const filename = m[1];
+      const ext = filename.substring(filename.lastIndexOf('.'));
+      const mime = MIME_TYPES[ext];
+      if (!mime) { res.writeHead(404); res.end('Not found'); return; }
+      const filePath = join(__dirname, 'vendor', filename);
+      try {
+        const content = await readFile(filePath);
+        const mtime = (await stat(filePath)).mtimeMs;
+        res.writeHead(200, {
+          'Content-Type': mime,
+          'Cache-Control': 'public, max-age=31536000, immutable',
+          'ETag': `"${mtime.toString(36)}"`,
+        });
+        res.end(content);
+      } catch {
+        res.writeHead(404); res.end('Not found');
+      }
     }],
   ];
 }

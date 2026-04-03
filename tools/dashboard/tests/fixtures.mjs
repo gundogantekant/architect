@@ -1,21 +1,37 @@
 import { test as base, expect } from '@playwright/test';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { SPEC_FILES } from './global-setup.mjs';
 import { purgeAll } from './helpers.mjs';
+import { ROOT, BASE_PORT, killAnyOnPort, waitPortFree, waitReadyAndVerify, gracefulKill, spawnTestServer } from './server-utils.mjs';
 
 export const test = base.extend({
-  // Auto worker fixture: sets TEST_SERVER_PORT so getBase() in helpers resolves correctly.
-  // Runs automatically before any test in the worker without needing to be declared.
+  // Worker fixture: spawns a dedicated test server for this spec file.
+  // Server starts lazily when the worker needs it, not upfront for all 15 specs.
   _workerPort: [async ({}, use, workerInfo) => {
-    // Project name is "${specName}/chromium" or "${specName}/firefox"
     const specName = workerInfo.project.name.replace(/\/(chromium|firefox)$/, '');
     const idx = SPEC_FILES.indexOf(specName);
-    const port = 3800 + (idx >= 0 ? idx : 0);
+    if (idx < 0) throw new Error(`Unknown spec "${specName}" — add it to SPEC_FILES in global-setup.mjs`);
+    const port = BASE_PORT + idx;
+    const workDir = join(ROOT, 'tmp', `pw-s${idx}`);
+
+    // Ensure port is free, then spawn server
+    killAnyOnPort(port);
+    await waitPortFree(port);
+    const proc = spawnTestServer(port, workDir);
+
+    // Wait for server to be fully ready
+    await waitReadyAndVerify(port, proc.pid);
+
     process.env.TEST_SERVER_PORT = String(port);
     await use(port);
+
+    // Teardown: gracefully kill server and clean up work dir
+    await gracefulKill(proc.pid);
+    try { rmSync(workDir, { recursive: true, force: true }); } catch {}
   }, { scope: 'worker', auto: true }],
 
   // Auto test fixture: purges all test data before each test.
-  // Eliminates the need for test.beforeEach(purgeAll) in every spec file.
   _autoPurge: [async ({}, use) => {
     await purgeAll();
     await use();
