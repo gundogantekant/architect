@@ -24,7 +24,7 @@ export default function portfolioRoutes(deps) {
     }],
 
     // Project files
-    [/^\/api\/project\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_-]+)$/, 'GET', async (m, _req, res) => {
+    [/^\/api\/project\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)$/, 'GET', async (m, _req, res) => {
       if (!safe(m[1]) || !safe(m[2])) return err(res, 'invalid path', 400);
       json(res, await listFiles(join(PORTFOLIO, m[1], m[2])));
     }],

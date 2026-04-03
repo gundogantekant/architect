@@ -832,6 +832,7 @@ function createDispatchPanel(dispatch) {
 const AUTO_DISMISS_MS = 8000;
 
 function scheduleAutoDismiss(panelType, id, infoObj) {
+  if (window._testDisableAutoDismiss) return;
   const panel = document.getElementById(`${panelType}-${id}`);
   if (!panel || infoObj._autoDismissTimer) return;
 
@@ -2455,13 +2456,15 @@ async function buildTree() {
     // Collect components, then sort by open work item count
     const componentEntries = [];
     for (const proj of projects) {
-      const files = await api(`project/${org}/${proj}`);
-      const components = files.filter(f => f.endsWith('.json'));
-      for (const file of components) {
-        const comp = file.replace(/\.json$/, '');
-        const key = `${org}/${proj}/${comp}`;
-        componentEntries.push({ org, proj, comp, key });
-      }
+      try {
+        const files = await api(`project/${org}/${proj}`);
+        const components = files.filter(f => f.endsWith('.json'));
+        for (const file of components) {
+          const comp = file.replace(/\.json$/, '');
+          const key = `${org}/${proj}/${comp}`;
+          componentEntries.push({ org, proj, comp, key });
+        }
+      } catch { /* skip projects whose files cannot be listed */ }
     }
     componentEntries.sort((a, b) => countOpenItems(bl, b.key) - countOpenItems(bl, a.key));
 

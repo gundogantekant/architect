@@ -57,7 +57,7 @@ const routes = [
   ...dispatchRoutes(deps),
   ...terminalRoutes(deps),
   ...serverMgmtRoutes(deps),
-  ...testEndpointRoutes(deps),
+  ...(process.env.WORK_DIR ? testEndpointRoutes(deps) : []),
 ];
 
 const server = createServer(async (req, res) => {

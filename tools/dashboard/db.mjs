@@ -692,6 +692,9 @@ export function getWorkItemStats(workItemId) {
 }
 
 export function hardDeleteAllTestData() {
+  if (!process.env.WORK_DIR) {
+    throw new Error('hardDeleteAllTestData refused: not in test mode (WORK_DIR not set)');
+  }
   // Only delete items created in the last 2 hours — protects real data from accidental purge.
   // Real work items and epics are days/weeks old; test seeds are always recent.
   const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();

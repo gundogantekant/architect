@@ -97,4 +97,14 @@ test.describe('Work item lifecycle @behavioral', () => {
     await page.waitForTimeout(300);
     await expect(detailRow).not.toBeVisible();
   });
+
+  test('WF-8: sidebar renders all orgs even with dotted project names', async ({ page }) => {
+    await page.goto('/');
+    // Wait for sidebar to render
+    await expect(page.locator('.org-group')).not.toHaveCount(0, { timeout: 15_000 });
+    // Every org returned by the API should have a corresponding sidebar group
+    const orgs = await api('orgs');
+    const orgGroups = page.locator('.org-group');
+    await expect(orgGroups).toHaveCount(orgs.length, { timeout: 10_000 });
+  });
 });

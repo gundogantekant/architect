@@ -20,6 +20,13 @@ export const test = base.extend({
     await purgeAll();
     await use();
   }, { scope: 'test', auto: true }],
+
+  // Auto test fixture: disables auto-dismiss (W-843) so completed/exited session
+  // panels persist during tests. Override with a no-op in auto-dismiss.spec.mjs.
+  _disableAutoDismiss: [async ({ page }, use) => {
+    await page.addInitScript(() => { window._testDisableAutoDismiss = true; });
+    await use();
+  }, { scope: 'test', auto: true }],
 });
 
 export { expect };

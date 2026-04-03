@@ -541,4 +541,20 @@ test.describe('API contracts @fast', () => {
     expect(result.overall[0]).toHaveProperty('project');
     expect(result.overall[0]).toHaveProperty('component');
   });
+
+  // --- Portfolio tree traversal (special characters in names) ---
+
+  test('AC-64: portfolio tree walk — all projects resolve including dotted names', async () => {
+    const orgs = await api('orgs');
+    expect(orgs.length).toBeGreaterThan(0);
+    for (const org of orgs) {
+      const projects = await api(`org/${org}/projects`);
+      for (const proj of projects) {
+        const resp = await fetch(`${getBase()}/api/project/${org}/${proj}`);
+        expect(resp.ok, `GET /api/project/${org}/${proj} should return 200`).toBe(true);
+        const files = await resp.json();
+        expect(Array.isArray(files), `project ${org}/${proj} should return an array`).toBe(true);
+      }
+    }
+  });
 });
