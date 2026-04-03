@@ -172,6 +172,7 @@
   .wi-sessions-container { padding: 8px 16px; background: #fafbfc; }
   .wi-sessions-container .dispatch-panel,
   .wi-sessions-container .terminal-panel { margin-bottom: 8px; }
+  tr[data-wi-row]:hover { background: rgba(0,0,0,0.03); }
 
   /* Sidebar grouping */
   .sidebar-group-label {
@@ -1141,7 +1142,7 @@ function _placeSessionPanelsNow() {
     loadDispatchContent(dispatch);
   }
 
-  // 5. Context-aware auto-minimize: collapse panels not relevant to current view
+  // 5. Context-aware expand/collapse: expand relevant panels, collapse others
   const hash = location.hash || '';
   let viewProjectKey = '';
   let viewEpicId = '';
@@ -1150,18 +1151,22 @@ function _placeSessionPanelsNow() {
   const epicMatch = hash.match(/^#epic\/(.+)$/);
   if (epicMatch) viewEpicId = epicMatch[1];
 
-  for (const session of allSessions) {
-    let isRelevant = true;
-    if (viewProjectKey) {
-      isRelevant = session.project_key === viewProjectKey;
-    } else if (viewEpicId) {
-      isRelevant = session.epic_id === viewEpicId;
-    }
-    if (!isRelevant) {
+  if (viewProjectKey || viewEpicId) {
+    for (const session of allSessions) {
+      let isRelevant = true;
+      if (viewProjectKey) {
+        isRelevant = session.project_key === viewProjectKey;
+      } else if (viewEpicId) {
+        isRelevant = session.epic_id === viewEpicId;
+      }
       const panel = sessionPanels.get(session.key);
-      if (panel && !panel.classList.contains('collapsed')) {
+      if (!panel) continue;
+      const minBtn = panel.querySelector('[data-minimize-dispatch], [data-minimize-terminal], [data-minimize-cli]');
+      if (isRelevant && panel.classList.contains('collapsed')) {
+        panel.classList.remove('collapsed');
+        if (minBtn) minBtn.textContent = '\u25bc';
+      } else if (!isRelevant && !panel.classList.contains('collapsed')) {
         panel.classList.add('collapsed');
-        const minBtn = panel.querySelector('[data-minimize-dispatch], [data-minimize-terminal]');
         if (minBtn) minBtn.textContent = '\u25b6';
       }
     }
@@ -1908,7 +1913,7 @@ function createSessionPanel(type, info) {
     bindSessionIdCopy(panel);
     const panelKey = `dispatch:${id}`;
     sessionPanels.set(panelKey, panel);
-    const collapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : (window._prefs?.default_panel_state === 'minimized');
+    const collapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : true;
     if (collapsed) {
       panel.classList.add('collapsed');
       panel.querySelector(`[data-minimize-dispatch="${id}"]`).textContent = '▶';
@@ -2016,7 +2021,7 @@ function createSessionPanel(type, info) {
     bindSessionIdCopy(panel);
     const panelKey = `terminal:${id}`;
     sessionPanels.set(panelKey, panel);
-    const collapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : (window._prefs?.default_panel_state === 'minimized');
+    const collapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : true;
     if (collapsed) {
       panel.classList.add('collapsed');
       panel.querySelector(`[data-minimize-terminal="${id}"]`).textContent = '▶';
@@ -2115,7 +2120,8 @@ function createSessionPanel(type, info) {
     `;
     const panelKey = `cli:${id}`;
     sessionPanels.set(panelKey, panel);
-    if (sessionCollapseState.get(panelKey)) {
+    const collapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : true;
+    if (collapsed) {
       panel.classList.add('collapsed');
       panel.querySelector(`[data-minimize-cli="${id}"]`).textContent = '▶';
     }
@@ -2856,6 +2862,21 @@ function bindTabs() {
       row.style.display = showing ? 'none' : '';
       btn.textContent = showing ? 'details' : 'hide';
     };
+  });
+
+  // Work item row click to toggle details
+  document.querySelectorAll('[data-wi-row]').forEach(row => {
+    row.style.cursor = 'pointer';
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('button, a, input, select, .badge, .tag')) return;
+      const idx = row.dataset.wiRow;
+      const detailRow = document.querySelector(`[data-wi-detail="${idx}"]`);
+      if (!detailRow) return;
+      const showing = detailRow.style.display !== 'none';
+      detailRow.style.display = showing ? 'none' : '';
+      const btn = document.querySelector(`.expand-btn[data-wi="${idx}"]`);
+      if (btn) btn.textContent = showing ? 'details' : 'hide';
+    });
   });
 
   // Add work item button
