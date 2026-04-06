@@ -156,6 +156,7 @@
   .dispatch-header .dispatch-title { font-size: 13px; font-weight: 600; flex: 1; }
   .dispatch-header .dispatch-meta { font-size: 11px; color: var(--text-light); }
   .dispatch-log { max-height: 350px; overflow-y: auto; padding: 12px 16px; background: #1e1e2e; color: #bac2de; font-family: monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; border-top: 1px solid #313244; }
+  .dispatch-log.log-light { background: #f8f8f8; color: #1e1e2e; border-top-color: #d0d0d0; }
 
   /* Collapsible panels */
   .dispatch-panel.collapsed .dispatch-log,
@@ -409,6 +410,7 @@
   .settings-btn.primary:hover { opacity: 0.9; }
   .settings-btn:disabled { opacity: 0.4; cursor: default; }
   .settings-log-box { max-height: 350px; overflow-y: auto; background: #1e1e2e; color: #cdd6f4; font-family: monospace; font-size: 12px; line-height: 1.6; padding: 12px; border-radius: 6px; white-space: pre-wrap; word-break: break-word; }
+  .settings-log-box.log-light { background: #f8f8f8; color: #1e1e2e; }
   .reconnecting-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 300; }
   .reconnecting-box { background: #fff; border-radius: 10px; padding: 32px 40px; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.2); }
   .reconnecting-box h3 { margin: 0 0 8px; font-size: 18px; }
@@ -1200,7 +1202,33 @@ const termThemes = {
     black: '#1e1e2e', red: '#d32f2f', green: '#388e3c', yellow: '#f9a825', blue: '#1976d2', magenta: '#7b1fa2', cyan: '#0097a7', white: '#f5f5f5',
     brightBlack: '#616161', brightRed: '#ef5350', brightGreen: '#66bb6a', brightYellow: '#ffee58', brightBlue: '#42a5f5', brightMagenta: '#ab47bc', brightCyan: '#26c6da', brightWhite: '#fafafa' },
 };
-// termThemes is used in initSession; activeTheme is resolved per-session from window._prefs
+// --- Theme resolution & OS-aware switching ---
+// resolveTermTheme() is the single source of truth for which theme key ('dark' | 'light') is active.
+// applyTermThemeToAll() live-updates all open xterm.js terminals, dispatch logs, and settings log boxes.
+// To add a new themeable surface: add a querySelectorAll line in applyTermThemeToAll() and toggle 'log-light'.
+function resolveTermTheme() {
+  const pref = window._prefs?.terminal_theme || 'system';
+  if (pref === 'dark' || pref === 'light') return pref;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function applyTermThemeToAll() {
+  const key = resolveTermTheme();
+  const theme = termThemes[key];
+  const isLight = key === 'light';
+  if (window._termSessions) {
+    for (const [, ss] of window._termSessions) {
+      if (ss._term) ss._term.options.theme = theme;
+    }
+  }
+  document.querySelectorAll('.terminal-container').forEach(el => el.classList.toggle('terminal-light', isLight));
+  document.querySelectorAll('.dispatch-log').forEach(el => el.classList.toggle('log-light', isLight));
+  document.querySelectorAll('.settings-log-box').forEach(el => el.classList.toggle('log-light', isLight));
+}
+
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  if ((window._prefs?.terminal_theme || 'system') === 'system') applyTermThemeToAll();
+});
 
 // --- TerminalWsManager ---
 class TerminalWsManager {
@@ -1542,7 +1570,7 @@ async function initSession(terminalInfo) {
 
           const fitAddon = new FitAddon();
           const webLinksAddon = new WebLinksAddon();
-          const theme = termThemes[window._prefs?.terminal_theme] || termThemes.dark;
+          const theme = termThemes[resolveTermTheme()];
           const term = new Terminal({
             cursorBlink: true,
             fontSize: 13,
@@ -1558,7 +1586,7 @@ async function initSession(terminalInfo) {
           // Clear loading overlay, attach terminal
           if (loadingEl) loadingEl.remove();
           loadingEl = null;
-          containerEl.classList.toggle('terminal-light', (window._prefs?.terminal_theme === 'light'));
+          containerEl.classList.toggle('terminal-light', resolveTermTheme() === 'light');
           term.open(containerEl);
           term.reset();
           fitAddon.fit();
@@ -1905,7 +1933,7 @@ function createSessionPanel(type, info) {
         <button class="kill-btn" data-kill-dispatch="${esc(id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
         <button class="dismiss-btn" data-dismiss-dispatch="${esc(id)}" ${isRunning ? 'style="display:none"' : ''}>✕</button>
       </div>
-      <div class="dispatch-log" id="log-${id}"></div>
+      <div class="dispatch-log${resolveTermTheme() === 'light' ? ' log-light' : ''}" id="log-${id}"></div>
       <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
         <button class="focus-btn" data-focus-dispatch-bottom="${esc(id)}">Focus</button>
         ${sessionIdTag(dispatch.claude_session_id)}
@@ -1916,7 +1944,8 @@ function createSessionPanel(type, info) {
     bindSessionIdCopy(panel);
     const panelKey = `dispatch:${id}`;
     sessionPanels.set(panelKey, panel);
-    const collapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : true;
+    const defaultCollapsed = !window._testDefaultExpanded && (window._prefs?.default_panel_state || 'minimized') !== 'expanded';
+    const collapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : defaultCollapsed;
     if (collapsed) {
       panel.classList.add('collapsed');
       panel.querySelector(`[data-minimize-dispatch="${id}"]`).textContent = '▶';
@@ -2024,7 +2053,8 @@ function createSessionPanel(type, info) {
     bindSessionIdCopy(panel);
     const panelKey = `terminal:${id}`;
     sessionPanels.set(panelKey, panel);
-    const collapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : true;
+    const defaultCollapsed = !window._testDefaultExpanded && (window._prefs?.default_panel_state || 'minimized') !== 'expanded';
+    const collapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : defaultCollapsed;
     if (collapsed) {
       panel.classList.add('collapsed');
       panel.querySelector(`[data-minimize-terminal="${id}"]`).textContent = '▶';
@@ -2123,7 +2153,8 @@ function createSessionPanel(type, info) {
     `;
     const panelKey = `cli:${id}`;
     sessionPanels.set(panelKey, panel);
-    const collapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : true;
+    const defaultCollapsed = !window._testDefaultExpanded && (window._prefs?.default_panel_state || 'minimized') !== 'expanded';
+    const collapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : defaultCollapsed;
     if (collapsed) {
       panel.classList.add('collapsed');
       panel.querySelector(`[data-minimize-cli="${id}"]`).textContent = '▶';
@@ -6174,9 +6205,10 @@ function renderSettingsView(status, config) {
   html += '<span style="font-size:11px;color:var(--text-light)">(--dangerously-skip-permissions)</span>';
   html += '</label></div>';
   // Terminal theme
-  const curTheme = window._prefs.terminal_theme || 'dark';
-  html += '<div style="margin-top:12px"><span class="key">Terminal Theme</span> ';
+  const curTheme = window._prefs.terminal_theme || 'system';
+  html += '<div style="margin-top:12px"><span class="key">Terminal &amp; Log Theme</span> ';
   html += '<select id="settings-terminal-theme" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px">';
+  html += '<option value="system"' + (curTheme === 'system' ? ' selected' : '') + '>System</option>';
   html += '<option value="dark"' + (curTheme === 'dark' ? ' selected' : '') + '>Dark</option>';
   html += '<option value="light"' + (curTheme === 'light' ? ' selected' : '') + '>Light</option>';
   html += '</select></div>';
@@ -6203,6 +6235,7 @@ let settingsRefreshTimer = null;
 
 function bindSettingsEvents(status, config) {
   loadSettingsLogs();
+  document.getElementById('settings-log-box')?.classList.toggle('log-light', resolveTermTheme() === 'light');
 
   if (settingsRefreshTimer) clearInterval(settingsRefreshTimer);
   settingsRefreshTimer = setInterval(async () => {
@@ -6315,6 +6348,7 @@ function bindSettingsEvents(status, config) {
         body: JSON.stringify({ terminal_theme: e.target.value }),
       });
       window._prefs.terminal_theme = e.target.value;
+      applyTermThemeToAll();
     } catch (err) {
       alert('Failed to save preference: ' + err.message);
     }
@@ -6556,8 +6590,13 @@ const _restorePromise = Promise.all([
 ]);
 Promise.all([buildTree(), buildEpicTree()]).then(async () => {
   startSessionsSidebarRefresh();
-  route();
+  // Wait for session restore before routing so panels exist when route() places them.
+  // All restore functions have try/catch — they always resolve, never hang.
   await _restorePromise;
+  await route();
+  // Synchronous placement after route completes — bypasses rAF debounce entirely
+  // to guarantee context-aware expand/collapse fires with all panels + correct hash.
+  _placeSessionPanelsNow();
   refreshSessionsSidebar();
   // Periodic session refresh (every 10s) — sync with server-side auto-cleanup
   setInterval(restoreDispatches, 10000);
