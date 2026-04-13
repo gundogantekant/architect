@@ -23,6 +23,14 @@ Business rules, heuristics, and decision logic for the architect system. Agents 
 
 All three terms refer to the same entity. The dashboard UI uses "task" for brevity. Internal code and API paths use "work-items". The ID prefix remains `W-XXX`.
 
+## Terminology: System Concepts
+
+| Term | Meaning |
+|------|---------|
+| "skill" / "slash command" | The same concept — a user-invocable workflow. "Skill" is the internal/formal term; "slash command" (e.g., `/review`) is the user-facing shorthand. |
+| "portfolio entry" / "component profile" | The same entity — a JSON file at `portfolio/<org>/<project>/<component>.json` describing a project component. "Portfolio entry" is the formal term. |
+| "brief" | The structured project overview section within a portfolio entry (`brief.purpose`, `brief.domain`, `brief.users`). Not a general synonym for "summary". |
+
 ## Complexity Heuristics
 
 | Level | Criteria |
@@ -78,7 +86,7 @@ These rules apply to ALL workflow patterns, not only `parallel-fan-out`:
 - **sequential**: Check whether any adjacent steps are actually independent and could overlap
 - **plan-then-execute**: Planner must group tasks into parallel batches
 - **parallel-fan-out**: Already parallel by design; rules ensure convergence steps (tester, reviewer) wait for all parallel work
-- **investigate-then-fix**: Investigation is always sequential; fix + test may parallelize if targeting separate components
+- **investigate-then-fix**: Investigation is always sequential; fix + test may parallelize if targeting separate components. When investigation spans >2 files or >1 component, dispatch multiple read-only agents (scout, debugger, Explore) in parallel during the investigation phase.
 - **Triage-guided dispatch**: Coordinator applies rules to the execution plan; orchestrator enforces them
 
 ## Agent Inclusion Rules
@@ -434,12 +442,44 @@ This applies to all implementation agents and the planner.
 
 ## Agent Dispatch Standards
 
-When dispatching any implementation agent via the Agent tool, the orchestrator MUST include the Coding Standards Brief (see above) in the prompt parameter. This applies to:
+When dispatching any agent via the Agent tool, the orchestrator MUST structure the dispatch prompt using the template below. This applies to:
 - Main session dispatching sub-agents
 - Dashboard-dispatched orchestrators dispatching their own sub-agents
 - Any agent that has the ability to spawn sub-agents
 
-Sub-agents receive their context exclusively from (a) their agent `.md` file and (b) the prompt parameter. File read instructions ("See domain/rules.md") are unreliable because agents may not follow through under turn pressure. The inline brief ensures standards are present regardless.
+Sub-agents receive their context exclusively from (a) their agent `.md` file and (b) the prompt parameter. File read instructions ("See domain/rules.md") are unreliable because agents may not follow through under turn pressure. The inline template ensures context is present regardless.
+
+### Dispatch Prompt Template
+
+Every Agent tool dispatch prompt MUST include these sections. Use the labelled placeholders as a fill-in template — empty or missing sections indicate an incomplete dispatch.
+
+```
+## Task
+[What the agent should do. Expected output format. Success criteria.]
+
+## Target Project
+[Organization, Project, Component, Path, Branch — all five fields.]
+
+## Project Context
+[Tier-filtered portfolio context. Look up the agent in § Context Tier Mapping
+to determine which fields to include. Omit for architect-internal tasks.]
+
+## Coding Standards Brief
+[Include the compact coding standards block from § Coding Standards Brief.]
+
+## Constraints
+[Relevant rules, scope boundaries, what NOT to do. Include org conventions.]
+```
+
+**Conditional sections** (include when applicable):
+- `## Work Item` — when the dispatch is for a tracked work item (ID, title, description, status)
+- `## Epic Context` — when the work item is linked to an epic (title, acceptance criteria, progress)
+- `## Environment` — when the agent needs dashboard API endpoints or path information
+
+**Exemptions**:
+- Read-only agents at `none` tier (git-ops): only Task and Target Project sections are required
+- Architect-internal tasks (no portfolio project): omit Project Context section
+- Trivial dispatches matching the Trivial Exception Rule: exempt from template (but these should be handled inline, not dispatched)
 
 ## Dispatch Contract Rules
 
@@ -640,6 +680,22 @@ The orchestrator may handle single-line fixes inline without dispatching an agen
 5. **Pre-dispatch check** (see Pre-Dispatch Check Rules): If classification type is a work type AND complexity >= small → run pre-dispatch check. If findings exist → present to user and get confirmation before proceeding. Runs in parallel with coordinator dispatch when both are needed.
 6. If classifier returns `needs_coordinator: true` → Dispatch **coordinator** (sonnet) for detailed planning
 7. Follow the dispatch plan from classifier or coordinator
+
+### Dispatch-First Rule
+
+The orchestrator dispatches sub-agents for research, analysis, and investigation tasks. The main session decomposes, dispatches, and synthesizes results — sub-agents execute. This reduces opus token consumption and enables parallel execution.
+
+| Condition | Action |
+|-----------|--------|
+| Task classified as `small+` work type by classifier or orchestrator | Dispatch to appropriate agent |
+| Task requires reading >3 files | Dispatch Explore agent(s) |
+| Task spans >1 component or project | Dispatch with full project context |
+| Task is pure analysis/research (no code modification) | Dispatch read-only agent at sonnet tier |
+| Investigation spans >2 files or >1 component | Dispatch multiple read-only agents in parallel |
+| Task is a direct question answerable from memory/context | Handle inline |
+| Task matches Trivial Exception Rule | Handle inline |
+
+The orchestrator's inline work should be limited to: decomposing tasks, constructing dispatch prompts, synthesizing agent results, answering direct questions, and running read-only git/API queries. Extended reading, analysis, and investigation belong in sub-agents.
 
 ### Git Operations
 

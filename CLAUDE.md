@@ -168,8 +168,9 @@ Use `/work list --org <name>` to scope work items to a specific organization. Se
 - Read-only agents do not modify code (see `domain/rules.md` → Agent Permission Model)
 - Implementation agents (coder-*, git-ops) use acceptEdits permission mode
 - The orchestrator delegates all git operations (commit, push, PR, branch, worktree) to the git-ops agent. The orchestrator only runs read-only git commands (status, log, diff) directly.
-- Apply role-scoped context injection when dispatching agents — see `domain/rules.md` → Role-Scoped Context Injection for the tier mapping per agent role
+- Apply role-scoped context injection when dispatching agents — see `domain/rules.md` → Role-Scoped Context Injection for the tier mapping per agent role. Before each dispatch, look up the agent in `domain/rules.md` → Context Tier Mapping to determine which portfolio fields to include.
 - Use dynamic model selection per dispatch — see `domain/rules.md` → Model Selection Rules for complexity-to-model mapping
+- The orchestrator dispatches sub-agents for research, analysis, and investigation tasks. The main session decomposes, dispatches, and synthesizes — sub-agents execute. See `domain/rules.md` → Dispatch-First Rule for trigger criteria. Structure every Agent tool dispatch using the template in `domain/rules.md` → Agent Dispatch Standards.
 - All work on portfolio projects uses a git worktree by default — create one before making any code changes. Exception: projects with `worktree_mode: "explicit"` in their portfolio entry work in-place; worktrees are created only on explicit request. Skip only when the user explicitly opts out. See `domain/rules.md` → Worktree Rules.
 - Follow git standards defined in `domain/rules.md`
 - Before using Playwright MCP tools directly in the main session, follow Model Affinity Rules in `domain/rules.md` to prompt model switching
