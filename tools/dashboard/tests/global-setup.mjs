@@ -25,6 +25,7 @@ export const SPEC_FILES = [
   'theme-system',
   'markdown-descriptions',
   'agent-phase',
+  'text-selection',
 ];
 
 function getLiveDashboardPorts() {
