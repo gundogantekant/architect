@@ -139,7 +139,8 @@ Full coordinator output. References RequestClassification and WorkflowPattern.
         "order": "number",
         "agent": "string (agent name)",
         "purpose": "string",
-        "parallel_with": ["string (agent names)"]
+        "parallel_with": ["string (agent names)"],
+        "contract": { "$ref": "DispatchContract (required for medium+ complexity, optional for trivial/small)" }
       }
     ]
   },
@@ -153,7 +154,22 @@ Full coordinator output. References RequestClassification and WorkflowPattern.
 }
 ```
 
-**Rules**: `suggested_work_item` only for medium+ complexity. `skip_reason` mutually exclusive with `execution_plan.steps`.
+**Rules**: `suggested_work_item` only for medium+ complexity. `skip_reason` mutually exclusive with `execution_plan.steps`. `contract` is required on all steps when classification complexity is `medium` or `large`; optional for `trivial` and `small`. When present, `purpose` serves as a one-line summary; `contract` provides the full success criteria. Steps without `contract` (legacy or trivial) remain valid.
+
+## DispatchContract (Value Object)
+
+Defines the success criteria for a single dispatch step. Immutable, compared by value, no identity or lifecycle. Embedded in DispatchPlan steps — not stored independently.
+
+```json
+{
+  "goal": "string — the exact success condition; what must be true when complete (1-3 sentences)",
+  "constraints": "string — hard boundaries that must not be crossed (1-3 sentences)",
+  "expected_output": "string — the specific artifact or structure the agent must produce (1-3 sentences)",
+  "failure_conditions": "string — what makes the output unacceptable (1-3 sentences)"
+}
+```
+
+**Rules**: All four fields are required when the contract is present. Each field should be 1–3 sentences. Empty strings are treated as absent (see `domain/rules.md` → Dispatch Contract Rules). The coordinator produces contracts as part of the DispatchPlan; the prompt-builder renders them in the dispatch prompt.
 
 ## ScoutReport
 

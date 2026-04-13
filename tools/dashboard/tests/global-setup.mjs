@@ -27,6 +27,7 @@ export const SPEC_FILES = [
   'agent-phase',
   'text-selection',
   'worktree-dispatch',
+  'dispatch-contract',
 ];
 
 function getLiveDashboardPorts() {

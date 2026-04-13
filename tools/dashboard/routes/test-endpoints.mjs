@@ -97,6 +97,22 @@ export default function testEndpointRoutes(deps) {
       json(res, { prompt, project_path: projectPath });
     }],
 
+    // Build dispatch prompt without spawning (for contract/prompt tests)
+    [/^\/api\/test\/build-prompt$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { workItem, projectKey, projectPath, additionalInstructions, contract, epicContext } = body;
+      const prompt = buildDispatchPrompt({
+        workItem: workItem || null,
+        projectKey: projectKey || 'test/test/main',
+        projectPath: projectPath || ROOT,
+        additionalInstructions: additionalInstructions || null,
+        portfolio: null,
+        epicContext: epicContext || null,
+        contract: contract || null,
+      });
+      json(res, { prompt });
+    }],
+
     // Seed a terminal with org_key support (no real PTY)
     [/^\/api\/test\/seed-org-terminal$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);

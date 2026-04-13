@@ -441,6 +441,49 @@ When dispatching any implementation agent via the Agent tool, the orchestrator M
 
 Sub-agents receive their context exclusively from (a) their agent `.md` file and (b) the prompt parameter. File read instructions ("See domain/rules.md") are unreliable because agents may not follow through under turn pressure. The inline brief ensures standards are present regardless.
 
+## Dispatch Contract Rules
+
+Every dispatch step for medium+ complexity work must carry a DispatchContract (see `domain/entities.md`) that defines clear success criteria. This ensures agents have unambiguous goals to work against and enables structured evaluation of dispatch outcomes.
+
+### When Required
+
+| Complexity | Contract Required |
+|------------|-------------------|
+| trivial | No — `purpose` field suffices |
+| small | No — `purpose` field suffices |
+| medium | Yes — all four fields must be populated |
+| large | Yes — all four fields must be populated |
+
+### Who Produces
+
+- **Coordinator**: Produces contracts as part of the DispatchPlan for medium+ complexity work. Each step in `execution_plan.steps` includes a `contract` field.
+- **Orchestrator**: For direct dispatches without a coordinator (e.g., orchestrator constructs plan from classifier output for medium+ work), the orchestrator constructs a minimal contract from the work item description.
+
+### Contract Source
+
+The coordinator derives contracts from:
+1. Work item description — if it already contains Goal/Constraints/Expected Output/Failure Conditions sections, extract and formalize them
+2. Epic context — acceptance criteria and plan excerpts inform goal and constraints
+3. Portfolio context — project conventions and custom rules inform constraints
+
+### Propagation
+
+- The prompt-builder renders the contract as a `# Dispatch Contract` section in the dispatch prompt
+- Sub-agent dispatches from the orchestrator session include the relevant step's contract in the agent prompt
+- One contract per dispatch step, not per work item — a multi-step plan has one contract per step
+
+### Field Guidance
+
+Each field should be 1–3 sentences. Avoid duplicating information already present in the work item description. The contract captures what the work item description does not make explicit: precise success criteria, hard limits, expected deliverable shape, and rejection criteria.
+
+### Empty String Policy
+
+Empty strings are treated as absent. The prompt-builder strips empty fields and renders only populated ones. A contract with all four fields empty is equivalent to no contract.
+
+### Backward Compatibility
+
+Steps without a `contract` field (from pre-existing plans or trivial/small dispatches) remain valid. The prompt-builder gracefully no-ops when the contract is missing or incomplete. No migration is needed for existing DispatchPlans.
+
 ## Git Standards
 
 Shared git rules enforced by all implementation agents.

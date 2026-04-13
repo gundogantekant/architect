@@ -230,7 +230,7 @@ export async function selectAgentsForDispatch({ workItem, portfolio }) {
   return agents;
 }
 
-export function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInstructions, portfolio, epicContext, relatedProjects, orgContext, worktreeContext }) {
+export function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInstructions, portfolio, epicContext, relatedProjects, orgContext, worktreeContext, contract }) {
   const sections = [];
 
   // --- Identity ---
@@ -534,6 +534,21 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     sections.push(`# Task\n\n${additionalInstructions}`);
   }
 
+  // --- Dispatch Contract (value object: goal, constraints, expected output, failure conditions) ---
+  if (contract && typeof contract === 'object') {
+    const fields = [
+      ['Goal', contract.goal],
+      ['Constraints', contract.constraints],
+      ['Expected Output', contract.expected_output],
+      ['Failure Conditions', contract.failure_conditions],
+    ].filter(([, v]) => typeof v === 'string' && v.trim());
+    if (fields.length) {
+      const lines = ['# Dispatch Contract', ''];
+      for (const [label, value] of fields) lines.push(`**${label}**: ${value}`);
+      sections.push(lines.join('\n'));
+    }
+  }
+
   // --- Layer 3: Epic Context (third — lightweight: title, status, progress, plan snippet, AC) ---
   if (epicContext) {
     const lines = ['# Epic Context', ''];
@@ -553,9 +568,9 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     sections.push(lines.join('\n'));
   }
 
-  // --- Constraints ---
+  // --- Dispatch Instructions (supplementary guidance beyond the contract) ---
   if (workItem && additionalInstructions) {
-    sections.push(`# Constraints\n\n${additionalInstructions}`);
+    sections.push(`# Dispatch Instructions\n\n${additionalInstructions}`);
   }
 
   // --- Coding Standards (inline brief — self-contained, no file read required) ---

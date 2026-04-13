@@ -75,7 +75,12 @@ export default function dispatchRoutes(deps) {
     // Create dispatch
     [/^\/api\/dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode } = body;
+      const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode, contract: rawContract } = body;
+
+      // Strip empty-string contract fields per domain/rules.md → Dispatch Contract Rules
+      const contract = rawContract && typeof rawContract === 'object'
+        ? Object.fromEntries(Object.entries(rawContract).filter(([, v]) => typeof v === 'string' && v.trim()))
+        : null;
 
       if (!project_key) {
         return err(res, 'project_key is required', 400);
@@ -165,6 +170,7 @@ export default function dispatchRoutes(deps) {
         epicContext,
         relatedProjects,
         worktreeContext,
+        contract: contract && Object.keys(contract).length ? contract : null,
       });
 
       // Select sub-agents based on work item and portfolio context

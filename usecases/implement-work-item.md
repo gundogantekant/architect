@@ -14,6 +14,7 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 ## Preconditions
 - Follow `usecases/load-portfolio-context.md` with depth **standard** (fallback: run scout to detect the stack)
 - Dashboard must be running at `http://127.0.0.1:3777`
+- For medium+ complexity work items, the DispatchPlan must include a `contract` on each step per `domain/rules.md` → Dispatch Contract Rules. If contracts are missing, the orchestrator constructs them from the work item description before dispatching.
 
 ## Agent(s)
 - **coder** (model: sonnet) — implementation
@@ -54,11 +55,11 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 
 8. **Worktree check**: If a `# Worktree Context` section is present in your prompt (i.e., the dispatch infrastructure already created a worktree and set your working directory to it), skip worktree creation and proceed to step 9. Otherwise, follow `usecases/manage-worktree.md` → create, using the work item ID as the ticket ID and the work item title as the task description. Respect the portfolio entry's `worktree_mode` field — if `"explicit"`, work in-place.
 
-9. **Implement changes**: Dispatch coder agent in the worktree with: portfolio context, work item details, the approved plan, and the coding standards brief from `domain/rules.md`.
+9. **Implement changes**: Dispatch coder agent in the worktree with: portfolio context, work item details, the approved plan, the coding standards brief from `domain/rules.md`, and the relevant DispatchContract (goal, constraints, expected output, failure conditions) from the DispatchPlan step.
 
 10. **Run tests**: Dispatch tester agent in the worktree. Run existing test suite if available. Write new tests if new code warrants them and the project has test infrastructure. If contract tests were written in step 7, verify they now pass (green). If tests fail: dispatch coder to fix, then re-run tester (max 2 iterations). If no test framework is detected, skip and note it in the output.
 
-11. **Technical Review Board — Code Gate** (for all non-trivial code changes per `domain/rules.md` → Technical Review Board Rules): Assemble the review board using context-based composition rules. Dispatch all selected tech-reviewer-* agents **in parallel** with the implementation diff (artifact_type=diff) and target project portfolio context. Collect `TechReviewVerdict` from each. Apply aggregation rules:
+11. **Technical Review Board — Code Gate** (for all non-trivial code changes per `domain/rules.md` → Technical Review Board Rules): Assemble the review board using context-based composition rules. Dispatch all selected tech-reviewer-* agents **in parallel** with the implementation diff (artifact_type=diff), target project portfolio context, and the DispatchContract so reviewers can evaluate whether the implementation meets the stated goals and does not violate the stated constraints. Collect `TechReviewVerdict` from each. Apply aggregation rules:
     - Any `block` → dispatch coder to fix, re-review (max 2 cycles). If still blocked, escalate to user.
     - Any `revise` (no `block`) → present to user WITH revision concerns highlighted. User decides: accept, request fix, or override.
     - All `approve` → proceed to commit.
