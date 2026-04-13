@@ -288,6 +288,12 @@ Stored at `portfolio/<org>/organization.json`.
     "pr_title_pattern": "string"
   },
   "rules": ["string"],
+  "coding_standards": {
+    "additional_rules": ["string — org-specific coding rules beyond the system defaults"],
+    "framework_patterns": {
+      "<framework-name>": ["string — framework-specific patterns or conventions"]
+    }
+  },
   "projects": ["string"],
   "design_systems": {
     "<system-key>": {
@@ -300,7 +306,7 @@ Stored at `portfolio/<org>/organization.json`.
 }
 ```
 
-**Optional fields**: `design_systems`, `cloud_environments`.
+**Optional fields**: `coding_standards`, `design_systems`, `cloud_environments`.
 
 ## WorkItem
 

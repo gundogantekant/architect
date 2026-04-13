@@ -383,6 +383,20 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
         lines.push(`- ${parts.join(', ')}`);
       }
     }
+    if (o.coding_standards) {
+      if (o.coding_standards.additional_rules?.length) {
+        lines.push('', '**Org Coding Standards**:');
+        for (const r of o.coding_standards.additional_rules) lines.push(`- ${r}`);
+      }
+      if (o.coding_standards.framework_patterns) {
+        for (const [fw, patterns] of Object.entries(o.coding_standards.framework_patterns)) {
+          if (patterns?.length) {
+            lines.push('', `**${fw} Patterns**:`);
+            for (const p of patterns) lines.push(`- ${p}`);
+          }
+        }
+      }
+    }
     if (o.design_systems) {
       lines.push('', '**Design Systems**:');
       for (const [name, ds] of Object.entries(o.design_systems)) {
@@ -477,6 +491,20 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     if (o.rules && o.rules.length) {
       lines.push('', '**Rules**:');
       for (const r of o.rules) lines.push(`- ${r}`);
+    }
+    if (o.coding_standards) {
+      if (o.coding_standards.additional_rules?.length) {
+        lines.push('', '**Org Coding Standards**:');
+        for (const r of o.coding_standards.additional_rules) lines.push(`- ${r}`);
+      }
+      if (o.coding_standards.framework_patterns) {
+        for (const [fw, patterns] of Object.entries(o.coding_standards.framework_patterns)) {
+          if (patterns?.length) {
+            lines.push('', `**${fw} Patterns**:`);
+            for (const p of patterns) lines.push(`- ${p}`);
+          }
+        }
+      }
     }
     sections.push(lines.join('\n'));
   }
