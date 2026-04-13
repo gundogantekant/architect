@@ -26,6 +26,7 @@ export const SPEC_FILES = [
   'markdown-descriptions',
   'agent-phase',
   'text-selection',
+  'worktree-dispatch',
 ];
 
 function getLiveDashboardPorts() {

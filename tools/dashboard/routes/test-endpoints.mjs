@@ -1,3 +1,5 @@
+import { shouldCreateWorktree } from '../worktree.mjs';
+
 export default function testEndpointRoutes(deps) {
   const {
     db, json, err, parseBody,
@@ -5,7 +7,7 @@ export default function testEndpointRoutes(deps) {
     dispatches, terminals, cliSessions,
     wireTerminalHandlers,
     broadcastDispatchLine, broadcastDispatchDone,
-    buildDispatchPrompt, resolveOrgPath, loadOrgContext,
+    buildDispatchPrompt, resolveOrgPath, loadOrgContext, loadPortfolioContext,
     saveDispatchToDb, saveTerminalToDb,
     restoreSessions,
     termEventLogPath, generateSeedContent,
@@ -18,7 +20,7 @@ export default function testEndpointRoutes(deps) {
     // --- Test endpoints (for E2E test seeding) ---
     [/^\/api\/test\/seed-dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { id, status, project_key, title, work_item_id, log_lines, claude_session_id } = body;
+      const { id, status, project_key, title, work_item_id, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch } = body;
       if (!id) return err(res, 'id is required', 400);
       const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
 
@@ -48,6 +50,9 @@ export default function testEndpointRoutes(deps) {
         status: status || 'completed',
         agent_phase: (status || 'completed') === 'running' ? 'generating' : null,
         claude_session_id: claude_session_id || null,
+        worktree_path: worktree_path || null,
+        worktree_branch: worktree_branch || null,
+        source_branch: source_branch || null,
         output,
         lastLines: [],
         wsClients: new Set(),
@@ -532,6 +537,34 @@ export default function testEndpointRoutes(deps) {
         contains_start: clean.includes(payload.slice(0, 50)),
         contains_end: clean.includes(payload.slice(-50)),
       });
+    }],
+
+    // Test worktree decision logic (W-927)
+    [/^\/api\/test\/worktree-decision$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { permission_mode, work_item_id, worktree_mode, feature_flag } = body;
+      const result = shouldCreateWorktree({
+        permissionMode: permission_mode,
+        workItemId: work_item_id,
+        portfolioEntry: worktree_mode ? { worktree_mode } : null,
+        featureFlag: feature_flag !== false,
+      });
+      json(res, { should_create: result });
+    }],
+
+    // Test prompt builder with worktree context (W-927)
+    [/^\/api\/test\/build-dispatch-prompt$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { project_key, work_item, worktree_context } = body;
+      const portfolio = await loadPortfolioContext(project_key).catch(() => null);
+      const prompt = buildDispatchPrompt({
+        workItem: work_item,
+        projectKey: project_key,
+        projectPath: ROOT,
+        portfolio,
+        worktreeContext: worktree_context || null,
+      });
+      json(res, { prompt });
     }],
   ];
 }

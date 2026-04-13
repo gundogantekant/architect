@@ -230,7 +230,7 @@ export async function selectAgentsForDispatch({ workItem, portfolio }) {
   return agents;
 }
 
-export function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInstructions, portfolio, epicContext, relatedProjects, orgContext }) {
+export function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInstructions, portfolio, epicContext, relatedProjects, orgContext, worktreeContext }) {
   const sections = [];
 
   // --- Identity ---
@@ -608,6 +608,22 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     envLines.push('');
     envLines.push('Use the architect project to look up cross-project context, related tasks, domain rules, or use-case workflows when needed. Your primary work should happen in the current directory (the target project).');
     sections.push(envLines.join('\n'));
+  }
+
+  // --- Worktree Context (when dispatch created a worktree) ---
+  if (worktreeContext) {
+    const wtLines = ['# Worktree Context', ''];
+    wtLines.push('You are running in a dedicated worktree — all file changes are isolated from the main branch.');
+    wtLines.push('');
+    wtLines.push(`- **Worktree path**: ${worktreeContext.worktreePath}`);
+    wtLines.push(`- **Source path**: ${projectPath}`);
+    wtLines.push(`- **Branch**: ${worktreeContext.branchName}`);
+    wtLines.push(`- **Originating branch**: ${worktreeContext.sourceBranch}`);
+    wtLines.push('');
+    wtLines.push('**Important**: Do NOT create a new worktree. You are already in one. Step 8 of implement-work-item (worktree creation) is already done.');
+    wtLines.push('- Commit your changes on this branch');
+    wtLines.push('- The worktree was provisioned with all required config files and post-setup commands');
+    sections.push(wtLines.join('\n'));
   }
 
   // --- Tracking (only when workItem is present) ---

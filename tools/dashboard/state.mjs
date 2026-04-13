@@ -17,6 +17,9 @@ export function saveDispatchToDb(d) {
     cost_usd: d.cost_usd || null,
     pid: d.pid || null,
     claude_session_id: d.claude_session_id || null,
+    worktree_path: d.worktree_path || null,
+    worktree_branch: d.worktree_branch || null,
+    source_branch: d.source_branch || null,
   });
 }
 

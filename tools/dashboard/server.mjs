@@ -191,6 +191,16 @@ async function main() {
   // Phase 3: Restore sessions
   restoreSessions(wireTerminalHandlers);
 
+  // Phase 3.5: Warn about orphaned worktrees
+  try {
+    const orphans = db.getDb().prepare(
+      "SELECT COUNT(*) as cnt FROM dispatches WHERE worktree_path IS NOT NULL AND status != 'running'"
+    ).get();
+    if (orphans?.cnt > 10) {
+      console.warn(`[worktree] ${orphans.cnt} orphaned dispatch worktrees detected — consider running /worktree cleanup`);
+    }
+  } catch {}
+
   // Phase 4: Start server
   server.listen(port, '127.0.0.1', () => {
     console.log(`Dashboard: http://127.0.0.1:${port}`);

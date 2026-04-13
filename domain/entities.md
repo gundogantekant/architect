@@ -88,6 +88,28 @@ Finding type semantics:
 
 **Trigger**: The orchestrator runs this check when the classifier returns `type` in {feature, bugfix, refactor, maintenance} AND `complexity` >= small. No classifier schema change is needed — the orchestrator derives the trigger from existing ClassifierOutput fields. See `domain/rules.md` → Pre-Dispatch Check Rules.
 
+## SessionIdentity
+
+Metadata describing the identity and scope of a session. Every dispatched agent session carries a SessionIdentity that determines what actions it may perform. The orchestrator (main session) and CLI sessions operate at depth 0 with full scope; dashboard-dispatched agents operate at depth 1 with restricted scope.
+
+```json
+{
+  "session_type": "orchestrator|dispatch|terminal|cli",
+  "session_id": "string (D-xxx, T-xxx, C-xxx, or 'main')",
+  "parent_session_id": "string | null (null for main orchestrator and CLI sessions)",
+  "dispatch_depth": "number (0 = main/cli, 1 = dashboard-dispatched, 2+ = forbidden)",
+  "context_tier": "none|minimal|standard|full"
+}
+```
+
+Session type semantics:
+- `orchestrator` — the main Claude session acting as PM/orchestrator. Depth 0.
+- `dispatch` — a Claude agent spawned by the dashboard for a work item. Depth 1.
+- `terminal` — an interactive PTY session spawned by the dashboard. Depth 1.
+- `cli` — an external CLI session registered via the dashboard API. Depth 0.
+
+See `domain/rules.md` → Session Scope Rules for permission tiers per session type.
+
 ## WorkflowPattern
 
 ```
@@ -360,7 +382,8 @@ Tracks an active worktree created for implementation isolation.
   "worktree_path": "string (absolute path to worktree)",
   "source_path": "string (absolute path to original project)",
   "branch_name": "string",
-  "ticket_id": "string (Notion ticket ID, e.g. GEN-1641)"
+  "ticket_id": "string (Notion ticket ID, e.g. GEN-1641)",
+  "originating_branch": "string (branch HEAD was on when worktree was created, e.g. main, feature/org-level-dispatch)"
 }
 ```
 
@@ -369,6 +392,7 @@ Tracks an active worktree created for implementation isolation.
 Ephemeral (in-memory only, not persisted to SQLite) state derived from stream-json events during a dispatch session's lifetime. Tracks what the dispatched agent is currently doing. Reset to null when the dispatch reaches a terminal status.
 
 Values:
+- `worktree_setup` — dispatch infrastructure is creating and provisioning the worktree before agent spawn
 - `generating` — agent is producing text (thinking, planning, responding)
 - `tool_running` — agent dispatched a tool call, execution in progress
 - `waiting_for_input` — agent finished its turn (stop_reason=end_turn), waiting for user
@@ -395,7 +419,10 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "claude_session_id": "string (Claude CLI session UUID, optional — captured from stream-json init event, used for resume)",
   "cost_usd": "number (total cost, optional)",
   "pid": "number (OS process ID, optional — stored for restart survival)",
-  "agent_phase": "AgentPhase (ephemeral, in-memory only — not persisted to SQLite, derived from live stream-json event parsing or log replay)"
+  "agent_phase": "AgentPhase (ephemeral, in-memory only — not persisted to SQLite, derived from live stream-json event parsing or log replay)",
+  "worktree_path": "string (absolute path to worktree, null if no worktree — persisted to SQLite)",
+  "worktree_branch": "string (worktree branch name, null if no worktree — persisted to SQLite)",
+  "source_branch": "string (originating branch the worktree was created from, null if no worktree — persisted to SQLite)"
 }
 ```
 
@@ -457,6 +484,28 @@ Sessions are persisted in SQLite tables (`dispatches`, `terminals`, `cli_session
   }
 }
 ```
+
+## EscalationLogEntry
+
+Structured log entry recorded when the orchestrator detects a condition requiring attention. Uses the canonical format for all escalation-type session log entries, ensuring consistent data across agents and views.
+
+```json
+{
+  "type": "escalation",
+  "trigger": "stale|blocked-chain|epic-stall|cost-anomaly|dispatch-loop",
+  "summary": "string — human-readable description of the escalation",
+  "related_items": ["string (W-XXX or E-XXX IDs)"]
+}
+```
+
+Trigger semantics:
+- `stale` — work item has had no status change or session log entry for 7+ days
+- `blocked-chain` — a blocked item's blocker has no active dispatch or progress
+- `epic-stall` — no linked item status change in the last 3 dispatches for an active epic
+- `cost-anomaly` — a single dispatch cost exceeds 2x the project's average dispatch cost
+- `dispatch-loop` — a work item has been dispatched 3+ times without reaching done
+
+See `domain/rules.md` → Project Manager Behavior Rules → Escalation Triggers for detection criteria.
 
 ## DashboardPreferences
 

@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs';
+import { createWorktreeForDispatch, shouldCreateWorktree } from '../worktree.mjs';
+
 export default function dispatchRoutes(deps) {
   const {
     db, json, err, parseBody,
@@ -128,6 +131,31 @@ export default function dispatchRoutes(deps) {
 
       const effectiveWorkItem = workItem || (work_item_id ? { id: work_item_id, title: title || '', description: description || '', status: 'open', priority: 'medium', tags: [], session_log: [] } : null);
 
+      // Resolve permission mode and skip_permissions independently
+      const resolvedPermMode = permission_mode || 'acceptEdits';
+      const resolvedSkipPerms = skip_permissions === true || skip_permissions === 'true';
+
+      // --- Dispatch-level worktree creation (W-927) ---
+      const featureFlag = (db.getPreference('worktree_at_dispatch') ?? 'true') === 'true';
+      const rawEntry = portfolio?.entry || null;
+      let worktreeContext = null;
+      let effectiveCwd = projectPath;
+
+      if (shouldCreateWorktree({ permissionMode: resolvedPermMode, workItemId: work_item_id, portfolioEntry: rawEntry, featureFlag })) {
+        try {
+          worktreeContext = await createWorktreeForDispatch({
+            projectPath,
+            portfolioEntry: rawEntry,
+            workItemId: work_item_id,
+            workItemTitle: title || effectiveWorkItem?.title || '',
+            orgConventions: portfolio?.org,
+          });
+          effectiveCwd = worktreeContext.worktreePath;
+        } catch (wtErr) {
+          return err(res, `Worktree creation failed: ${wtErr.message}`, 500);
+        }
+      }
+
       const prompt = buildDispatchPrompt({
         workItem: effectiveWorkItem,
         projectKey: project_key,
@@ -136,14 +164,11 @@ export default function dispatchRoutes(deps) {
         portfolio,
         epicContext,
         relatedProjects,
+        worktreeContext,
       });
 
       // Select sub-agents based on work item and portfolio context
       const agentDefs = await selectAgentsForDispatch({ workItem: effectiveWorkItem, portfolio });
-
-      // Resolve permission mode and skip_permissions independently
-      const resolvedPermMode = permission_mode || 'acceptEdits';
-      const resolvedSkipPerms = skip_permissions === true || skip_permissions === 'true';
 
       const dispatch = {
         id,
@@ -157,6 +182,9 @@ export default function dispatchRoutes(deps) {
         status: 'running',
         agent_phase: 'generating',
         claude_session_id: null,
+        worktree_path: worktreeContext?.worktreePath || null,
+        worktree_branch: worktreeContext?.branchName || null,
+        source_branch: worktreeContext?.sourceBranch || null,
         output: [],
         lastLines: [],
         wsClients: new Set(),
@@ -178,12 +206,12 @@ export default function dispatchRoutes(deps) {
           args.push('--agents', JSON.stringify(agentDefs));
         }
         proc = spawn(CLAUDE_BIN, args, {
-          cwd: projectPath,
+          cwd: effectiveCwd,
           stdio: ['pipe', 'pipe', 'pipe'],
           env: { ...process.env, ARCHITECT_ROOT: ROOT },
         });
-      } catch (err) {
-        return json(res, { error: `Failed to spawn claude: ${err.message}` }, 500);
+      } catch (spawnErr) {
+        return json(res, { error: `Failed to spawn claude: ${spawnErr.message}` }, 500);
       }
 
       // Write prompt with backpressure handling to prevent truncation on large prompts
@@ -288,6 +316,9 @@ export default function dispatchRoutes(deps) {
           permission_mode: d.permission_mode || 'acceptEdits',
           skip_permissions: d.skip_permissions || false,
           claude_session_id: d.claude_session_id || null,
+          worktree_path: d.worktree_path || null,
+          worktree_branch: d.worktree_branch || null,
+          source_branch: d.source_branch || null,
         });
       }
       json(res, list);
@@ -369,7 +400,13 @@ export default function dispatchRoutes(deps) {
 
       const body = await parseBody(req);
       const resumeSessionId = old.claude_session_id;
-      const { work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions } = old;
+      const { work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, worktree_path, worktree_branch, source_branch } = old;
+
+      // Validate worktree liveness if one was used
+      const resumeCwd = worktree_path && existsSync(worktree_path) ? worktree_path : project_path;
+      if (worktree_path && !existsSync(worktree_path)) {
+        return err(res, `Worktree was removed (${worktree_path}). Re-dispatch to create a new one.`, 400);
+      }
 
       // Remove old suspended record
       dispatches.delete(m[1]);
@@ -392,6 +429,9 @@ export default function dispatchRoutes(deps) {
         status: 'running',
         agent_phase: 'generating',
         claude_session_id: resumeSessionId,
+        worktree_path: worktree_path || null,
+        worktree_branch: worktree_branch || null,
+        source_branch: source_branch || null,
         output: [],
         lastLines: [],
         wsClients: new Set(),
@@ -407,7 +447,7 @@ export default function dispatchRoutes(deps) {
 
       let proc;
       try {
-        proc = spawn(CLAUDE_BIN, args, { cwd: project_path, env: { ...process.env, ARCHITECT_ROOT: ROOT }, stdio: ['pipe', 'pipe', 'pipe'] });
+        proc = spawn(CLAUDE_BIN, args, { cwd: resumeCwd, env: { ...process.env, ARCHITECT_ROOT: ROOT }, stdio: ['pipe', 'pipe', 'pipe'] });
       } catch (e) {
         return err(res, `Failed to spawn resumed dispatch: ${e.message}`, 500);
       }

@@ -52,7 +52,7 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 
 7. **Write contract tests** (if applicable per `domain/rules.md` → Contract-First Planning Rules): When the plan introduces new API endpoints, UI interactions, or dispatch flows, write E2E/integration tests that encode the expected behavior before implementation. Verify they fail (red). Trivial changes are exempt.
 
-8. **Create worktree**: Follow `usecases/manage-worktree.md` → create, using the work item ID as the ticket ID and the work item title as the task description. Respect the portfolio entry's `worktree_mode` field — if `"explicit"`, work in-place.
+8. **Worktree check**: If a `# Worktree Context` section is present in your prompt (i.e., the dispatch infrastructure already created a worktree and set your working directory to it), skip worktree creation and proceed to step 9. Otherwise, follow `usecases/manage-worktree.md` → create, using the work item ID as the ticket ID and the work item title as the task description. Respect the portfolio entry's `worktree_mode` field — if `"explicit"`, work in-place.
 
 9. **Implement changes**: Dispatch coder agent in the worktree with: portfolio context, work item details, the approved plan, and the coding standards brief from `domain/rules.md`.
 
@@ -69,7 +69,7 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 
 14. **Update status**: Dispatch tracker agent with command `update <id> done`. If the item has an `epic_id`, tracker checks epic progress and suggests status transition.
 
-15. **Present results**: Summarize changes made, test results, commit hash, and branch name. Offer `/pr` to create a pull request from the worktree branch, or `/worktree cleanup` to discard.
+15. **Present results**: Summarize changes made, test results, commit hash, and branch name. Offer the user three options: `/pr` (default — create pull request from the worktree branch), merge-back (local merge into originating branch via `/worktree cleanup` with merge-back mode), or `/worktree cleanup` (discard changes).
 
 ## Post-conditions
 - All changes are committed in a worktree branch (not pushed)

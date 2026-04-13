@@ -601,6 +601,42 @@ The orchestrator may handle single-line fixes inline without dispatching an agen
 
 All git operations (commit, push, PR creation, branch management, worktree operations, merge) are delegated to the **git-ops** agent (haiku). The orchestrator does not run git commands directly except for read-only queries (status, log, diff for context).
 
+## Session Scope Rules
+
+Every session has a `SessionIdentity` (see `domain/entities.md`) that determines its permissions. These rules define what each session type may and may not do.
+
+### Session Type Permissions
+
+| Capability | orchestrator (depth 0) | dispatch (depth 1) | terminal (depth 1) | cli (depth 0) |
+|---|---|---|---|---|
+| Spawn sub-agents (Agent tool) | Yes | Yes (depth 1 only) | Yes (depth 1 only) | Yes |
+| Trigger dashboard dispatches | Yes | No | No | Yes |
+| Create/kill terminal sessions | Yes | No | No | Yes |
+| Modify any work item | Yes | No | No | Yes |
+| Modify own work item | Yes | Yes | Yes | Yes |
+| Create new work items (adjacent discoveries) | Yes | Yes | Yes | Yes |
+| Read portfolio context | Yes (full) | Yes (tier-filtered) | Yes (tier-filtered) | Yes (full) |
+
+### Depth Limit
+
+- `dispatch_depth: 0` — main orchestrator or CLI session. Full capabilities.
+- `dispatch_depth: 1` — dashboard-dispatched agent or terminal. Restricted to own work item scope. May spawn sub-agents via the Agent tool (in-process) but must not trigger further dashboard dispatches.
+- `dispatch_depth: 2+` — forbidden. Sub-agents of dispatched agents run in-process only. They do not get their own session identity.
+
+### Work Item Scope
+
+Dispatched sessions (depth 1) operate within a bounded scope:
+- **Read**: any work item, any portfolio entry within their context tier
+- **Update**: only the work item they were dispatched for (status, session log)
+- **Create**: new work items for adjacent discoveries are permitted (the orchestrator reviews these later)
+- **Delete**: not permitted — only the orchestrator or user may cancel/delete work items
+
+### Enforcement
+
+These rules are enforced at two levels:
+1. **Prompt-level**: The session identity and scope restrictions are injected into every dispatched agent's prompt (see dashboard prompt builder)
+2. **Runtime-level**: API authorization middleware validates session identity on mutating endpoints (see follow-up ticket for implementation)
+
 ## Retry and Feedback Policy
 
 No automatic re-dispatch on failure. The orchestrator receives failure information and makes an informed decision.

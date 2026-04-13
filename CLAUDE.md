@@ -108,6 +108,8 @@ planner (produces task list with parallel batches) → dispatch batches concurre
 debugger/scout → coder (fix) → tester (verify) → git-ops (commit)
 ```
 
+**Dispatch-Level Worktree Isolation**: When the dashboard dispatches an agent with `acceptEdits` permission mode + a work item + `worktree_mode: "auto"`, the dispatch infrastructure creates a git worktree **before** spawning the agent. The agent starts with `cwd` set to the worktree. This prevents conflicts between parallel dispatches on the same project. The agent receives a `# Worktree Context` prompt section and skips its own worktree creation (implement-work-item step 8). Controlled by the `worktree_at_dispatch` dashboard preference. See `domain/rules.md` → Worktree Rules.
+
 See `domain/rules.md` for triage dispatch rules, workflow selection matrix, agent inclusion rules, model selection rules, and role-scoped context injection.
 
 ## Project Portfolio
