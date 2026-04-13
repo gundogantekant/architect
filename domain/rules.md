@@ -453,13 +453,18 @@ Shared git rules enforced by all implementation agents.
 ## Worktree Rules
 
 - **All work on portfolio projects MUST use a worktree by default, unless the PortfolioEntry sets `worktree_mode: "explicit"`.** This applies to implementation agents, direct orchestrator edits, and any skill that modifies code in a portfolio project. When `worktree_mode` is `"explicit"`, agents work in-place on the current branch and only create a worktree when the user explicitly requests one. When `worktree_mode` is `"auto"` (the default), the only exception is when the user explicitly requests working without a worktree (e.g., "edit in place", "no worktree", "work on main").
+- **Dispatch infrastructure creates worktrees for `acceptEdits` mode dispatches with a work item** when `worktree_mode` is `"auto"` and the `worktree_at_dispatch` preference is enabled. The dispatched agent starts with `cwd` already set to the worktree. Agents detect this via the `# Worktree Context` section in their prompt and skip their own worktree creation step (implement-work-item step 8).
+- **`plan` mode dispatches, ad-hoc dispatches (no work item), and `worktree_mode: "explicit"` projects** do not get dispatch-level worktrees. The agent manages its own worktree if needed.
+- **Worktree creation failure blocks the dispatch** with a 500 error. There is no silent fallback to the original project directory — isolation is mandatory when requested.
 - Read-only operations (review, audit, diagnosis, scouting) do not require a worktree.
 - Worktrees are sibling directories of the project folder, not inside it
 - Path: `<parent-of-project-dir>/<project-dir-name>-<branch-name>/`
 - Branch/folder naming: `<project-dir-name>-<branch-prefix><ticket-id>-<slug>` (e.g., `light-app-GEN-1641-add-auth-flow`)
-- Ticket ID comes from Notion (via MCP) or user input; the orchestrator obtains it before creating the worktree
+- Ticket ID comes from the work item ID (W-XXX), Notion (via MCP), or user input; the orchestrator obtains it before creating the worktree
+- WorktreeContext captures `originating_branch` at creation time — the branch the worktree was branched from. This may be `main`, a feature branch, or any other branch.
 - After worktree creation, `worktree_setup` hooks from the PortfolioEntry run if defined (copy paths, post commands)
-- After implementation, the user decides: merge via `/pr` or discard via `/worktree cleanup`
+- After implementation, the user is presented with three options: `/pr` (default — create pull request), merge-back (local merge into originating branch), or `/worktree cleanup` (discard)
+- **Merge-back** uses fast-forward when possible, falls back to merge commit, and never auto-resolves conflicts. On conflict: abort and report to user.
 - Portfolio registry always stores the original project path, never worktree paths
 
 ## Error Recovery
@@ -740,3 +745,11 @@ open → [Plan Gate] → ready → in-progress → [Code Gate] → done
 ## External Action Rules
 
 - **Never post comments, reviews, or any content to GitHub pull requests unless the user explicitly requests it.** This applies to all agents, skills, and orchestrator actions. Read-only operations (fetching PR diffs, viewing comments, reading PR metadata) are always allowed. The restriction covers `gh pr comment`, `gh pr review`, and any GitHub API call that writes to a PR.
+
+## Token & Credential Management Rules
+
+- **Before creating any token, API key, credential, or named resource on a third-party service, always ask the user for the token name.** Never create tokens silently.
+- Suggest a name following the organization-level `token_naming` convention from `portfolio/<org>/organization.json`. If no org convention exists, suggest the default pattern: `<UserName> <context> <service> <purpose>`.
+- When performing any named action on behalf of the user — creating accounts, registering webhooks, naming cloud resources, generating SSH keys — ask for the preferred name or confirm a suggestion before proceeding.
+- Token names must be identifiable and traceable: a person reading the token name later should understand who created it, from which device/context, for which service, and for what purpose.
+- This rule applies to all agents, skills, and orchestrator actions across all portfolio projects.
