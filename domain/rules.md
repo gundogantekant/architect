@@ -255,7 +255,8 @@ When PM's classification confidence is below **0.6**, always include clarificati
 - PM suggests work items for **medium+ complexity** requests only
 - Work items are created only after user confirmation
 - IDs use sequential `W-XXX` format (zero-padded, never reused)
-- Statuses: `open` → `in-progress` → `done` (or `blocked`, `cancelled`)
+- Statuses: `open` → `ready` → `in-progress` → `done` (or `blocked`, `cancelled`)
+- `archived` is reachable only from `done` or `cancelled` — archived items are hidden from the active backlog
 - Session log is append-only
 - `list` supports `--org <name>` to filter by organization prefix
 - `list` supports `--project` with comma-separated values for multi-project filtering

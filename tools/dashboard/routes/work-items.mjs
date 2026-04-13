@@ -62,6 +62,13 @@ export default function workItemRoutes(deps) {
       json(res, { deleted: m[1] });
     }],
 
+    // Archive work item (done/cancelled → archived)
+    [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/archive$/, 'POST', async (m, _req, res) => {
+      const archived = db.archiveWorkItem(m[1]);
+      if (!archived) return err(res, 'work item not found or not archivable (must be done or cancelled)', 404);
+      json(res, archived);
+    }],
+
     // Add session log entry to work item
     [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/log$/, 'POST', async (m, req, res) => {
       const itemId = m[1];

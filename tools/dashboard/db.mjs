@@ -165,8 +165,19 @@ export function updateWorkItem(id, fields) {
 export function deleteWorkItem(id) {
   const item = getWorkItem(id);
   if (!item) return null;
-  db.prepare('DELETE FROM work_items WHERE id = ?').run(id);
-  return item;
+  const now = new Date().toISOString();
+  db.prepare("UPDATE work_items SET status = 'cancelled', updated_at = ? WHERE id = ?").run(now, id);
+  return getWorkItem(id);
+}
+
+export function archiveWorkItem(id) {
+  const item = getWorkItem(id);
+  if (!item) return null;
+  if (item.status !== 'done' && item.status !== 'cancelled') return null;
+  const now = new Date().toISOString();
+  db.prepare("UPDATE work_items SET status = 'archived', updated_at = ? WHERE id = ?").run(now, id);
+  addWorkItemLog(id, 'Archived');
+  return getWorkItem(id);
 }
 
 export function addWorkItemLog(workItemId, summary) {
@@ -435,10 +446,12 @@ export function getAllPreferences() {
 export function getBacklog(orgFilter) {
   let items;
   if (orgFilter) {
-    items = db.prepare('SELECT * FROM work_items WHERE project_key LIKE ?').all(orgFilter.toLowerCase() + '/%');
+    items = db.prepare("SELECT * FROM work_items WHERE project_key LIKE ? AND status != 'archived'").all(orgFilter.toLowerCase() + '/%');
   } else {
-    items = db.prepare('SELECT * FROM work_items').all();
+    items = db.prepare("SELECT * FROM work_items WHERE status != 'archived'").all();
   }
+
+  const statsMap = getAllWorkItemStats();
 
   // Group by project_key
   const projects = {};
@@ -449,6 +462,14 @@ export function getBacklog(orgFilter) {
       date: l.logged_at,
       summary: l.summary,
     }));
+    // Attach cumulative agent time stats
+    const stats = statsMap.get(item.id);
+    if (stats) {
+      item.total_time_seconds = stats.total_time_seconds;
+      item.total_cost_usd = stats.total_cost_usd;
+      item.session_count = stats.session_count;
+      item.last_session_at = stats.last_session_at;
+    }
     if (!projects[row.project_key]) projects[row.project_key] = { items: [] };
     projects[row.project_key].items.push(item);
   }
@@ -481,6 +502,14 @@ export function getWorkItemFull(id) {
   // Find project_key
   const row = db.prepare('SELECT project_key FROM work_items WHERE id = ?').get(id);
   if (row) item.project_key = row.project_key;
+  // Attach cumulative agent time stats
+  const stats = getWorkItemStats(id);
+  if (stats) {
+    item.total_time_seconds = stats.total_time_seconds;
+    item.total_cost_usd = stats.total_cost_usd;
+    item.session_count = stats.session_count;
+    item.last_session_at = stats.last_session_at;
+  }
   return item;
 }
 
@@ -707,6 +736,13 @@ export function getEpicStats(epicId) {
 
 export function getWorkItemStats(workItemId) {
   return db.prepare('SELECT * FROM work_item_stats WHERE work_item_id = ?').get(workItemId);
+}
+
+export function getAllWorkItemStats() {
+  const rows = db.prepare('SELECT * FROM work_item_stats').all();
+  const map = new Map();
+  for (const r of rows) map.set(r.work_item_id, r);
+  return map;
 }
 
 export function hardDeleteAllTestData() {

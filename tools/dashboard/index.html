@@ -2682,6 +2682,15 @@ function renderWorkItemsTable(items, allWorkItems, tableId) {
     html += `<button class="delete-btn" data-wi-del="${idx}">delete</button>`;
     html += `</td></tr>`;
     html += `<tr class="wi-detail" data-wi-detail="${idx}" style="display:none"><td colspan="8">`;
+    html += `<div style="font-size:11px;color:var(--text-light);margin-bottom:8px;display:flex;flex-wrap:wrap;gap:4px 12px">`;
+    html += `<span>Created: ${fmtDate(w.created_at)}</span>`;
+    html += `<span>Updated: ${fmtDate(w.updated_at)}</span>`;
+    if (w.total_time_seconds) {
+      const hrs = (w.total_time_seconds / 3600).toFixed(1);
+      html += `<span>Agent time: ${hrs}h (${w.session_count || 0} sessions)</span>`;
+    }
+    if (w.total_cost_usd) html += `<span>Cost: $${w.total_cost_usd.toFixed(2)}</span>`;
+    html += `</div>`;
     if (w.description?.trim()) html += `<div class="md-inline" style="max-height:300px;overflow-y:auto;margin-bottom:8px">${renderMd(w.description)}</div>`;
     if (w.session_log?.length) {
       html += `<div class="session-log">`;
@@ -4011,6 +4020,15 @@ async function renderEpicDetailView(epicId) {
       html += `</td></tr>`;
       // Detail row for this work item in epic view
       html += `<tr class="wi-detail" data-epic-wi-detail="${esc(item.id)}" style="display:none"><td colspan="8">`;
+      html += `<div style="font-size:11px;color:var(--text-light);margin-bottom:8px;display:flex;flex-wrap:wrap;gap:4px 12px">`;
+      html += `<span>Created: ${fmtDate(item.created_at)}</span>`;
+      html += `<span>Updated: ${fmtDate(item.updated_at)}</span>`;
+      if (item.total_time_seconds) {
+        const hrs = (item.total_time_seconds / 3600).toFixed(1);
+        html += `<span>Agent time: ${hrs}h (${item.session_count || 0} sessions)</span>`;
+      }
+      if (item.total_cost_usd) html += `<span>Cost: $${item.total_cost_usd.toFixed(2)}</span>`;
+      html += `</div>`;
       if (item.description?.trim()) html += `<div class="md-inline" style="max-height:300px;overflow-y:auto;margin-bottom:8px">${renderMd(item.description)}</div>`;
       if (item.session_log?.length) {
         html += `<div class="session-log">`;

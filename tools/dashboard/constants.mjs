@@ -24,7 +24,7 @@ export const port = (() => {
 })();
 
 // Valid status values — canonical source: domain/entities.md
-export const VALID_WORK_ITEM_STATUSES = new Set(['open', 'in-progress', 'blocked', 'done', 'cancelled']);
+export const VALID_WORK_ITEM_STATUSES = new Set(['open', 'ready', 'in-progress', 'blocked', 'done', 'cancelled', 'archived']);
 export const VALID_EPIC_STATUSES = new Set(['draft', 'active', 'done', 'cancelled', 'archived']);
 export const VALID_PRIORITIES = new Set(['low', 'medium', 'high', 'critical']);
 

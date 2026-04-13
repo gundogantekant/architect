@@ -294,7 +294,7 @@ Stored in `work/backlog.json` under `projects[key].items`. The project key (`org
 {
   "id": "string (W-XXX format, zero-padded)",
   "title": "string",
-  "status": "open|ready|in-progress|blocked|done|cancelled",
+  "status": "open|ready|in-progress|blocked|done|cancelled|archived",
   "priority": "low|medium|high|critical",
   "description": "string",
   "epic_id": "string (E-XXX or empty, optional)",
@@ -316,6 +316,7 @@ Status semantics:
 - `blocked` — waiting on dependency
 - `done` — code reviewed and approved, merged
 - `cancelled` — abandoned
+- `archived` — completed or cancelled item moved to archive, hidden from active backlog
 
 ### Work Item Artifact Directory
 
