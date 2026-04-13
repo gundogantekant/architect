@@ -92,12 +92,13 @@ These rules apply to ALL workflow patterns, not only `parallel-fan-out`:
 | reviewer | All code changes except trivial |
 | security-auditor | Auth, secrets, input validation, or external data is involved |
 | browser | E2E tests, visual regression, bug reproduction in browser, or web automation tasks requested by the user |
+| tech-reviewer-* | All plans from planner agent (medium+ complexity) and all non-trivial code changes. Dispatched as a context-filtered group (3–9 agents) in parallel per Technical Review Board Rules |
 
 ## Agent Permission Model
 
 | Category | Agents | Can modify code | Can write data | Can interact with web | Uses worktree |
 |----------|--------|-----------------|----------------|-----------------------|---------------|
-| Read-only | reviewer, security-auditor, performance, strategist, classifier, coordinator, scout, debugger, dependency-manager | No | No | No | No (main tree) |
+| Read-only | reviewer, security-auditor, performance, strategist, classifier, coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot | No | No | No | No (main tree) |
 | Interactive | browser | No | No | Yes | No |
 | Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer, git-ops | Yes | No | No | Yes (worktree) |
 | Onboarding | profiler | No (writes only CLAUDE.md to target project) | No | No | No |
@@ -466,6 +467,15 @@ Static defaults defined in each agent's frontmatter. The orchestrator overrides 
 | planner | opus | read-only |
 | strategist | opus | read-only |
 | security-auditor | opus | read-only |
+| tech-reviewer-swe | sonnet | read-only |
+| tech-reviewer-arch | sonnet | read-only |
+| tech-reviewer-dx | sonnet | read-only |
+| tech-reviewer-ux | sonnet | read-only |
+| tech-reviewer-frontend | sonnet | read-only |
+| tech-reviewer-dba | sonnet | read-only |
+| tech-reviewer-pm | sonnet | read-only |
+| tech-reviewer-systems | sonnet | read-only |
+| tech-reviewer-iot | sonnet | read-only |
 
 ## Role-Scoped Context Injection
 
@@ -477,7 +487,7 @@ Each agent receives only the context layers relevant to its role. This reduces t
 |--------------|--------|-----------------|
 | none | git-ops | Branch name and project path only |
 | minimal | classifier, scout, tracker, dependency-manager, browser | `guidance.stack_summary`, `scout_report.language`, `scout_report.framework` |
-| standard | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, coordinator, planner, debugger, documenter, api-designer, refactorer, strategist, profiler | Minimal + `guidance.structure`, `guidance.conventions`, `custom_rules`, `agents.dispatch_notes`, `brief.purpose`, `brief.domain`, `brief.users`, `doc_paths`, `portfolio_guides` |
+| standard | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, coordinator, planner, debugger, documenter, api-designer, refactorer, strategist, profiler, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot | Minimal + `guidance.structure`, `guidance.conventions`, `custom_rules`, `agents.dispatch_notes`, `brief.purpose`, `brief.domain`, `brief.users`, `doc_paths`, `portfolio_guides` |
 | full | tester, reviewer, security-auditor, ci-cd, performance | Standard + `guidance.ci_cd`, `guidance.testing`, complete `brief` (all fields), `doc_paths` |
 
 ### Application
@@ -565,6 +575,93 @@ Every plan that introduces new API endpoints, UI interactions, or agent dispatch
 3. **Test placement**: Dashboard contracts go in `tools/dashboard/tests/`. Other projects use their own test infrastructure. Test files follow the naming convention `<feature>.spec.mjs`.
 4. **Contract scope**: At minimum, cover the API layer (request/response contracts), the UI layer (element rendering, user interactions), and any prompt/context assembly (content verification).
 5. **Exemptions**: Trivial changes (typo fixes, single-line edits, documentation-only) are exempt. If in doubt, write the contract.
+
+## Technical Review Board Rules
+
+The Technical Review Board is a context-filtered group of specialized review agents (3–9) that evaluate artifacts (plans, code diffs, PRs) from multiple perspectives. It operates as a two-gate quality system in the work item lifecycle.
+
+### Review Board Agents
+
+**Required (always dispatched)**:
+
+| Agent | Perspective |
+|-------|-------------|
+| tech-reviewer-swe | Testability, Clean Code enforcement, performance, security, dependency management, tech debt |
+| tech-reviewer-arch | Clean Architecture enforcement, layer boundaries, structural soundness, integration points |
+| tech-reviewer-pm | Scope alignment, risk assessment, milestone impact, dependency tracking, effort estimation |
+
+**Context-dependent (dispatched when context matches)**:
+
+| Agent | Perspective | Dispatch when |
+|-------|-------------|---------------|
+| tech-reviewer-frontend | Component architecture, state management, rendering performance, browser compat, responsive design | Project has frontend stack OR artifact touches UI/component code |
+| tech-reviewer-ux | User flows, interaction design, accessibility, cognitive load, error states | Project has user-facing interfaces OR artifact introduces user flows |
+| tech-reviewer-dx | API surface, CLI ergonomics, configuration, Clean Code naming on APIs | Project has developer-facing surfaces (APIs, CLIs, SDKs, agent prompts) OR artifact changes developer APIs |
+| tech-reviewer-dba | Schema design, query patterns, indexing, migrations, Clean Architecture data layer | Project uses a database OR artifact touches schema/query/model code |
+| tech-reviewer-systems | System boundaries, communication protocols, cross-subsystem failure modes, version compat | Project spans multiple subsystems OR artifact crosses system boundaries |
+| tech-reviewer-iot | Device provisioning, OTA, telemetry, power management, BLE, connectivity resilience | Project involves IoT/embedded devices OR artifact touches device-layer code |
+
+All agents are read-only (sonnet default, escalatable to opus for large/strategic artifacts per Model Selection Rules).
+
+### Context-Based Board Composition
+
+The orchestrator assembles the board using three context signals (checked in order):
+1. **Portfolio entry** — `scout_report.language`, `scout_report.framework`, `guidance.stack_summary`, tags
+2. **Artifact content** — keywords/patterns in the plan text or diff being reviewed
+3. **Work item metadata** — tags, title, description
+
+**Resolution rule**: When portfolio entry is missing or incomplete, fall back to artifact content scanning. When both are inconclusive, include the reviewer (over-inclusion is cheaper than missing a perspective).
+
+### Artifact Types
+
+The board reviews three artifact types:
+1. **Plan** — text output from the planner agent
+2. **Diff** — staged changes, branch diffs, or file-scoped diffs
+3. **PR** — PR diffs plus PR metadata (title, description, labels, linked issues)
+
+### Two-Gate Lifecycle
+
+The board operates as two gates in the work item lifecycle:
+
+```
+open → [Plan Gate] → ready → in-progress → [Code Gate] → done
+```
+
+| Gate | Trigger | Artifact Type | Success Outcome |
+|------|---------|---------------|-----------------|
+| Plan Gate | Plan produced by planner (medium+ complexity) | plan | Work item status → `ready` |
+| Code Gate | Implementation complete, before merge | diff or pr | Work item status → `done` |
+
+### Orchestrator Flow
+
+1. Orchestrator determines which agents to dispatch using context-based composition rules
+2. Orchestrator dispatches all selected tech-reviewer-* agents **in parallel** with the artifact and target project portfolio context as input
+3. Orchestrator collects all `TechReviewVerdict` results (see `domain/entities.md`)
+4. Orchestrator applies aggregation rules to determine `TechReviewBoardResult`
+
+### Aggregation Rules
+
+| Condition | Result |
+|-----------|--------|
+| Any verdict is `block` | Artifact does NOT proceed. Orchestrator feeds all concerns back to planner (plan gate) or coder (code gate) for revision, then re-runs the review board. Maximum 2 revision cycles before mandatory user escalation. |
+| Any verdict is `revise` (none `block`) | Orchestrator presents artifact to user WITH revision concerns highlighted. User decides: accept as-is, request revision, or override. |
+| All verdicts are `approve` | Artifact proceeds. Plan gate: status → `ready`. Code gate: proceed to commit/merge. |
+
+### Exemptions
+
+- Trivial or small complexity work items skip the plan gate (no planner involved)
+- The code gate runs for all non-trivial code changes
+- Direct agent dispatches without a planning phase skip the plan gate
+- Plans provided by the user (not generated by the planner agent) skip the plan gate
+
+### Integration Points
+
+1. `usecases/implement-work-item.md` step 6 — **Plan Gate**: after plan generation, before user confirmation. On approve → status `ready`.
+2. `usecases/implement-work-item.md` step 11 — **Code Gate**: after tests pass, before commit. On approve → proceed to commit.
+3. `usecases/review-code.md` — Code Gate runs alongside the reviewer agent for detailed findings.
+4. `usecases/create-pr.md` — Code Gate runs before PR creation. Block verdicts warn the user.
+5. `plan-then-execute` workflow — Plan Gate runs after planner produces task decomposition.
+6. Any coordinator dispatch that includes a planner step — Plan Gate runs after planner completes.
 
 ## External Action Rules
 

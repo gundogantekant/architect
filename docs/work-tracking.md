@@ -27,7 +27,7 @@ The `/work` command provides persistent work item and epic tracking across sessi
 
 ## Filters for `list`
 
-- `--status <open|in-progress|blocked|done|cancelled>`
+- `--status <open|ready|in-progress|blocked|done|cancelled>`
 - `--project <org/project/component>` — supports comma-separated values for multi-project filtering
 - `--org <org-name>` — scope to all projects in an organization
 - `--tag <tag>`
@@ -71,11 +71,25 @@ Both CLI and dashboard use topological sort (Kahn's algorithm) for work item lis
 
 | Status | Meaning |
 |--------|---------|
-| open | Ready to start |
-| in-progress | Currently being worked on |
+| open | Created, not yet planned |
+| ready | Plan reviewed and approved by technical review board, cleared for implementation |
+| in-progress | Implementation underway |
 | blocked | Waiting on dependency or external input |
-| done | Completed |
+| done | Code reviewed and approved, merged |
 | cancelled | No longer needed |
+
+### Two-Gate Lifecycle
+
+The Technical Review Board operates as two quality gates in the work item lifecycle:
+
+```
+open → [Plan Gate] → ready → in-progress → [Code Gate] → done
+```
+
+- **Plan Gate**: After the planner produces a plan (medium+ complexity), the technical review board evaluates it. On approval, the work item transitions to `ready`.
+- **Code Gate**: After implementation and tests pass, the board evaluates the code diff. On approval, the work item proceeds to commit and `done`.
+
+See `domain/rules.md` → Technical Review Board Rules for full details.
 
 ## Epics
 

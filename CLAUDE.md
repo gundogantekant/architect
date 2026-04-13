@@ -6,7 +6,7 @@ When the user says "architect" in conversation, it primarily refers to **this pr
 
 ## Overview
 
-This project provides 24 specialized Claude Code subagents and 18 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack. The main thread acts as a strict orchestrator/PM — it reads, plans, dispatches, and tracks, but delegates all implementation and git operations to specialized agents.
+This project provides 33 specialized Claude Code subagents and 18 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack. The main thread acts as a strict orchestrator/PM — it reads, plans, dispatches, and tracks, but delegates all implementation and git operations to specialized agents.
 
 ## Architecture
 
@@ -51,6 +51,15 @@ See `docs/architecture.md` for layer boundaries and dependency rules.
 | Systematic refactoring | refactorer | sonnet |
 | Browser automation (E2E, visual, web tasks) | browser | sonnet |
 | Git operations (commit, push, PR, branch, worktree) | git-ops | haiku |
+| Tech review — SWE perspective | tech-reviewer-swe | sonnet |
+| Tech review — architecture (Clean Architecture) | tech-reviewer-arch | sonnet |
+| Tech review — project management | tech-reviewer-pm | sonnet |
+| Tech review — frontend perspective | tech-reviewer-frontend | sonnet |
+| Tech review — UX perspective | tech-reviewer-ux | sonnet |
+| Tech review — DX perspective | tech-reviewer-dx | sonnet |
+| Tech review — database architecture | tech-reviewer-dba | sonnet |
+| Tech review — systems engineering | tech-reviewer-systems | sonnet |
+| Tech review — IoT engineering | tech-reviewer-iot | sonnet |
 
 Default models are overridden dynamically by the orchestrator based on task complexity. See `domain/rules.md` → Model Selection Rules.
 
@@ -68,9 +77,19 @@ classifier (haiku, fast triage) → [coordinator (sonnet, detailed plan)] → fo
 ```
 For simple cases (trivial/small, high confidence), the orchestrator skips the coordinator and constructs a dispatch plan directly from the classifier output.
 
+**Technical Review Board** (two-gate lifecycle for medium+ work):
+```
+Plan Gate:  planner → [tech-reviewer-swe + tech-reviewer-arch + tech-reviewer-pm + (context-dependent: frontend, ux, dx, dba, systems, iot)] (parallel)
+  → aggregate verdicts → if block: revise + re-review (max 2 cycles) → status: ready
+
+Code Gate:  coder → tester → [tech-reviewer-* board] (parallel) + reviewer (detailed)
+  → aggregate verdicts → if block: fix + re-review → commit/merge
+```
+Board composition is context-filtered (3–9 agents). See `domain/rules.md` → Technical Review Board Rules.
+
 **Sequential Pipeline** (new features):
 ```
-scout → [strategist] → planner → coder → tester → reviewer → git-ops (commit)
+scout → [strategist] → planner → tech review board (plan gate) → coder → tester → tech review board (code gate) → reviewer → git-ops (commit)
 ```
 
 **Parallel Fan-Out** (full-stack features):
