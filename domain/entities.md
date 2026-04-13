@@ -51,6 +51,43 @@ Full output of the classifier agent. Extends RequestClassification with dispatch
 
 **Rules**: When `needs_coordinator` is false, the orchestrator constructs a simple dispatch plan directly from this output. When true, the orchestrator dispatches the coordinator agent with this output as input.
 
+## PreDispatchCheckResult
+
+Output by the orchestrator when running pre-dispatch awareness checks. The orchestrator evaluates whether the user's request overlaps with recent commits, done/in-progress work items, or active dispatches before proceeding with agent dispatch.
+
+```json
+{
+  "status": "clear|warning|conflict",
+  "findings": [
+    {
+      "type": "already_done|partial_overlap|active_conflict|stale_context",
+      "severity": "minor|major|critical",
+      "evidence": "string — commit hash, work item ID, or file path",
+      "summary": "string — what was found",
+      "recommendation": "string — suggested action"
+    }
+  ]
+}
+```
+
+Status semantics:
+- `clear` — no findings, proceed silently without mentioning the check
+- `warning` — findings exist (minor/major severity), present to user before proceeding
+- `conflict` — at least one critical finding, strongly recommend user review before proceeding
+
+Severity alignment (matches TechReviewVerdict severity scale):
+- `minor` — related activity detected (1 keyword match), informational only
+- `major` — likely overlap, user should confirm awareness (2+ keyword matches)
+- `critical` — strong evidence request is already addressed (exact title match on done item)
+
+Finding type semantics:
+- `already_done` — a done work item or recent commit closely matches the request
+- `partial_overlap` — request scope overlaps with an existing done/in-progress item's scope
+- `active_conflict` — an in-progress item or active dispatch targets the same area
+- `stale_context` — recent commits modified files/modules the request targets
+
+**Trigger**: The orchestrator runs this check when the classifier returns `type` in {feature, bugfix, refactor, maintenance} AND `complexity` >= small. No classifier schema change is needed — the orchestrator derives the trigger from existing ClassifierOutput fields. See `domain/rules.md` → Pre-Dispatch Check Rules.
+
 ## WorkflowPattern
 
 ```

@@ -300,6 +300,79 @@ The orchestrator uses a two-stage triage flow: **classifier** (haiku, fast) then
 - Trivial tasks (typo fix, single-line change) — dispatch directly
 - Explicit agent invocations where the user names the agent
 
+## Pre-Dispatch Check Rules
+
+Before dispatching work agents, the orchestrator checks whether the user's request overlaps with recent codebase changes, done/in-progress work items, or active dispatches. This catches human errors where the user's mental model is stale — requesting changes that already exist or conflict with ongoing work.
+
+### Trigger Condition
+
+The orchestrator runs the pre-dispatch check when the classifier returns:
+- `classification.type` is one of: `feature`, `bugfix`, `refactor`, `maintenance`
+- AND `classification.complexity` is `small` or higher
+
+No classifier schema change is needed — the orchestrator derives the trigger from existing ClassifierOutput fields.
+
+### Skip Conditions
+
+The pre-dispatch check does NOT run when:
+- Classifier gates it: type is NOT in {feature, bugfix, refactor, maintenance} OR complexity is `trivial`
+- Slash commands: handled before classifier runs
+- Target project is not in portfolio: no backlog to check against
+- Explicit work item reference: user references a specific work item ID (e.g., "continue W-891") — they are already aware of context
+
+### Checks
+
+| Check | Method | Flags |
+|-------|--------|-------|
+| Already Done | `git log --oneline -20 --grep=<term> -i` + `GET /api/work-items?project_key=<key>` filtered by status `done` | Commit messages or done work items whose titles match extracted keywords |
+| In-Progress Conflict | `GET /api/work-items?project_key=<key>` filtered by status `in-progress` or `open` + `GET /api/dispatch/active` | Open/in-progress items or active dispatches whose titles overlap the request |
+| Recent Changes Staleness | `git log --oneline -5 -- <path>` (when the request mentions specific files or modules) | Recent commits touching the same area the request targets |
+
+### Keyword Extraction
+
+The orchestrator extracts 2–5 significant terms from the user's request:
+- Entity names (nouns describing the thing being changed)
+- Action verbs (add, remove, fix, implement, refactor)
+- File or module names explicitly mentioned
+
+Example: "add dark mode toggle to settings" → terms: `dark-mode`, `toggle`, `settings`
+
+### Severity Scoring
+
+| Condition | Severity |
+|-----------|----------|
+| 1 keyword match in git log or backlog title | `minor` |
+| 2+ keyword matches across git log and/or backlog | `major` |
+| Exact title match on a done work item | `critical` |
+
+### Orchestrator Behavior on Findings
+
+| Status | Behavior |
+|--------|----------|
+| `clear` | Proceed silently. Do not mention the check to the user. |
+| `warning` (all minor) | Mention findings briefly, proceed without blocking. |
+| `warning` (any major) | Present findings with evidence, ask user for confirmation before proceeding. |
+| `conflict` (any critical) | Present findings, strongly recommend reviewing evidence before proceeding. User can override. |
+
+### Presentation Format
+
+When findings exist, the orchestrator presents them as:
+
+```
+**Pre-dispatch check** — I found related recent activity:
+
+- [type] severity: summary (evidence)
+  → recommendation
+
+Proceed with this request?
+```
+
+Findings are listed by severity (critical first), max 5 shown. If more exist, append: "(+N more findings)".
+
+### Parallelization
+
+When both the pre-dispatch check and the coordinator are needed (`needs_coordinator: true`), the orchestrator runs the pre-dispatch check in parallel with the coordinator dispatch — they are independent operations. If the check requires user confirmation, the coordinator output is buffered until the user confirms.
+
 ## Coding Standards
 
 Shared standards enforced by all implementation agents. These rules apply to every line of code written by the system.
@@ -515,8 +588,9 @@ The orchestrator may handle single-line fixes inline without dispatching an agen
 2. Is this a trivial inline fix? → Handle directly
 3. Is this a direct question? → Answer directly
 4. Otherwise → Dispatch **classifier** (haiku) for fast triage
-5. If classifier returns `needs_coordinator: true` → Dispatch **coordinator** (sonnet) for detailed planning
-6. Follow the dispatch plan from classifier or coordinator
+5. **Pre-dispatch check** (see Pre-Dispatch Check Rules): If classification type is a work type AND complexity >= small → run pre-dispatch check. If findings exist → present to user and get confirmation before proceeding. Runs in parallel with coordinator dispatch when both are needed.
+6. If classifier returns `needs_coordinator: true` → Dispatch **coordinator** (sonnet) for detailed planning
+7. Follow the dispatch plan from classifier or coordinator
 
 ### Git Operations
 

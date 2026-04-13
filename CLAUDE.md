@@ -73,9 +73,9 @@ The main Claude conversation acts as orchestrator. Subagents cannot spawn subage
 
 **Classifier + Coordinator Dispatch** (non-trivial work requests):
 ```
-classifier (haiku, fast triage) → [coordinator (sonnet, detailed plan)] → follow execution plan
+classifier (haiku, fast triage) → [pre-dispatch check (orchestrator, if work type + small+)] → [coordinator (sonnet, detailed plan)] → follow execution plan
 ```
-For simple cases (trivial/small, high confidence), the orchestrator skips the coordinator and constructs a dispatch plan directly from the classifier output.
+For simple cases (trivial/small, high confidence), the orchestrator skips the coordinator and constructs a dispatch plan directly from the classifier output. Pre-dispatch check runs in parallel with coordinator when both are needed. See `domain/rules.md` → Pre-Dispatch Check Rules.
 
 **Technical Review Board** (two-gate lifecycle for medium+ work):
 ```
