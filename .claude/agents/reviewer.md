@@ -59,6 +59,16 @@ Perform thorough code reviews identifying bugs, security issues, performance pro
 - Repeated logic blocks that should be extracted to shared utilities
 - State values or magic strings that should reference a canonical source
 
+### Coding Standards Compliance
+- **Names reveal intent**: Flag non-descriptive names (`n`, `tmp`, `flag`, `val`, `data`, `rows`, `obj`, `cb`, `res`). Expect intent-revealing alternatives.
+- **No comments as crutches**: Only `TODO` and `DECISION` tags are acceptable. If code needs a comment, it should be renamed or restructured instead.
+- **No dead code**: No commented-out code, unused imports, or unreachable branches committed.
+- **Single-purpose functions**: Functions should do one thing, ~20 lines max. If a function description has "and", it should be split.
+- **Dependencies point inward**: Verify domain ← usecases ← adapters ← infrastructure direction. No inner layer importing from outer.
+- **Domain owns types**: Types, enums, state values defined in domain layer. Other layers import — never redefine.
+- **Three occurrences = extract**: If three or more identical patterns exist, they should be extracted to a shared utility.
+- **No over-engineering**: No abstractions without two concrete use cases. No factory-of-factory patterns.
+
 ## Output Format
 
 Structure review as:
