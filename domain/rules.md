@@ -637,6 +637,63 @@ These rules are enforced at two levels:
 1. **Prompt-level**: The session identity and scope restrictions are injected into every dispatched agent's prompt (see dashboard prompt builder)
 2. **Runtime-level**: API authorization middleware validates session identity on mutating endpoints (see follow-up ticket for implementation)
 
+## Project Manager Behavior Rules
+
+The orchestrator acts as a project manager across all onboarded projects. PM responsibilities are distinct from dispatch orchestration — they concern awareness, reporting, and proactive issue detection.
+
+### Session Start Protocol
+
+At the start of every conversation, the orchestrator runs a lightweight background check. This is **async and non-blocking** — it must not delay the orchestrator's first response to the user.
+
+1. Check for active dispatches (running agents)
+2. Check for active terminals
+3. Check for in-progress work items across all projects
+4. **Surface a summary only if findings are non-empty**: blocked items, stale dispatches, items needing attention, or cost anomalies
+5. If no findings, proceed silently — do not report "all clear"
+
+### Progress Reporting
+
+When asked for project status or progress, the orchestrator produces a structured report:
+
+1. Load work items for the target project, grouped by status (open, ready, in-progress, blocked, done, cancelled)
+2. Identify blocked items and trace their blockers (what are they waiting on?)
+3. Identify stale items — no status change or session log entry for 7+ days
+4. If an epic is active, report epic progress: done items / total linked items, acceptance criteria coverage
+5. Identify items with active dispatches vs items with no recent activity
+6. Suggest next actions: which blocked items to unblock, which ready items to dispatch next, which stale items to review
+
+### Cross-Org Coordination
+
+When the user operates at the organization level (no specific project target, or explicit org-level request):
+
+1. Load organization context for the target org
+2. For each project in the org, summarize:
+   - Active work items count and status distribution
+   - Blocked item count and blockers
+   - Latest activity (most recent session log entry date)
+   - Active dispatches count
+3. Detect cross-project dependencies: work items with `depends_on` references pointing to items in other project keys
+4. Flag cross-project blockers: a blocked item in project A waiting on an item in project B that has no active dispatch
+5. Report org-level cost summary if cost data is available
+
+### Escalation Triggers
+
+The orchestrator proactively detects and flags conditions using `EscalationLogEntry` format (see `domain/entities.md`):
+
+| Trigger | Detection Criteria | Action |
+|---------|-------------------|--------|
+| `stale` | Work item has no status change or session log entry for 7+ days | Flag to user in status reports; suggest review or cancellation |
+| `blocked-chain` | A blocked item's blocker (via `depends_on`) has no active dispatch and no recent progress | Flag to user; suggest dispatching work on the blocker |
+| `epic-stall` | An active epic has had no linked item status change across the last 3 dispatches | Flag to user; suggest reviewing epic scope or priority |
+| `cost-anomaly` | A single dispatch `cost_usd` exceeds 2x the project's average dispatch cost | Flag to user; suggest reviewing the dispatch for inefficiency |
+| `dispatch-loop` | A work item has been dispatched 3+ times (counted via session log entries) without reaching `done` status | Flag to user; suggest manual investigation or scope reduction |
+
+Escalation entries are recorded as session log entries on the affected work item using the `EscalationLogEntry` schema. The orchestrator presents escalations to the user — it does not take autonomous corrective action.
+
+### Reconciliation with Work Item Rules
+
+PM behavior rules complement, not replace, existing Work Item Rules and Epic Rules. The PM layer adds proactive detection on top of the passive tracking system. Work item status transitions remain governed by Work Item Rules.
+
 ## Retry and Feedback Policy
 
 No automatic re-dispatch on failure. The orchestrator receives failure information and makes an informed decision.

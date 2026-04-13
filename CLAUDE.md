@@ -67,6 +67,14 @@ Default models are overridden dynamically by the orchestrator based on task comp
 
 The main thread is strictly an orchestrator/PM. It reads, plans, dispatches, and tracks — but does not implement code (except single-line trivial fixes like typos). Git operations are delegated to the git-ops agent. See `domain/rules.md` → Orchestrator Behavior Rules for the full dispatch decision flow.
 
+### Session Identity & Scope
+
+Every session carries a `SessionIdentity` that determines its permissions. The orchestrator (depth 0) has full capabilities; dashboard-dispatched agents (depth 1) are restricted to their own work item scope and cannot trigger further dashboard dispatches. Depth 2+ is forbidden — sub-agents of dispatched agents run in-process only. See `domain/entities.md` → SessionIdentity and `domain/rules.md` → Session Scope Rules.
+
+### Project Manager Behavior
+
+The orchestrator acts as PM across all onboarded projects. At session start, it runs an async background check for active dispatches, blocked items, and stale work — surfacing a summary only when findings exist. It proactively detects escalation conditions (stale items, blocked chains, epic stalls, dispatch loops, cost anomalies) using the `EscalationLogEntry` format. See `domain/rules.md` → Project Manager Behavior Rules and `domain/entities.md` → EscalationLogEntry.
+
 ### Coordination Patterns
 
 The main Claude conversation acts as orchestrator. Subagents cannot spawn subagents.
