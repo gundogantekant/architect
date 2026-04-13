@@ -24,6 +24,7 @@ export const SPEC_FILES = [
   'auto-dismiss',
   'theme-system',
   'markdown-descriptions',
+  'agent-phase',
 ];
 
 function getLiveDashboardPorts() {

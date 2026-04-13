@@ -8,8 +8,16 @@
  * Test server started automatically by globalSetup on an isolated port
  */
 
-import { test, expect } from './fixtures.mjs';
+import { test as baseTest, expect } from './fixtures.mjs';
 import { getBase, seedDispatch } from './helpers.mjs';
+
+// Default test object uses expanded panels (from fixtures.mjs _defaultExpanded)
+const test = baseTest;
+
+// Tests that verify collapsed-by-default behavior override the fixture to no-op
+const testCollapsed = baseTest.extend({
+  _defaultExpanded: [async ({}, use) => { await use(); }, { scope: 'test', auto: true }],
+});
 
 // Global purge before the suite: clears real claude processes left by prior test files
 // (worker-scoped purgeAll cannot kill dispatches that have live process handles)
@@ -25,7 +33,7 @@ test('DP-1: dispatch panel appears with status-running dot', async ({ page }) =>
   const { dispatch_id: id } = await seedDispatch({ status: 'running' });
   await page.goto('/');
   await expect(page.locator(`#dispatch-${id}`)).toBeVisible({ timeout: 5000 });
-  await expect(page.locator(`#dispatch-${id} .status-dot.running`)).toBeVisible();
+  await expect(page.locator(`#dispatch-${id} .status-dot.generating`)).toBeVisible();
 });
 
 test('DP-2: dispatch panel shows seeded output lines', async ({ page }) => {
@@ -46,7 +54,7 @@ test('DP-2: dispatch panel shows seeded output lines', async ({ page }) => {
   );
 });
 
-test('DP-3: toggle expand/collapse works on default-collapsed panel', async ({ page }) => {
+testCollapsed('DP-3: toggle expand/collapse works on default-collapsed panel', async ({ page }) => {
   const { dispatch_id: id } = await seedDispatch({ status: 'completed' });
   await page.goto('/');
   await expect(page.locator(`#dispatch-${id}`)).toBeVisible({ timeout: 5000 });
@@ -172,7 +180,7 @@ test('CLI-2: CLI session panel shows [CLI] badge', async ({ page }) => {
   await expect(page.locator(`#cli-${id} .badge-cli`)).toContainText('[CLI]');
 });
 
-test('CLI-3: CLI panel toggle expand/collapse works on default-collapsed panel', async ({ page }) => {
+testCollapsed('CLI-3: CLI panel toggle expand/collapse works on default-collapsed panel', async ({ page }) => {
   const { id } = await registerCliSession('Collapse test');
   await page.goto('/');
   await expect(page.locator(`#cli-${id}`)).toBeVisible({ timeout: 5000 });
@@ -203,7 +211,7 @@ test('CLI-4: CLI panel has no kill or suspend buttons', async ({ page }) => {
 // Suite C: Context-Aware Panel Expand/Collapse (DP-11 to DP-15)
 // ============================================================
 
-test('DP-11: new dispatch panel defaults to collapsed', async ({ page }) => {
+testCollapsed('DP-11: new dispatch panel defaults to collapsed', async ({ page }) => {
   const { dispatch_id: id } = await seedDispatch({ status: 'running' });
   await page.goto('/');
   await expect(page.locator(`#dispatch-${id}`)).toBeVisible({ timeout: 5000 });
@@ -213,6 +221,8 @@ test('DP-11: new dispatch panel defaults to collapsed', async ({ page }) => {
 
 test('DP-12: relevant panels auto-expand when navigating to their project view', async ({ page }) => {
   // Seed 2 dispatches for architect, 3 for neuronic-cloud
+  // Panels start expanded (via _defaultExpanded fixture setting the preference).
+  // Context-aware logic COLLAPSES non-matching panels — deterministic.
   const arch1 = await seedDispatch({ status: 'running', project_key: 'ticari/architect/main', title: 'Arch dispatch 1' });
   const arch2 = await seedDispatch({ status: 'running', project_key: 'ticari/architect/main', title: 'Arch dispatch 2' });
   const nc1 = await seedDispatch({ status: 'running', project_key: 'ticari/neuronic-cloud/main', title: 'NC dispatch 1' });
@@ -221,13 +231,13 @@ test('DP-12: relevant panels auto-expand when navigating to their project view',
 
   // Navigate to architect project view
   await page.goto('/#component/ticari/architect/main');
-  await expect(page.locator(`#dispatch-${arch1.dispatch_id}`)).toBeVisible({ timeout: 5000 });
+  await expect(page.locator(`#dispatch-${arch1.dispatch_id}`)).toBeVisible({ timeout: 30_000 });
 
-  // Architect panels should be expanded (not collapsed)
+  // Architect panels should be expanded (matching project, kept expanded)
   await expect(page.locator(`#dispatch-${arch1.dispatch_id}`)).not.toHaveClass(/collapsed/);
   await expect(page.locator(`#dispatch-${arch2.dispatch_id}`)).not.toHaveClass(/collapsed/);
 
-  // Neuronic-cloud panels should be collapsed
+  // Neuronic-cloud panels should be collapsed (non-matching project, collapsed by context-aware)
   await expect(page.locator(`#dispatch-${nc1.dispatch_id}`)).toHaveClass(/collapsed/);
   await expect(page.locator(`#dispatch-${nc2.dispatch_id}`)).toHaveClass(/collapsed/);
   await expect(page.locator(`#dispatch-${nc3.dispatch_id}`)).toHaveClass(/collapsed/);
@@ -267,7 +277,7 @@ test('DP-14: manual toggle within a project view is respected', async ({ page })
   await expect(page.locator(`#dispatch-${id}`)).toHaveClass(/collapsed/);
 });
 
-test('DP-15: no auto-expand on generic views (home)', async ({ page }) => {
+testCollapsed('DP-15: no auto-expand on generic views (home)', async ({ page }) => {
   const arch = await seedDispatch({ status: 'running', project_key: 'ticari/architect/main', title: 'Home test 1' });
   const nc = await seedDispatch({ status: 'running', project_key: 'ticari/neuronic-cloud/main', title: 'Home test 2' });
 

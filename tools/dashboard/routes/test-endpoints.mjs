@@ -46,7 +46,7 @@ export default function testEndpointRoutes(deps) {
         permission_mode: 'plan',
         skip_permissions: false,
         status: status || 'completed',
-        needs_input: false,
+        agent_phase: (status || 'completed') === 'running' ? 'generating' : null,
         claude_session_id: claude_session_id || null,
         output,
         lastLines: [],

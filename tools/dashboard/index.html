@@ -50,12 +50,14 @@
   .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; margin: 2px 3px; }
   .badge-role { background: #ede9fe; color: var(--accent); }
   .badge-open { background: #dbeafe; color: var(--blue); }
+  .badge-ready { background: #ede9fe; color: #7c3aed; }
   .badge-done { background: #dcfce7; color: #16a34a; }
   .badge-blocked { background: #fee2e2; color: var(--red); }
   .badge-high { background: #fee2e2; color: var(--red); }
   .badge-medium { background: #fef3c7; color: #b45309; }
   .badge-low { background: #e0f2fe; color: #0284c7; }
   .badge-agent { background: #f0fdf4; color: var(--teal); border: 1px solid #bbf7d0; }
+  .badge-phase { background: #f0f0f0; color: #333; font-size: 10px; border: 1px solid #d0d0d0; }
   .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 10.5px; background: #f1f5f9; color: #64748b; margin: 1px 2px; }
 
   /* Tabs */
@@ -156,7 +158,9 @@
   .resume-btn:disabled { opacity: 0.4; cursor: default; }
   .dispatch-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: linear-gradient(135deg, #fafafa 0%, #f5f0ff 100%); cursor: pointer; }
   .dispatch-header .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-  .dispatch-header .status-dot.running { background: var(--orange); animation: pulse 1.5s infinite; }
+  .dispatch-header .status-dot.running, .dispatch-header .status-dot.generating { background: var(--orange); animation: pulse 1.5s infinite; transition: background 0.3s ease; }
+  .dispatch-header .status-dot.tool-running { background: var(--blue); animation: pulse 1.5s infinite; transition: background 0.3s ease; }
+  .dispatch-header .status-dot.needs-input { background: var(--green); animation: pulse 1.5s infinite; transition: background 0.3s ease; }
   .dispatch-header .status-dot.completed { background: var(--blue); }
   .dispatch-header .status-dot.failed { background: var(--red); }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
@@ -337,7 +341,9 @@
   .agent-tile:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); border-color: var(--accent); }
   .agent-tile-header { display: flex; align-items: center; gap: 8px; padding: 12px 14px 8px; }
   .agent-tile-header .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-  .agent-tile-header .status-dot.running { background: var(--orange); animation: pulse 1.5s infinite; }
+  .agent-tile-header .status-dot.running, .agent-tile-header .status-dot.generating { background: var(--orange); animation: pulse 1.5s infinite; transition: background 0.3s ease; }
+  .agent-tile-header .status-dot.tool-running { background: var(--blue); animation: pulse 1.5s infinite; transition: background 0.3s ease; }
+  .agent-tile-header .status-dot.needs-input { background: var(--green); animation: pulse 1.5s infinite; transition: background 0.3s ease; }
   .agent-tile-header .status-dot.completed { background: var(--blue); }
   .agent-tile-header .status-dot.failed, .agent-tile-header .status-dot.killed { background: var(--red); }
   .agent-tile-header .status-dot.suspended { background: #f59e0b; }
@@ -522,6 +528,8 @@ function renderMd(text) {
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+const ACTIVE_DOT_CLASSES = ['running', 'generating', 'tool-running', 'needs-input'];
+function clearActiveDotClasses(dot) { dot.classList.remove(...ACTIVE_DOT_CLASSES); }
 
 function getRouteTitle() {
   const hash = location.hash.slice(1);
@@ -923,7 +931,7 @@ function finalizeDispatchPanel(dispatch) {
     panel.className = panel.className.replace(/status-\w+/, `status-${dispatch.status}`);
     const dot = panel.querySelector('.status-dot');
     if (dot) {
-      dot.classList.remove('running');
+      clearActiveDotClasses(dot);
       dot.classList.add(dispatch.status === 'completed' ? 'completed' : 'failed');
     }
     // Hide action buttons, show dismiss
@@ -1012,8 +1020,8 @@ async function killAllSessions() {
   ]);
   activeDispatches.forEach(d => { d.status = 'killed'; });
   activeTerminals.forEach(t => { t.status = 'killed'; });
-  document.querySelectorAll('.dispatch-panel .status-dot.running, .terminal-header .status-dot.running').forEach(dot => {
-    dot.classList.remove('running');
+  document.querySelectorAll('.dispatch-panel .status-dot.running, .dispatch-panel .status-dot.generating, .dispatch-panel .status-dot.tool-running, .dispatch-panel .status-dot.needs-input, .terminal-header .status-dot.running').forEach(dot => {
+    clearActiveDotClasses(dot);
     dot.classList.add('failed');
   });
   document.querySelectorAll('.kill-btn').forEach(btn => { btn.disabled = true; });
@@ -1854,7 +1862,7 @@ function finalizeTerminalPanel(terminalInfo) {
   panel.className = panel.className.replace(/status-\w+/, `status-${terminalInfo.status}`);
   const dot = panel.querySelector('.status-dot');
   if (dot) {
-    dot.classList.remove('running');
+    clearActiveDotClasses(dot);
     dot.classList.add(terminalInfo.status === 'completed' ? 'completed' : 'failed');
   }
   const killBtn = panel.querySelector(`[data-kill-terminal="${terminalInfo.id}"]`);
@@ -1941,7 +1949,7 @@ function createSessionPanel(type, info) {
     const suspendedBadge = isSuspended ? '<span class="suspended-badge">[suspended]</span>' : '';
     panel.innerHTML = `
       <div class="dispatch-header">
-        <span class="status-dot ${isRunning ? 'running' : dispatch.status}"></span>
+        <span class="status-dot ${isRunning ? (dispatch.agent_phase === 'waiting_for_input' ? 'needs-input' : dispatch.agent_phase === 'tool_running' ? 'tool-running' : 'generating') : dispatch.status}" title="${isRunning ? ({generating:'Thinking',tool_running:'Running tool',waiting_for_input:'Needs input'}[dispatch.agent_phase]||'') : ''}"></span>
         <span class="dispatch-title">${esc(titleParts.join(' — '))}${planBadge}${skipBadge}${suspendedBadge}</span>
         <span class="dispatch-meta">${new Date(dispatch.started_at).toLocaleTimeString()}</span>
         <button class="focus-btn" data-focus-dispatch="${esc(id)}">Focus</button>
@@ -1987,7 +1995,7 @@ function createSessionPanel(type, info) {
         dispatch.status = 'killed';
         panel.className = panel.className.replace(/status-\w+/, 'status-killed');
         const dot = panel.querySelector('.status-dot');
-        dot.classList.remove('running');
+        clearActiveDotClasses(dot);
         dot.classList.add('killed', 'failed');
         const dismissBtn = panel.querySelector(`[data-dismiss-dispatch="${id}"]`);
         if (dismissBtn) dismissBtn.style.display = '';
@@ -2004,7 +2012,7 @@ function createSessionPanel(type, info) {
           dispatch.status = 'suspended';
           panel.className = panel.className.replace(/status-\w+/, 'status-suspended');
           const dot = panel.querySelector('.status-dot');
-          dot.classList.remove('running');
+          clearActiveDotClasses(dot);
           dot.classList.add('suspended');
           btn.style.display = 'none';
           panel.querySelector(`[data-kill-dispatch="${id}"]`).disabled = true;
@@ -2095,7 +2103,7 @@ function createSessionPanel(type, info) {
         await fetch(`/api/terminal/${id}`, { method: 'DELETE' });
         terminalInfo.status = 'killed';
         const dot = panel.querySelector('.status-dot');
-        dot.classList.remove('running');
+        clearActiveDotClasses(dot);
         dot.classList.add('failed');
         const dismissBtn = panel.querySelector(`[data-dismiss-terminal="${id}"]`);
         if (dismissBtn) dismissBtn.style.display = '';
@@ -2112,7 +2120,7 @@ function createSessionPanel(type, info) {
           terminalInfo.status = 'suspended';
           panel.classList.add('status-suspended');
           const dot = panel.querySelector('.status-dot');
-          dot.classList.remove('running');
+          clearActiveDotClasses(dot);
           dot.classList.add('suspended');
           btn.style.display = 'none';
           panel.querySelector(`[data-kill-terminal="${id}"]`).disabled = true;
@@ -2361,12 +2369,11 @@ async function restoreDispatches() {
     for (const d of list) {
       const existing = activeDispatches.find(a => a.id === d.id);
       if (existing) {
-        // Update needs_input from server
-        existing.needs_input = d.needs_input || false;
+        existing.agent_phase = d.agent_phase || null;
         existing.status = d.status;
         continue;
       }
-      const dispatch = { ...d, title: d.work_item_id, needs_input: d.needs_input || false };
+      const dispatch = { ...d, title: d.work_item_id, agent_phase: d.agent_phase || null };
       activeDispatches.push(dispatch);
       createDispatchPanel(dispatch);
       newDispatches.push(dispatch);
@@ -2404,7 +2411,7 @@ async function restoreDispatches() {
 function countOpenItems(bl, key) {
   const items = bl?.projects?.[key]?.items;
   if (!items) return 0;
-  return items.filter(i => i.status === 'open' || i.status === 'in-progress' || i.status === 'blocked').length;
+  return items.filter(i => i.status === 'open' || i.status === 'ready' || i.status === 'in-progress' || i.status === 'blocked').length;
 }
 
 function buildSessionsByProjectMap() {
@@ -2429,15 +2436,16 @@ function buildSessionsByProjectMap() {
 
 function signalColor(bl, key, sessionsByProject) {
   const sessions = sessionsByProject?.get(key) || [];
-  // Green: agent needs user input
-  if (sessions.some(s => s.needs_input && s.status === 'running')) return 'green';
-  // Orange: running session
-  if (sessions.some(s => s.status === 'running')) return 'orange';
-  // Blue: has work items
+  // Priority: waiting_for_input > tool_running > generating
+  if (sessions.some(s => s.agent_phase === 'waiting_for_input' && s.status === 'running'))
+    return { color: 'green', title: 'Agent needs input' };
+  if (sessions.some(s => s.agent_phase === 'tool_running' && s.status === 'running'))
+    return { color: 'blue', title: 'Agent running tool' };
+  if (sessions.some(s => s.status === 'running'))
+    return { color: 'orange', title: 'Agent thinking' };
   const items = bl?.projects?.[key]?.items;
-  if (items && items.length > 0) return 'blue';
-  // Grey: no work items
-  return 'grey';
+  if (items && items.length > 0) return { color: 'blue', title: 'Has work items' };
+  return { color: 'grey', title: '' };
 }
 
 function updateProjectSignalDots() {
@@ -2446,8 +2454,9 @@ function updateProjectSignalDots() {
     const key = item.dataset.key;
     const dot = item.querySelector('.signal-dot');
     if (!dot) return;
-    const color = signalColor(window._backlogCache, key, sessionsByProject);
-    dot.className = `signal-dot ${color}`;
+    const sig = signalColor(window._backlogCache, key, sessionsByProject);
+    dot.className = `signal-dot ${sig.color}`;
+    dot.title = sig.title || '';
   });
 }
 
@@ -2520,11 +2529,11 @@ async function buildTree() {
     componentEntries.sort((a, b) => countOpenItems(bl, b.key) - countOpenItems(bl, a.key));
 
     for (const { org: o, proj, comp, key } of componentEntries) {
-      const color = signalColor(bl, key, sessionsByProject);
+      const sig = signalColor(bl, key, sessionsByProject);
       const item = document.createElement('div');
       item.className = 'project-item';
       item.dataset.key = key;
-      item.innerHTML = `<span class="signal-dot ${color}"></span>${esc(proj)} / ${esc(comp)}`;
+      item.innerHTML = `<span class="signal-dot ${sig.color}" title="${esc(sig.title || '')}"></span>${esc(proj)} / ${esc(comp)}`;
       item.onclick = (e) => {
         e.stopPropagation();
         location.hash = `#component/${o}/${proj}/${comp}`;
@@ -2638,8 +2647,8 @@ function renderWorkItemsTable(items, allWorkItems, tableId) {
   let html = `<table${tableId ? ` id="${tableId}"` : ''} class="wi-table"><thead><tr><th data-wi-sort="id" style="cursor:pointer">ID &#8645;</th><th>Title</th><th data-wi-sort="status" style="cursor:pointer">Status &#8645;</th><th data-wi-sort="priority" style="cursor:pointer">Priority &#8645;</th><th>Depends On</th><th>Epic</th><th>Tags</th><th></th></tr></thead><tbody>`;
   for (const w of items) {
     const idx = allWorkItems.indexOf(w);
-    const sc = {'done':'done','blocked':'blocked','in-progress':'in-progress','cancelled':'cancelled'}[w.status] || 'open';
-    const canDispatch = w.status === 'open' || w.status === 'in-progress';
+    const sc = {'done':'done','blocked':'blocked','in-progress':'in-progress','cancelled':'cancelled','ready':'ready'}[w.status] || 'open';
+    const canDispatch = w.status === 'open' || w.status === 'ready' || w.status === 'in-progress';
     const depState = isBlockedByDeps(w, allWorkItems);
     const rowClass = depState.blocked ? ' class="blocked-by-deps"' : '';
     const depHtml = (w.depends_on || []).length ? w.depends_on.map(d => {
@@ -3120,7 +3129,7 @@ function setActive(key) {
 function showStatusDropdown(badge, itemId, currentStatus) {
   // Remove any existing dropdown
   document.querySelectorAll('.status-dropdown').forEach(d => d.remove());
-  const statuses = ['open', 'in-progress', 'blocked', 'done', 'cancelled'];
+  const statuses = ['open', 'ready', 'in-progress', 'blocked', 'done', 'cancelled'];
   const dropdown = document.createElement('div');
   dropdown.className = 'status-dropdown';
   for (const s of statuses) {
@@ -3305,7 +3314,7 @@ function bindFilterBar() {
   const wiTable = document.getElementById('wi-table');
   if (wiTable) {
     const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
-    const statusOrder = { 'open': 0, 'in-progress': 1, 'blocked': 2, 'done': 3, 'cancelled': 4 };
+    const statusOrder = { 'open': 0, 'ready': 1, 'in-progress': 2, 'blocked': 3, 'done': 4, 'cancelled': 5 };
     let sortCol = null, sortAsc = true;
 
     wiTable.querySelectorAll('th[data-wi-sort]').forEach(th => {
@@ -3364,7 +3373,7 @@ function showWorkItemModal(existingItem = null) {
       <div class="field">
         <label>Status</label>
         <select id="wi-status">
-          ${['open','in-progress','blocked','done','cancelled'].map(s => `<option value="${s}"${(isEdit ? existingItem.status : 'open') === s ? ' selected' : ''}>${s}</option>`).join('')}
+          ${['open','ready','in-progress','blocked','done','cancelled'].map(s => `<option value="${s}"${(isEdit ? existingItem.status : 'open') === s ? ' selected' : ''}>${s}</option>`).join('')}
         </select>
       </div>
       <div class="field">
@@ -3676,7 +3685,7 @@ async function showReviewModal(projectKey) {
         title: titleText,
         permission_mode: permMode || 'plan',
         skip_permissions: skipPerms,
-        needs_input: false,
+        agent_phase: 'generating',
         status: 'running',
         started_at: new Date().toISOString(),
       };
@@ -3962,8 +3971,8 @@ async function renderEpicDetailView(epicId) {
     html += `</div>`;
     html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Depends On</th><th>Project</th><th>Tags</th><th></th></tr></thead><tbody>`;
     for (const item of sortedEpicItems) {
-      const sc = {'done':'done','blocked':'blocked','in-progress':'in-progress','cancelled':'cancelled'}[item.status] || 'open';
-      const canDispatch = item.status === 'open' || item.status === 'in-progress';
+      const sc = {'done':'done','blocked':'blocked','in-progress':'in-progress','cancelled':'cancelled','ready':'ready'}[item.status] || 'open';
+      const canDispatch = item.status === 'open' || item.status === 'ready' || item.status === 'in-progress';
       const depState = isBlockedByDeps(item, items);
       const rowClass = depState.blocked ? ' blocked-by-deps' : '';
       const depHtml = (item.depends_on || []).length ? item.depends_on.map(d => {
@@ -4589,7 +4598,7 @@ async function showLinkItemModal(epicId) {
   const allItems = [];
   for (const [key, group] of Object.entries(bl.projects || {})) {
     for (const item of (group.items || [])) {
-      if (!item.epic_id && (item.status === 'open' || item.status === 'in-progress')) {
+      if (!item.epic_id && (item.status === 'open' || item.status === 'ready' || item.status === 'in-progress')) {
         allItems.push({ ...item, project_key: key });
       }
     }
@@ -4761,7 +4770,7 @@ async function showCreateEpicTaskModal(epicId) {
 async function showEpicDispatchModal(epicId) {
   const epic = await api(`epics/${epicId}`);
   const items = epic.resolved_items || [];
-  const openItems = items.filter(i => i.status === 'open' || i.status === 'in-progress');
+  const openItems = items.filter(i => i.status === 'open' || i.status === 'ready' || i.status === 'in-progress');
   let projectKeys = epic.project_keys || [];
   const p = epic.progress || { done: 0, total: 0 };
 
@@ -5223,7 +5232,7 @@ function openFocusPopup(type, id) {
       if (dispatch) dispatch.status = 'killed';
       if (terminalInfo) terminalInfo.status = 'killed';
       const dot = header.querySelector('.status-dot');
-      dot.classList.remove('running');
+      clearActiveDotClasses(dot);
       dot.classList.add('failed');
       // Also update inline panel status class, dot, and buttons
       const panelPrefix = type === 'dispatch' ? 'dispatch' : 'terminal';
@@ -5234,7 +5243,7 @@ function openFocusPopup(type, id) {
         if (dismissBtn) dismissBtn.style.display = '';
       }
       const inlineDot = document.querySelector(`#${panelPrefix}-${id} .status-dot`);
-      if (inlineDot) { inlineDot.classList.remove('running'); inlineDot.classList.add('killed', 'failed'); }
+      if (inlineDot) { clearActiveDotClasses(inlineDot); inlineDot.classList.add('killed', 'failed'); }
       const inlineKill = document.querySelector(`[data-kill-${panelPrefix}="${id}"]`);
       if (inlineKill) inlineKill.disabled = true;
       syncSessionState();
@@ -5256,7 +5265,7 @@ function openFocusPopup(type, id) {
           if (dispatch) dispatch.status = 'suspended';
           if (terminalInfo) terminalInfo.status = 'suspended';
           const dot = header.querySelector('.status-dot');
-          dot.classList.remove('running');
+          clearActiveDotClasses(dot);
           dot.classList.add('suspended');
           killBtn.disabled = true;
           syncSessionState();
@@ -5329,7 +5338,7 @@ function openFocusPopup(type, id) {
     const currentStatus = type === 'dispatch' ? dispatch?.status : terminalInfo?.status;
     if (currentStatus && currentStatus !== 'running') {
       const dot = header.querySelector('.status-dot');
-      dot.classList.remove('running');
+      clearActiveDotClasses(dot);
       dot.classList.add(currentStatus === 'completed' ? 'completed' : 'failed');
       killBtn.disabled = true;
     }
@@ -5383,7 +5392,16 @@ let agentsFullRefreshInterval = null;
 
 function renderAgentTile(agent) {
   const isCli = agent.type === 'cli';
-  const dotClass = agent.status === 'running' ? 'running' : (agent.status === 'completed' ? 'completed' : 'failed');
+  let dotClass;
+  if (agent.status !== 'running') {
+    dotClass = agent.status === 'completed' ? 'completed' : (agent.status === 'suspended' ? 'suspended' : 'failed');
+  } else if (agent.agent_phase === 'waiting_for_input') {
+    dotClass = 'needs-input';
+  } else if (agent.agent_phase === 'tool_running') {
+    dotClass = 'tool-running';
+  } else {
+    dotClass = 'generating';
+  }
   const elapsed = formatElapsed(agent.started_at);
   const title = agent.work_item_id ? `${agent.work_item_id} — ${agent.title || ''}` : (agent.title || agent.id);
   const preview = isCli ? '(read-only — no output)' : ((agent.last_output || []).slice(-3).join('\n') || '(no output yet)');
@@ -5395,6 +5413,10 @@ function renderAgentTile(agent) {
   if (agent.work_item_id) badges += `<span class="badge badge-open">${esc(agent.work_item_id)}</span>`;
   if (agent.epic_id) badges += `<span class="badge badge-epic">${esc(agent.epic_id)}</span>`;
   badges += `<span class="badge ${typeBadgeClass}">${typeLabel}</span>`;
+  if (agent.status === 'running' && agent.agent_phase) {
+    const phaseLabels = { generating: 'thinking', tool_running: 'running tool', waiting_for_input: 'needs input' };
+    badges += `<span class="badge badge-phase">${phaseLabels[agent.agent_phase] || agent.agent_phase}</span>`;
+  }
   if (agent.claude_session_id) badges += sessionIdTag(agent.claude_session_id);
 
   return `<div class="agent-tile" data-agent-type="${esc(agent.type)}" data-agent-id="${esc(agent.id)}">
@@ -5422,7 +5444,7 @@ async function fetchAgentsList() {
   ]);
   const agents = [];
   for (const d of dispatches) {
-    agents.push({ type: 'dispatch', id: d.id, status: d.status, title: d.work_item_id || d.id, work_item_id: d.work_item_id, project_key: d.project_key, epic_id: d.epic_id, started_at: d.started_at, last_output: d.last_output || [], cost_usd: d.cost_usd, claude_session_id: d.claude_session_id });
+    agents.push({ type: 'dispatch', id: d.id, status: d.status, title: d.work_item_id || d.id, work_item_id: d.work_item_id, project_key: d.project_key, epic_id: d.epic_id, started_at: d.started_at, last_output: d.last_output || [], cost_usd: d.cost_usd, claude_session_id: d.claude_session_id, agent_phase: d.agent_phase || null });
   }
   for (const t of terminals) {
     agents.push({ type: 'terminal', id: t.id, status: t.status, title: t.title || t.id, work_item_id: t.work_item_id, project_key: t.project_key, epic_id: t.epic_id, started_at: t.started_at, last_output: t.last_output || [], claude_session_id: t.claude_session_id });
@@ -5580,7 +5602,7 @@ function bindAgentsEvents(agents, filters) {
         // Update tile visually
         const tile = btn.closest('.agent-tile');
         const dot = tile.querySelector('.status-dot');
-        dot.classList.remove('running');
+        clearActiveDotClasses(dot);
         dot.classList.add('failed');
       } catch {}
     };

@@ -16,7 +16,7 @@ Canonical schemas for all structured data in the architect system. Agents and sk
 }
 ```
 
-**Read-only agents**: reviewer, security-auditor, performance, strategist, classifier, coordinator, scout, debugger, dependency-manager
+**Read-only agents**: reviewer, security-auditor, performance, strategist, classifier, coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot
 **Interactive agents**: browser (interacts with web via Playwright, no code/data writes)
 **Implementation agents**: coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer, git-ops
 **Onboarding agents**: profiler (writes only CLAUDE.md to the target project)
@@ -235,7 +235,7 @@ Stored in `work/backlog.json` under `projects[key].items`. The project key (`org
 {
   "id": "string (W-XXX format, zero-padded)",
   "title": "string",
-  "status": "open|in-progress|blocked|done|cancelled",
+  "status": "open|ready|in-progress|blocked|done|cancelled",
   "priority": "low|medium|high|critical",
   "description": "string",
   "epic_id": "string (E-XXX or empty, optional)",
@@ -249,6 +249,14 @@ Stored in `work/backlog.json` under `projects[key].items`. The project key (`org
   ]
 }
 ```
+
+Status semantics:
+- `open` — created, not yet planned
+- `ready` — plan reviewed and approved by technical review board, cleared for implementation
+- `in-progress` — implementation underway
+- `blocked` — waiting on dependency
+- `done` — code reviewed and approved, merged
+- `cancelled` — abandoned
 
 ### Work Item Artifact Directory
 
@@ -319,6 +327,16 @@ Tracks an active worktree created for implementation isolation.
 }
 ```
 
+## AgentPhase
+
+Ephemeral (in-memory only, not persisted to SQLite) state derived from stream-json events during a dispatch session's lifetime. Tracks what the dispatched agent is currently doing. Reset to null when the dispatch reaches a terminal status.
+
+Values:
+- `generating` — agent is producing text (thinking, planning, responding)
+- `tool_running` — agent dispatched a tool call, execution in progress
+- `waiting_for_input` — agent finished its turn (stop_reason=end_turn), waiting for user
+- `null` — dispatch in terminal state (completed/failed/killed/interrupted) or phase unknown
+
 ## DispatchRequest
 
 Record created when the dashboard dispatches a Claude agent for a work item. Persisted to SQLite `dispatches` table (excluding process handles and listeners). Output streamed to `work/logs/D-xxx.jsonl`. On restart, sessions with live PIDs are reconnected via log file tailing; others are marked `interrupted`.
@@ -339,7 +357,8 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "session_id": "string (Claude session ID, optional — legacy field)",
   "claude_session_id": "string (Claude CLI session UUID, optional — captured from stream-json init event, used for resume)",
   "cost_usd": "number (total cost, optional)",
-  "pid": "number (OS process ID, optional — stored for restart survival)"
+  "pid": "number (OS process ID, optional — stored for restart survival)",
+  "agent_phase": "AgentPhase (ephemeral, in-memory only — not persisted to SQLite, derived from live stream-json event parsing or log replay)"
 }
 ```
 
@@ -414,6 +433,57 @@ Key-value pairs stored in the `preferences` table in SQLite. Used for dashboard-
 ```
 
 Accessed via `GET/PUT /api/settings/preferences`.
+
+## TechReviewVerdict
+
+Output by each tech reviewer agent when evaluating a plan, code change, or pull request.
+
+```json
+{
+  "agent": "string — reviewer agent name (tech-reviewer-swe|tech-reviewer-arch|tech-reviewer-dx|tech-reviewer-ux|tech-reviewer-frontend|tech-reviewer-dba|tech-reviewer-pm|tech-reviewer-systems|tech-reviewer-iot)",
+  "artifact_type": "plan|diff|pr",
+  "verdict": "approve|revise|block",
+  "concerns": [
+    {
+      "severity": "critical|major|minor",
+      "area": "string — which part of the artifact",
+      "issue": "string — what's wrong",
+      "suggestion": "string — proposed fix"
+    }
+  ],
+  "positive_notes": ["string — what's done well"],
+  "summary": "string — one-paragraph assessment"
+}
+```
+
+Verdict semantics:
+- `approve` — artifact is sound from this reviewer's perspective
+- `revise` — artifact has issues that should be addressed but are not blocking
+- `block` — artifact has fundamental problems that must be resolved before proceeding
+
+## TechReviewBoardResult
+
+Aggregate output of all dispatched tech reviewer agents, produced by the orchestrator. The number of reviewers varies (3–9) based on context-based board composition rules in `domain/rules.md`.
+
+```json
+{
+  "verdicts": [{ "$ref": "TechReviewVerdict" }],
+  "aggregate_decision": "approve|revise|block",
+  "revision_cycle": "number (0-2)",
+  "dispatched_agents": ["string — names of agents actually dispatched"],
+  "skipped_agents": [
+    {
+      "agent": "string — agent name",
+      "reason": "string — why not dispatched"
+    }
+  ]
+}
+```
+
+Aggregation rules:
+- Any `block` → aggregate is `block`
+- Any `revise` (no `block`) → aggregate is `revise`
+- All `approve` → aggregate is `approve`
 
 ## RegistryEntry
 

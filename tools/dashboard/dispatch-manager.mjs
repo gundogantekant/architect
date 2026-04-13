@@ -56,10 +56,12 @@ export function tailLogFile(dispatch) {
     offset = lines.length;
     // Populate output buffer from existing log
     dispatch.output = lines;
-    // Populate lastLines preview
+    // Populate lastLines preview and derive agent_phase from replayed events
+    let replayPhase = 'generating';
     for (const line of lines) {
       try {
         const evt = JSON.parse(line);
+        replayPhase = derivePhase(replayPhase, evt);
         const text = extractStreamText(evt);
         if (text) {
           dispatch.lastLines.push(text);
@@ -67,6 +69,7 @@ export function tailLogFile(dispatch) {
         }
       } catch {}
     }
+    dispatch.agent_phase = replayPhase;
   } catch {}
 
   // Re-open log stream for any new output written by the orphaned process
@@ -94,6 +97,10 @@ export function tailLogFile(dispatch) {
         dispatch.output.push(line);
         try {
           const evt = JSON.parse(line);
+          const newPhase = derivePhase(dispatch.agent_phase, evt);
+          if (newPhase !== dispatch.agent_phase) {
+            dispatch.agent_phase = newPhase;
+          }
           const text = extractStreamText(evt);
           if (text) {
             dispatch.lastLines.push(text);
@@ -283,6 +290,26 @@ export function extractStreamText(evt) {
   return null;
 }
 
+// Derive the next agent phase from current phase and a stream-json event.
+// Pure function — no side effects. Used by both live parsing and log replay.
+// Seed with 'generating' for new dispatches.
+export function derivePhase(currentPhase, evt) {
+  if (evt.type === 'content_block_start' && evt.content_block?.type === 'tool_use')
+    return 'tool_running';
+  if (evt.type === 'assistant' && evt.message?.stop_reason === 'end_turn')
+    return 'waiting_for_input';
+  if (evt.type === 'assistant' && evt.message?.stop_reason === 'tool_use')
+    return 'tool_running';
+  if (currentPhase === 'tool_running' && (
+    (evt.type === 'content_block_start' && evt.content_block?.type === 'text') ||
+    (evt.type === 'content_block_delta' && evt.delta?.text)
+  ))
+    return 'generating';
+  if (evt.type === 'result')
+    return null;
+  return currentPhase;
+}
+
 export function killProcess(proc, signal = 'SIGTERM') {
   try { proc.kill(signal); } catch {}
 }
@@ -311,14 +338,11 @@ export function wireDispatchHandlers(dispatch, proc) {
         }
         if (evt.type === 'result' && evt.total_cost_usd != null) {
           dispatch.cost_usd = evt.total_cost_usd;
-          dispatch.needs_input = false;
           saveDispatchToDb(dispatch);
         }
-        // Track needs_input: agent asked a question (end_turn) vs using tools (tool_use)
-        if (evt.type === 'assistant' && evt.message?.stop_reason === 'end_turn') {
-          dispatch.needs_input = true;
-        } else if (evt.type === 'assistant' && evt.message?.stop_reason === 'tool_use') {
-          dispatch.needs_input = false;
+        const newPhase = derivePhase(dispatch.agent_phase, evt);
+        if (newPhase !== dispatch.agent_phase) {
+          dispatch.agent_phase = newPhase;
         }
         const text = extractStreamText(evt);
         if (text) {
