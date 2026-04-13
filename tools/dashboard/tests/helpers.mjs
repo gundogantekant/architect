@@ -265,26 +265,28 @@ export async function seedSessionHistory(opts = {}) {
 }
 
 export async function seedWorkItem(opts = {}) {
-  return api('work-items', {
-    method: 'POST',
-    body: JSON.stringify({
-      title: opts.title || 'Test work item',
-      status: opts.status || 'open',
-      priority: 'medium',
-      project_key: opts.project_key || 'ticari/architect/main',
-    }),
-  });
+  const body = {
+    title: opts.title || 'Test work item',
+    status: opts.status || 'open',
+    priority: opts.priority || 'medium',
+    project_key: opts.project_key || 'ticari/architect/main',
+  };
+  if (opts.description !== undefined) body.description = opts.description;
+  if (opts.tags !== undefined) body.tags = opts.tags;
+  if (opts.epic_id !== undefined) body.epic_id = opts.epic_id;
+  return api('work-items', { method: 'POST', body: JSON.stringify(body) });
 }
 
 export async function seedEpic(opts = {}) {
-  return api('epics', {
-    method: 'POST',
-    body: JSON.stringify({
-      title: opts.title || 'Test epic',
-      status: opts.status || 'active',
-      priority: 'medium',
-    }),
-  });
+  const body = {
+    title: opts.title || 'Test epic',
+    status: opts.status || 'active',
+    priority: opts.priority || 'medium',
+  };
+  if (opts.description !== undefined) body.description = opts.description;
+  if (opts.acceptance_criteria !== undefined) body.acceptance_criteria = opts.acceptance_criteria;
+  if (opts.tags !== undefined) body.tags = opts.tags;
+  return api('epics', { method: 'POST', body: JSON.stringify(body) });
 }
 
 export async function seedDispatch(opts = {}) {

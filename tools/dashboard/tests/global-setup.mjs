@@ -23,6 +23,7 @@ export const SPEC_FILES = [
   'dispatch-scroll',
   'auto-dismiss',
   'theme-system',
+  'markdown-descriptions',
 ];
 
 function getLiveDashboardPorts() {
