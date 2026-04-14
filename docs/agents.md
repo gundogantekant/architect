@@ -43,9 +43,9 @@
 | reviewer | opus | 30 | Code review (read-only) |
 | security-auditor | opus | 25 | Security analysis (read-only) |
 
-### Technical Review Board
+### Review Board
 
-Context-filtered board of 3–9 agents that evaluate plans, code diffs, and PRs from multiple perspectives. Operates as a two-gate lifecycle (plan gate → `ready`, code gate → `done`). See `domain/rules.md` → Technical Review Board Rules.
+Context-filtered board of 3–10 agents that evaluate plans, code diffs, and PRs from multiple perspectives. Operates as a two-gate lifecycle (plan gate → `ready`, code gate → `done`). See `domain/rules.md` → Review Board Rules.
 
 **Required (always dispatched)**:
 

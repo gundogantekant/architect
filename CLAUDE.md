@@ -6,7 +6,7 @@ When the user says "architect" in conversation, it primarily refers to **this pr
 
 ## Overview
 
-This project provides 33 specialized Claude Code subagents and 18 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack. The main thread acts as a strict orchestrator/PM — it reads, plans, dispatches, and tracks, but delegates all implementation and git operations to specialized agents.
+This project provides 34 specialized Claude Code subagents and 18 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack. The main thread acts as a strict orchestrator/PM — it reads, plans, dispatches, and tracks, but delegates all implementation and git operations to specialized agents.
 
 ## Architecture
 
@@ -60,6 +60,7 @@ See `docs/architecture.md` for layer boundaries and dependency rules.
 | Tech review — database architecture | tech-reviewer-dba | sonnet |
 | Tech review — systems engineering | tech-reviewer-systems | sonnet |
 | Tech review — IoT engineering | tech-reviewer-iot | sonnet |
+| Tech review — production readiness | tech-reviewer-prod | sonnet |
 
 Default models are overridden dynamically by the orchestrator based on task complexity. See `domain/rules.md` → Model Selection Rules.
 
@@ -85,17 +86,17 @@ classifier (haiku, fast triage) → [pre-dispatch check (orchestrator, if work t
 ```
 For simple cases (trivial/small, high confidence), the orchestrator skips the coordinator and constructs a dispatch plan directly from the classifier output. Pre-dispatch check runs in parallel with coordinator when both are needed. See `domain/rules.md` → Pre-Dispatch Check Rules.
 
-**Dispatch Contracts** (medium+ complexity): Each step in the coordinator's DispatchPlan includes a `DispatchContract` (Goal, Constraints, Expected Output, Failure Conditions + optional Scope Boundary, Stop Conditions) that defines clear success criteria and session governance for the dispatched agent. Contracts flow into sub-agent prompts and are used by the Technical Review Board to evaluate whether implementation meets stated goals. For long-running sessions, the contract's scope_boundary and stop_conditions provide self-enforcement guardrails. Work items must have a valid contract (at minimum a goal) to transition from `open` to `ready` status; only `ready`+ items are dispatchable from the dashboard. See `domain/entities.md` → DispatchContract, `domain/rules.md` → Dispatch Contract Rules, and `domain/rules.md` → Long-Running Session Rules.
+**Dispatch Contracts** (medium+ complexity): Each step in the coordinator's DispatchPlan includes a `DispatchContract` (Goal, Constraints, Expected Output, Failure Conditions + optional Scope Boundary, Stop Conditions) that defines clear success criteria and session governance for the dispatched agent. Contracts flow into sub-agent prompts and are used by the Review Board to evaluate whether implementation meets stated goals. For long-running sessions, the contract's scope_boundary and stop_conditions provide self-enforcement guardrails. Work items must have a valid contract (at minimum a goal) to transition from `open` to `ready` status; only `ready`+ items are dispatchable from the dashboard. See `domain/entities.md` → DispatchContract, `domain/rules.md` → Dispatch Contract Rules, and `domain/rules.md` → Long-Running Session Rules.
 
-**Technical Review Board** (two-gate lifecycle for medium+ work):
+**Review Board** (two-gate lifecycle for medium+ work):
 ```
-Plan Gate:  planner → [tech-reviewer-swe + tech-reviewer-arch + tech-reviewer-pm + (context-dependent: frontend, ux, dx, dba, systems, iot)] (parallel)
+Plan Gate:  planner → [tech-reviewer-swe + tech-reviewer-arch + tech-reviewer-pm + (context-dependent: frontend, ux, dx, dba, systems, prod, iot)] (parallel)
   → aggregate verdicts → if block: revise + re-review (max 2 cycles) → status: ready
 
 Code Gate:  coder → tester → [tech-reviewer-* board] (parallel) + reviewer (detailed)
   → aggregate verdicts → if block: fix + re-review → commit/merge
 ```
-Board composition is context-filtered (3–9 agents). See `domain/rules.md` → Technical Review Board Rules.
+Board composition is context-filtered (3–10 agents). See `domain/rules.md` → Review Board Rules.
 
 **Sequential Pipeline** (new features):
 ```

@@ -45,7 +45,7 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 
 5. **Plan implementation**: Produce a bullet-point plan (max 5 points) covering: files to modify/create, approach summary, test strategy. If the work item has a stored `plan.md` artifact, use it as the basis instead of generating from scratch. Present to user for confirmation. If rejected, refine or abort.
 
-6. **Technical Review Board — Plan Gate** (if medium+ complexity per `domain/rules.md` → Technical Review Board Rules): Assemble the review board using context-based composition rules (3–9 agents). Dispatch all selected tech-reviewer-* agents **in parallel** with the plan text, artifact_type=plan, and target project portfolio context. Collect `TechReviewVerdict` from each. Apply aggregation rules:
+6. **Review Board — Plan Gate** (if medium+ complexity per `domain/rules.md` → Review Board Rules): Assemble the review board using context-based composition rules (3–10 agents). Dispatch all selected tech-reviewer-* agents **in parallel** with the plan text, artifact_type=plan, and target project portfolio context. Collect `TechReviewVerdict` from each. Apply aggregation rules:
    - Any `block` → feed concerns back to planner for revision, re-review (max 2 cycles). If still blocked after 2 cycles, escalate to user.
    - Any `revise` (no `block`) → present plan to user WITH revision concerns highlighted. User decides: accept, revise, or override.
    - All `approve` → update work item status to `ready`. Proceed to user confirmation (step 5 already handles this).
@@ -59,7 +59,7 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 
 10. **Run tests**: Dispatch tester agent in the worktree. Run existing test suite if available. Write new tests if new code warrants them and the project has test infrastructure. If contract tests were written in step 7, verify they now pass (green). If tests fail: dispatch coder to fix, then re-run tester (max 2 iterations). If no test framework is detected, skip and note it in the output.
 
-11. **Technical Review Board — Code Gate** (for all non-trivial code changes per `domain/rules.md` → Technical Review Board Rules): Assemble the review board using context-based composition rules. Dispatch all selected tech-reviewer-* agents **in parallel** with the implementation diff (artifact_type=diff), target project portfolio context, and the DispatchContract so reviewers can evaluate whether the implementation meets the stated goals and does not violate the stated constraints. Collect `TechReviewVerdict` from each. Apply aggregation rules:
+11. **Review Board — Code Gate** (for all non-trivial code changes per `domain/rules.md` → Review Board Rules): Assemble the review board using context-based composition rules. Dispatch all selected tech-reviewer-* agents **in parallel** with the implementation diff (artifact_type=diff), target project portfolio context, and the DispatchContract so reviewers can evaluate whether the implementation meets the stated goals and does not violate the stated constraints. Collect `TechReviewVerdict` from each. Apply aggregation rules:
     - Any `block` → dispatch coder to fix, re-review (max 2 cycles). If still blocked, escalate to user.
     - Any `revise` (no `block`) → present to user WITH revision concerns highlighted. User decides: accept, request fix, or override.
     - All `approve` → proceed to commit.

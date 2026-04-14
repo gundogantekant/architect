@@ -100,13 +100,13 @@ These rules apply to ALL workflow patterns, not only `parallel-fan-out`:
 | reviewer | All code changes except trivial |
 | security-auditor | Auth, secrets, input validation, or external data is involved |
 | browser | E2E tests, visual regression, bug reproduction in browser, or web automation tasks requested by the user |
-| tech-reviewer-* | All plans from planner agent (medium+ complexity) and all non-trivial code changes. Dispatched as a context-filtered group (3–9 agents) in parallel per Technical Review Board Rules |
+| tech-reviewer-* | All plans from planner agent (medium+ complexity) and all non-trivial code changes. Dispatched as a context-filtered group (3–10 agents) in parallel per Review Board Rules |
 
 ## Agent Permission Model
 
 | Category | Agents | Can modify code | Can write data | Can interact with web | Uses worktree |
 |----------|--------|-----------------|----------------|-----------------------|---------------|
-| Read-only | reviewer, security-auditor, performance, strategist, classifier, coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot | No | No | No | No (main tree) |
+| Read-only | reviewer, security-auditor, performance, strategist, classifier, coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod | No | No | No | No (main tree) |
 | Interactive | browser | No | No | Yes | No |
 | Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer, git-ops | Yes | No | No | Yes (worktree) |
 | Onboarding | profiler | No (writes only CLAUDE.md to target project) | No | No | No |
@@ -265,7 +265,7 @@ When PM's classification confidence is below **0.6**, always include clarificati
 - IDs use sequential `W-XXX` format (zero-padded, never reused)
 - Statuses: `open` → `ready` → `in-progress` → `done` (or `blocked`, `cancelled`)
 - `archived` is reachable only from `done` or `cancelled` — archived items are hidden from the active backlog
-- **Contract-gated ready transition**: The `open → ready` transition requires a valid contract. At minimum, a non-empty `goal` field must be present (from structured description sections, coordinator DispatchPlan, or manual input). For medium+ complexity: all 4 core contract fields must be populated. For large complexity: `scope_boundary` and `stop_conditions` (3+) must also be populated. The plan gate (Technical Review Board) evaluates the contract alongside the plan for medium+ complexity. Dashboard dispatch is restricted to `ready`+ status items.
+- **Contract-gated ready transition**: The `open → ready` transition requires a valid contract. At minimum, a non-empty `goal` field must be present (from structured description sections, coordinator DispatchPlan, or manual input). For medium+ complexity: all 4 core contract fields must be populated. For large complexity: `scope_boundary` and `stop_conditions` (3+) must also be populated. The plan gate (Review Board) evaluates the contract alongside the plan for medium+ complexity. Dashboard dispatch is restricted to `ready`+ status items.
 - Session log is append-only
 - `list` supports `--org <name>` to filter by organization prefix
 - `list` supports `--project` with comma-separated values for multi-project filtering
@@ -696,6 +696,7 @@ Static defaults defined in each agent's frontmatter. The orchestrator overrides 
 | tech-reviewer-pm | sonnet | read-only |
 | tech-reviewer-systems | sonnet | read-only |
 | tech-reviewer-iot | sonnet | read-only |
+| tech-reviewer-prod | sonnet | read-only |
 
 ## Role-Scoped Context Injection
 
@@ -707,7 +708,7 @@ Each agent receives only the context layers relevant to its role. This reduces t
 |--------------|--------|-----------------|
 | none | git-ops | Branch name and project path only |
 | minimal | classifier, scout, tracker, dependency-manager, browser | `guidance.stack_summary`, `scout_report.language`, `scout_report.framework` |
-| standard | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, coordinator, planner, debugger, documenter, api-designer, refactorer, strategist, profiler, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot | Minimal + `guidance.structure`, `guidance.conventions`, `custom_rules`, `agents.dispatch_notes`, `brief.purpose`, `brief.domain`, `brief.users`, `doc_paths`, `portfolio_guides` |
+| standard | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, coordinator, planner, debugger, documenter, api-designer, refactorer, strategist, profiler, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod | Minimal + `guidance.structure`, `guidance.conventions`, `custom_rules`, `agents.dispatch_notes`, `brief.purpose`, `brief.domain`, `brief.users`, `doc_paths`, `portfolio_guides` |
 | full | tester, reviewer, security-auditor, ci-cd, performance | Standard + `guidance.ci_cd`, `guidance.testing`, complete `brief` (all fields), `doc_paths` |
 
 ### Application
@@ -906,9 +907,9 @@ Every plan that introduces new API endpoints, UI interactions, or agent dispatch
 4. **Contract scope**: At minimum, cover the API layer (request/response contracts), the UI layer (element rendering, user interactions), and any prompt/context assembly (content verification).
 5. **Exemptions**: Trivial changes (typo fixes, single-line edits, documentation-only) are exempt. If in doubt, write the contract.
 
-## Technical Review Board Rules
+## Review Board Rules
 
-The Technical Review Board is a context-filtered group of specialized review agents (3–9) that evaluate artifacts (plans, code diffs, PRs) from multiple perspectives. It operates as a two-gate quality system in the work item lifecycle.
+The Review Board is a context-filtered group of specialized review agents (3–10) that evaluate artifacts (plans, code diffs, PRs) from multiple perspectives. It operates as a two-gate quality system in the work item lifecycle.
 
 ### Review Board Agents
 
@@ -930,6 +931,7 @@ The Technical Review Board is a context-filtered group of specialized review age
 | tech-reviewer-dba | Schema design, query patterns, indexing, migrations, Clean Architecture data layer | Project uses a database OR artifact touches schema/query/model code |
 | tech-reviewer-systems | System boundaries, communication protocols, cross-subsystem failure modes, version compat | Project spans multiple subsystems OR artifact crosses system boundaries |
 | tech-reviewer-iot | Device provisioning, OTA, telemetry, power management, BLE, connectivity resilience | Project involves IoT/embedded devices OR artifact touches device-layer code |
+| tech-reviewer-prod | Logging, monitoring, health checks, deployment safety, config management, graceful degradation, operational documentation | Project has backend services or APIs OR artifact introduces new deployment units, secrets/config management, or changes to operational runbooks. Skip for purely frontend-only artifacts with no deployment changes. |
 
 All agents are read-only (sonnet default, escalatable to opus for large/strategic artifacts per Model Selection Rules).
 

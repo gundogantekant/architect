@@ -16,7 +16,7 @@ Canonical schemas for all structured data in the architect system. Agents and sk
 }
 ```
 
-**Read-only agents**: reviewer, security-auditor, performance, strategist, classifier, coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot
+**Read-only agents**: reviewer, security-auditor, performance, strategist, classifier, coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod
 **Interactive agents**: browser (interacts with web via Playwright, no code/data writes)
 **Implementation agents**: coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer, git-ops
 **Onboarding agents**: profiler (writes only CLAUDE.md to the target project)
@@ -551,7 +551,7 @@ Output by each tech reviewer agent when evaluating a plan, code change, or pull 
 
 ```json
 {
-  "agent": "string — reviewer agent name (tech-reviewer-swe|tech-reviewer-arch|tech-reviewer-dx|tech-reviewer-ux|tech-reviewer-frontend|tech-reviewer-dba|tech-reviewer-pm|tech-reviewer-systems|tech-reviewer-iot)",
+  "agent": "string — reviewer agent name (tech-reviewer-swe|tech-reviewer-arch|tech-reviewer-dx|tech-reviewer-ux|tech-reviewer-frontend|tech-reviewer-dba|tech-reviewer-pm|tech-reviewer-systems|tech-reviewer-iot|tech-reviewer-prod)",
   "artifact_type": "plan|diff|pr",
   "verdict": "approve|revise|block",
   "concerns": [
@@ -574,7 +574,7 @@ Verdict semantics:
 
 ## TechReviewBoardResult
 
-Aggregate output of all dispatched tech reviewer agents, produced by the orchestrator. The number of reviewers varies (3–9) based on context-based board composition rules in `domain/rules.md`.
+Aggregate output of all dispatched tech reviewer agents, produced by the orchestrator. The number of reviewers varies (3–10) based on context-based board composition rules in `domain/rules.md`.
 
 ```json
 {

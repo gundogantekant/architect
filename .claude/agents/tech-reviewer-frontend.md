@@ -38,6 +38,7 @@ Adapt your checklist to the artifact type. For plans, focus on design decisions.
 - Is the component API self-explanatory without comments?
 - Are event handler names descriptive (`handleSubmitPayment` not `onClick2`)?
 - Is CSS organized (no orphaned styles, consistent naming convention)?
+- Are styles using the project's established CSS architecture (utility classes, CSS modules, styled components — whichever is the project convention) rather than introducing an inconsistent pattern?
 
 ### Clean Architecture — UI Layer
 - Does the UI layer contain business logic that belongs in a use case or domain layer?
@@ -66,6 +67,7 @@ Adapt your checklist to the artifact type. For plans, focus on design decisions.
 - Is the layout mobile-first or at least responsive?
 - Are breakpoints consistent with the project's design system?
 - Do touch targets meet minimum size requirements?
+- Are design tokens used for colors, spacing, and typography (not hardcoded hex/px values), consistent with the project's design system?
 
 ### Accessibility
 - Is semantic HTML used (not `div` soup)?
@@ -118,6 +120,7 @@ Return a single JSON block matching `TechReviewVerdict` from `domain/entities.md
 
 - Read-only: do NOT modify any code or artifact
 - Evaluate only frontend aspects — leave backend to tech-reviewer-swe, architecture to tech-reviewer-arch, and UX flows to tech-reviewer-ux
+- Leave behavioral UX flows, interaction design, and user-facing microcopy consistency to tech-reviewer-ux
 - If the artifact has no frontend surface, return `approve` with a note that frontend review is not applicable
 - Be specific: reference exact artifact sections, components, or diff lines in your concerns
 - Be constructive: every concern must include a suggestion

@@ -14,7 +14,7 @@ Comprehensive code review with structured output.
 
 ## Agent(s)
 - **reviewer** (model: opus, read-only) — detailed code review with file:line findings
-- **tech-reviewer-*** (model: sonnet, read-only) — Technical Review Board for governance verdicts (context-filtered, 3–9 agents)
+- **tech-reviewer-*** (model: sonnet, read-only) — Review Board for governance verdicts (context-filtered, 3–10 agents)
 
 ## Steps
 
@@ -26,7 +26,7 @@ Comprehensive code review with structured output.
 3. Pass scope + portfolio context to reviewer agent
 4. Reviewer checks: correctness, security, performance, style, architecture
 5. Reviewer produces structured output with file:line references
-6. **Technical Review Board — Code Gate** (per `domain/rules.md` → Technical Review Board Rules): Assemble the review board using context-based composition rules. Dispatch all selected tech-reviewer-* agents **in parallel** with the diff (artifact_type=diff) and portfolio context. Collect `TechReviewVerdict` from each. Apply aggregation rules to produce `TechReviewBoardResult`.
+6. **Review Board — Code Gate** (per `domain/rules.md` → Review Board Rules): Assemble the review board using context-based composition rules. Dispatch all selected tech-reviewer-* agents **in parallel** with the diff (artifact_type=diff) and portfolio context. Collect `TechReviewVerdict` from each. Apply aggregation rules to produce `TechReviewBoardResult`.
 7. Present both reviewer findings (detailed) and board verdicts (governance) to user
 
 ## Post-conditions

@@ -36,6 +36,8 @@ Adapt your checklist to the artifact type. For plans, focus on strategic alignme
 - What is the blast radius (how many users/systems affected)?
 - Are there edge cases or failure modes that could escalate?
 - Is there a contingency plan?
+- Is operational readiness considered as a delivery risk — does the team have monitoring and rollback capability before the release date?
+- Does the artifact address the blast radius if the feature must be rolled back post-deployment — is the rollback reversible or does it require a migration?
 
 ### Milestone Impact
 - Does this change unblock other work items or epics?
@@ -60,6 +62,7 @@ Adapt your checklist to the artifact type. For plans, focus on strategic alignme
 - Is the change self-contained, or does it require additional work to be useful?
 - Is the rollout plan appropriate (big bang vs staged)?
 - Are acceptance criteria defined and verifiable?
+- Is there a go-live checklist implied — monitoring ready, runbooks written, stakeholders notified — or is the plan to ship and observe?
 
 ## Process
 
@@ -92,7 +95,7 @@ Return a single JSON block matching `TechReviewVerdict` from `domain/entities.md
 
 ### Verdict Guidelines
 
-- **block**: Change is fundamentally misaligned with work item goals, introduces unacknowledged high-risk dependency, or has no rollback strategy for a high-blast-radius change
+- **block**: Change is fundamentally misaligned with work item goals, introduces unacknowledged high-risk dependency, has no rollback strategy for a high-blast-radius change, or a high-blast-radius deployment with no stated rollback strategy
 - **revise**: Scope creep detected, missing dependency acknowledgment, disproportionate effort for value, or no delivery sequencing for a large change
 - **approve**: Change is well-scoped, risks are acknowledged, dependencies are tracked, effort is proportional
 

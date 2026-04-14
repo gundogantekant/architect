@@ -80,7 +80,7 @@ Both CLI and dashboard use topological sort (Kahn's algorithm) for work item lis
 
 ### Two-Gate Lifecycle
 
-The Technical Review Board operates as two quality gates in the work item lifecycle:
+The Review Board operates as two quality gates in the work item lifecycle:
 
 ```
 open → [Plan Gate] → ready → in-progress → [Code Gate] → done
@@ -89,7 +89,7 @@ open → [Plan Gate] → ready → in-progress → [Code Gate] → done
 - **Plan Gate**: After the planner produces a plan (medium+ complexity), the technical review board evaluates it. On approval, the work item transitions to `ready`.
 - **Code Gate**: After implementation and tests pass, the board evaluates the code diff. On approval, the work item proceeds to commit and `done`.
 
-See `domain/rules.md` → Technical Review Board Rules for full details.
+See `domain/rules.md` → Review Board Rules for full details.
 
 ## Epics
 
