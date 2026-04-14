@@ -132,4 +132,136 @@ test.describe('Dispatch Contract @fast', () => {
     expect(prompt).not.toContain('# Constraints\n');
   });
 
+  test('DC-7: scope_boundary renders in contract section when present', async ({ request }) => {
+    const base = getBase();
+    const resp = await request.post(`${base}/api/test/build-prompt`, {
+      data: {
+        workItem: { id: 'W-906', title: 'DC-7 test', status: 'ready', priority: 'medium' },
+        projectKey: 'ticari/architect/main',
+        projectPath: '/tmp/test-project',
+        contract: {
+          ...BASE_CONTRACT,
+          scope_boundary: 'Only modify files under src/auth/ and tests/auth/',
+        },
+      },
+    });
+    expect(resp.ok()).toBe(true);
+    const { prompt } = await resp.json();
+
+    expect(prompt).toContain('# Dispatch Contract');
+    expect(prompt).toContain('**Scope Boundary**: Only modify files under src/auth/ and tests/auth/');
+  });
+
+  test('DC-8: stop_conditions render as bullet list when present', async ({ request }) => {
+    const base = getBase();
+    const resp = await request.post(`${base}/api/test/build-prompt`, {
+      data: {
+        workItem: { id: 'W-907', title: 'DC-8 test', status: 'ready', priority: 'medium' },
+        projectKey: 'ticari/architect/main',
+        projectPath: '/tmp/test-project',
+        contract: {
+          ...BASE_CONTRACT,
+          stop_conditions: [
+            'Schema migration required beyond planned scope',
+            'More than 5 files need changes not mentioned in the plan',
+            'Security-sensitive code encountered outside plan scope',
+          ],
+        },
+      },
+    });
+    expect(resp.ok()).toBe(true);
+    const { prompt } = await resp.json();
+
+    expect(prompt).toContain('# Dispatch Contract');
+    expect(prompt).toContain('**Stop Conditions**');
+    expect(prompt).toContain('- Schema migration required beyond planned scope');
+    expect(prompt).toContain('- More than 5 files need changes not mentioned in the plan');
+    expect(prompt).toContain('- Security-sensitive code encountered outside plan scope');
+  });
+
+  test('DC-9: scope_boundary and stop_conditions omitted when null/absent', async ({ request }) => {
+    const base = getBase();
+    const resp = await request.post(`${base}/api/test/build-prompt`, {
+      data: {
+        workItem: { id: 'W-908', title: 'DC-9 test', status: 'ready', priority: 'medium' },
+        projectKey: 'ticari/architect/main',
+        projectPath: '/tmp/test-project',
+        contract: BASE_CONTRACT,
+      },
+    });
+    expect(resp.ok()).toBe(true);
+    const { prompt } = await resp.json();
+
+    expect(prompt).toContain('# Dispatch Contract');
+    expect(prompt).not.toContain('Scope Boundary');
+    expect(prompt).not.toContain('Stop Conditions');
+  });
+
+  test('DC-10: contract derived from structured work item description', async ({ request }) => {
+    const base = getBase();
+    const description = [
+      '**Goal**: Implement subscription management with 3 tiers.',
+      '**Constraints**: No changes to existing API routes.',
+      '**Expected Output**: Modified billing module with passing tests.',
+      '**Failure Conditions**: Existing endpoints break or tests fail.',
+      '**Scope Boundary**: Only src/billing/ and tests/billing/',
+      '**Stop Conditions**:',
+      'Schema migration required',
+      'Auth module needs changes',
+    ].join('\n');
+
+    const resp = await request.post(`${base}/api/test/build-prompt`, {
+      data: {
+        workItem: { id: 'W-909', title: 'DC-10 test', status: 'ready', priority: 'medium', description },
+        projectKey: 'ticari/architect/main',
+        projectPath: '/tmp/test-project',
+      },
+    });
+    expect(resp.ok()).toBe(true);
+    const { prompt } = await resp.json();
+
+    expect(prompt).toContain('# Dispatch Contract');
+    expect(prompt).toContain('**Goal**: Implement subscription management with 3 tiers.');
+    expect(prompt).toContain('**Constraints**: No changes to existing API routes.');
+    expect(prompt).toContain('**Scope Boundary**: Only src/billing/ and tests/billing/');
+    expect(prompt).toContain('- Schema migration required');
+    expect(prompt).toContain('- Auth module needs changes');
+  });
+
+  test('DC-11: no contract derived from free-form description', async ({ request }) => {
+    const base = getBase();
+    const resp = await request.post(`${base}/api/test/build-prompt`, {
+      data: {
+        workItem: { id: 'W-910', title: 'DC-11 test', status: 'open', priority: 'medium', description: 'Fix the login bug that users reported last week.' },
+        projectKey: 'ticari/architect/main',
+        projectPath: '/tmp/test-project',
+      },
+    });
+    expect(resp.ok()).toBe(true);
+    const { prompt } = await resp.json();
+
+    expect(prompt).not.toContain('# Dispatch Contract');
+  });
+
+  test('DC-12: explicit contract takes precedence over description-derived contract', async ({ request }) => {
+    const base = getBase();
+    const description = '**Goal**: Goal from description.\n**Constraints**: Constraint from description.';
+
+    const resp = await request.post(`${base}/api/test/build-prompt`, {
+      data: {
+        workItem: { id: 'W-911', title: 'DC-12 test', status: 'ready', priority: 'medium', description },
+        projectKey: 'ticari/architect/main',
+        projectPath: '/tmp/test-project',
+        contract: BASE_CONTRACT,
+      },
+    });
+    expect(resp.ok()).toBe(true);
+    const { prompt } = await resp.json();
+
+    // Contract section should use the explicit contract, not the description-derived one
+    const contractSection = prompt.slice(prompt.indexOf('# Dispatch Contract'));
+    expect(contractSection).toContain(`**Goal**: ${BASE_CONTRACT.goal}`);
+    expect(contractSection).not.toContain('Goal from description');
+  });
+
 });

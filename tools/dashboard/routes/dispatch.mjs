@@ -78,9 +78,20 @@ export default function dispatchRoutes(deps) {
       const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode, contract: rawContract } = body;
 
       // Strip empty-string contract fields per domain/rules.md → Dispatch Contract Rules
-      const contract = rawContract && typeof rawContract === 'object'
-        ? Object.fromEntries(Object.entries(rawContract).filter(([, v]) => typeof v === 'string' && v.trim()))
-        : null;
+      let contract = null;
+      if (rawContract && typeof rawContract === 'object') {
+        const cleaned = {};
+        for (const [k, v] of Object.entries(rawContract)) {
+          if (k === 'stop_conditions') {
+            if (Array.isArray(v) && v.filter(s => typeof s === 'string' && s.trim()).length) {
+              cleaned[k] = v.filter(s => typeof s === 'string' && s.trim());
+            }
+          } else if (typeof v === 'string' && v.trim()) {
+            cleaned[k] = v;
+          }
+        }
+        contract = Object.keys(cleaned).length ? cleaned : null;
+      }
 
       if (!project_key) {
         return err(res, 'project_key is required', 400);
