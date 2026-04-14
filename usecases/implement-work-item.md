@@ -53,7 +53,7 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 
 7. **Write contract tests** (if applicable per `domain/rules.md` → Contract-First Planning Rules): When the plan introduces new API endpoints, UI interactions, or dispatch flows, write E2E/integration tests that encode the expected behavior before implementation. Verify they fail (red). Trivial changes are exempt.
 
-8. **Worktree check**: If a `# Worktree Context` section is present in your prompt (i.e., the dispatch infrastructure already created a worktree and set your working directory to it), skip worktree creation and proceed to step 9. Otherwise, follow `usecases/manage-worktree.md` → create, using the work item ID as the ticket ID and the work item title as the task description. Respect the portfolio entry's `worktree_mode` field — if `"explicit"`, work in-place.
+8. **Worktree check**: If a `# Worktree Context` section is present in your prompt (i.e., the dispatch infrastructure already created a worktree and set your working directory to it), skip worktree creation and proceed to step 9. Otherwise, follow `usecases/manage-worktree.md` → create, using the work item ID as the ticket ID (branch and directory will be named `W-<id>`). Respect the portfolio entry's `worktree_mode` field — if `"explicit"`, work in-place.
 
 9. **Implement changes**: Dispatch coder agent in the worktree with: portfolio context, work item details, the approved plan, the coding standards brief from `domain/rules.md`, and the full DispatchContract (goal, constraints, expected output, failure conditions, scope_boundary, stop_conditions) from the DispatchPlan step. For medium+ complexity, the agent must follow `domain/rules.md` → Long-Running Session Rules (phase-based progress checkpoints, scope boundary self-enforcement, stop condition protocol).
 
@@ -68,12 +68,15 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 
 13. **Log progress**: `POST /api/work-items/<id>/log` with `{"message": "Implemented: <summary>. Branch: <branch-name>"}`.
 
-14. **Update status**: Dispatch tracker agent with command `update <id> done`. If the item has an `epic_id`, tracker checks epic progress and suggests status transition.
+14. **Merge-back confirmation**: Present a one-line summary: "Ready to merge <N> commit(s) from `<branch>` into `<originating_branch>`. Proceed?" Wait for user confirmation before continuing.
 
-15. **Present results**: Summarize changes made, test results, commit hash, and branch name. Offer the user three options: `/pr` (default — create pull request from the worktree branch), merge-back (local merge into originating branch via `/worktree cleanup` with merge-back mode), or `/worktree cleanup` (discard changes).
+15. **Merge-back**: Dispatch git-ops to merge the worktree branch into the originating branch (fast-forward preferred, merge commit fallback). On success: remove the worktree, delete the branch, then proceed to step 16. On conflict: dispatch the coder agent to attempt resolution — it must (a) identify the conflicting hunks, (b) produce a resolution, and (c) provide an impact analysis (what changed semantically, risk level). If the coder agent's resolution is clean and low-risk, apply it, complete the merge, and proceed to step 16. If the conflict cannot be meaningfully resolved (risk too high, intent unclear, or multiple overlapping changes), run `git merge --abort`, preserve the worktree intact, report the conflicting files with a brief conflict summary, and offer two options: (a) run `/pr` to push a pull request instead, or (b) leave the worktree open for manual resolution. Do not proceed to step 16 on unresolved conflict.
+
+16. **Update status + present results**: Dispatch tracker to mark item `done`. If the item has an `epic_id`, tracker checks epic progress and suggests status transition. Log: `POST /api/work-items/<id>/log` with the merge commit hash and originating branch. Summarize: changes made, test results, merge commit hash, and target branch. Note: run `/pr` explicitly if a GitHub pull request is needed.
 
 ## Post-conditions
-- All changes are committed in a worktree branch (not pushed)
-- Work item status is `done`
-- Session log records the implementation summary and branch name
-- User can follow up with `/pr` or `/worktree cleanup`
+- Changes are committed and merged into the originating branch
+- Worktree and branch are removed
+- Work item status is `done` (set only after successful merge)
+- Session log records the implementation summary and merge commit hash
+- User can run `/pr` explicitly if a GitHub pull request is needed

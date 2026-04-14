@@ -599,13 +599,14 @@ Shared git rules enforced by all implementation agents.
 - **Worktree creation failure blocks the dispatch** with a 500 error. There is no silent fallback to the original project directory — isolation is mandatory when requested.
 - Read-only operations (review, audit, diagnosis, scouting) do not require a worktree.
 - Worktrees are sibling directories of the project folder, not inside it
-- Path: `<parent-of-project-dir>/<project-dir-name>-<branch-name>/`
-- Branch/folder naming: `<project-dir-name>-<branch-prefix><ticket-id>-<slug>` (e.g., `light-app-GEN-1641-add-auth-flow`)
-- Ticket ID comes from the work item ID (W-XXX), Notion (via MCP), or user input; the orchestrator obtains it before creating the worktree
+- Path: `<parent-of-project-dir>/W-<id>/` (e.g., `/Users/user/NeuronicRepos/W-933/`)
+- Branch/folder naming: `W-<id>` (e.g., `W-933`). Both the worktree directory and branch name use this form — short, ticket-centric, immediately identifiable.
+- Ticket ID comes from the work item ID (W-XXX); the orchestrator obtains it before creating the worktree
 - WorktreeContext captures `originating_branch` at creation time — the branch the worktree was branched from. This may be `main`, a feature branch, or any other branch.
 - After worktree creation, `worktree_setup` hooks from the PortfolioEntry run if defined (copy paths, post commands)
-- After implementation, the user is presented with three options: `/pr` (default — create pull request), merge-back (local merge into originating branch), or `/worktree cleanup` (discard)
-- **Merge-back** uses fast-forward when possible, falls back to merge commit, and never auto-resolves conflicts. On conflict: abort and report to user.
+- After implementation completes (tests pass, commit made): present a pre-merge confirmation showing the branch, target, and commit count, then automatically merge-back into the originating branch and remove the worktree. On conflict: first dispatch the coder agent to attempt auto-resolution with impact analysis — if the resolution is clean and low-risk, apply it and continue the merge; if the conflict cannot be resolved meaningfully, abort the merge, preserve the worktree intact, list conflicting files, and offer two paths: run `/pr` to push a pull request instead, or leave the worktree open for manual resolution. Do not set the work item to `done` until after a successful merge. PR creation is not automatic — the user invokes `/pr` explicitly when a GitHub PR is wanted.
+- The user may still invoke `/worktree cleanup` to discard the worktree at any point.
+- **Merge-back** uses fast-forward when possible, falls back to merge commit. On conflict: attempt auto-resolution with coder agent + impact analysis before reporting to user.
 - Portfolio registry always stores the original project path, never worktree paths
 
 ## Error Recovery
