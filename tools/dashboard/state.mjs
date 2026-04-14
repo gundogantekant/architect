@@ -49,7 +49,11 @@ export function saveCliSessionToDb(c) {
 export function archiveSession(session, type) {
   const endedAt = type === 'cli' ? session.exited_at : (type === 'dispatch' ? session.completed_at : session.exited_at);
   const startedAt = type === 'cli' ? session.registered_at : session.started_at;
-  if (!endedAt || !startedAt || !session.project_key) return;
+  if (!endedAt || !startedAt || !session.project_key) {
+    const missing = [!startedAt && 'startedAt', !endedAt && 'endedAt', !session.project_key && 'project_key'].filter(Boolean).join(', ');
+    console.warn(`archiveSession(${type} ${session.id}): skipped — missing ${missing}`);
+    return;
+  }
   try {
     db.recordSessionHistory({
       id: session.id, type, project_key: session.project_key,
@@ -61,4 +65,15 @@ export function archiveSession(session, type) {
   } catch (e) {
     console.error(`Failed to archive ${type} ${session.id}:`, e.message);
   }
+}
+
+// --- Centralized session finalization: set terminal timestamp + archive ---
+export function finalizeSession(session, type) {
+  const now = new Date().toISOString();
+  if (type === 'dispatch') {
+    if (!session.completed_at) session.completed_at = now;
+  } else {
+    if (!session.exited_at) session.exited_at = now;
+  }
+  archiveSession(session, type);
 }

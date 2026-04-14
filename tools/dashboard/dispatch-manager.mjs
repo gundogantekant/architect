@@ -85,6 +85,7 @@ export function tailLogFile(dispatch) {
       dispatch.completed_at = new Date().toISOString();
       if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
       saveDispatchToDb(dispatch);
+      archiveSession(dispatch, 'dispatch');
       broadcastDispatchDone(dispatch);
       return;
     }
@@ -155,11 +156,12 @@ export function restoreSessions(wireTerminalHandlers) {
         tailLogFile(dispatch);
         console.log(`Dispatch ${d.id}: PID ${d.pid} still alive, reconnecting via log tail`);
       } else {
-        // PID dead — mark interrupted, load log content for display
+        // PID dead — mark interrupted, archive to session_history, load log content for display
         interruptedDispatches++;
         d.status = 'interrupted';
         d.completed_at = now;
         db.updateDispatchStatus(d.id, 'interrupted', now);
+        archiveSession(d, 'dispatch');
         const logPath = join(LOGS_DIR, `${d.id}.jsonl`);
         let output = [];
         try { output = readFileSync(logPath, 'utf8').split('\n').filter(l => l.trim()); } catch {}
@@ -241,11 +243,12 @@ export function restoreSessions(wireTerminalHandlers) {
         });
         console.log(`Terminal ${t.id}: PID ${t.pid} alive but no tmux — marked as detached`);
       } else {
-        // Dead — mark interrupted
+        // Dead — mark interrupted, archive to session_history
         interruptedTerminals++;
         t.status = 'interrupted';
         t.exited_at = now;
         db.updateTerminalStatus(t.id, 'interrupted', now);
+        archiveSession(t, 'terminal');
         terminals.set(t.id, {
           ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
           cols: t.cols || 80, rows: t.rows || 24,

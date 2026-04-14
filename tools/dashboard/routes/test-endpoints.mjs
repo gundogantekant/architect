@@ -20,7 +20,7 @@ export default function testEndpointRoutes(deps) {
     // --- Test endpoints (for E2E test seeding) ---
     [/^\/api\/test\/seed-dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { id, status, project_key, title, work_item_id, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch } = body;
+      const { id, status, project_key, title, work_item_id, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch, pid: seedPid } = body;
       if (!id) return err(res, 'id is required', 400);
       const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
 
@@ -59,7 +59,7 @@ export default function testEndpointRoutes(deps) {
         started_at: new Date().toISOString(),
         completed_at: status !== 'running' ? new Date().toISOString() : null,
         process: null,
-        pid: null,
+        pid: seedPid || null,
         logPath,
         _testWorkerId,
       };
@@ -169,12 +169,12 @@ export default function testEndpointRoutes(deps) {
     // Seed a session_history entry (for time report tests)
     [/^\/api\/test\/seed-session-history$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { project_key, duration_seconds, cost_usd, started_at, ended_at } = body;
+      const { id: seedId, project_key, duration_seconds, cost_usd, started_at, ended_at } = body;
       if (!project_key) return err(res, 'project_key is required', 400);
       const end = ended_at || new Date().toISOString();
       const dur = duration_seconds || 300;
       const start = started_at || new Date(new Date(end).getTime() - dur * 1000).toISOString();
-      const id = `SH-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const id = seedId || `SH-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       db.recordSessionHistory({
         id,
         type: 'test',

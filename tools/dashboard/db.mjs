@@ -609,17 +609,22 @@ export function recordSessionHistory({ id, type, project_key, work_item_id, epic
   const start = new Date(started_at).getTime();
   const end = new Date(ended_at).getTime();
   const duration_seconds = Math.max(0, (end - start) / 1000);
+  if (isNaN(duration_seconds)) {
+    console.warn(`recordSessionHistory(${id}): NaN duration from ${started_at} → ${ended_at}`);
+    return;
+  }
 
   db.transaction(() => {
     ensureProject(project_key);
-    const result = db.prepare(`
-      INSERT OR IGNORE INTO session_history (id, type, project_key, work_item_id, epic_id, title, status, permission_mode, started_at, ended_at, duration_seconds, cost_usd)
+    db.prepare(`
+      INSERT INTO session_history (id, type, project_key, work_item_id, epic_id, title, status, permission_mode, started_at, ended_at, duration_seconds, cost_usd)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        status = excluded.status,
+        cost_usd = COALESCE(excluded.cost_usd, session_history.cost_usd)
     `).run(id, type, project_key, work_item_id || null, epic_id || null, title || '', status, permission_mode || null, started_at, ended_at, duration_seconds, cost_usd || null);
-    if (result.changes > 0) {
-      db.prepare(`UPDATE projects SET session_count = session_count + 1, total_time_seconds = total_time_seconds + ?, total_cost_usd = total_cost_usd + ? WHERE key = ?`)
-        .run(duration_seconds, cost_usd || 0, project_key);
-    }
+    // Legacy accumulator columns (total_time_seconds, total_cost_usd, session_count)
+    // on projects table are no longer updated. Use project_stats view for live totals.
   })();
 }
 
@@ -643,8 +648,10 @@ export function getTimeReport(todayStart) {
     WHERE sh.ended_at >= ? GROUP BY sh.project_key ORDER BY time_seconds DESC
   `).all(todayStart);
   const overall = db.prepare(`
-    SELECT key AS project_key, org, project, component, session_count AS sessions, total_time_seconds AS time_seconds, total_cost_usd AS cost_usd
-    FROM projects WHERE session_count > 0 ORDER BY total_time_seconds DESC
+    SELECT ps.project_key, p.org, p.project, p.component,
+      ps.session_count AS sessions, ps.total_time_seconds AS time_seconds, ps.total_cost_usd AS cost_usd
+    FROM project_stats ps JOIN projects p ON ps.project_key = p.key
+    ORDER BY time_seconds DESC
   `).all();
   return { today, overall };
 }
@@ -689,9 +696,10 @@ export function getTimeReportByOrg(todayStart) {
     WHERE sh.ended_at >= ? GROUP BY p.org ORDER BY time_seconds DESC
   `).all(todayStart);
   const overall = db.prepare(`
-    SELECT org, org AS project_key,
-      SUM(session_count) AS sessions, SUM(total_time_seconds) AS time_seconds, SUM(total_cost_usd) AS cost_usd
-    FROM projects WHERE session_count > 0 GROUP BY org ORDER BY time_seconds DESC
+    SELECT p.org, p.org AS project_key,
+      SUM(ps.session_count) AS sessions, SUM(ps.total_time_seconds) AS time_seconds, SUM(ps.total_cost_usd) AS cost_usd
+    FROM project_stats ps JOIN projects p ON ps.project_key = p.key
+    GROUP BY p.org ORDER BY time_seconds DESC
   `).all();
   return { today, overall };
 }
@@ -757,8 +765,7 @@ export function hardDeleteAllTestData() {
   db.prepare("DELETE FROM work_items WHERE created_at > ?").run(cutoff);
   db.prepare("DELETE FROM epics WHERE created_at > ?").run(cutoff);
   db.prepare("DELETE FROM session_history WHERE ended_at > ?").run(cutoff);
-  // Reset project counters for test-seeded projects (those with no real sessions left)
-  db.prepare(`UPDATE projects SET session_count = 0, total_time_seconds = 0, total_cost_usd = 0
-    WHERE key NOT IN (SELECT DISTINCT project_key FROM session_history)`).run();
+  // Legacy accumulator columns (session_count, total_time_seconds, total_cost_usd) on
+  // projects table are no longer maintained. Use project_stats view for live totals.
   db.pragma('foreign_keys = ON');
 }

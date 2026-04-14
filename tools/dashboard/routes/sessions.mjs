@@ -1,5 +1,5 @@
 export default function sessionRoutes(deps) {
-  const { json, err, parseBody, isPidAlive, cliSessions, saveCliSessionToDb } = deps;
+  const { json, err, parseBody, isPidAlive, cliSessions, saveCliSessionToDb, archiveSession } = deps;
   return [
     // --- CLI session endpoints ---
 
@@ -46,6 +46,8 @@ export default function sessionRoutes(deps) {
       session.status = 'exited';
       session.exited_at = new Date().toISOString();
       saveCliSessionToDb(session);
+      archiveSession(session, 'cli');
+      cliSessions.delete(m[1]);
       json(res, { status: 'exited', id: m[1] });
     }],
   ];

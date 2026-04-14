@@ -28,6 +28,7 @@ export const SPEC_FILES = [
   'text-selection',
   'worktree-dispatch',
   'dispatch-contract',
+  'time-tracking',
 ];
 
 function getLiveDashboardPorts() {

@@ -147,6 +147,7 @@ function shutdownFlush() {
       d.status = 'interrupted';
       d.completed_at = now;
       saveDispatchToDb(d);
+      archiveSession(d, 'dispatch');
     }
   }
 
@@ -161,6 +162,7 @@ function shutdownFlush() {
       t.status = 'interrupted';
       t.exited_at = now;
       saveTerminalToDb(t);
+      archiveSession(t, 'terminal');
     }
   }
 
