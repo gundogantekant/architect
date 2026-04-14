@@ -404,6 +404,16 @@ export function getPersistedCliSessions() {
   return db.prepare('SELECT * FROM cli_sessions').all();
 }
 
+// --- Lightweight title-only lookups (avoids full-row hydration) ---
+
+export function getWorkItemTitle(id) {
+  return db.prepare('SELECT title FROM work_items WHERE id = ?').get(id)?.title ?? null;
+}
+
+export function getEpicTitle(id) {
+  return db.prepare('SELECT title FROM epics WHERE id = ?').get(id)?.title ?? null;
+}
+
 // --- Session status updates ---
 
 export function updateDispatchStatus(id, status, completed_at) {

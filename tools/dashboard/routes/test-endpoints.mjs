@@ -20,7 +20,7 @@ export default function testEndpointRoutes(deps) {
     // --- Test endpoints (for E2E test seeding) ---
     [/^\/api\/test\/seed-dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { id, status, project_key, title, work_item_id, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch, pid: seedPid } = body;
+      const { id, status, project_key, title, work_item_id, epic_id: seedEpicId, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch, pid: seedPid } = body;
       if (!id) return err(res, 'id is required', 400);
       const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
 
@@ -41,7 +41,7 @@ export default function testEndpointRoutes(deps) {
       const dispatch = {
         id,
         work_item_id: work_item_id || null,
-        epic_id: null,
+        epic_id: seedEpicId || null,
         project_key: project_key || 'test/test/main',
         project_path: ROOT,
         title: title || id,
@@ -281,7 +281,7 @@ export default function testEndpointRoutes(deps) {
     // Seed a terminal with EventStream content (no real PTY)
     [/^\/api\/test\/seed-terminal$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { scrollback, status, claude_session_id, lines, withFakeContent, withInjectionEvents, ansiColors, agentType: bodyAgentType } = body;
+      const { scrollback, status, claude_session_id, lines, withFakeContent, withInjectionEvents, ansiColors, agentType: bodyAgentType, work_item_id, epic_id } = body;
       const agentType = bodyAgentType || 'shell';
       const workerId = req.headers['x-test-worker-id'];
       const id = body.id || (workerId !== undefined ? `T-${Date.now()}-${workerId}` : `T-${Date.now()}`);
@@ -323,8 +323,8 @@ export default function testEndpointRoutes(deps) {
         id,
         type: agentType,
         agent_type: agentType,
-        work_item_id: null,
-        epic_id: null,
+        work_item_id: work_item_id || null,
+        epic_id: epic_id || null,
         project_key: 'test/test/main',
         project_path: ROOT,
         title: `Test terminal ${id}`,

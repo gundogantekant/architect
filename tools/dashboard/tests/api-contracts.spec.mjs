@@ -8,7 +8,7 @@
  */
 
 import { test, expect } from './fixtures.mjs';
-import { getBase, seedWorkItem, seedEpic, seedDispatch, seedSessionHistory, api } from './helpers.mjs';
+import { getBase, seedWorkItem, seedEpic, seedDispatch, seedTerminal, seedSessionHistory, api } from './helpers.mjs';
 
 test.describe('API contracts @fast', () => {
 
@@ -62,6 +62,27 @@ test.describe('API contracts @fast', () => {
   test('AC-8: GET /api/terminal/active returns array', async () => {
     const result = await api('terminal/active');
     expect(Array.isArray(result)).toBe(true);
+  });
+
+  test('AC-7a: GET /api/dispatch/active returns title and work_item_title when linked', async () => {
+    const workItem = await seedWorkItem({ title: 'AC-7a dispatch work item' });
+    const { dispatch_id } = await seedDispatch({ work_item_id: workItem.id, title: workItem.title });
+    const result = await api('dispatch/active');
+    const entry = result.find(d => d.id === dispatch_id);
+    expect(entry).toBeDefined();
+    expect(entry.title).toBe(workItem.title);
+    expect(entry.work_item_title).toBe(workItem.title);
+    expect(entry.epic_title).toBeNull();
+  });
+
+  test('AC-8a: GET /api/terminal/active returns work_item_title when linked', async () => {
+    const workItem = await seedWorkItem({ title: 'AC-8a terminal work item' });
+    const seeded = await seedTerminal({ work_item_id: workItem.id });
+    const result = await api('terminal/active');
+    const entry = result.find(t => t.id === seeded.id);
+    expect(entry).toBeDefined();
+    expect(entry.work_item_title).toBe(workItem.title);
+    expect(entry.epic_title).toBeNull();
   });
 
   test('AC-9: GET /api/server/status returns pid and port', async () => {

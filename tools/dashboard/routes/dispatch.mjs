@@ -319,8 +319,11 @@ export default function dispatchRoutes(deps) {
         if (workerId !== undefined && d._testWorkerId !== workerId) continue;
         list.push({
           id,
+          title: d.title || null,
           work_item_id: d.work_item_id,
+          work_item_title: d.work_item_id ? db.getWorkItemTitle(d.work_item_id) : null,
           epic_id: d.epic_id || null,
+          epic_title: d.epic_id ? db.getEpicTitle(d.epic_id) : null,
           project_key: d.project_key,
           project_path: d.project_path,
           status: d.status,
