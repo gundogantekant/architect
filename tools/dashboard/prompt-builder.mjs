@@ -746,3 +746,37 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
 
   return sections.join('\n\n');
 }
+
+/**
+ * Build the `# Auto-Implement Mode` section injected into the autonomous dispatch prompt.
+ * References the workflow path rather than embedding its content.
+ */
+function buildAutoImplementSection(workItem) {
+  const id = workItem?.id || 'W-???';
+  return `# Auto-Implement Mode
+
+You are running in autonomous self-organizing mode for work item ${id}.
+
+Follow the workflow at \`$ARCHITECT_ROOT/usecases/implement-work-item.md\` exactly, executing all 15 steps without waiting for user confirmation at intermediate steps.
+
+**EXCEPTION**: If the Technical Review Board blocks after 2 revision cycles at any gate, do NOT proceed. Log the block reason to the work item session log and halt — the dispatch will be marked as failed.
+
+Your session depth is 1. You MUST NOT trigger further dashboard dispatches (POST /api/dispatch or /api/dispatch/auto-implement). All sub-agent work runs in-process via the Agent tool.
+
+When making any API call to the dashboard (curl http://127.0.0.1:3777/...), include the header:
+\`--header "X-Architect-Session-Depth: 1"\``;
+}
+
+/**
+ * Build an autonomous auto-implement dispatch prompt.
+ * Delegates to buildDispatchPrompt for all standard sections, then replaces
+ * the Dispatch Instructions section with the Auto-Implement Mode section.
+ */
+export function buildAutoImplementPrompt(args) {
+  const base = buildDispatchPrompt(args);
+  const autoSection = buildAutoImplementSection(args.workItem);
+  if (base.includes('# Dispatch Instructions')) {
+    return base.replace(/# Dispatch Instructions[\s\S]*?(?=\n# [A-Z]|$)/, autoSection);
+  }
+  return base + '\n\n' + autoSection;
+}

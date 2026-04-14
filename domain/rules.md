@@ -534,6 +534,32 @@ Empty strings are treated as absent. The prompt-builder strips empty fields and 
 
 Steps without a `contract` field (from pre-existing plans or trivial/small dispatches) remain valid. The prompt-builder gracefully no-ops when the contract is missing or incomplete. No migration is needed for existing DispatchPlans.
 
+## Auto-Implement Eligibility Rules
+
+Checked before creating an auto-implement dispatch. All conditions must pass; any failure returns 400 with a user-facing reason string.
+
+| Condition | Required | Rejection Message |
+|-----------|----------|-------------------|
+| Work item status is `open`, `ready`, or `in-progress` | Yes | "Work item status '<status>' cannot be auto-implemented. Must be open, ready, or in-progress." |
+| All `depends_on` items have status `done` | Yes | "Unmet dependencies: <id1>, <id2>. Resolve these before auto-implementing." |
+| No active dispatch exists for this work_item_id | Yes | "A dispatch is already running for this work item." |
+| Caller session depth must be 0 | Yes | "Auto-implement cannot be triggered from within a dispatch agent (depth ≥ 1)." |
+
+Depth is communicated via `X-Architect-Session-Depth` request header. When absent, depth is assumed to be 0 (preserves CLI and browser flows). When present and ≥ 1, reject with 403.
+
+## Auto-Implement Failure Protocol
+
+When the autonomous agent encounters a blocking failure (no user present to decide):
+
+| Failure Event | Agent Action |
+|---------------|-------------|
+| Plan Gate blocked after 2 TRB revision cycles | Log block reason to work item session log; halt; dispatch status = 'failed' |
+| Tests fail after 2 coder-fix iterations | Log failure details; halt; preserve worktree |
+| Code Gate blocked after 2 revision cycles | Log block reason; halt; preserve worktree |
+| Commit failure | Log error; halt; preserve worktree |
+
+In all failure cases: dispatch status = 'failed', work item status remains 'in-progress'. User reviews via dashboard and decides next step (retry, fix manually, or discard worktree).
+
 ### Contract Derivation from Work Item Description
 
 When no explicit contract is provided and the work item description contains structured sections, the prompt-builder extracts contract fields automatically. Recognized section headers (markdown bold format):

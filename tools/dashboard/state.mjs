@@ -20,6 +20,7 @@ export function saveDispatchToDb(d) {
     worktree_path: d.worktree_path || null,
     worktree_branch: d.worktree_branch || null,
     source_branch: d.source_branch || null,
+    dispatch_mode: d.dispatch_mode || 'standard',
   });
 }
 
