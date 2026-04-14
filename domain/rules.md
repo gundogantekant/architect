@@ -698,6 +698,17 @@ Static defaults defined in each agent's frontmatter. The orchestrator overrides 
 | tech-reviewer-iot | sonnet | read-only |
 | tech-reviewer-prod | sonnet | read-only |
 
+### Review Board Escalation
+
+Two review board agents escalate to opus when the artifact complexity is `large` or `strategic`:
+
+| Agent | Escalated Model | Reason |
+|-------|-----------------|--------|
+| tech-reviewer-arch | opus | Structural integrity, layer boundary violations, and dependency flow require deep reasoning at large/strategic scale |
+| tech-reviewer-systems | opus | Only dispatched for cross-system artifacts — inherently complex. Subsystem interaction failures and version compatibility edge cases benefit from opus reasoning |
+
+All other tech-reviewer-* agents remain on sonnet regardless of complexity (domain-specific pattern checking, not deep structural reasoning).
+
 ## Role-Scoped Context Injection
 
 Each agent receives only the context layers relevant to its role. This reduces token waste while ensuring agents have what they need. Organization conventions are always included regardless of role.
@@ -933,7 +944,7 @@ The Review Board is a context-filtered group of specialized review agents (3–1
 | tech-reviewer-iot | Device provisioning, OTA, telemetry, power management, BLE, connectivity resilience | Project involves IoT/embedded devices OR artifact touches device-layer code |
 | tech-reviewer-prod | Logging, monitoring, health checks, deployment safety, config management, graceful degradation, operational documentation | Project has backend services or APIs OR artifact introduces new deployment units, secrets/config management, or changes to operational runbooks. Skip for purely frontend-only artifacts with no deployment changes. |
 
-All agents are read-only (sonnet default, escalatable to opus for large/strategic artifacts per Model Selection Rules).
+All agents are read-only. tech-reviewer-arch and tech-reviewer-systems escalate to opus for large/strategic artifacts; all others use sonnet. See Model Selection Rules → Review Board Escalation.
 
 ### Context-Based Board Composition
 

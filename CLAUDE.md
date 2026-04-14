@@ -52,17 +52,19 @@ See `docs/architecture.md` for layer boundaries and dependency rules.
 | Browser automation (E2E, visual, web tasks) | browser | sonnet |
 | Git operations (commit, push, PR, branch, worktree) | git-ops | haiku |
 | Tech review — SWE perspective | tech-reviewer-swe | sonnet |
-| Tech review — architecture (Clean Architecture) | tech-reviewer-arch | sonnet |
+| Tech review — architecture (Clean Architecture) | tech-reviewer-arch | sonnet / opus* |
 | Tech review — project management | tech-reviewer-pm | sonnet |
 | Tech review — frontend perspective | tech-reviewer-frontend | sonnet |
 | Tech review — UX perspective | tech-reviewer-ux | sonnet |
 | Tech review — DX perspective | tech-reviewer-dx | sonnet |
 | Tech review — database architecture | tech-reviewer-dba | sonnet |
-| Tech review — systems engineering | tech-reviewer-systems | sonnet |
+| Tech review — systems engineering | tech-reviewer-systems | sonnet / opus* |
 | Tech review — IoT engineering | tech-reviewer-iot | sonnet |
 | Tech review — production readiness | tech-reviewer-prod | sonnet |
 
-Default models are overridden dynamically by the orchestrator based on task complexity. See `domain/rules.md` → Model Selection Rules.
+*Escalated to opus when dispatched for large or strategic artifacts.
+
+Default models are overridden dynamically by the orchestrator based on task complexity. See `domain/rules.md` → Model Selection Rules → Review Board Escalation.
 
 ### Orchestrator Behavior
 
