@@ -2270,6 +2270,17 @@ async function dispatchWorkItem(workItem, projectKey) {
           <label>Additional Instructions</label>
           <textarea id="dispatch-instructions" placeholder="Optional: add context, constraints, or specific instructions for the agent..."></textarea>
         </div>
+        <details id="contract-details" style="margin-bottom:14px">
+          <summary style="cursor:pointer;font-size:13px;font-weight:500;color:var(--text-secondary)">Dispatch Contract</summary>
+          <div style="margin-top:8px;display:flex;flex-direction:column;gap:8px">
+            <div class="field"><label for="contract-goal">Goal</label><textarea id="contract-goal" rows="2" placeholder="What must be true when complete?"></textarea></div>
+            <div class="field"><label for="contract-constraints">Constraints</label><textarea id="contract-constraints" rows="2" placeholder="Hard boundaries not to cross"></textarea></div>
+            <div class="field"><label for="contract-expected-output">Expected Output</label><textarea id="contract-expected-output" rows="2" placeholder="Specific artifact or structure to produce"></textarea></div>
+            <div class="field"><label for="contract-failure-conditions">Failure Conditions</label><textarea id="contract-failure-conditions" rows="2" placeholder="What makes output unacceptable"></textarea></div>
+            <div class="field"><label for="contract-scope-boundary">Scope Boundary</label><textarea id="contract-scope-boundary" rows="1" placeholder="Files/dirs the agent must NOT modify"></textarea></div>
+            <div class="field"><label for="contract-stop-conditions">Stop Conditions</label><textarea id="contract-stop-conditions" rows="2" placeholder="One per line: conditions to halt and report"></textarea></div>
+          </div>
+        </details>
         <div class="field">
           <label for="dispatch-agent-type">Agent</label>
           <select id="dispatch-agent-type">
@@ -2286,13 +2297,55 @@ async function dispatchWorkItem(workItem, projectKey) {
         ${permissionModeSelect('dispatch-perm-mode')}
         ${skipPermissionsCheckbox('dispatch-skip-perms')}
       `,
-      afterMount: (o) => wireAgentTypeToggle(o, 'dispatch-agent-type', 'dispatch-perm-mode', 'dispatch-skip-perms'),
+      afterMount: (o) => {
+        wireAgentTypeToggle(o, 'dispatch-agent-type', 'dispatch-perm-mode', 'dispatch-skip-perms');
+        // Auto-populate contract fields from structured description
+        if (workItem.description) {
+          const desc = workItem.description;
+          const extract = (header) => { const m = desc.match(new RegExp(`\\*\\*${header}\\*\\*:\\s*(.+)`, 'i')); return m ? m[1].trim() : ''; };
+          const goal = extract('Goal');
+          const constraints = extract('Constraints');
+          const expectedOutput = extract('Expected Output');
+          const failureConditions = extract('Failure Conditions');
+          const scopeBoundary = extract('Scope Boundary');
+          // Stop conditions: multi-line after header
+          const scMatch = desc.match(/\*\*Stop Conditions\*\*:\s*\n([\s\S]*?)(?=\n\*\*[A-Z]|\n##|\s*$)/i);
+          const stopConditions = scMatch ? scMatch[1].split('\n').map(l => l.replace(/^[-*]\s*/, '').trim()).filter(Boolean).join('\n') : '';
+          if (goal) o.querySelector('#contract-goal').value = goal;
+          if (constraints) o.querySelector('#contract-constraints').value = constraints;
+          if (expectedOutput) o.querySelector('#contract-expected-output').value = expectedOutput;
+          if (failureConditions) o.querySelector('#contract-failure-conditions').value = failureConditions;
+          if (scopeBoundary) o.querySelector('#contract-scope-boundary').value = scopeBoundary;
+          if (stopConditions) o.querySelector('#contract-stop-conditions').value = stopConditions;
+          // Auto-expand if any field was populated
+          if (goal || constraints || expectedOutput || failureConditions || scopeBoundary || stopConditions) {
+            o.querySelector('#contract-details').open = true;
+          }
+        }
+      },
       onSubmit: async (overlay) => {
         const instructions = overlay.querySelector('#dispatch-instructions').value.trim();
         const plainTerminal = !overlay.querySelector('#dispatch-claude-agent').checked;
         const agentType = overlay.querySelector('#dispatch-agent-type')?.value || 'claude';
         const permMode = getPermissionMode(overlay, 'dispatch-perm-mode');
         const skipPerms = overlay.querySelector('#dispatch-skip-perms').checked;
+
+        // Collect contract fields
+        const contractGoal = overlay.querySelector('#contract-goal')?.value?.trim() || '';
+        const contractConstraints = overlay.querySelector('#contract-constraints')?.value?.trim() || '';
+        const contractExpectedOutput = overlay.querySelector('#contract-expected-output')?.value?.trim() || '';
+        const contractFailureConditions = overlay.querySelector('#contract-failure-conditions')?.value?.trim() || '';
+        const contractScopeBoundary = overlay.querySelector('#contract-scope-boundary')?.value?.trim() || '';
+        const contractStopConditionsRaw = overlay.querySelector('#contract-stop-conditions')?.value?.trim() || '';
+        const contractStopConditions = contractStopConditionsRaw ? contractStopConditionsRaw.split('\n').map(s => s.trim()).filter(Boolean) : [];
+
+        const contract = {};
+        if (contractGoal) contract.goal = contractGoal;
+        if (contractConstraints) contract.constraints = contractConstraints;
+        if (contractExpectedOutput) contract.expected_output = contractExpectedOutput;
+        if (contractFailureConditions) contract.failure_conditions = contractFailureConditions;
+        if (contractScopeBoundary) contract.scope_boundary = contractScopeBoundary;
+        if (contractStopConditions.length) contract.stop_conditions = contractStopConditions;
 
         const endpoint = plainTerminal ? '/api/terminal/shell' : '/api/terminal';
         const body = plainTerminal
@@ -2306,6 +2359,7 @@ async function dispatchWorkItem(workItem, projectKey) {
               permission_mode: permMode,
               skip_permissions: skipPerms,
               agentType,
+              ...(Object.keys(contract).length ? { contract } : {}),
             };
         const resp = await fetch(endpoint, {
           method: 'POST',

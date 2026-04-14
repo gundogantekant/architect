@@ -55,7 +55,7 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 
 8. **Worktree check**: If a `# Worktree Context` section is present in your prompt (i.e., the dispatch infrastructure already created a worktree and set your working directory to it), skip worktree creation and proceed to step 9. Otherwise, follow `usecases/manage-worktree.md` → create, using the work item ID as the ticket ID and the work item title as the task description. Respect the portfolio entry's `worktree_mode` field — if `"explicit"`, work in-place.
 
-9. **Implement changes**: Dispatch coder agent in the worktree with: portfolio context, work item details, the approved plan, the coding standards brief from `domain/rules.md`, and the relevant DispatchContract (goal, constraints, expected output, failure conditions) from the DispatchPlan step.
+9. **Implement changes**: Dispatch coder agent in the worktree with: portfolio context, work item details, the approved plan, the coding standards brief from `domain/rules.md`, and the full DispatchContract (goal, constraints, expected output, failure conditions, scope_boundary, stop_conditions) from the DispatchPlan step. For medium+ complexity, the agent must follow `domain/rules.md` → Long-Running Session Rules (phase-based progress checkpoints, scope boundary self-enforcement, stop condition protocol).
 
 10. **Run tests**: Dispatch tester agent in the worktree. Run existing test suite if available. Write new tests if new code warrants them and the project has test infrastructure. If contract tests were written in step 7, verify they now pass (green). If tests fail: dispatch coder to fix, then re-run tester (max 2 iterations). If no test framework is detected, skip and note it in the output.
 

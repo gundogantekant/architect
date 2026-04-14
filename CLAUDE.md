@@ -85,7 +85,7 @@ classifier (haiku, fast triage) → [pre-dispatch check (orchestrator, if work t
 ```
 For simple cases (trivial/small, high confidence), the orchestrator skips the coordinator and constructs a dispatch plan directly from the classifier output. Pre-dispatch check runs in parallel with coordinator when both are needed. See `domain/rules.md` → Pre-Dispatch Check Rules.
 
-**Dispatch Contracts** (medium+ complexity): Each step in the coordinator's DispatchPlan includes a `DispatchContract` (Goal, Constraints, Expected Output, Failure Conditions) that defines clear success criteria for the dispatched agent. Contracts flow into sub-agent prompts and are used by the Technical Review Board to evaluate whether implementation meets stated goals. See `domain/entities.md` → DispatchContract and `domain/rules.md` → Dispatch Contract Rules.
+**Dispatch Contracts** (medium+ complexity): Each step in the coordinator's DispatchPlan includes a `DispatchContract` (Goal, Constraints, Expected Output, Failure Conditions + optional Scope Boundary, Stop Conditions) that defines clear success criteria and session governance for the dispatched agent. Contracts flow into sub-agent prompts and are used by the Technical Review Board to evaluate whether implementation meets stated goals. For long-running sessions, the contract's scope_boundary and stop_conditions provide self-enforcement guardrails. Work items must have a valid contract (at minimum a goal) to transition from `open` to `ready` status; only `ready`+ items are dispatchable from the dashboard. See `domain/entities.md` → DispatchContract, `domain/rules.md` → Dispatch Contract Rules, and `domain/rules.md` → Long-Running Session Rules.
 
 **Technical Review Board** (two-gate lifecycle for medium+ work):
 ```
@@ -175,7 +175,7 @@ Use `/work list --org <name>` to scope work items to a specific organization. Se
 - Follow git standards defined in `domain/rules.md`
 - Before using Playwright MCP tools directly in the main session, follow Model Affinity Rules in `domain/rules.md` to prompt model switching
 - Plans that introduce new API endpoints, UI interactions, or dispatch flows must include contract tests written before implementation. See `domain/rules.md` → Contract-First Planning Rules.
-- For medium+ complexity dispatches, ensure DispatchContracts (Goal, Constraints, Expected Output, Failure Conditions) from the coordinator's plan are propagated to sub-agent prompts. See `domain/rules.md` → Dispatch Contract Rules.
+- For medium+ complexity dispatches, ensure DispatchContracts (Goal, Constraints, Expected Output, Failure Conditions + Scope Boundary, Stop Conditions for large) from the coordinator's plan are propagated to sub-agent prompts. See `domain/rules.md` → Dispatch Contract Rules and Long-Running Session Rules.
 
 ## Dashboard (`tools/dashboard/`)
 

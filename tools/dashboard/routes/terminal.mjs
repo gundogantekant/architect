@@ -17,7 +17,7 @@ export default function terminalRoutes(deps) {
     // Create terminal session
     [/^\/api\/terminal$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { work_item_id, epic_id, project_key, org_key, title, description, additional_instructions, skip_permissions, permission_mode, agentType: bodyAgentType, skip_seed } = body;
+      const { work_item_id, epic_id, project_key, org_key, title, description, additional_instructions, skip_permissions, permission_mode, agentType: bodyAgentType, skip_seed, contract: rawTermContract } = body;
       const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
 
       if (!project_key && !org_key) return err(res, 'project_key or org_key is required', 400);
@@ -64,6 +64,22 @@ export default function terminalRoutes(deps) {
 
       const effectiveTermWorkItem = workItem || (work_item_id ? { id: work_item_id, title: title || '', description: description || '', status: 'open', priority: 'medium', tags: [], session_log: [] } : null);
 
+      // Strip empty-string contract fields per domain/rules.md → Dispatch Contract Rules
+      let termContract = null;
+      if (rawTermContract && typeof rawTermContract === 'object') {
+        const cleaned = {};
+        for (const [k, v] of Object.entries(rawTermContract)) {
+          if (k === 'stop_conditions') {
+            if (Array.isArray(v) && v.filter(s => typeof s === 'string' && s.trim()).length) {
+              cleaned[k] = v.filter(s => typeof s === 'string' && s.trim());
+            }
+          } else if (typeof v === 'string' && v.trim()) {
+            cleaned[k] = v;
+          }
+        }
+        termContract = Object.keys(cleaned).length ? cleaned : null;
+      }
+
       const prompt = buildDispatchPrompt({
         workItem: effectiveTermWorkItem,
         projectKey: project_key || `${org_key}/*`,
@@ -72,6 +88,7 @@ export default function terminalRoutes(deps) {
         portfolio,
         epicContext,
         orgContext,
+        contract: termContract,
       });
 
       // Select sub-agents for terminal session

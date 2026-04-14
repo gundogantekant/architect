@@ -165,11 +165,13 @@ Defines the success criteria for a single dispatch step. Immutable, compared by 
   "goal": "string — the exact success condition; what must be true when complete (1-3 sentences)",
   "constraints": "string — hard boundaries that must not be crossed (1-3 sentences)",
   "expected_output": "string — the specific artifact or structure the agent must produce (1-3 sentences)",
-  "failure_conditions": "string — what makes the output unacceptable (1-3 sentences)"
+  "failure_conditions": "string — what makes the output unacceptable (1-3 sentences)",
+  "scope_boundary": "string | null — files/directories the agent must NOT modify; null for trivial/small",
+  "stop_conditions": "string[] | null — conditions requiring the agent to halt and report; null for trivial/small"
 }
 ```
 
-**Rules**: All four fields are required when the contract is present. Each field should be 1–3 sentences. Empty strings are treated as absent (see `domain/rules.md` → Dispatch Contract Rules). The coordinator produces contracts as part of the DispatchPlan; the prompt-builder renders them in the dispatch prompt.
+**Rules**: All four core fields (goal, constraints, expected_output, failure_conditions) are required when the contract is present. `scope_boundary` is required for large complexity, optional for medium, absent for trivial/small. `stop_conditions` is required for large complexity (3+ conditions), optional for medium, absent for trivial/small. Each string field should be 1–3 sentences. Empty strings are treated as absent (see `domain/rules.md` → Dispatch Contract Rules). The coordinator produces contracts as part of the DispatchPlan; the prompt-builder renders them in the dispatch prompt.
 
 ## ScoutReport
 

@@ -39,12 +39,14 @@ Produce a full DispatchPlan for medium+ complexity work. You receive a Classifie
 3. Validate and potentially adjust the classifier's complexity and workflow assessment
 4. Determine if clarifications are needed (see `domain/rules.md` → Clarification Triggers)
 5. Build an ordered dispatch plan. For each step, evaluate independence against every other step using `domain/rules.md` → Parallelization Rules. Populate `parallel_with` for every step that can run concurrently with another.
-6. For each step (medium+ complexity), define a DispatchContract with four fields (see `domain/entities.md` → DispatchContract):
+6. For each step (medium+ complexity), define a DispatchContract with six fields (see `domain/entities.md` → DispatchContract):
    - **goal**: the exact success condition (1-3 sentences)
    - **constraints**: hard boundaries that must not be crossed (1-3 sentences)
    - **expected_output**: the specific artifact or structure the agent must produce (1-3 sentences)
    - **failure_conditions**: what makes the output unacceptable (1-3 sentences)
-   Derive contracts from the work item description, epic context, and portfolio context. If the work item description already contains Goal/Constraints/Expected Output/Failure Conditions sections, extract and formalize them.
+   - **scope_boundary**: files/directories the agent must NOT modify (required for large, optional for medium)
+   - **stop_conditions**: conditions requiring the agent to halt and report (required for large with 3+, optional for medium). Examples: "Schema migration required beyond planned scope", "More than 5 files need changes not mentioned in the plan", "Security-sensitive code encountered outside plan scope", "Test infrastructure does not exist for the affected module"
+   Derive contracts from the work item description, epic context, and portfolio context. If the work item description already contains Goal/Constraints/Expected Output/Failure Conditions sections, extract and formalize them. See `domain/rules.md` → Complexity-Scaled Contract Detail for field requirements per complexity level.
 7. Return a structured JSON execution plan (see `domain/entities.md` → DispatchPlan)
 
 ## Output Format

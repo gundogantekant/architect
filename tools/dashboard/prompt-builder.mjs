@@ -230,6 +230,49 @@ export async function selectAgentsForDispatch({ workItem, portfolio }) {
   return agents;
 }
 
+/**
+ * Extract contract fields from structured work item description.
+ * Recognized headers: **Goal**:, **Constraints**:, **Expected Output**:,
+ * **Failure Conditions**:, **Scope Boundary**:, **Stop Conditions**:
+ * Returns null if no recognized headers found.
+ */
+function deriveContractFromDescription(description) {
+  if (!description || typeof description !== 'string') return null;
+
+  const fieldMap = {
+    'Goal': 'goal',
+    'Constraints': 'constraints',
+    'Expected Output': 'expected_output',
+    'Failure Conditions': 'failure_conditions',
+    'Scope Boundary': 'scope_boundary',
+  };
+
+  const contract = {};
+  let foundAny = false;
+
+  for (const [header, key] of Object.entries(fieldMap)) {
+    const pattern = new RegExp(`\\*\\*${header}\\*\\*:\\s*(.+)`, 'i');
+    const match = description.match(pattern);
+    if (match) {
+      contract[key] = match[1].trim();
+      foundAny = true;
+    }
+  }
+
+  // Stop Conditions: multi-line — header line followed by newline-separated items
+  const scPattern = /\*\*Stop Conditions\*\*:\s*\n([\s\S]*?)(?=\n\*\*[A-Z]|\n##|\s*$)/i;
+  const scMatch = description.match(scPattern);
+  if (scMatch) {
+    const items = scMatch[1].split('\n').map(l => l.replace(/^[-*]\s*/, '').trim()).filter(Boolean);
+    if (items.length) {
+      contract.stop_conditions = items;
+      foundAny = true;
+    }
+  }
+
+  return foundAny ? contract : null;
+}
+
 export function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInstructions, portfolio, epicContext, relatedProjects, orgContext, worktreeContext, contract }) {
   const sections = [];
 
@@ -562,17 +605,28 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     sections.push(`# Task\n\n${additionalInstructions}`);
   }
 
-  // --- Dispatch Contract (value object: goal, constraints, expected output, failure conditions) ---
-  if (contract && typeof contract === 'object') {
+  // --- Dispatch Contract (value object: goal, constraints, expected output, failure conditions, scope boundary, stop conditions) ---
+  const effectiveContract = contract && typeof contract === 'object' && Object.keys(contract).length
+    ? contract
+    : deriveContractFromDescription(workItem?.description);
+
+  if (effectiveContract) {
     const fields = [
-      ['Goal', contract.goal],
-      ['Constraints', contract.constraints],
-      ['Expected Output', contract.expected_output],
-      ['Failure Conditions', contract.failure_conditions],
+      ['Goal', effectiveContract.goal],
+      ['Constraints', effectiveContract.constraints],
+      ['Expected Output', effectiveContract.expected_output],
+      ['Failure Conditions', effectiveContract.failure_conditions],
     ].filter(([, v]) => typeof v === 'string' && v.trim());
     if (fields.length) {
       const lines = ['# Dispatch Contract', ''];
       for (const [label, value] of fields) lines.push(`**${label}**: ${value}`);
+      if (typeof effectiveContract.scope_boundary === 'string' && effectiveContract.scope_boundary.trim()) {
+        lines.push(`**Scope Boundary**: ${effectiveContract.scope_boundary}`);
+      }
+      if (Array.isArray(effectiveContract.stop_conditions) && effectiveContract.stop_conditions.length) {
+        lines.push('', '**Stop Conditions** (halt and report if any occur):');
+        for (const c of effectiveContract.stop_conditions) lines.push(`- ${c}`);
+      }
       sections.push(lines.join('\n'));
     }
   }

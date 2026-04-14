@@ -265,6 +265,7 @@ When PM's classification confidence is below **0.6**, always include clarificati
 - IDs use sequential `W-XXX` format (zero-padded, never reused)
 - Statuses: `open` → `ready` → `in-progress` → `done` (or `blocked`, `cancelled`)
 - `archived` is reachable only from `done` or `cancelled` — archived items are hidden from the active backlog
+- **Contract-gated ready transition**: The `open → ready` transition requires a valid contract. At minimum, a non-empty `goal` field must be present (from structured description sections, coordinator DispatchPlan, or manual input). For medium+ complexity: all 4 core contract fields must be populated. For large complexity: `scope_boundary` and `stop_conditions` (3+) must also be populated. The plan gate (Technical Review Board) evaluates the contract alongside the plan for medium+ complexity. Dashboard dispatch is restricted to `ready`+ status items.
 - Session log is append-only
 - `list` supports `--org <name>` to filter by organization prefix
 - `list` supports `--project` with comma-separated values for multi-project filtering
@@ -491,8 +492,17 @@ Every dispatch step for medium+ complexity work must carry a DispatchContract (s
 |------------|-------------------|
 | trivial | No — `purpose` field suffices |
 | small | No — `purpose` field suffices |
-| medium | Yes — all four fields must be populated |
-| large | Yes — all four fields must be populated |
+| medium | Yes — all four core fields must be populated |
+| large | Yes — all four core fields must be populated |
+
+### Complexity-Scaled Contract Detail
+
+| Complexity | Core Fields (4) | scope_boundary | stop_conditions |
+|------------|-----------------|----------------|-----------------|
+| trivial | None | None | None |
+| small | None | None | None |
+| medium | Required, 1-2 sentences each | Optional | Optional |
+| large | Required, 2-3 sentences with measurable criteria | Required | Required (3+) |
 
 ### Who Produces
 
@@ -523,6 +533,53 @@ Empty strings are treated as absent. The prompt-builder strips empty fields and 
 ### Backward Compatibility
 
 Steps without a `contract` field (from pre-existing plans or trivial/small dispatches) remain valid. The prompt-builder gracefully no-ops when the contract is missing or incomplete. No migration is needed for existing DispatchPlans.
+
+### Contract Derivation from Work Item Description
+
+When no explicit contract is provided and the work item description contains structured sections, the prompt-builder extracts contract fields automatically. Recognized section headers (markdown bold format):
+
+- `**Goal**:` → goal
+- `**Constraints**:` → constraints
+- `**Expected Output**:` → expected_output
+- `**Failure Conditions**:` → failure_conditions
+- `**Scope Boundary**:` → scope_boundary
+- `**Stop Conditions**:` → stop_conditions (newline-separated items become array entries)
+
+Only fields with matching headers are populated. Free-form descriptions without these sections produce no derived contract. Explicitly provided contracts (via dispatch modal or coordinator) take precedence over derived contracts.
+
+## Long-Running Session Rules
+
+Dispatched agents on medium+ complexity work must follow phase-based progress reporting and self-enforcement of scope and stop conditions. These rules are prompt-level advisory guidance — the agent self-regulates based on its contract.
+
+### Phase-Based Progress Checkpoints
+
+Agents must log progress via `POST /api/work-items/<id>/log` at these phases:
+
+1. **Post-investigation**: After reading relevant files and before planning changes — log: files examined, approach decided, estimated scope
+2. **Post-implementation-batch**: After each logical group of file changes — log: files modified, what was done, remaining work
+3. **Pre-stop-condition**: Before stopping due to a stop condition — log: trigger condition, work accomplished, recommendation
+4. **Completion**: On task completion — log: summary of all changes, test results, branch name
+
+### Scope Boundary Self-Enforcement
+
+When `scope_boundary` is present in the contract:
+
+1. Before modifying any file, the agent checks the path against the stated boundary
+2. Out-of-scope discoveries are logged as new work items via the dashboard API
+3. The agent does NOT expand into out-of-scope areas
+
+This is advisory prompt guidance. Post-dispatch scope verification (comparing worktree diff against declared scope_boundary) is a separate capability not covered here.
+
+### Stop Condition Protocol
+
+When a `stop_conditions` entry matches the current situation:
+
+1. Agent stops implementation immediately
+2. Agent logs the condition via the work item session log
+3. Agent produces a structured summary: what was accomplished, what triggered the stop, what it recommends
+4. Agent does NOT continue past the stop point
+
+Stop conditions complement (not replace) orchestrator-level escalation triggers (stale, blocked-chain, epic-stall, cost-anomaly, dispatch-loop defined in PM Behavior Rules). Stop conditions are agent-self-enforced during execution; orchestrator triggers are detected after execution.
 
 ## Git Standards
 
