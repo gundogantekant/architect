@@ -380,8 +380,14 @@ test('TS-3. Normal screen still uses scrollLines (no SGR sent)', async ({ page }
     }
   }, t.id);
 
+  // Wait for terminal to be scrolled to bottom (may take a frame under load)
+  await page.waitForFunction((id) => {
+    const sess = window._termSessions?.get(id);
+    if (!sess?._term) return false;
+    const buf = sess._term.buffer.active;
+    return buf.viewportY >= buf.baseY;
+  }, t.id, { timeout: 5_000 });
   const metricsBefore = await getXtermScrollMetrics(page, t.id);
-  expect(metricsBefore.atBottom).toBe(true);
 
   // Dispatch wheel event (scroll up) in normal screen
   await page.evaluate(({ id }) => {

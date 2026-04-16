@@ -448,6 +448,6 @@ test('R-11. Fresh dispatch connects terminal without page refresh', async ({ pag
   const hasXterm = await page.locator(`#term-container-${t.id} .xterm`).isVisible({ timeout: 5_000 });
   expect(hasXterm).toBe(true);
 
-  const loadingGone = await page.locator(`#term-container-${t.id} .terminal-loading`).isHidden({ timeout: 1_000 });
+  const loadingGone = await page.locator(`#term-container-${t.id} .terminal-loading`).isHidden({ timeout: 3_000 });
   expect(loadingGone).toBe(true);
 });

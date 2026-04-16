@@ -1,3 +1,18 @@
+/**
+ * Test fixtures for dashboard E2E tests.
+ *
+ * Auto-fixtures (applied to every test unless overridden):
+ *   _workerPort         — spawns an isolated test server per spec file
+ *   _autoPurge          — purges all test data before each test
+ *   _disableAutoDismiss — prevents auto-dismiss of completed panels (override in auto-dismiss.spec)
+ *   _defaultExpanded    — sets default_panel_state to 'expanded' (override in panel-lifecycle.spec)
+ *
+ * Override pattern (see auto-dismiss.spec.mjs):
+ *   const test = baseTest.extend({
+ *     _fixtureName: [async ({}, use) => { await use(); }, { scope: 'test', auto: true }],
+ *   });
+ */
+
 import { test as base, expect } from '@playwright/test';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -41,6 +56,16 @@ export const test = base.extend({
   // panels persist during tests. Override with a no-op in auto-dismiss.spec.mjs.
   _disableAutoDismiss: [async ({ page }, use) => {
     await page.addInitScript(() => { window._testDisableAutoDismiss = true; });
+    await use();
+  }, { scope: 'test', auto: true }],
+
+  // Auto test fixture: defaults panels to expanded so tests can interact with
+  // terminal containers and dispatch logs. Uses addInitScript for 100% reliability
+  // under parallel load (no network dependency).
+  // Tests verifying collapse behavior (panel-lifecycle DP-3/DP-11/DP-15, CLI-3)
+  // override this to no-op.
+  _defaultExpanded: [async ({ page }, use) => {
+    await page.addInitScript(() => { window._testDefaultExpanded = true; });
     await use();
   }, { scope: 'test', auto: true }],
 });
