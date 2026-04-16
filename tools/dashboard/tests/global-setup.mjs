@@ -29,6 +29,7 @@ export const SPEC_FILES = [
   'worktree-dispatch',
   'dispatch-contract',
   'time-tracking',
+  'suspend-resume',
 ];
 
 function getLiveDashboardPorts() {

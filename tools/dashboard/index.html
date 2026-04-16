@@ -2057,7 +2057,24 @@ function createSessionPanel(type, info) {
       try {
         const resp = await fetch(`/api/dispatch/${id}/resume`, { method: 'POST' });
         if (resp.ok) {
+          const result = await resp.json();
           await dismissDispatchPanel(id);
+          const newDispatch = {
+            id: result.dispatch_id,
+            work_item_id: dispatch.work_item_id,
+            work_item_title: dispatch.work_item_title,
+            epic_id: dispatch.epic_id,
+            project_key: dispatch.project_key,
+            permission_mode: dispatch.permission_mode,
+            skip_permissions: dispatch.skip_permissions,
+            agent_phase: 'generating',
+            status: 'running',
+            started_at: new Date().toISOString(),
+          };
+          activeDispatches.push(newDispatch);
+          createDispatchPanel(newDispatch);
+          placeSessionPanels();
+          loadDispatchContent(newDispatch);
           syncSessionState();
         }
       } catch {}

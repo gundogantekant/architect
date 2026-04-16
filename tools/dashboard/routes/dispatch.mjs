@@ -7,7 +7,7 @@ export default function dispatchRoutes(deps) {
     ROOT, LOGS_DIR, CLAUDE_BIN,
     dispatches,
     wireDispatchHandlers,
-    buildDispatchPrompt, resolveProjectPath, loadPortfolioContext, loadWorkItem, selectAgentsForDispatch, loadEpicPlanSnippet,
+    buildDispatchPrompt, buildResumePrompt, resolveProjectPath, loadPortfolioContext, loadWorkItem, loadResumeContext, selectAgentsForDispatch, loadEpicPlanSnippet,
     broadcastDispatchLine, broadcastDispatchDone, killProcessGraceful,
     saveDispatchToDb, archiveSession,
     isPidAlive,
@@ -418,7 +418,8 @@ export default function dispatchRoutes(deps) {
       if (old.status !== 'suspended') return err(res, 'dispatch is not suspended', 400);
       if (!old.claude_session_id) return err(res, 'no session ID available for resume', 400);
 
-      const body = await parseBody(req);
+      let body = {};
+      try { body = await parseBody(req); } catch {}
       const resumeSessionId = old.claude_session_id;
       const { work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, worktree_path, worktree_branch, source_branch } = old;
 
@@ -459,11 +460,16 @@ export default function dispatchRoutes(deps) {
         completed_at: null,
       };
 
+      const { workItem: freshWorkItem, portfolio } = await loadResumeContext({ work_item_id, project_key });
+
       const args = ['-p', '--output-format', 'stream-json', '--verbose'];
       args.push('--resume', resumeSessionId);
       args.push('--permission-mode', resolvedPermMode === 'plan' ? 'plan' : 'acceptEdits');
       if (resolvedSkipPerms) args.push('--dangerously-skip-permissions');
       args.push('--add-dir', ROOT);
+
+      const agentDefs = await selectAgentsForDispatch({ workItem: freshWorkItem, portfolio });
+      if (agentDefs.length) args.push('--agents', JSON.stringify(agentDefs));
 
       let proc;
       try {
@@ -479,7 +485,11 @@ export default function dispatchRoutes(deps) {
       dispatch.logStream = createWriteStream(logPath, { flags: 'a' });
       wireDispatchHandlers(dispatch, proc);
 
-      const prompt = body?.additional_instructions || 'Continue where you left off.';
+      const prompt = buildResumePrompt({
+        workItem: freshWorkItem,
+        contract: null,
+        additionalInstructions: body?.additional_instructions || null,
+      });
       proc.stdin.write(prompt + '\n');
       proc.stdin.end();
 

@@ -142,6 +142,49 @@ export function loadWorkItem(workItemId) {
   return db.getWorkItemFull(workItemId);
 }
 
+export async function loadResumeContext({ work_item_id, project_key }) {
+  const [workItem, portfolio] = await Promise.all([
+    work_item_id ? loadWorkItem(work_item_id) : null,
+    project_key ? loadPortfolioContext(project_key) : null,
+  ]);
+  return { workItem, portfolio };
+}
+
+export function buildResumePrompt({ workItem, contract, additionalInstructions }) {
+  const lines = ['# Resumed Session', '', 'This is a continuation of your previous session (not a fresh start).', ''];
+
+  if (workItem) {
+    lines.push(`**Work item**: ${workItem.id} — ${workItem.title || ''}`, `**Status**: ${workItem.status || 'unknown'}`, '');
+    const log = workItem.session_log || [];
+    const entries = log.slice(-5);
+    lines.push('**Session log (last 5 entries)**:');
+    if (entries.length) {
+      for (const e of entries) {
+        const ts = e.timestamp ? `[${e.timestamp.slice(0, 16)}] ` : '';
+        lines.push(`- ${ts}${e.summary || ''}`);
+      }
+    } else {
+      lines.push('- None');
+    }
+    lines.push('');
+  }
+
+  if (contract) {
+    const hasScope = contract.scope_boundary && contract.scope_boundary.length;
+    const hasStop = contract.stop_conditions && contract.stop_conditions.length;
+    if (hasScope || hasStop) {
+      lines.push('**Contract reminders**:');
+      if (hasScope) lines.push(`- Scope boundary: ${Array.isArray(contract.scope_boundary) ? contract.scope_boundary.join(', ') : contract.scope_boundary}`);
+      if (hasStop) lines.push(`- Stop conditions: ${Array.isArray(contract.stop_conditions) ? contract.stop_conditions.join('; ') : contract.stop_conditions}`);
+      lines.push('');
+    }
+  }
+
+  lines.push('**Instructions**:');
+  lines.push(additionalInstructions || 'Continue where you left off.');
+
+  return lines.join('\n');
+}
 
 export function topoSort(items) {
   const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };

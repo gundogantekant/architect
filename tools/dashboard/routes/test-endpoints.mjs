@@ -7,7 +7,7 @@ export default function testEndpointRoutes(deps) {
     dispatches, terminals, cliSessions,
     wireTerminalHandlers,
     broadcastDispatchLine, broadcastDispatchDone,
-    buildDispatchPrompt, resolveOrgPath, loadOrgContext, loadPortfolioContext,
+    buildDispatchPrompt, buildResumePrompt, resolveOrgPath, loadOrgContext, loadPortfolioContext, loadResumeContext, selectAgentsForDispatch,
     saveDispatchToDb, saveTerminalToDb,
     restoreSessions,
     termEventLogPath, generateSeedContent,
@@ -111,6 +111,19 @@ export default function testEndpointRoutes(deps) {
         contract: contract || null,
       });
       json(res, { prompt });
+    }],
+
+    [/^\/api\/test\/build-resume-prompt$/, 'POST', async (_m, req, res) => {
+      const { workItem, contract, additionalInstructions } = await parseBody(req);
+      const prompt = buildResumePrompt({ workItem: workItem || null, contract: contract || null, additionalInstructions: additionalInstructions || null });
+      json(res, { prompt });
+    }],
+
+    [/^\/api\/test\/resume-args-preview$/, 'POST', async (_m, req, res) => {
+      const { work_item_id, project_key } = await parseBody(req);
+      const { workItem, portfolio } = await loadResumeContext({ work_item_id: work_item_id || null, project_key: project_key || null });
+      const agentDefs = await selectAgentsForDispatch({ workItem, portfolio });
+      json(res, { has_agents: agentDefs.length > 0, agent_count: agentDefs.length });
     }],
 
     // Seed a terminal with org_key support (no real PTY)
