@@ -6,7 +6,7 @@ When the user says "architect" in conversation, it primarily refers to **this pr
 
 ## Overview
 
-This project provides 34 specialized Claude Code subagents and 18 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack. The main thread acts as a strict orchestrator/PM — it reads, plans, dispatches, and tracks, but delegates all implementation and git operations to specialized agents.
+This project provides 34 specialized Claude Code subagents and 19 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack. The main thread acts as a strict orchestrator/PM — it reads, plans, dispatches, and tracks, but delegates all implementation and git operations to specialized agents.
 
 ## Architecture
 
@@ -15,7 +15,7 @@ Clean Architecture with four layers. Dependencies point inward only.
 | Layer | Location | Contents |
 |-------|----------|----------|
 | Domain | `domain/` | Entity schemas (`entities.md`), business rules (`rules.md`) |
-| Use Cases | `usecases/` | Workflow definitions (18 files, one per skill workflow) |
+| Use Cases | `usecases/` | Workflow definitions (19 files, one per skill workflow) |
 | Adapters | `.claude/agents/`, `.claude/skills/` | Agent prompts, skill entry points |
 | Infrastructure | `portfolio/`, `work/`, `templates/` | Instance data (gitignored), project templates |
 
@@ -232,3 +232,4 @@ Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/log` (plain text 
 | /refactor [scope] | Systematic refactoring |
 | /browse [task] | Perform a web automation task via browser agent |
 | /worktree [list\|cleanup] | Manage git worktrees for implementation isolation |
+| /review-board [gate] [scope] | Manually trigger the Technical Review Board on a plan or code diff |
