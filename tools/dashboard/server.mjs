@@ -23,6 +23,7 @@ import { setupWebSocket } from './ws-router.mjs';
 import staticRoutes from './routes/static.mjs';
 import portfolioRoutes from './routes/portfolio.mjs';
 import workItemRoutes from './routes/work-items.mjs';
+import approvalRoutes from './routes/approvals.mjs';
 import epicRoutes from './routes/epics.mjs';
 import sessionRoutes from './routes/sessions.mjs';
 import dispatchRoutes from './routes/dispatch.mjs';
@@ -51,6 +52,7 @@ const deps = {
 const routes = [
   ...staticRoutes(deps),
   ...portfolioRoutes(deps),
+  ...approvalRoutes(deps),
   ...workItemRoutes(deps),
   ...epicRoutes(deps),
   ...sessionRoutes(deps),

@@ -26,7 +26,7 @@ test.describe('API contracts @fast', () => {
   test('AC-3: POST /api/work-items creates item', async () => {
     const item = await api('work-items', {
       method: 'POST',
-      body: JSON.stringify({ title: 'AC-3 item', status: 'open', priority: 'medium', project_key: 'ticari/architect/main' }),
+      body: JSON.stringify({ title: 'AC-3 item', status: 'draft', priority: 'medium', project_key: 'ticari/architect/main' }),
     });
     expect(item.id).toBeTruthy();
     expect(item.title).toBe('AC-3 item');
@@ -34,6 +34,11 @@ test.describe('API contracts @fast', () => {
 
   test('AC-4: PATCH /api/work-items/:id updates status', async () => {
     const item = await seedWorkItem({ title: 'PATCH test' });
+    await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'planned' }) });
+    await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'in-progress' }) });
+    await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'in-review' }) });
+    await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'testing' }) });
+    await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'preview' }) });
     const updated = await api(`work-items/${item.id}`, {
       method: 'PATCH',
       body: JSON.stringify({ status: 'done' }),

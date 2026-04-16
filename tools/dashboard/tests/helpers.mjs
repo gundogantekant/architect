@@ -252,9 +252,10 @@ export async function seedWorkItem(opts = {}) {
     method: 'POST',
     body: JSON.stringify({
       title: opts.title || 'Test work item',
-      status: opts.status || 'open',
+      status: opts.status || 'draft',
       priority: 'medium',
       project_key: opts.project_key || 'ticari/architect/main',
+      ...(opts.tags ? { tags: opts.tags } : {}),
     }),
   });
 }

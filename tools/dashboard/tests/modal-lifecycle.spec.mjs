@@ -121,7 +121,7 @@ test('M-2-3: showReviewModal submit creates session and closes modal', async ({ 
 // ============================================================
 
 test('M-3-1: dispatchWorkItem modal opens on dispatch button click', async ({ page }) => {
-  await seedWorkItem({ title: 'Modal lifecycle test item', status: 'open' });
+  await seedWorkItem({ title: 'Modal lifecycle test item', status: 'in-progress' });
   await page.goto('/#component/ticari/architect/main');
   await page.waitForSelector('.dispatch-btn[data-wi-idx]', { timeout: 15000 });
   await page.click('.dispatch-btn[data-wi-idx]');
@@ -130,7 +130,7 @@ test('M-3-1: dispatchWorkItem modal opens on dispatch button click', async ({ pa
 });
 
 test('M-3-2: dispatchWorkItem cancel closes without creating session', async ({ page }) => {
-  await seedWorkItem({ title: 'Modal lifecycle test item', status: 'open' });
+  await seedWorkItem({ title: 'Modal lifecycle test item', status: 'in-progress' });
   await page.goto('/#component/ticari/architect/main');
   await page.waitForSelector('.dispatch-btn[data-wi-idx]', { timeout: 15000 });
   await page.click('.dispatch-btn[data-wi-idx]');
@@ -156,7 +156,7 @@ test('M-3-2: dispatchWorkItem cancel closes without creating session', async ({ 
 });
 
 test('M-3-3: dispatchWorkItem submit creates session and closes modal', async ({ page }) => {
-  await seedWorkItem({ title: 'Modal lifecycle test item', status: 'open' });
+  await seedWorkItem({ title: 'Modal lifecycle test item', status: 'in-progress' });
   await page.goto('/#component/ticari/architect/main');
   await page.waitForSelector('.dispatch-btn[data-wi-idx]', { timeout: 15000 });
   await page.click('.dispatch-btn[data-wi-idx]');

@@ -220,10 +220,34 @@
   .status-option:hover { background: #f1f5f9; }
   .status-option.current { font-weight: 700; color: var(--accent); }
 
-  /* Cancelled badge */
-  .badge-cancelled { background: #f1f5f9; color: #64748b; }
+  /* Status badges — 10-state machine */
+  .badge-draft { background: #f1f5f9; color: #64748b; }
+  .badge-planned { background: #dbeafe; color: #1d4ed8; }
+  .badge-in-progress { background: #ede9fe; color: #6d28d9; }
+  .badge-blocked { background: #ffedd5; color: #c2410c; }
+  .badge-in-review { background: #ccfbf1; color: #0f766e; }
+  .badge-testing { background: #f3e8ff; color: #7c3aed; }
+  .badge-preview { background: #fef9c3; color: #a16207; }
+  .badge-done { background: #dcfce7; color: #16a34a; }
+  .badge-cancelled { background: #fee2e2; color: #b91c1c; }
   .badge-archived { background: #f1f5f9; color: #94a3b8; font-style: italic; }
-  .badge-in-progress { background: #fef3c7; color: #b45309; }
+  /* Legacy aliases kept for backward compat */
+  .badge-open { background: #dbeafe; color: var(--blue); }
+
+  /* Cancelled row strikethrough */
+  tr[data-wi-status-val="cancelled"] td:nth-child(2) { text-decoration: line-through; color: var(--text-light); }
+
+  /* Flag badges — small inline modifiers */
+  .flag-badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; margin-left: 4px; vertical-align: middle; }
+  .flag-input { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
+  .flag-approval { background: #ede9fe; color: #7c3aed; border: 1px solid #ddd6fe; }
+
+  /* Awaiting Action widget */
+  .awaiting-action-box { background: #fffbeb; border: 1px solid #fde68a; border-left: 3px solid #f59e0b; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; }
+  .awaiting-action-box h4 { font-size: 13px; font-weight: 700; color: #b45309; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+  .awaiting-action-box .aa-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; border-bottom: 1px solid #fde68a; }
+  .awaiting-action-box .aa-item:last-child { border: none; }
+  .awaiting-action-box .aa-id { font-family: monospace; color: var(--text-light); flex-shrink: 0; }
 
   /* CLI session panels */
   .cli-session-panel { background: var(--bg-card); border: 1px solid var(--border); border-left: 3px solid var(--teal); border-radius: 8px; margin-bottom: 16px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06); transition: box-shadow 0.2s; }
@@ -2067,7 +2091,7 @@ async function dispatchWorkItem(workItem, projectKey) {
       submitId: 'modal-dispatch',
       buildFields: () => `
         <div style="margin-bottom:14px">
-          <span class="badge badge-${workItem.status === 'done' ? 'done' : (workItem.depends_on?.length ? 'blocked' : 'open')}">${esc(workItem.status)}</span>
+          <span class="badge badge-${workItem.status || 'draft'}">${esc(workItem.status)}</span>
           <span class="badge badge-${workItem.priority || 'medium'}">${esc(workItem.priority || 'medium')}</span>
         </div>
         <div class="field">
@@ -2237,7 +2261,7 @@ async function restoreDispatches() {
 function countOpenItems(bl, key) {
   const items = bl?.projects?.[key]?.items;
   if (!items) return 0;
-  return items.filter(i => i.status === 'open' || i.status === 'in-progress' || i.status === 'blocked').length;
+  return items.filter(i => !['done','cancelled','archived'].includes(i.status)).length;
 }
 
 function buildSessionsByProjectMap() {
@@ -2439,8 +2463,8 @@ function renderWorkItemsTable(items, allWorkItems, tableId) {
   let html = `<table${tableId ? ` id="${tableId}"` : ''} class="wi-table"><thead><tr><th data-wi-sort="id" style="cursor:pointer">ID &#8645;</th><th>Title</th><th data-wi-sort="status" style="cursor:pointer">Status &#8645;</th><th data-wi-sort="priority" style="cursor:pointer">Priority &#8645;</th><th>Depends On</th><th>Epic</th><th>Tags</th><th></th></tr></thead><tbody>`;
   for (const w of items) {
     const idx = allWorkItems.indexOf(w);
-    const sc = {'done':'done','blocked':'blocked','in-progress':'in-progress','cancelled':'cancelled'}[w.status] || 'open';
-    const canDispatch = w.status === 'open' || w.status === 'in-progress';
+    const sc = w.status || 'draft';
+    const canDispatch = ['planned','in-progress','in-review','testing','preview'].includes(w.status);
     const depState = isBlockedByDeps(w, allWorkItems);
     const rowClass = depState.blocked ? ' class="blocked-by-deps"' : '';
     const depHtml = (w.depends_on || []).length ? w.depends_on.map(d => {
@@ -2449,8 +2473,10 @@ function renderWorkItemsTable(items, allWorkItems, tableId) {
       return `<span class="dep-badge ${cls}">${esc(d)}</span>`;
     }).join('') : '';
     const depTooltip = depState.blocked ? ` title="Dependencies not yet complete: ${depState.pending.join(', ')}"` : '';
+    const flagHtml = (w.input_needed ? `<span class="flag-badge flag-input">input needed</span>` : '') +
+                     (w.approval_active ? `<span class="flag-badge flag-approval">approval needed</span>` : '');
     html += `<tr${rowClass}${depTooltip} data-wi-row="${idx}" data-wi-status-val="${esc(w.status)}" data-wi-priority-val="${esc(w.priority || 'medium')}" data-wi-epic-val="${esc(w.epic_id || '')}" data-wi-tags-val="${esc((w.tags||[]).join(','))}"><td><code>${esc(w.id)}</code></td><td>${esc(w.title)}</td>`;
-    html += `<td><span class="badge badge-${sc}" data-status-click="${esc(w.id)}" data-current-status="${esc(w.status)}" style="cursor:pointer">${esc(w.status)}</span></td>`;
+    html += `<td><span class="badge badge-${sc}" data-status-click="${esc(w.id)}" data-current-status="${esc(w.status)}" style="cursor:pointer">${esc(w.status)}</span>${flagHtml}</td>`;
     html += `<td><span class="badge badge-${w.priority || 'medium'}">${esc(w.priority || '\u2014')}</span></td>`;
     html += `<td>${depHtml}</td>`;
     html += `<td>${w.epic_id ? `<span class="badge badge-epic" data-epic-nav="${esc(w.epic_id)}">${esc(w.epic_id)}</span>` : ''}</td>`;
@@ -2569,6 +2595,9 @@ function renderComponentView(org, proj, comp, data, workItems, files, projectEpi
     html += `</div>`;
   }
 
+  // Awaiting Action widget — populated async after render
+  html += `<div id="awaiting-action-widget"></div>`;
+
   if (workItems.length) {
     // Collect filter values
     const allStatuses = [...new Set(workItems.map(w => w.status))].sort();
@@ -2576,11 +2605,29 @@ function renderComponentView(org, proj, comp, data, workItems, files, projectEpi
     const allEpics = [...new Set(workItems.map(w => w.epic_id).filter(Boolean))].sort();
     const allTags = [...new Set(workItems.flatMap(w => w.tags || []))].sort();
 
+    // Status phase grouping for filter bar
+    const statusPhases = [
+      { label: 'Refinement', states: ['draft'] },
+      { label: 'Planning', states: ['planned'] },
+      { label: 'Implementation', states: ['in-progress', 'blocked'] },
+      { label: 'Validation', states: ['in-review', 'testing'] },
+      { label: 'Acceptance', states: ['preview'] },
+      { label: 'Terminal', states: ['done', 'cancelled', 'archived'] },
+    ];
+
     // Filter bar
     html += `<div class="wi-filter-bar" id="wi-filter-bar">`;
     html += `<span style="font-size:12px;font-weight:600;color:var(--text-light)">Status:</span>`;
+    let lastPhaseLabel = null;
+    const statusToPhase = {};
+    for (const phase of statusPhases) for (const s of phase.states) statusToPhase[s] = phase.label;
     for (const s of allStatuses) {
-      const checked = (s !== 'done' && s !== 'cancelled') ? 'checked' : '';
+      const phase = statusToPhase[s] || null;
+      if (phase && phase !== lastPhaseLabel) {
+        html += `<span style="font-size:10px;color:#94a3b8;padding:0 2px;border-left:1px solid var(--border);margin-left:4px;padding-left:6px">${esc(phase)}</span>`;
+        lastPhaseLabel = phase;
+      }
+      const checked = (s !== 'done' && s !== 'cancelled' && s !== 'archived') ? 'checked' : '';
       html += `<label class="filter-checkbox"><input type="checkbox" data-wi-status="${esc(s)}" ${checked} />${esc(s)}</label>`;
     }
     if (allPriorities.length > 1) {
@@ -2825,6 +2872,9 @@ function bindTabs() {
   // Filter bar
   bindFilterBar();
 
+  // Awaiting Action widget
+  loadAwaitingAction(currentProjectKey);
+
   // Board epic grouping toggle
   const epicToggle = document.getElementById('board-epic-toggle');
   if (epicToggle) {
@@ -2906,7 +2956,7 @@ function setActive(key) {
 function showStatusDropdown(badge, itemId, currentStatus) {
   // Remove any existing dropdown
   document.querySelectorAll('.status-dropdown').forEach(d => d.remove());
-  const statuses = ['open', 'in-progress', 'blocked', 'done', 'cancelled'];
+  const statuses = ['draft', 'planned', 'in-progress', 'blocked', 'in-review', 'testing', 'preview', 'done', 'cancelled', 'archived'];
   const dropdown = document.createElement('div');
   dropdown.className = 'status-dropdown';
   for (const s of statuses) {
@@ -2942,13 +2992,46 @@ function showStatusDropdown(badge, itemId, currentStatus) {
   setTimeout(() => document.addEventListener('click', close), 0);
 }
 
+// --- Awaiting Action widget ---
+async function loadAwaitingAction(projectKey) {
+  const widget = document.getElementById('awaiting-action-widget');
+  if (!widget) return;
+  try {
+    const params = projectKey ? `?project=${encodeURIComponent(projectKey)}&awaiting_action=true` : '?awaiting_action=true';
+    const data = await api('backlog' + params).catch(() => null);
+    // Collect items from current project that need attention
+    const items = [];
+    const allProjects = data?.projects || {};
+    for (const [key, group] of Object.entries(allProjects)) {
+      if (projectKey && key !== projectKey) continue;
+      for (const item of (group.items || [])) {
+        if (item.input_needed || item.approval_active || item.status === 'blocked') {
+          items.push({ ...item, project_key: key });
+        }
+      }
+    }
+    if (!items.length) { widget.innerHTML = ''; return; }
+    let html = `<div class="awaiting-action-box">`;
+    html += `<h4>&#9888; Awaiting Action <span style="font-weight:400;font-size:11px;color:#92400e">(${items.length})</span></h4>`;
+    for (const item of items) {
+      const reasons = [];
+      if (item.status === 'blocked') reasons.push(`<span class="badge badge-blocked" style="font-size:10px;padding:1px 6px">blocked</span>`);
+      if (item.input_needed) reasons.push(`<span class="flag-badge flag-input">input needed</span>`);
+      if (item.approval_active) reasons.push(`<span class="flag-badge flag-approval">approval needed</span>`);
+      html += `<div class="aa-item"><span class="aa-id">${esc(item.id)}</span><span style="flex:1">${esc(item.title)}</span>${reasons.join('')}</div>`;
+    }
+    html += `</div>`;
+    widget.innerHTML = html;
+  } catch { widget.innerHTML = ''; }
+}
+
 // --- Filter bar logic ---
 function bindFilterBar() {
   const bar = document.getElementById('wi-filter-bar');
   if (!bar) return;
 
-  // Exclusion model: unchecked = hidden. Default: done + cancelled excluded.
-  const excludedStatus = new Set(['done', 'cancelled']);
+  // Exclusion model: unchecked = hidden. Default: done + cancelled + archived excluded.
+  const excludedStatus = new Set(['done', 'cancelled', 'archived']);
   const excludedPriority = new Set();
   const activeFilters = { epic: '', tags: '' };
   const prefsKey = 'wi_filters';
@@ -3091,7 +3174,7 @@ function bindFilterBar() {
   const wiTable = document.getElementById('wi-table');
   if (wiTable) {
     const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
-    const statusOrder = { 'open': 0, 'in-progress': 1, 'blocked': 2, 'done': 3, 'cancelled': 4 };
+    const statusOrder = { 'draft': 0, 'planned': 1, 'in-progress': 2, 'blocked': 3, 'in-review': 4, 'testing': 5, 'preview': 6, 'done': 7, 'cancelled': 8, 'archived': 9 };
     let sortCol = null, sortAsc = true;
 
     wiTable.querySelectorAll('th[data-wi-sort]').forEach(th => {
@@ -3150,7 +3233,7 @@ function showWorkItemModal(existingItem = null) {
       <div class="field">
         <label>Status</label>
         <select id="wi-status">
-          ${['open','in-progress','blocked','done','cancelled'].map(s => `<option value="${s}"${(isEdit ? existingItem.status : 'open') === s ? ' selected' : ''}>${s}</option>`).join('')}
+          ${['draft','planned','in-progress','blocked','in-review','testing','preview','done','cancelled','archived'].map(s => `<option value="${s}"${(isEdit ? existingItem.status : 'draft') === s ? ' selected' : ''}>${s}</option>`).join('')}
         </select>
       </div>
       <div class="field">
@@ -3640,7 +3723,7 @@ async function renderEpicDetailView(epicId) {
     html += `<div class="wi-filter-bar" id="epic-filter-bar">`;
     html += `<span style="font-size:12px;font-weight:600;color:var(--text-light)">Status:</span>`;
     for (const s of epicStatuses) {
-      const checked = (s !== 'done' && s !== 'cancelled') ? 'checked' : '';
+      const checked = (s !== 'done' && s !== 'cancelled' && s !== 'archived') ? 'checked' : '';
       html += `<label class="filter-checkbox"><input type="checkbox" data-ef-status="${esc(s)}" ${checked} />${esc(s)}</label>`;
     }
     html += `<span class="filter-count" id="epic-filter-count">${items.length} tasks</span>`;
@@ -3648,8 +3731,8 @@ async function renderEpicDetailView(epicId) {
     html += `</div>`;
     html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Depends On</th><th>Project</th><th>Tags</th><th></th></tr></thead><tbody>`;
     for (const item of sortedEpicItems) {
-      const sc = {'done':'done','blocked':'blocked','in-progress':'in-progress','cancelled':'cancelled'}[item.status] || 'open';
-      const canDispatch = item.status === 'open' || item.status === 'in-progress';
+      const sc = item.status || 'draft';
+      const canDispatch = ['planned','in-progress','in-review','testing','preview'].includes(item.status);
       const depState = isBlockedByDeps(item, items);
       const rowClass = depState.blocked ? ' blocked-by-deps' : '';
       const depHtml = (item.depends_on || []).length ? item.depends_on.map(d => {
@@ -3658,10 +3741,12 @@ async function renderEpicDetailView(epicId) {
         return `<span class="dep-badge ${cls}">${esc(d)}</span>`;
       }).join('') : '';
       const depTooltip = depState.blocked ? ` title="Dependencies not yet complete: ${depState.pending.join(', ')}"` : '';
+      const itemFlagHtml = (item.input_needed ? `<span class="flag-badge flag-input">input needed</span>` : '') +
+                           (item.approval_active ? `<span class="flag-badge flag-approval">approval needed</span>` : '');
       html += `<tr class="epic-task-row${rowClass}" data-ef-row data-ef-status-val="${esc(item.status)}"${depTooltip}>`;
       html += `<td><code>${esc(item.id)}</code></td>`;
       html += `<td>${esc(item.title)}</td>`;
-      html += `<td><span class="badge badge-${sc}" data-status-click="${esc(item.id)}" data-current-status="${esc(item.status)}" style="cursor:pointer">${esc(item.status)}</span></td>`;
+      html += `<td><span class="badge badge-${sc}" data-status-click="${esc(item.id)}" data-current-status="${esc(item.status)}" style="cursor:pointer">${esc(item.status)}</span>${itemFlagHtml}</td>`;
       html += `<td><span class="badge badge-${item.priority || 'medium'}">${esc(item.priority || 'medium')}</span></td>`;
       html += `<td>${depHtml}</td>`;
       html += `<td><span class="tag">${esc(item.project_key)}</span></td>`;
@@ -4275,7 +4360,7 @@ async function showLinkItemModal(epicId) {
   const allItems = [];
   for (const [key, group] of Object.entries(bl.projects || {})) {
     for (const item of (group.items || [])) {
-      if (!item.epic_id && (item.status === 'open' || item.status === 'in-progress')) {
+      if (!item.epic_id && !['done','cancelled','archived'].includes(item.status)) {
         allItems.push({ ...item, project_key: key });
       }
     }
@@ -4447,7 +4532,7 @@ async function showCreateEpicTaskModal(epicId) {
 async function showEpicDispatchModal(epicId) {
   const epic = await api(`epics/${epicId}`);
   const items = epic.resolved_items || [];
-  const openItems = items.filter(i => i.status === 'open' || i.status === 'in-progress');
+  const openItems = items.filter(i => ['planned','in-progress','in-review','testing','preview'].includes(i.status));
   let projectKeys = epic.project_keys || [];
   const p = epic.progress || { done: 0, total: 0 };
 

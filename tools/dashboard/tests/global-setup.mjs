@@ -20,6 +20,7 @@ export const SPEC_FILES = [
   'api-contracts',
   'error-paths',
   'restart-recovery',
+  'state-transitions',
 ];
 
 function getLiveDashboardPorts() {

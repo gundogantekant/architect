@@ -229,13 +229,13 @@ Stored at `portfolio/<org>/organization.json`.
 
 ## WorkItem
 
-Stored in `work/backlog.json` under `projects[key].items`. The project key (`org/project/component`) provides the project context, so items do not carry a redundant `project` field.
+Stored in SQLite (`work_items` table). The project key (`org/project/component`) provides the project context, so items do not carry a redundant `project` field.
 
 ```json
 {
   "id": "string (W-XXX format, zero-padded)",
   "title": "string",
-  "status": "open|in-progress|blocked|done|cancelled",
+  "status": "draft|planned|in-progress|blocked|in-review|testing|preview|done|cancelled|archived",
   "priority": "low|medium|high|critical",
   "description": "string",
   "epic_id": "string (E-XXX or empty, optional)",
@@ -244,11 +244,39 @@ Stored in `work/backlog.json` under `projects[key].items`. The project key (`org
   "updated_at": "string (ISO 8601)",
   "depends_on": ["string (W-XXX)"],
   "tags": ["string"],
+  "input_needed": "boolean — flag, blocks forward transitions while active",
+  "input_needed_from": "string — who needs to provide input (optional)",
+  "input_needed_reason": "string — what information is needed (optional)",
+  "input_needed_at": "string (ISO 8601) — when flagged (optional)",
+  "approval": {
+    "active": "boolean — flag, blocks forward transitions while active",
+    "mode": "all|any|sequential — resolution mode",
+    "requested_at": "string (ISO 8601, optional)",
+    "resolved_at": "string (ISO 8601, optional)",
+    "approvers": [ { "$ref": "WorkItemApproval" } ]
+  },
+  "released_at": "string (ISO 8601, optional) — when shipped; only settable when status=done",
+  "released_version": "string — version identifier (optional)",
   "session_log": [
     { "date": "string (ISO 8601)", "summary": "string" }
   ]
 }
 ```
+
+### State semantics (10 values)
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| Refinement | `draft` | Rough idea, no contract yet |
+| Planning | `planned` | Contract validated; dashboard dispatch allowed from here |
+| Implementation | `in-progress` | Actively being worked on |
+| | `blocked` | Blocked by dependency or external factor |
+| Validation | `in-review` | Code complete, under technical review (code gate) |
+| | `testing` | Review passed, tests in progress |
+| Acceptance | `preview` | Stakeholder acceptance testing |
+| Terminal | `done` | Completed |
+| | `cancelled` | Abandoned; soft-deleted items land here |
+| | `archived` | Hidden from active backlog |
 
 ### Work Item Artifact Directory
 
@@ -257,6 +285,31 @@ Work item artifacts (plans, documentation) are stored as files at `work/items/W-
 - `docs.md` — documentation and notes
 
 Directories are created lazily on first write. The `notes` field on WorkItem is **deprecated** — existing content is migrated to `work/items/W-XXX/docs.md` by the v4→v5 migration.
+
+## WorkItemApproval
+
+Stored in SQLite (`work_item_approvals` table). Normalized approver records supporting sequential ordering and cross-project blocking dependencies.
+
+```json
+{
+  "id": "number (autoincrement)",
+  "work_item_id": "string (W-XXX) — parent reference",
+  "identity": "string — approver identifier (user, team, or role)",
+  "status": "pending|approved|rejected",
+  "sort_order": "number — sequence in sequential mode; ignored in all/any",
+  "blocking_work_item_id": "string (W-XXX, optional) — cross-project block; approval cannot advance until blocker reaches status=done",
+  "decided_at": "string (ISO 8601, optional)",
+  "reason": "string (optional) — rejection reason or approval note",
+  "created_at": "string (ISO 8601)"
+}
+```
+
+Resolution semantics (per parent WorkItem's `approval.mode`):
+- `all` — every approver must approve; any rejection flips rejected, flag stays active
+- `any` — at least one approval resolves the flag
+- `sequential` — only the lowest `sort_order` pending approver is active at a time; next approver is activated on approval
+
+Maximum 20 approvers per work item (enforced at API layer).
 
 ## Epic
 
