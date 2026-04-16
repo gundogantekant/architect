@@ -41,12 +41,12 @@ test.describe('API contracts @fast', () => {
     expect(updated.status).toBe('done');
   });
 
-  test('AC-5: DELETE /api/work-items/:id removes item', async () => {
+  test('AC-5: DELETE /api/work-items/:id soft-deletes item (status → cancelled)', async () => {
     const item = await seedWorkItem({ title: 'Delete test' });
-    await api(`work-items/${item.id}`, { method: 'DELETE' });
-    const backlog = await api('backlog');
-    const allItems = Object.values(backlog.projects || {}).flatMap(p => p.items || []);
-    expect(allItems.find(i => i.id === item.id)).toBeUndefined();
+    const resp = await api(`work-items/${item.id}`, { method: 'DELETE' });
+    expect(resp.deleted).toBe(item.id);
+    const updated = await api(`work-items/${item.id}`);
+    expect(updated.status).toBe('cancelled');
   });
 
   test('AC-6: GET /api/epics returns array', async () => {
