@@ -31,6 +31,7 @@ export const SPEC_FILES = [
   'time-tracking',
   'suspend-resume',
   'state-transitions',
+  'auto-implement',
 ];
 
 function getLiveDashboardPorts() {

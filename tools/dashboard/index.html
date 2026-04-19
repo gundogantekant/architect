@@ -76,6 +76,22 @@
   .expand-btn { cursor: pointer; color: var(--blue); font-size: 12px; border: none; background: none; }
   .dispatch-btn { cursor: pointer; color: #fff; font-size: 12px; border: none; background: var(--accent); padding: 3px 10px; border-radius: 4px; margin-left: 4px; }
   .dispatch-btn:hover { opacity: 0.85; }
+  .split-btn-group { display: inline-flex; position: relative; margin-left: 4px; }
+  .split-btn-group .dispatch-btn { border-radius: 3px 0 0 3px; border-right: none; margin-left: 0; }
+  .split-btn-group .dispatch-chevron { border-radius: 0 3px 3px 0; padding: 2px 5px; font-size: 0.7em; cursor: pointer; color: #fff; background: var(--accent); border: none; border-left: 1px solid rgba(255,255,255,0.3); }
+  .split-btn-group .dispatch-chevron:hover { opacity: 0.85; }
+  .dispatch-dropdown { position: absolute; top: 100%; right: 0; background: var(--bg-secondary, #fff); border: 1px solid var(--border); border-radius: 4px; z-index: 100; min-width: 140px; box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+  .dispatch-dropdown.hidden { display: none; }
+  .dispatch-dropdown button { display: block; width: 100%; text-align: left; padding: 6px 10px; background: none; border: none; cursor: pointer; font-size: 0.85em; color: var(--text-primary, #111); }
+  .dispatch-dropdown button:hover { background: var(--border); }
+  .dispatch-dropdown button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .badge-auto { color: var(--teal, #14b8a6); border-color: var(--teal, #14b8a6); }
+  .toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+  .toast { background: #1e293b; color: #f1f5f9; padding: 10px 16px; border-radius: 6px; font-size: 13px; min-width: 220px; max-width: 360px; display: flex; align-items: center; gap: 10px; pointer-events: all; box-shadow: 0 4px 12px rgba(0,0,0,0.25); }
+  .toast.toast-success { border-left: 3px solid #22c55e; }
+  .toast.toast-error { border-left: 3px solid #ef4444; }
+  .toast a { color: var(--teal, #14b8a6); text-decoration: underline; cursor: pointer; }
+  .toast-close { margin-left: auto; background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 14px; }
 
   /* Key-value */
   .kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; font-size: 13px; margin-bottom: 12px; }
@@ -841,6 +857,7 @@ function updateDispatchBadge() {
 }
 
 function syncSessionState() {
+  window._activeDispatches = activeDispatches;
   placeSessionPanels();    // debounced via rAF — repositions all panels
   updateDispatchBadge();   // immediate — updates badge counts + refreshSessionsSidebar
 }
@@ -966,9 +983,21 @@ function finalizeDispatchPanel(dispatch) {
     const dismissBtn = panel.querySelector(`[data-dismiss-dispatch="${dispatch.id}"]`);
     if (dismissBtn) dismissBtn.style.display = '';
   }
+  if (dispatch.dispatch_mode === 'auto_implement') {
+    showAutoImplementToast(dispatch);
+  }
   syncSessionState();
   if (dispatch.status !== 'running' && dispatch.status !== 'suspended') {
     scheduleAutoDismiss('dispatch', dispatch.id, dispatch);
+  }
+}
+
+function showAutoImplementToast(dispatch) {
+  const workItemLabel = dispatch.work_item_id || dispatch.id;
+  if (dispatch.status === 'completed') {
+    showToast(`${workItemLabel} auto-implemented`, 'success', 'View dispatch', dispatch.id);
+  } else {
+    showToast(`${workItemLabel} auto-implement failed`, 'error', 'View dispatch', dispatch.id);
   }
 }
 
@@ -1981,6 +2010,7 @@ function createSessionPanel(type, info) {
     const skipBadge = dispatch.skip_permissions ? '<span class="auto-badge">[skip-perms]</span>' : '';
     const planBadge = dispatch.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
     const suspendedBadge = isSuspended ? '<span class="suspended-badge">[suspended]</span>' : '';
+    const autoImplementBadge = dispatch.dispatch_mode === 'auto_implement' ? '<span class="status-badge badge-open badge-auto">[auto]</span>' : '';
     const dKeyParts = (dispatch.project_key || '').split('/').filter(p => p && p !== '*');
     const dBreadcrumb = [];
     if (dKeyParts.length >= 2) dBreadcrumb.push(`${esc(dKeyParts[0])} / ${esc(dKeyParts[1])}`);
@@ -1999,7 +2029,7 @@ function createSessionPanel(type, info) {
     panel.innerHTML = `
       <div class="dispatch-header">
         <span class="status-dot ${isRunning ? (dispatch.agent_phase === 'waiting_for_input' ? 'needs-input' : dispatch.agent_phase === 'tool_running' ? 'tool-running' : 'generating') : dispatch.status}" title="${isRunning ? ({generating:'Thinking',tool_running:'Running tool',waiting_for_input:'Needs input'}[dispatch.agent_phase]||'') : ''}"></span>
-        <span class="dispatch-title">${dispatchPathStr}${planBadge}${skipBadge}${suspendedBadge}</span>
+        <span class="dispatch-title">${dispatchPathStr}${planBadge}${skipBadge}${suspendedBadge}${autoImplementBadge}</span>
         <span class="dispatch-meta">${new Date(dispatch.started_at).toLocaleTimeString()}</span>
         <button class="focus-btn" data-focus-dispatch="${esc(id)}">Focus</button>
         <button class="minimize-btn" data-minimize-dispatch="${esc(id)}">▼</button>
@@ -2492,6 +2522,90 @@ async function dispatchWorkItem(workItem, projectKey) {
   });
 }
 
+function closeAllDropdowns() {
+  document.querySelectorAll('.dispatch-dropdown:not(.hidden)').forEach(d => d.classList.add('hidden'));
+}
+
+function showToast(message, type, linkText, linkDispatchId) {
+  let container = document.getElementById('toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    container.className = 'toast-container';
+    document.body.appendChild(container);
+  }
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type === 'success' ? 'success' : 'error'}`;
+  let inner = `<span>${esc(message)}</span>`;
+  if (linkText && linkDispatchId) {
+    inner += ` <a onclick="openFocusPopup('dispatch','${esc(linkDispatchId)}');this.closest('.toast').remove()">${esc(linkText)}</a>`;
+  }
+  inner += `<button class="toast-close" title="Dismiss">✕</button>`;
+  toast.innerHTML = inner;
+  toast.querySelector('.toast-close').onclick = () => toast.remove();
+  container.appendChild(toast);
+  setTimeout(() => { if (toast.parentElement) toast.remove(); }, 10000);
+}
+
+function showAutoImplementConfirm(workItem, projectKey) {
+  const { overlay, close } = createDispatchOverlay({
+    title: `Auto-Implement ${workItem.id}`,
+    cancelId: 'modal-cancel',
+    submitId: 'modal-dispatch',
+    buildFields: () => `
+      <div style="margin-bottom:12px;font-size:13px;font-weight:500">${esc(workItem.title)}</div>
+      <p style="font-size:13px;margin-bottom:10px">This will execute the full implement-work-item workflow autonomously:</p>
+      <p style="font-size:12px;color:var(--text-secondary);margin-bottom:12px;font-family:monospace">investigate → plan → TRB review → code → test → TRB review → commit</p>
+      <ul style="font-size:12px;margin-bottom:14px;padding-left:18px;line-height:1.8">
+        <li>⚠ Agent makes commits in a worktree branch (cannot push or merge)</li>
+        <li>⚠ Both TRB gates remain enforced</li>
+        <li>⚠ skip-permissions enabled — no permission prompts</li>
+      </ul>
+      <div class="interactive-toggle" style="margin-bottom:4px">
+        <input type="checkbox" id="auto-implement-confirm-check" />
+        <label for="auto-implement-confirm-check">I understand the agent will commit code autonomously</label>
+      </div>
+    `,
+    afterMount: (o) => {
+      const submitBtn = o.querySelector('[data-modal-submit]');
+      const checkbox = o.querySelector('#auto-implement-confirm-check');
+      if (submitBtn && checkbox) {
+        submitBtn.disabled = true;
+        checkbox.onchange = () => { submitBtn.disabled = !checkbox.checked; };
+      }
+    },
+    onSubmit: async (o) => {
+      const resp = await fetch('/api/dispatch/auto-implement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ work_item_id: workItem.id, project_key: projectKey }),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error || 'Auto-implement failed');
+
+      const dispatch = {
+        id: result.dispatch_id,
+        work_item_id: workItem.id,
+        work_item_title: workItem.title,
+        project_key: projectKey,
+        title: workItem.title,
+        permission_mode: 'acceptEdits',
+        skip_permissions: true,
+        dispatch_mode: 'auto_implement',
+        status: 'running',
+        agent_phase: 'generating',
+        claude_session_id: null,
+        started_at: new Date().toISOString(),
+      };
+      activeDispatches.push(dispatch);
+      syncSessionState();
+      createDispatchPanel(dispatch);
+      placeSessionPanels();
+      await loadDispatchContent(dispatch);
+    },
+  });
+}
+
 // Restore active dispatches on page load
 async function restoreDispatches() {
   try {
@@ -2798,7 +2912,16 @@ function renderWorkItemsTable(items, allWorkItems, tableId) {
     html += `<td>${(w.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
     html += `<td><button class="expand-btn" data-wi="${idx}">details</button>`;
     html += `<button class="edit-btn" data-wi-edit="${idx}">edit</button>`;
-    if (canDispatch) html += `<button class="dispatch-btn" data-wi-idx="${idx}">dispatch</button>`;
+    if (canDispatch) {
+      const hasActiveDispatch = (window._activeDispatches || []).some(d => d.work_item_id === w.id && d.status === 'running');
+      const isAutoEligible = !hasActiveDispatch && ['open','ready','in-progress'].includes(w.status);
+      html += `<span class="split-btn-group" data-split-wi="${idx}">`;
+      html += `<button class="dispatch-btn" data-wi-idx="${idx}">dispatch</button>`;
+      html += `<button class="dispatch-chevron" data-chevron-wi="${idx}" title="More dispatch options">▾</button>`;
+      html += `<div class="dispatch-dropdown hidden" data-dropdown-wi="${idx}">`;
+      html += `<button ${isAutoEligible ? '' : 'disabled'} data-auto-wi="${idx}" title="${hasActiveDispatch ? 'A dispatch is already running for this item' : (!isAutoEligible ? 'Item status not eligible' : '')}">Auto-implement</button>`;
+      html += `</div></span>`;
+    }
     html += `<button class="delete-btn" data-wi-del="${idx}">delete</button>`;
     html += `</td></tr>`;
     html += `<tr class="wi-detail" data-wi-detail="${idx}" style="display:none"><td colspan="8">`;
@@ -3139,13 +3262,42 @@ function bindTabs() {
   });
 
   // Dispatch buttons
-  document.querySelectorAll('.dispatch-btn').forEach(btn => {
+  document.querySelectorAll('.dispatch-btn[data-wi-idx]').forEach(btn => {
     btn.onclick = () => {
       const idx = parseInt(btn.dataset.wiIdx);
       const wi = currentWorkItems[idx];
       if (wi) dispatchWorkItem(wi, currentProjectKey);
     };
   });
+
+  // Split button chevron — toggle dropdown
+  document.querySelectorAll('.dispatch-chevron[data-chevron-wi]').forEach(chevron => {
+    chevron.onclick = (e) => {
+      e.stopPropagation();
+      const idx = chevron.dataset.chevronWi;
+      const dropdown = document.querySelector(`.dispatch-dropdown[data-dropdown-wi="${idx}"]`);
+      if (dropdown) {
+        const isHidden = dropdown.classList.contains('hidden');
+        document.querySelectorAll('.dispatch-dropdown:not(.hidden)').forEach(d => d.classList.add('hidden'));
+        if (isHidden) dropdown.classList.remove('hidden');
+      }
+    };
+  });
+
+  // Auto-implement option in dropdown
+  document.querySelectorAll('[data-auto-wi]').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const idx = parseInt(btn.dataset.autoWi);
+      const wi = currentWorkItems[idx];
+      const dropdown = btn.closest('.dispatch-dropdown');
+      if (dropdown) dropdown.classList.add('hidden');
+      if (wi) showAutoImplementConfirm(wi, currentProjectKey);
+    };
+  });
+
+  // Close dropdowns on outside click
+  document.addEventListener('click', closeAllDropdowns);
 
   // Status badge click (component view)
   document.querySelectorAll('[data-status-click]').forEach(badge => {
@@ -5642,6 +5794,7 @@ function renderAgentTile(agent) {
     badges += `<span class="badge badge-phase">${phaseLabels[agent.agent_phase] || agent.agent_phase}</span>`;
   }
   if (agent.claude_session_id) badges += sessionIdTag(agent.claude_session_id);
+  if (agent.dispatch_mode === 'auto_implement') badges += `<span class="badge badge-open badge-auto">[auto]</span>`;
 
   return `<div class="agent-tile" data-agent-type="${esc(agent.type)}" data-agent-id="${esc(agent.id)}">
     <div class="agent-tile-header">
@@ -5668,7 +5821,7 @@ async function fetchAgentsList() {
   ]);
   const agents = [];
   for (const d of dispatches) {
-    agents.push({ type: 'dispatch', id: d.id, status: d.status, title: d.work_item_id || d.id, work_item_id: d.work_item_id, project_key: d.project_key, epic_id: d.epic_id, started_at: d.started_at, last_output: d.last_output || [], cost_usd: d.cost_usd, claude_session_id: d.claude_session_id, agent_phase: d.agent_phase || null });
+    agents.push({ type: 'dispatch', id: d.id, status: d.status, title: d.work_item_id || d.id, work_item_id: d.work_item_id, work_item_title: d.work_item_title || null, project_key: d.project_key, epic_id: d.epic_id, epic_title: d.epic_title || null, started_at: d.started_at, last_output: d.last_output || [], cost_usd: d.cost_usd, claude_session_id: d.claude_session_id, agent_phase: d.agent_phase || null, dispatch_mode: d.dispatch_mode || 'standard' });
   }
   for (const t of terminals) {
     agents.push({ type: 'terminal', id: t.id, status: t.status, title: t.title || t.id, work_item_id: t.work_item_id, project_key: t.project_key, epic_id: t.epic_id, started_at: t.started_at, last_output: t.last_output || [], claude_session_id: t.claude_session_id });
@@ -5689,12 +5842,14 @@ function renderAgentsView(agents, filters = {}) {
   const statusFilter = filters.status || 'all';
   const epicFilter = filters.epic || '';
   const projectFilter = filters.project || '';
+  const autoOnly = filters.autoOnly || false;
 
   let filtered = agents;
   if (statusFilter === 'active') filtered = filtered.filter(a => a.status === 'running');
   else if (statusFilter === 'recent') filtered = filtered.filter(a => a.status !== 'running');
   if (epicFilter) filtered = filtered.filter(a => a.epic_id === epicFilter);
   if (projectFilter) filtered = filtered.filter(a => a.project_key === projectFilter);
+  if (autoOnly) filtered = filtered.filter(a => a.dispatch_mode === 'auto_implement');
 
   // Collect unique epics/projects for dropdowns
   const allEpics = [...new Set(agents.map(a => a.epic_id).filter(Boolean))].sort();
@@ -5716,6 +5871,7 @@ function renderAgentsView(agents, filters = {}) {
     html += `</select>`;
   }
   html += `<button class="btn-add-wi" id="agents-quick-dispatch">+ Dispatch</button>`;
+  html += `<label style="font-size:12px;display:inline-flex;align-items:center;gap:4px;margin-left:8px;cursor:pointer"><input type="checkbox" id="agents-auto-only"${filters.autoOnly ? ' checked' : ''}> Auto-implement only</label>`;
   html += `</div>`;
 
   if (filtered.length) {
@@ -5904,6 +6060,15 @@ function bindAgentsEvents(agents, filters) {
     };
   }
 
+  // Auto-implement only checkbox
+  const autoOnlyCheck = document.getElementById('agents-auto-only');
+  if (autoOnlyCheck) {
+    autoOnlyCheck.onchange = () => {
+      const hash = buildAgentsHash({ ...filters, autoOnly: autoOnlyCheck.checked });
+      location.hash = hash;
+    };
+  }
+
   // Quick dispatch button
   const quickDispatchBtn = document.getElementById('agents-quick-dispatch');
   if (quickDispatchBtn) quickDispatchBtn.onclick = () => showQuickDispatchModal();
@@ -5915,18 +6080,20 @@ function buildAgentsHash(filters) {
   if (filters.status && filters.status !== 'all') params.push(`status=${filters.status}`);
   if (filters.epic) params.push(`epic=${filters.epic}`);
   if (filters.project) params.push(`project=${filters.project}`);
+  if (filters.autoOnly) params.push(`autoOnly=1`);
   if (params.length) hash += '?' + params.join('&');
   return hash;
 }
 
 function parseAgentsFilters(hash) {
-  const filters = { status: 'all', epic: '', project: '' };
+  const filters = { status: 'all', epic: '', project: '', autoOnly: false };
   const qIdx = hash.indexOf('?');
   if (qIdx === -1) return filters;
   const params = new URLSearchParams(hash.slice(qIdx + 1));
   if (params.get('status')) filters.status = params.get('status');
   if (params.get('epic')) filters.epic = params.get('epic');
   if (params.get('project')) filters.project = params.get('project');
+  if (params.get('autoOnly') === '1') filters.autoOnly = true;
   return filters;
 }
 

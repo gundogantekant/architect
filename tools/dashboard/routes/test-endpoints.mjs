@@ -3,11 +3,11 @@ import { shouldCreateWorktree } from '../worktree.mjs';
 export default function testEndpointRoutes(deps) {
   const {
     db, json, err, parseBody,
-    ROOT, LOGS_DIR, TMUX_AVAILABLE,
+    ROOT, PORTFOLIO, LOGS_DIR, TMUX_AVAILABLE,
     dispatches, terminals, cliSessions,
     wireTerminalHandlers,
     broadcastDispatchLine, broadcastDispatchDone,
-    buildDispatchPrompt, buildResumePrompt, resolveOrgPath, loadOrgContext, loadPortfolioContext, loadResumeContext, selectAgentsForDispatch,
+    buildDispatchPrompt, buildResumePrompt, buildAutoImplementPrompt, resolveOrgPath, loadOrgContext, loadPortfolioContext, loadResumeContext, selectAgentsForDispatch,
     saveDispatchToDb, saveTerminalToDb,
     restoreSessions,
     termEventLogPath, generateSeedContent,
@@ -34,7 +34,7 @@ export default function testEndpointRoutes(deps) {
 
     [/^\/api\/test\/seed-dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { id, status, project_key, title, work_item_id, epic_id: seedEpicId, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch, pid: seedPid } = body;
+      const { id, status, project_key, title, work_item_id, epic_id: seedEpicId, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch, pid: seedPid, dispatch_mode } = body;
       if (!id) return err(res, 'id is required', 400);
       const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
 
@@ -67,6 +67,7 @@ export default function testEndpointRoutes(deps) {
         worktree_path: worktree_path || null,
         worktree_branch: worktree_branch || null,
         source_branch: source_branch || null,
+        dispatch_mode: dispatch_mode || 'standard',
         output,
         lastLines: [],
         wsClients: new Set(),
@@ -109,6 +110,35 @@ export default function testEndpointRoutes(deps) {
         orgContext,
       });
       json(res, { prompt, project_path: projectPath });
+    }],
+
+    // Build auto-implement prompt without spawning (for contract/prompt tests)
+    [/^\/api\/test\/build-auto-implement-prompt$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { workItem, projectKey, projectPath } = body;
+      const prompt = buildAutoImplementPrompt({
+        workItem: workItem || null,
+        projectKey: projectKey || 'test/test/main',
+        projectPath: projectPath || ROOT,
+        portfolio: null,
+        epicContext: null,
+      });
+      json(res, { prompt });
+    }],
+
+    // Seed a fake portfolio registry entry pointing to a given path (for worktree-failure tests)
+    [/^\/api\/test\/seed-registry-entry$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { project_key, project_path } = body;
+      if (!project_key || !project_path) return err(res, 'project_key and project_path are required', 400);
+      const [org, project, component] = project_key.split('/');
+      const registryPath = join(PORTFOLIO, 'registry.json');
+      let registry = { entries: {} };
+      try { registry = JSON.parse(readFileSync(registryPath, 'utf8')); } catch {}
+      registry.entries[project_path] = { org, project, component };
+      await mkdir(PORTFOLIO, { recursive: true });
+      writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+      json(res, { seeded: true });
     }],
 
     // Build dispatch prompt without spawning (for contract/prompt tests)

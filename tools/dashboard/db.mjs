@@ -459,9 +459,9 @@ export function getEpicProjectKeys(epicId) {
 
 export function saveDispatch(d) {
   db.prepare(`
-    INSERT OR REPLACE INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(d.id, d.work_item_id || null, d.epic_id || null, d.project_key, d.project_path || '', d.title || '', d.permission_mode || 'acceptEdits', d.skip_permissions ? 1 : 0, d.status, d.started_at, d.completed_at || null, d.cost_usd || null, d.pid || null, d.claude_session_id || null, d.worktree_path || null, d.worktree_branch || null, d.source_branch || null);
+    INSERT OR REPLACE INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(d.id, d.work_item_id || null, d.epic_id || null, d.project_key, d.project_path || '', d.title || '', d.permission_mode || 'acceptEdits', d.skip_permissions ? 1 : 0, d.status, d.started_at, d.completed_at || null, d.cost_usd || null, d.pid || null, d.claude_session_id || null, d.worktree_path || null, d.worktree_branch || null, d.source_branch || null, d.dispatch_mode || 'standard');
 }
 
 export function deleteDispatch(id) {

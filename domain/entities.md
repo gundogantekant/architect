@@ -499,7 +499,8 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "agent_phase": "AgentPhase (ephemeral, in-memory only — not persisted to SQLite, derived from live stream-json event parsing or log replay)",
   "worktree_path": "string (absolute path to worktree, null if no worktree — persisted to SQLite)",
   "worktree_branch": "string (worktree branch name, null if no worktree — persisted to SQLite)",
-  "source_branch": "string (originating branch the worktree was created from, null if no worktree — persisted to SQLite)"
+  "source_branch": "string (originating branch the worktree was created from, null if no worktree — persisted to SQLite)",
+  "dispatch_mode": "string ('standard' | 'auto_implement', default 'standard')"
 }
 ```
 

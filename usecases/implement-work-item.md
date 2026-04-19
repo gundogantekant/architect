@@ -15,6 +15,7 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 - Follow `usecases/load-portfolio-context.md` with depth **standard** (fallback: run scout to detect the stack)
 - Dashboard must be running at `http://127.0.0.1:3777`
 - For medium+ complexity work items, the DispatchPlan must include a `contract` on each step per `domain/rules.md` → Dispatch Contract Rules. If contracts are missing, the orchestrator constructs them from the work item description before dispatching.
+- **Autonomous mode**: When the prompt contains a `# Auto-Implement Mode` section, proceed through all 15 steps without pausing for user confirmation at intermediate gates. The only exception: if a Technical Review Board gate returns `block` after 2 revision cycles, halt and mark the dispatch as failed rather than escalating interactively.
 
 ## Agent(s)
 - **coder** (model: sonnet) — implementation
