@@ -28,6 +28,25 @@ Manage persistent work items and epics across sessions. Items are grouped by pro
 4. Dispatch tracker agent with parsed command, resolved project scope, and today's date
 5. Display tracker output
 
+## Flag Management
+
+```
+PATCH /api/work-items/:id/input-needed    Set or clear the input_needed flag
+  body: {"set": true, "question": "What should the retry limit be?"}   (set)
+  body: {"set": false}                                                  (clear)
+
+POST /api/work-items/:id/approvals        Add an approver
+  body: {"approver": "<name>", "sequential": false}
+
+PATCH /api/work-items/:id/approvals/:id   Resolve an approval
+  body: {"resolution": "approved" | "rejected"}
+```
+
+- `input_needed` blocks all forward state transitions until cleared
+- `approval_active` is set automatically when an approver is added; cleared when all approvals resolve
+- Rejecting an approval returns the item to the previous state
+- Use `?awaiting_action=true` on list/filter endpoints to see only flagged items
+
 ## Dependency Subcommands
 
 ```

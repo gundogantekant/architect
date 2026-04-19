@@ -18,6 +18,20 @@ export default function testEndpointRoutes(deps) {
   } = deps;
   return [
     // --- Test endpoints (for E2E test seeding) ---
+
+    [/^\/api\/test\/explain-query$/, 'GET', async (_m, req, res) => {
+      const url = new URL(req.url, 'http://localhost');
+      const query = url.searchParams.get('query');
+      if (query === 'approver_pending') {
+        const identity = url.searchParams.get('identity') || 'probe';
+        const plan = db.getDb().prepare(
+          `EXPLAIN QUERY PLAN SELECT * FROM work_item_approvals WHERE identity = ? AND status = 'pending'`
+        ).all(identity);
+        return json(res, { plan });
+      }
+      return err(res, `unknown query '${query}'`, 400);
+    }],
+
     [/^\/api\/test\/seed-dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
       const { id, status, project_key, title, work_item_id, epic_id: seedEpicId, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch, pid: seedPid } = body;

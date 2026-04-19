@@ -55,12 +55,19 @@ export async function initDatabaseAsync(workDir, migrationsDir) {
 
     console.log(`Applying migration ${file}...`);
     const migration = await import(join(migrationsDir, file));
-    db.transaction(() => {
+    if (migration.noTransaction) {
       migration.up(db, workDir);
       db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(
         version, new Date().toISOString()
       );
-    })();
+    } else {
+      db.transaction(() => {
+        migration.up(db, workDir);
+        db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(
+          version, new Date().toISOString()
+        );
+      })();
+    }
     console.log(`Migration ${file} applied.`);
   }
 
@@ -130,17 +137,21 @@ export function createWorkItem({ project_key, title, status, priority, descripti
   db.prepare(`
     INSERT INTO work_items (id, project_key, title, status, priority, description, epic_id, tags, depends_on, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)
-  `).run(id, project_key, title, status || 'open', priority || 'medium', description || '', epic_id || null, JSON.stringify(tags || []), now, now);
+  `).run(id, project_key, title, status || 'draft', priority || 'medium', description || '', epic_id || null, JSON.stringify(tags || []), now, now);
 
   addWorkItemLog(id, 'Created');
-
-  // If epic_id is set, the link is implicit via the epic_id column
 
   return getWorkItem(id);
 }
 
 export function updateWorkItem(id, fields) {
-  const allowed = ['title', 'status', 'priority', 'description', 'tags', 'depends_on', 'epic_id'];
+  const allowed = [
+    'title', 'status', 'priority', 'description', 'tags', 'depends_on', 'epic_id',
+    'input_needed', 'input_needed_from', 'input_needed_reason', 'input_needed_at',
+    'approval_active', 'approval_mode', 'approval_requested_at', 'approval_resolved_at',
+    'released_at', 'released_version',
+  ];
+  const booleanFields = new Set(['input_needed', 'approval_active']);
   const sets = [];
   const values = [];
   for (const key of allowed) {
@@ -148,6 +159,9 @@ export function updateWorkItem(id, fields) {
       if (key === 'tags' || key === 'depends_on') {
         sets.push(`${key} = ?`);
         values.push(JSON.stringify(fields[key]));
+      } else if (booleanFields.has(key)) {
+        sets.push(`${key} = ?`);
+        values.push(fields[key] ? 1 : 0);
       } else {
         sets.push(`${key} = ?`);
         values.push(fields[key]);
@@ -160,6 +174,98 @@ export function updateWorkItem(id, fields) {
   values.push(id);
   db.prepare(`UPDATE work_items SET ${sets.join(', ')} WHERE id = ?`).run(...values);
   return getWorkItem(id);
+}
+
+// --- Work Item Approvals ---
+
+export function getWorkItemApprovals(workItemId) {
+  return db.prepare('SELECT * FROM work_item_approvals WHERE work_item_id = ? ORDER BY sort_order, id').all(workItemId).map(hydrateApproval);
+}
+
+export function addWorkItemApproval({ workItemId, identity, sort_order, blocking_work_item_id }) {
+  const now = new Date().toISOString();
+  const info = db.prepare(`
+    INSERT INTO work_item_approvals (work_item_id, identity, status, sort_order, blocking_work_item_id, created_at)
+    VALUES (?, ?, 'pending', ?, ?, ?)
+  `).run(workItemId, identity, sort_order ?? 0, blocking_work_item_id || null, now);
+  activateApprovalFlag(workItemId);
+  return getApprovalById(info.lastInsertRowid);
+}
+
+export function getApprovalById(approvalId) {
+  const row = db.prepare('SELECT * FROM work_item_approvals WHERE id = ?').get(approvalId);
+  return row ? hydrateApproval(row) : null;
+}
+
+export function updateWorkItemApproval(approvalId, { status, reason }) {
+  const now = new Date().toISOString();
+  const sets = [];
+  const values = [];
+  if (status !== undefined) { sets.push('status = ?'); values.push(status); sets.push('decided_at = ?'); values.push(now); }
+  if (reason !== undefined) { sets.push('reason = ?'); values.push(reason); }
+  if (sets.length === 0) return getApprovalById(approvalId);
+  values.push(approvalId);
+  db.prepare(`UPDATE work_item_approvals SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+  const updated = getApprovalById(approvalId);
+  if (updated) resolveApprovalIfComplete(updated.work_item_id);
+  return updated;
+}
+
+function activateApprovalFlag(workItemId) {
+  const now = new Date().toISOString();
+  const current = db.prepare('SELECT approval_active FROM work_items WHERE id = ?').get(workItemId);
+  if (!current || current.approval_active === 1) return;
+  db.prepare(`UPDATE work_items SET approval_active = 1, approval_requested_at = COALESCE(approval_requested_at, ?), approval_resolved_at = NULL, updated_at = ? WHERE id = ?`)
+    .run(now, now, workItemId);
+}
+
+export function resolveApprovalIfComplete(workItemId) {
+  const wi = db.prepare('SELECT approval_mode, approval_active FROM work_items WHERE id = ?').get(workItemId);
+  if (!wi || wi.approval_active !== 1) return;
+  const approvers = db.prepare('SELECT * FROM work_item_approvals WHERE work_item_id = ?').all(workItemId);
+  if (approvers.length === 0) return;
+  const mode = wi.approval_mode || 'all';
+  let resolved = false;
+  if (mode === 'any') {
+    resolved = approvers.some(a => a.status === 'approved');
+  } else if (mode === 'all' || mode === 'sequential') {
+    resolved = approvers.every(a => a.status === 'approved');
+  }
+  if (resolved) {
+    const now = new Date().toISOString();
+    db.prepare(`UPDATE work_items SET approval_active = 0, approval_resolved_at = ?, updated_at = ? WHERE id = ?`).run(now, now, workItemId);
+  }
+}
+
+export function getPendingApprovalsForIdentity(identity) {
+  return db.prepare(`
+    SELECT wia.*, wi.project_key, wi.title
+    FROM work_item_approvals wia
+    JOIN work_items wi ON wi.id = wia.work_item_id
+    WHERE wia.identity = ? AND wia.status = 'pending'
+  `).all(identity);
+}
+
+export function resolveBlockedApprovals(blockingItemId) {
+  const pending = db.prepare(`
+    SELECT id, work_item_id FROM work_item_approvals
+    WHERE blocking_work_item_id = ? AND status = 'pending'
+  `).all(blockingItemId);
+  const now = new Date().toISOString();
+  for (const row of pending) {
+    db.prepare(`UPDATE work_item_approvals SET status = 'approved', decided_at = ?, reason = COALESCE(reason, ?) WHERE id = ?`)
+      .run(now, `auto-approved by blocker ${blockingItemId}=done`, row.id);
+    resolveApprovalIfComplete(row.work_item_id);
+  }
+}
+
+export function getActiveApproverForSequential(workItemId) {
+  const row = db.prepare(`
+    SELECT id FROM work_item_approvals
+    WHERE work_item_id = ? AND status = 'pending'
+    ORDER BY sort_order ASC, id ASC LIMIT 1
+  `).get(workItemId);
+  return row ? row.id : null;
 }
 
 export function deleteWorkItem(id) {
@@ -553,6 +659,9 @@ export function getEpicFull(id) {
 // --- Hydration helpers ---
 
 function hydrateWorkItem(row) {
+  const approvers = db
+    ? db.prepare('SELECT * FROM work_item_approvals WHERE work_item_id = ? ORDER BY sort_order, id').all(row.id)
+    : [];
   return {
     id: row.id,
     project_key: row.project_key,
@@ -565,6 +674,33 @@ function hydrateWorkItem(row) {
     depends_on: JSON.parse(row.depends_on || '[]'),
     created_at: row.created_at,
     updated_at: row.updated_at,
+    input_needed: !!row.input_needed,
+    input_needed_from: row.input_needed_from || '',
+    input_needed_reason: row.input_needed_reason || '',
+    input_needed_at: row.input_needed_at || '',
+    approval: {
+      active: !!row.approval_active,
+      mode: row.approval_mode || 'all',
+      requested_at: row.approval_requested_at || '',
+      resolved_at: row.approval_resolved_at || '',
+      approvers: approvers.map(hydrateApproval),
+    },
+    released_at: row.released_at || '',
+    released_version: row.released_version || '',
+  };
+}
+
+function hydrateApproval(row) {
+  return {
+    id: row.id,
+    work_item_id: row.work_item_id,
+    identity: row.identity,
+    status: row.status,
+    sort_order: row.sort_order,
+    blocking_work_item_id: row.blocking_work_item_id || '',
+    decided_at: row.decided_at || '',
+    reason: row.reason || '',
+    created_at: row.created_at,
   };
 }
 

@@ -341,7 +341,7 @@ test('R-9. Modal scrollable when content exceeds viewport', async ({ page }) => 
   // Failure mode: .modal has no max-height or overflow-y; content extends past viewport bottom
   // Fixed by: adding max-height: 90vh; overflow-y: auto to .modal CSS
 
-  await seedWorkItem({ title: 'Overflow test item', status: 'open' });
+  await seedWorkItem({ title: 'Overflow test item', status: 'in-progress' });
   await page.goto('/#component/ticari/architect/main');
   await page.waitForSelector('.dispatch-btn[data-wi-idx]', { timeout: 15000 });
   await page.click('.dispatch-btn[data-wi-idx]');
@@ -390,7 +390,7 @@ test('R-10. Modal fits within viewport on small screen', async ({ page }) => {
   // Fixed by: max-height: 90vh on .modal
 
   await page.setViewportSize({ width: 800, height: 400 });
-  await seedWorkItem({ title: 'Small viewport test', status: 'open' });
+  await seedWorkItem({ title: 'Small viewport test', status: 'in-progress' });
   await page.goto('/#component/ticari/architect/main');
   await page.waitForSelector('.dispatch-btn[data-wi-idx]', { timeout: 15000 });
   await page.click('.dispatch-btn[data-wi-idx]');

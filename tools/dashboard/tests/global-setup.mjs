@@ -30,6 +30,7 @@ export const SPEC_FILES = [
   'dispatch-contract',
   'time-tracking',
   'suspend-resume',
+  'state-transitions',
 ];
 
 function getLiveDashboardPorts() {

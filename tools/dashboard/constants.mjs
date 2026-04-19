@@ -23,10 +23,74 @@ export const port = (() => {
   return 3777;
 })();
 
-// Valid status values — canonical source: domain/entities.md
-export const VALID_WORK_ITEM_STATUSES = new Set(['open', 'ready', 'in-progress', 'blocked', 'done', 'cancelled', 'archived']);
+// Valid status values — canonical source: domain/entities.md and domain/rules.md
+export const VALID_WORK_ITEM_STATUSES = new Set([
+  'draft', 'planned', 'in-progress', 'blocked',
+  'in-review', 'testing', 'preview',
+  'done', 'cancelled', 'archived',
+]);
 export const VALID_EPIC_STATUSES = new Set(['draft', 'active', 'done', 'cancelled', 'archived']);
 export const VALID_PRIORITIES = new Set(['low', 'medium', 'high', 'critical']);
+export const VALID_APPROVAL_MODES = new Set(['all', 'any', 'sequential']);
+
+// Canonical state transition map. Mirrors domain/rules.md → State Transition Table.
+// Contract test SM-17 enforces parity.
+export const VALID_TRANSITIONS = new Map([
+  ['draft',       new Set(['planned', 'cancelled'])],
+  ['planned',     new Set(['in-progress', 'draft', 'cancelled'])],
+  ['in-progress', new Set(['blocked', 'in-review', 'cancelled'])],
+  ['blocked',     new Set(['in-progress', 'cancelled'])],
+  ['in-review',   new Set(['in-progress', 'testing', 'cancelled'])],
+  ['testing',     new Set(['in-progress', 'preview', 'cancelled'])],
+  ['preview',     new Set(['in-progress', 'done', 'cancelled'])],
+  ['done',        new Set(['archived', 'cancelled'])],
+  ['cancelled',   new Set(['draft', 'archived'])],
+  ['archived',    new Set([])],
+]);
+
+// Backward transitions bypass flag blocking (plus → cancelled and → archived).
+export const BACKWARD_TRANSITIONS = new Set([
+  'in-review->in-progress',
+  'testing->in-progress',
+  'preview->in-progress',
+  'blocked->in-progress',
+  'cancelled->draft',
+]);
+
+// T1 fast path shortcut: items tagged T1 may take in-progress→done directly.
+export const T1_FAST_PATH_TRANSITIONS = new Set(['in-progress->done']);
+
+// Stakeholder projection — simplified status labels for non-technical consumers.
+export const STAKEHOLDER_PROJECTION = new Map([
+  ['draft', 'Requested'],
+  ['planned', 'Requested'],
+  ['in-progress', 'In Progress'],
+  ['blocked', 'In Progress'],
+  ['in-review', 'In Review'],
+  ['testing', 'In Review'],
+  ['preview', 'In Review'],
+  ['done', 'Done'],
+  ['cancelled', 'Cancelled'],
+  ['archived', 'Archived'],
+]);
+
+export function formatStatusWithFlags(item, view = 'internal') {
+  const base = view === 'stakeholder'
+    ? (STAKEHOLDER_PROJECTION.get(item.status) || item.status)
+    : item.status;
+  const flags = [];
+  if (item.input_needed) flags.push('input needed');
+  if (item.approval && item.approval.active) flags.push('approval needed');
+  return flags.length ? `${base} [${flags.join(', ')}]` : base;
+}
+
+export function isBackwardTransition(from, to) {
+  return BACKWARD_TRANSITIONS.has(`${from}->${to}`);
+}
+
+export function isAdministrativeTransition(from, to) {
+  return to === 'cancelled' || to === 'archived' || isBackwardTransition(from, to);
+}
 
 export const SERVER_START_TIME = Date.now();
 export const DASHCTL_PATH = join(import.meta.dirname, 'dashctl.sh');

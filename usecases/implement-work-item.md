@@ -33,10 +33,13 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 
 ## Steps
 
-1. **Fetch work item details**: `GET /api/work-items/<id>` — read title, description, priority, tags, epic_id, depends_on, session_log. Check for stored artifacts via `GET /api/work-items/<id>/artifacts` (especially plan.md).
+1. **Fetch work item details**: `GET /api/work-items/<id>` — read title, description, priority, tags, epic_id, depends_on, session_log, flags (`input_needed`, `approval_active`). Check for stored artifacts via `GET /api/work-items/<id>/artifacts` (especially plan.md).
 
 2. **Guard checks**:
    - If status is `done` or `cancelled`, warn user and confirm before proceeding.
+   - If status is not `planned`, warn user — items must be in `planned` state before dispatch. Prompt to transition to `planned` or abort.
+   - If `input_needed` flag is set, surface the pending question to the user and wait for resolution before proceeding.
+   - If `approval_active` flag is set, inform user that approval is pending and halt — do not proceed until the flag is cleared.
    - If `depends_on` contains items that are not `done`, warn user about unmet dependencies.
 
 3. **Update status**: `PATCH /api/work-items/<id>` with `{"status": "in-progress"}`.

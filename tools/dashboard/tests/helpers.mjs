@@ -267,7 +267,7 @@ export async function seedSessionHistory(opts = {}) {
 export async function seedWorkItem(opts = {}) {
   const body = {
     title: opts.title || 'Test work item',
-    status: opts.status || 'open',
+    status: opts.status || 'draft',
     priority: opts.priority || 'medium',
     project_key: opts.project_key || 'ticari/architect/main',
   };

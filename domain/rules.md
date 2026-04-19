@@ -263,13 +263,94 @@ When PM's classification confidence is below **0.6**, always include clarificati
 - PM suggests work items for **medium+ complexity** requests only
 - Work items are created only after user confirmation
 - IDs use sequential `W-XXX` format (zero-padded, never reused)
-- Statuses: `open` → `ready` → `in-progress` → `done` (or `blocked`, `cancelled`)
+- New items default to status `draft`
+- Statuses: `draft` → `planned` → `in-progress` → `done` (or `blocked`, `cancelled`); see State Transition Table for full map
 - `archived` is reachable only from `done` or `cancelled` — archived items are hidden from the active backlog
-- **Contract-gated ready transition**: The `open → ready` transition requires a valid contract. At minimum, a non-empty `goal` field must be present (from structured description sections, coordinator DispatchPlan, or manual input). For medium+ complexity: all 4 core contract fields must be populated. For large complexity: `scope_boundary` and `stop_conditions` (3+) must also be populated. The plan gate (Review Board) evaluates the contract alongside the plan for medium+ complexity. Dashboard dispatch is restricted to `ready`+ status items.
+- **Contract-gated planned transition**: The `draft → planned` transition requires a valid contract. At minimum, a non-empty `goal` field must be present (from structured description sections, coordinator DispatchPlan, or manual input). For medium+ complexity: all 4 core contract fields must be populated. For large complexity: `scope_boundary` and `stop_conditions` (3+) must also be populated. The plan gate (Review Board) evaluates the contract alongside the plan for medium+ complexity. Dashboard dispatch is restricted to `planned`+ status items.
 - Session log is append-only
 - `list` supports `--org <name>` to filter by organization prefix
 - `list` supports `--project` with comma-separated values for multi-project filtering
 - `--org` and `--project` can be combined: org narrows first, project filters within
+
+### State Transition Table
+
+Canonical source for state transitions. `tools/dashboard/constants.mjs` mirrors this table via `VALID_TRANSITIONS`. A contract test enforces consistency.
+
+| From | Valid Targets |
+|------|---------------|
+| `draft` | `planned`, `cancelled` |
+| `planned` | `in-progress`, `draft`, `cancelled` |
+| `in-progress` | `blocked`, `in-review`, `cancelled` |
+| `blocked` | `in-progress`, `cancelled` |
+| `in-review` | `in-progress`, `testing`, `cancelled` |
+| `testing` | `in-progress`, `preview`, `cancelled` |
+| `preview` | `in-progress`, `done`, `cancelled` |
+| `done` | `archived`, `cancelled` |
+| `cancelled` | `draft`, `archived` |
+| `archived` | — (terminal) |
+
+Backward transitions (returning to an earlier phase): `in-review → in-progress`, `testing → in-progress`, `preview → in-progress`, `blocked → in-progress`, `cancelled → draft`.
+
+### Flag Blocking Rule
+
+Forward transitions are rejected when `input_needed = 1` OR `approval.active = 1`. The following administrative transitions bypass flag blocking and are always allowed:
+- Backward transitions (see above)
+- Any state → `cancelled`
+- Any state → `archived`
+
+### Draft → Planned Contract Gate (W-236 preserved)
+
+`draft → planned` requires a valid DispatchContract attached to the work item:
+- Minimum (any complexity): non-empty `goal`
+- Medium+: all four core fields (`goal`, `constraints`, `expected_output`, `failure_conditions`)
+- Large: also `scope_boundary` and `stop_conditions` (3+ entries)
+
+The contract gate operates independently of the `approval` flag — both must be satisfied when approval is required.
+
+### T1 Fast Path
+
+Items tagged `T1` (trivial complexity) may skip `in-review`, `testing`, and `preview` via the shortcut trajectory `draft → planned → in-progress → done`. This path is valid ONLY for items whose `tags` array contains `T1`. The `in-progress → done` shortcut is rejected for untagged items. Medium+ items walk the full pipeline.
+
+### Planned → Draft Rollback
+
+Rolling a `planned` item back to `draft` (contract invalidation) requires a mandatory `reason` field in the PATCH payload. The reason is appended to `session_log` with a timestamp. The API rejects the transition with HTTP 400 when the reason is missing.
+
+### Sequential Approval Semantics
+
+When a work item's `approval.mode = 'sequential'`:
+- Only the approver with the lowest `sort_order` whose status is `pending` is currently active
+- On that approver's decision, the next-highest pending approver becomes active
+- When all approvers have approved (or the resolution criterion is met), `approval.active` flips to 0 and `approval.resolved_at` is set
+
+In `all` mode, every approver must approve. In `any` mode, the first approval resolves the flag.
+
+### Invalid Transition Error Shape
+
+API responses for invalid transitions include the valid target list:
+
+```json
+{
+  "error": "invalid transition draft→in-progress",
+  "from": "draft",
+  "attempted": "in-progress",
+  "valid_targets": ["planned", "cancelled"]
+}
+```
+
+### Stakeholder Projection
+
+Simplified status rendering for non-technical consumers (CLI, Telegram, Chat). The dashboard API exposes `?view=stakeholder` to return projected statuses.
+
+| Internal States | Stakeholder View |
+|-----------------|------------------|
+| `draft`, `planned` | Requested |
+| `in-progress`, `blocked` | In Progress |
+| `in-review`, `testing`, `preview` | In Review |
+| `done` | Done |
+| `cancelled` | Cancelled |
+| `archived` | Archived |
+
+Flag modifiers still render: `In Progress [input needed]`, `In Review [approval needed]`.
 
 ## Epic Rules
 
