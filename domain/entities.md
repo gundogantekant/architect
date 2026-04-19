@@ -251,9 +251,17 @@ Stored at `portfolio/<org>/<project>/<component>.json`.
   },
   "custom_rules": ["string"],
   "portfolio_guides": ["string — filenames of markdown guides in the same portfolio directory to auto-load"],
+  // portfolio_guides: must include at minimum "local-dev-setup.md" for any project where setup complexity
+  // was detected at onboarding. Auto-generated skeleton at onboarding; overwritten on /onboard rescan.
   "worktree_mode": "auto|explicit (default: auto — 'auto' creates worktrees by default, 'explicit' only when user explicitly requests)",
+  // worktree_mode: must always be set explicitly. When "explicit" is chosen, a rationale entry in
+  // custom_rules is required per domain/rules.md → Worktree Rules.
   "worktree_setup": {
     "copy_paths": ["string — relative paths to copy from source to worktree"],
+    // copy_paths: populated by the profiler via git ls-files --others --ignored --exclude-standard.
+    // An empty array [] is valid and explicit — it means no gitignored runtime files were detected.
+    // An ABSENT worktree_setup field (not present at all) means the project was onboarded before
+    // detection was added — triggers the Pre-Dispatch Worktree Readiness Check warning.
     "post_commands": ["string — shell commands to run in worktree after copy"]
   },
   "interfaces": {
@@ -275,7 +283,7 @@ Stored at `portfolio/<org>/<project>/<component>.json`.
 }
 ```
 
-**Optional fields**: `brief`, `doc_paths`, `portfolio_guides`, `worktree_mode`, `worktree_setup`, and `interfaces` are absent on entries onboarded before the profiler was added or where no setup is needed. The `interfaces` field enables cross-project awareness — the orchestrator and coordinator use `consumes` to identify impact when planning changes that affect APIs or protocols.
+**Optional fields**: `brief`, `doc_paths`, `portfolio_guides`, `worktree_mode`, `worktree_setup`, and `interfaces` are absent on entries onboarded before the profiler was added or where no setup is needed. After onboarding with profiler Phase 5.5, `worktree_setup` is always present (either with `copy_paths` populated or explicitly `{"copy_paths": [], "post_commands": []}`). An absent `worktree_setup` field is a signal that the project needs rescanning. The `interfaces` field enables cross-project awareness — the orchestrator and coordinator use `consumes` to identify impact when planning changes that affect APIs or protocols.
 
 ## Organization
 

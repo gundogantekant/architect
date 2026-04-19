@@ -690,6 +690,16 @@ Shared git rules enforced by all implementation agents.
 - **Merge-back** uses fast-forward when possible, falls back to merge commit. On conflict: attempt auto-resolution with coder agent + impact analysis before reporting to user.
 - Portfolio registry always stores the original project path, never worktree paths
 
+### Pre-Dispatch Worktree Readiness Check
+
+Before dispatching any implementation agent to a `worktree_mode: "auto"` project with a work item ID, the orchestrator must verify worktree readiness using only the already-loaded PortfolioEntry (no additional filesystem I/O):
+
+1. **Missing `worktree_setup`**: If the `worktree_setup` field is absent from the PortfolioEntry (not the same as `copy_paths: []`), warn: "Warning: [project] has no `worktree_setup` configured. This project was onboarded before worktree setup detection was available. Run `/onboard <path> rescan` to detect runtime config files, or proceed knowing the worktree may be missing runtime configuration." User must confirm to proceed.
+2. **Empty `copy_paths` (intentional)**: If `worktree_setup` is present and `copy_paths` is an empty array, no warning is shown. An empty array is the explicit "no runtime files to copy" state — correct and intentional.
+3. **Missing `portfolio_guides`**: If `portfolio_guides` is absent or empty, surface an advisory: "Note: [project] has no registered portfolio guides. Run `/onboard <path> rescan` to generate guides." Advisory only — does not block dispatch.
+4. **Scope**: This check runs only when `worktree_mode: "auto"` + work_item_id present. Skipped for plan-mode dispatches, ad-hoc dispatches (no work item), and `worktree_mode: "explicit"` projects.
+5. **Dashboard path**: The same check runs server-side in the dashboard dispatch endpoint (`POST /api/dispatch`) using the already-loaded `portfolio?.entry`. A warning response `{ warning: "...", require_confirm: true }` is returned to the browser before the dispatch proceeds. The dispatch UI must surface this and require user confirmation before spawning the agent.
+
 ## Error Recovery
 
 | Scenario | Action |
