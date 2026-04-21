@@ -49,9 +49,28 @@ export async function initDatabaseAsync(workDir, migrationsDir) {
     .filter(f => /^\d{3}-.+\.mjs$/.test(f))
     .sort();
 
+  // Guardrail: detect duplicate version numbers before the runner silently
+  // skips one. The W-951 incident was two files sharing version 008 — the
+  // alphabetically-first applied as v8, the second was skipped for weeks.
+  const byVersion = new Map();
+  for (const file of files) {
+    const v = parseInt(file.slice(0, 3), 10);
+    if (byVersion.has(v)) {
+      const nextFree = Math.max(...byVersion.keys()) + 1;
+      throw new Error(
+        `Duplicate migration version ${v}: "${byVersion.get(v)}" and "${file}". ` +
+        `Rename one to ${String(nextFree).padStart(3, '0')}-<name>.mjs.`
+      );
+    }
+    byVersion.set(v, file);
+  }
+
   for (const file of files) {
     const version = parseInt(file.slice(0, 3), 10);
-    if (applied.has(version)) continue;
+    if (applied.has(version)) {
+      console.log(`Skipping migration ${file} (version ${version} already applied).`);
+      continue;
+    }
 
     console.log(`Applying migration ${file}...`);
     const migration = await import(join(migrationsDir, file));
