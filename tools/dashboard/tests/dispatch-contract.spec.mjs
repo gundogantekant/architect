@@ -23,7 +23,7 @@ test.describe('Dispatch Contract @fast', () => {
     const base = getBase();
     const resp = await request.post(`${base}/api/test/build-prompt`, {
       data: {
-        workItem: { id: 'W-900', title: 'DC-1 test', status: 'open', priority: 'medium' },
+        workItem: { id: 'W-900', title: 'DC-1 test', status: 'draft', priority: 'medium' },
         projectKey: 'ticari/architect/main',
         projectPath: '/tmp/test-project',
         contract: BASE_CONTRACT,
@@ -43,7 +43,7 @@ test.describe('Dispatch Contract @fast', () => {
     const base = getBase();
     const resp = await request.post(`${base}/api/test/build-prompt`, {
       data: {
-        workItem: { id: 'W-901', title: 'DC-2 test', status: 'open', priority: 'medium' },
+        workItem: { id: 'W-901', title: 'DC-2 test', status: 'draft', priority: 'medium' },
         projectKey: 'ticari/architect/main',
         projectPath: '/tmp/test-project',
       },
@@ -58,7 +58,7 @@ test.describe('Dispatch Contract @fast', () => {
     const base = getBase();
     const resp = await request.post(`${base}/api/test/build-prompt`, {
       data: {
-        workItem: { id: 'W-902', title: 'DC-3 test', status: 'open', priority: 'medium' },
+        workItem: { id: 'W-902', title: 'DC-3 test', status: 'draft', priority: 'medium' },
         projectKey: 'ticari/architect/main',
         projectPath: '/tmp/test-project',
         contract: { goal: 'Fix the login bug', constraints: '', expected_output: '', failure_conditions: 'Login still fails' },
@@ -78,7 +78,7 @@ test.describe('Dispatch Contract @fast', () => {
     const base = getBase();
     const resp = await request.post(`${base}/api/test/build-prompt`, {
       data: {
-        workItem: { id: 'W-903', title: 'DC-4 test', status: 'open', priority: 'medium' },
+        workItem: { id: 'W-903', title: 'DC-4 test', status: 'draft', priority: 'medium' },
         projectKey: 'ticari/architect/main',
         projectPath: '/tmp/test-project',
         contract: { goal: '', constraints: '', expected_output: '', failure_conditions: '' },
@@ -94,7 +94,7 @@ test.describe('Dispatch Contract @fast', () => {
     const base = getBase();
     const resp = await request.post(`${base}/api/test/build-prompt`, {
       data: {
-        workItem: { id: 'W-904', title: 'DC-5 test', status: 'open', priority: 'medium' },
+        workItem: { id: 'W-904', title: 'DC-5 test', status: 'draft', priority: 'medium' },
         projectKey: 'ticari/architect/main',
         projectPath: '/tmp/test-project',
         contract: BASE_CONTRACT,
@@ -117,7 +117,7 @@ test.describe('Dispatch Contract @fast', () => {
     const base = getBase();
     const resp = await request.post(`${base}/api/test/build-prompt`, {
       data: {
-        workItem: { id: 'W-905', title: 'DC-6 test', status: 'open', priority: 'medium' },
+        workItem: { id: 'W-905', title: 'DC-6 test', status: 'draft', priority: 'medium' },
         projectKey: 'ticari/architect/main',
         projectPath: '/tmp/test-project',
         additionalInstructions: 'Focus on the auth module only',
@@ -136,7 +136,7 @@ test.describe('Dispatch Contract @fast', () => {
     const base = getBase();
     const resp = await request.post(`${base}/api/test/build-prompt`, {
       data: {
-        workItem: { id: 'W-906', title: 'DC-7 test', status: 'ready', priority: 'medium' },
+        workItem: { id: 'W-906', title: 'DC-7 test', status: 'planned', priority: 'medium' },
         projectKey: 'ticari/architect/main',
         projectPath: '/tmp/test-project',
         contract: {
@@ -156,7 +156,7 @@ test.describe('Dispatch Contract @fast', () => {
     const base = getBase();
     const resp = await request.post(`${base}/api/test/build-prompt`, {
       data: {
-        workItem: { id: 'W-907', title: 'DC-8 test', status: 'ready', priority: 'medium' },
+        workItem: { id: 'W-907', title: 'DC-8 test', status: 'planned', priority: 'medium' },
         projectKey: 'ticari/architect/main',
         projectPath: '/tmp/test-project',
         contract: {
@@ -183,7 +183,7 @@ test.describe('Dispatch Contract @fast', () => {
     const base = getBase();
     const resp = await request.post(`${base}/api/test/build-prompt`, {
       data: {
-        workItem: { id: 'W-908', title: 'DC-9 test', status: 'ready', priority: 'medium' },
+        workItem: { id: 'W-908', title: 'DC-9 test', status: 'planned', priority: 'medium' },
         projectKey: 'ticari/architect/main',
         projectPath: '/tmp/test-project',
         contract: BASE_CONTRACT,
@@ -212,7 +212,7 @@ test.describe('Dispatch Contract @fast', () => {
 
     const resp = await request.post(`${base}/api/test/build-prompt`, {
       data: {
-        workItem: { id: 'W-909', title: 'DC-10 test', status: 'ready', priority: 'medium', description },
+        workItem: { id: 'W-909', title: 'DC-10 test', status: 'planned', priority: 'medium', description },
         projectKey: 'ticari/architect/main',
         projectPath: '/tmp/test-project',
       },
@@ -232,7 +232,7 @@ test.describe('Dispatch Contract @fast', () => {
     const base = getBase();
     const resp = await request.post(`${base}/api/test/build-prompt`, {
       data: {
-        workItem: { id: 'W-910', title: 'DC-11 test', status: 'open', priority: 'medium', description: 'Fix the login bug that users reported last week.' },
+        workItem: { id: 'W-910', title: 'DC-11 test', status: 'draft', priority: 'medium', description: 'Fix the login bug that users reported last week.' },
         projectKey: 'ticari/architect/main',
         projectPath: '/tmp/test-project',
       },
@@ -249,7 +249,7 @@ test.describe('Dispatch Contract @fast', () => {
 
     const resp = await request.post(`${base}/api/test/build-prompt`, {
       data: {
-        workItem: { id: 'W-911', title: 'DC-12 test', status: 'ready', priority: 'medium', description },
+        workItem: { id: 'W-911', title: 'DC-12 test', status: 'planned', priority: 'medium', description },
         projectKey: 'ticari/architect/main',
         projectPath: '/tmp/test-project',
         contract: BASE_CONTRACT,

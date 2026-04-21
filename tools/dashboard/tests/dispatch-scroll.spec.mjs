@@ -366,7 +366,7 @@ test('DS-7. Scrollbar appears in work-item session slot', async ({ page }) => {
   // Create a work item first, then link a dispatch to it
   const wi = await seedWorkItem({
     title: 'Scroll test item',
-    status: 'open',
+    status: 'draft',
     project_key: 'ticari/architect/main',
   });
   const workItemId = wi.id;

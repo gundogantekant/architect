@@ -37,8 +37,8 @@ test.describe('Auto-Implement Dispatch @fast', () => {
 
   test('AI-2: rejects blocked work item', async ({ request }) => {
     const base = getBase();
-    const wi = await seedWorkItem({ title: 'AI-2 test', status: 'open' });
-    // PATCH to blocked status
+    const wi = await seedWorkItem({ title: 'AI-2 test', status: 'in-progress' });
+    // PATCH to blocked status (valid transition: in-progress → blocked)
     await api(`work-items/${wi.id}`, {
       method: 'PATCH',
       body: JSON.stringify({ status: 'blocked' }),
@@ -56,8 +56,8 @@ test.describe('Auto-Implement Dispatch @fast', () => {
 
   test('AI-3: rejects when depends_on items not done', async ({ request }) => {
     const base = getBase();
-    const blocker = await seedWorkItem({ title: 'AI-3 blocker', status: 'open' });
-    const dependent = await seedWorkItem({ title: 'AI-3 dependent', status: 'open' });
+    const blocker = await seedWorkItem({ title: 'AI-3 blocker', status: 'planned' });
+    const dependent = await seedWorkItem({ title: 'AI-3 dependent', status: 'planned' });
     // Link dependency
     await api(`work-items/${dependent.id}/depend`, {
       method: 'POST',
@@ -76,7 +76,7 @@ test.describe('Auto-Implement Dispatch @fast', () => {
 
   test('AI-4: rejects when active dispatch exists for work item', async ({ request }) => {
     const base = getBase();
-    const wi = await seedWorkItem({ title: 'AI-4 test', status: 'open' });
+    const wi = await seedWorkItem({ title: 'AI-4 test', status: 'planned' });
     await seedDispatch({ work_item_id: wi.id, status: 'running' });
     const resp = await request.post(`${base}/api/dispatch/auto-implement`, {
       headers: { 'Content-Type': 'application/json' },
@@ -91,7 +91,7 @@ test.describe('Auto-Implement Dispatch @fast', () => {
 
   test('AI-5: rejects when X-Architect-Session-Depth header is 1', async ({ request }) => {
     const base = getBase();
-    const wi = await seedWorkItem({ title: 'AI-5 test', status: 'open' });
+    const wi = await seedWorkItem({ title: 'AI-5 test', status: 'planned' });
     const resp = await request.post(`${base}/api/dispatch/auto-implement`, {
       headers: {
         'Content-Type': 'application/json',
@@ -108,7 +108,7 @@ test.describe('Auto-Implement Dispatch @fast', () => {
     // Checks depth validation doesn't block absent header.
     // Expects either 200 (project resolves) or 400 (project not in test env) — not 403.
     const base = getBase();
-    const wi = await seedWorkItem({ title: 'AI-5b test', status: 'open' });
+    const wi = await seedWorkItem({ title: 'AI-5b test', status: 'planned' });
     const resp = await request.post(`${base}/api/dispatch/auto-implement`, {
       headers: { 'Content-Type': 'application/json' },
       data: { work_item_id: wi.id, project_key: PROJECT_KEY },
@@ -123,7 +123,7 @@ test.describe('Auto-Implement Dispatch @fast', () => {
     const resp = await request.post(`${base}/api/test/build-auto-implement-prompt`, {
       headers: { 'Content-Type': 'application/json' },
       data: {
-        workItem: { id: 'W-AI6', title: 'AI-6 test', status: 'open', priority: 'medium' },
+        workItem: { id: 'W-AI6', title: 'AI-6 test', status: 'planned', priority: 'medium' },
         projectKey: PROJECT_KEY,
         projectPath: '/tmp/test-project',
       },
@@ -140,7 +140,7 @@ test.describe('Auto-Implement Dispatch @fast', () => {
     const resp = await request.post(`${base}/api/test/build-auto-implement-prompt`, {
       headers: { 'Content-Type': 'application/json' },
       data: {
-        workItem: { id: 'W-AI7', title: 'AI-7 test', status: 'open', priority: 'medium' },
+        workItem: { id: 'W-AI7', title: 'AI-7 test', status: 'planned', priority: 'medium' },
         projectKey: PROJECT_KEY,
         projectPath: '/tmp/test-project',
       },
@@ -186,7 +186,7 @@ test.describe('Auto-Implement Dispatch @fast', () => {
       headers: { 'Content-Type': 'application/json' },
       data: { project_key: fakeKey, project_path: '/tmp' },
     });
-    const wi = await seedWorkItem({ title: 'AI-10 test', status: 'open' });
+    const wi = await seedWorkItem({ title: 'AI-10 test', status: 'planned' });
     const resp = await request.post(`${base}/api/dispatch/auto-implement`, {
       headers: { 'Content-Type': 'application/json' },
       data: { work_item_id: wi.id, project_key: fakeKey },

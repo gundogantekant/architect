@@ -140,7 +140,7 @@ test.describe('Worktree dispatch contracts @fast', () => {
       method: 'POST',
       body: JSON.stringify({
         project_key: 'ticari/architect/main',
-        work_item: { id: 'W-999', title: 'Test', description: '', status: 'open', priority: 'medium', tags: [], session_log: [] },
+        work_item: { id: 'W-999', title: 'Test', description: '', status: 'draft', priority: 'medium', tags: [], session_log: [] },
         worktree_context: {
           worktreePath: '/tmp/test-wt',
           branchName: 'architect-W-999-test',
@@ -159,7 +159,7 @@ test.describe('Worktree dispatch contracts @fast', () => {
       method: 'POST',
       body: JSON.stringify({
         project_key: 'ticari/architect/main',
-        work_item: { id: 'W-999', title: 'Test', description: '', status: 'open', priority: 'medium', tags: [], session_log: [] },
+        work_item: { id: 'W-999', title: 'Test', description: '', status: 'draft', priority: 'medium', tags: [], session_log: [] },
       }),
     });
     expect(resp.prompt).not.toContain('# Worktree Context');

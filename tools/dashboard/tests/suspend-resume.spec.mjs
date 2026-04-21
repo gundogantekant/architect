@@ -21,7 +21,7 @@ test('SR-1: buildResumePrompt includes work item title and status', async ({ req
 test('SR-2: buildResumePrompt includes last 5 session log entries (capped)', async ({ request }) => {
   const log = Array.from({ length: 8 }, (_, i) => ({ summary: `entry-${i}`, timestamp: '2026-01-01T00:00:00Z' }));
   const resp = await request.post(`${getBase()}/api/test/build-resume-prompt`, {
-    data: { workItem: { id: 'W-938', title: 'T', status: 'open', session_log: log } },
+    data: { workItem: { id: 'W-938', title: 'T', status: 'draft', session_log: log } },
   });
   const { prompt } = await resp.json();
   expect(prompt).toContain('entry-7');
@@ -33,7 +33,7 @@ test('SR-2: buildResumePrompt includes last 5 session log entries (capped)', asy
 test('SR-3: buildResumePrompt includes contract scope_boundary and stop_conditions when present', async ({ request }) => {
   const resp = await request.post(`${getBase()}/api/test/build-resume-prompt`, {
     data: {
-      workItem: { id: 'W-1', title: 'T', status: 'open', session_log: [] },
+      workItem: { id: 'W-1', title: 'T', status: 'draft', session_log: [] },
       contract: { scope_boundary: ['src/only'], stop_conditions: ['If error count > 5'] },
     },
   });
@@ -44,7 +44,7 @@ test('SR-3: buildResumePrompt includes contract scope_boundary and stop_conditio
 
 test('SR-4: buildResumePrompt omits contract section when contract is absent', async ({ request }) => {
   const resp = await request.post(`${getBase()}/api/test/build-resume-prompt`, {
-    data: { workItem: { id: 'W-1', title: 'T', status: 'open', session_log: [] }, contract: null },
+    data: { workItem: { id: 'W-1', title: 'T', status: 'draft', session_log: [] }, contract: null },
   });
   const { prompt } = await resp.json();
   expect(prompt).not.toContain('Contract reminders');
@@ -52,7 +52,7 @@ test('SR-4: buildResumePrompt omits contract section when contract is absent', a
 
 test('SR-5: buildResumePrompt falls back to default instructions when none provided', async ({ request }) => {
   const resp = await request.post(`${getBase()}/api/test/build-resume-prompt`, {
-    data: { workItem: { id: 'W-1', title: 'T', status: 'open', session_log: [] } },
+    data: { workItem: { id: 'W-1', title: 'T', status: 'draft', session_log: [] } },
   });
   const { prompt } = await resp.json();
   expect(prompt).toContain('Continue where you left off.');
