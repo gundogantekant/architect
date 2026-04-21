@@ -6,7 +6,7 @@ When the user says "architect" in conversation, it primarily refers to **this pr
 
 ## Overview
 
-This project provides 24 specialized Claude Code subagents and 18 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack. The main thread acts as a strict orchestrator/PM — it reads, plans, dispatches, and tracks, but delegates all implementation and git operations to specialized agents.
+This project provides 34 specialized Claude Code subagents and 19 slash commands for complete software development lifecycle management. It is technology-flexible, local-first, and adapts to any project's stack. The main thread acts as a strict orchestrator/PM — it reads, plans, dispatches, and tracks, but delegates all implementation and git operations to specialized agents.
 
 ## Architecture
 
@@ -15,7 +15,7 @@ Clean Architecture with four layers. Dependencies point inward only.
 | Layer | Location | Contents |
 |-------|----------|----------|
 | Domain | `domain/` | Entity schemas (`entities.md`), business rules (`rules.md`) |
-| Use Cases | `usecases/` | Workflow definitions (18 files, one per skill workflow) |
+| Use Cases | `usecases/` | Workflow definitions (19 files, one per skill workflow) |
 | Adapters | `.claude/agents/`, `.claude/skills/` | Agent prompts, skill entry points |
 | Infrastructure | `portfolio/`, `work/`, `templates/` | Instance data (gitignored), project templates |
 
@@ -51,12 +51,32 @@ See `docs/architecture.md` for layer boundaries and dependency rules.
 | Systematic refactoring | refactorer | sonnet |
 | Browser automation (E2E, visual, web tasks) | browser | sonnet |
 | Git operations (commit, push, PR, branch, worktree) | git-ops | haiku |
+| Tech review — SWE perspective | tech-reviewer-swe | sonnet |
+| Tech review — architecture (Clean Architecture) | tech-reviewer-arch | sonnet / opus* |
+| Tech review — project management | tech-reviewer-pm | sonnet |
+| Tech review — frontend perspective | tech-reviewer-frontend | sonnet |
+| Tech review — UX perspective | tech-reviewer-ux | sonnet |
+| Tech review — DX perspective | tech-reviewer-dx | sonnet |
+| Tech review — database architecture | tech-reviewer-dba | sonnet |
+| Tech review — systems engineering | tech-reviewer-systems | sonnet / opus* |
+| Tech review — IoT engineering | tech-reviewer-iot | sonnet |
+| Tech review — production readiness | tech-reviewer-prod | sonnet |
 
-Default models are overridden dynamically by the orchestrator based on task complexity. See `domain/rules.md` → Model Selection Rules.
+*Escalated to opus when dispatched for large or strategic artifacts.
+
+Default models are overridden dynamically by the orchestrator based on task complexity. See `domain/rules.md` → Model Selection Rules → Review Board Escalation.
 
 ### Orchestrator Behavior
 
 The main thread is strictly an orchestrator/PM. It reads, plans, dispatches, and tracks — but does not implement code (except single-line trivial fixes like typos). Git operations are delegated to the git-ops agent. See `domain/rules.md` → Orchestrator Behavior Rules for the full dispatch decision flow.
+
+### Session Identity & Scope
+
+Every session carries a `SessionIdentity` that determines its permissions. The orchestrator (depth 0) has full capabilities; dashboard-dispatched agents (depth 1) are restricted to their own work item scope and cannot trigger further dashboard dispatches. Depth 2+ is forbidden — sub-agents of dispatched agents run in-process only. See `domain/entities.md` → SessionIdentity and `domain/rules.md` → Session Scope Rules.
+
+### Project Manager Behavior
+
+The orchestrator acts as PM across all onboarded projects. At session start, it runs an async background check for active dispatches, blocked items, and stale work — surfacing a summary only when findings exist. It proactively detects escalation conditions (stale items, blocked chains, epic stalls, dispatch loops, cost anomalies) using the `EscalationLogEntry` format. See `domain/rules.md` → Project Manager Behavior Rules and `domain/entities.md` → EscalationLogEntry.
 
 ### Coordination Patterns
 
@@ -64,13 +84,25 @@ The main Claude conversation acts as orchestrator. Subagents cannot spawn subage
 
 **Classifier + Coordinator Dispatch** (non-trivial work requests):
 ```
-classifier (haiku, fast triage) → [coordinator (sonnet, detailed plan)] → follow execution plan
+classifier (haiku, fast triage) → [pre-dispatch check (orchestrator, if work type + small+)] → [coordinator (sonnet, detailed plan)] → follow execution plan
 ```
-For simple cases (trivial/small, high confidence), the orchestrator skips the coordinator and constructs a dispatch plan directly from the classifier output.
+For simple cases (trivial/small, high confidence), the orchestrator skips the coordinator and constructs a dispatch plan directly from the classifier output. Pre-dispatch check runs in parallel with coordinator when both are needed. See `domain/rules.md` → Pre-Dispatch Check Rules.
+
+**Dispatch Contracts** (medium+ complexity): Each step in the coordinator's DispatchPlan includes a `DispatchContract` (Goal, Constraints, Expected Output, Failure Conditions + optional Scope Boundary, Stop Conditions) that defines clear success criteria and session governance for the dispatched agent. Contracts flow into sub-agent prompts and are used by the Review Board to evaluate whether implementation meets stated goals. For long-running sessions, the contract's scope_boundary and stop_conditions provide self-enforcement guardrails. Work items must have a valid contract (at minimum a goal) to transition from `open` to `ready` status; only `ready`+ items are dispatchable from the dashboard. See `domain/entities.md` → DispatchContract, `domain/rules.md` → Dispatch Contract Rules, and `domain/rules.md` → Long-Running Session Rules.
+
+**Review Board** (two-gate lifecycle for medium+ work):
+```
+Plan Gate:  planner → [tech-reviewer-swe + tech-reviewer-arch + tech-reviewer-pm + (context-dependent: frontend, ux, dx, dba, systems, prod, iot)] (parallel)
+  → aggregate verdicts → if block: revise + re-review (max 2 cycles) → status: ready
+
+Code Gate:  coder → tester → [tech-reviewer-* board] (parallel) + reviewer (detailed)
+  → aggregate verdicts → if block: fix + re-review → commit/merge
+```
+Board composition is context-filtered (3–10 agents). See `domain/rules.md` → Review Board Rules.
 
 **Sequential Pipeline** (new features):
 ```
-scout → [strategist] → planner → coder → tester → reviewer → git-ops (commit)
+scout → [strategist] → planner → tech review board (plan gate) → coder → tester → tech review board (code gate) → reviewer → git-ops (commit)
 ```
 
 **Parallel Fan-Out** (full-stack features):
@@ -88,6 +120,8 @@ planner (produces task list with parallel batches) → dispatch batches concurre
 ```
 debugger/scout → coder (fix) → tester (verify) → git-ops (commit)
 ```
+
+**Dispatch-Level Worktree Isolation**: When the dashboard dispatches an agent with `acceptEdits` permission mode + a work item + `worktree_mode: "auto"`, the dispatch infrastructure creates a git worktree **before** spawning the agent. The agent starts with `cwd` set to the worktree. This prevents conflicts between parallel dispatches on the same project. The agent receives a `# Worktree Context` prompt section and skips its own worktree creation (implement-work-item step 8). Controlled by the `worktree_at_dispatch` dashboard preference. See `domain/rules.md` → Worktree Rules.
 
 See `domain/rules.md` for triage dispatch rules, workflow selection matrix, agent inclusion rules, model selection rules, and role-scoped context injection.
 
@@ -137,11 +171,14 @@ Use `/work list --org <name>` to scope work items to a specific organization. Se
 - Read-only agents do not modify code (see `domain/rules.md` → Agent Permission Model)
 - Implementation agents (coder-*, git-ops) use acceptEdits permission mode
 - The orchestrator delegates all git operations (commit, push, PR, branch, worktree) to the git-ops agent. The orchestrator only runs read-only git commands (status, log, diff) directly.
-- Apply role-scoped context injection when dispatching agents — see `domain/rules.md` → Role-Scoped Context Injection for the tier mapping per agent role
+- Apply role-scoped context injection when dispatching agents — see `domain/rules.md` → Role-Scoped Context Injection for the tier mapping per agent role. Before each dispatch, look up the agent in `domain/rules.md` → Context Tier Mapping to determine which portfolio fields to include.
 - Use dynamic model selection per dispatch — see `domain/rules.md` → Model Selection Rules for complexity-to-model mapping
+- The orchestrator dispatches sub-agents for research, analysis, and investigation tasks. The main session decomposes, dispatches, and synthesizes — sub-agents execute. See `domain/rules.md` → Dispatch-First Rule for trigger criteria. Structure every Agent tool dispatch using the template in `domain/rules.md` → Agent Dispatch Standards.
 - All work on portfolio projects uses a git worktree by default — create one before making any code changes. Exception: projects with `worktree_mode: "explicit"` in their portfolio entry work in-place; worktrees are created only on explicit request. Skip only when the user explicitly opts out. See `domain/rules.md` → Worktree Rules.
 - Follow git standards defined in `domain/rules.md`
 - Before using Playwright MCP tools directly in the main session, follow Model Affinity Rules in `domain/rules.md` to prompt model switching
+- Plans that introduce new API endpoints, UI interactions, or dispatch flows must include contract tests written before implementation. See `domain/rules.md` → Contract-First Planning Rules.
+- For medium+ complexity dispatches, ensure DispatchContracts (Goal, Constraints, Expected Output, Failure Conditions + Scope Boundary, Stop Conditions for large) from the coordinator's plan are propagated to sub-agent prompts. See `domain/rules.md` → Dispatch Contract Rules and Long-Running Session Rules.
 
 ## Dashboard (`tools/dashboard/`)
 
@@ -195,3 +232,4 @@ Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/log` (plain text 
 | /refactor [scope] | Systematic refactoring |
 | /browse [task] | Perform a web automation task via browser agent |
 | /worktree [list\|cleanup] | Manage git worktrees for implementation isolation |
+| /review-board [gate] [scope] | Manually trigger the Technical Review Board on a plan or code diff |

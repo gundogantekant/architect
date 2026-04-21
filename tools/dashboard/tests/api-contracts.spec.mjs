@@ -8,7 +8,7 @@
  */
 
 import { test, expect } from './fixtures.mjs';
-import { getBase, seedWorkItem, seedEpic, seedDispatch, api } from './helpers.mjs';
+import { getBase, seedWorkItem, seedEpic, seedDispatch, seedTerminal, seedSessionHistory, api } from './helpers.mjs';
 
 test.describe('API contracts @fast', () => {
 
@@ -26,7 +26,7 @@ test.describe('API contracts @fast', () => {
   test('AC-3: POST /api/work-items creates item', async () => {
     const item = await api('work-items', {
       method: 'POST',
-      body: JSON.stringify({ title: 'AC-3 item', status: 'open', priority: 'medium', project_key: 'ticari/architect/main' }),
+      body: JSON.stringify({ title: 'AC-3 item', status: 'draft', priority: 'medium', project_key: 'ticari/architect/main' }),
     });
     expect(item.id).toBeTruthy();
     expect(item.title).toBe('AC-3 item');
@@ -34,6 +34,11 @@ test.describe('API contracts @fast', () => {
 
   test('AC-4: PATCH /api/work-items/:id updates status', async () => {
     const item = await seedWorkItem({ title: 'PATCH test' });
+    await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'planned' }) });
+    await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'in-progress' }) });
+    await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'in-review' }) });
+    await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'testing' }) });
+    await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'preview' }) });
     const updated = await api(`work-items/${item.id}`, {
       method: 'PATCH',
       body: JSON.stringify({ status: 'done' }),
@@ -41,12 +46,12 @@ test.describe('API contracts @fast', () => {
     expect(updated.status).toBe('done');
   });
 
-  test('AC-5: DELETE /api/work-items/:id removes item', async () => {
+  test('AC-5: DELETE /api/work-items/:id soft-deletes item (status → cancelled)', async () => {
     const item = await seedWorkItem({ title: 'Delete test' });
-    await api(`work-items/${item.id}`, { method: 'DELETE' });
-    const backlog = await api('backlog');
-    const allItems = Object.values(backlog.projects || {}).flatMap(p => p.items || []);
-    expect(allItems.find(i => i.id === item.id)).toBeUndefined();
+    const resp = await api(`work-items/${item.id}`, { method: 'DELETE' });
+    expect(resp.deleted).toBe(item.id);
+    const updated = await api(`work-items/${item.id}`);
+    expect(updated.status).toBe('cancelled');
   });
 
   test('AC-6: GET /api/epics returns array', async () => {
@@ -62,6 +67,27 @@ test.describe('API contracts @fast', () => {
   test('AC-8: GET /api/terminal/active returns array', async () => {
     const result = await api('terminal/active');
     expect(Array.isArray(result)).toBe(true);
+  });
+
+  test('AC-7a: GET /api/dispatch/active returns title and work_item_title when linked', async () => {
+    const workItem = await seedWorkItem({ title: 'AC-7a dispatch work item' });
+    const { dispatch_id } = await seedDispatch({ work_item_id: workItem.id, title: workItem.title });
+    const result = await api('dispatch/active');
+    const entry = result.find(d => d.id === dispatch_id);
+    expect(entry).toBeDefined();
+    expect(entry.title).toBe(workItem.title);
+    expect(entry.work_item_title).toBe(workItem.title);
+    expect(entry.epic_title).toBeNull();
+  });
+
+  test('AC-8a: GET /api/terminal/active returns work_item_title when linked', async () => {
+    const workItem = await seedWorkItem({ title: 'AC-8a terminal work item' });
+    const seeded = await seedTerminal({ work_item_id: workItem.id });
+    const result = await api('terminal/active');
+    const entry = result.find(t => t.id === seeded.id);
+    expect(entry).toBeDefined();
+    expect(entry.work_item_title).toBe(workItem.title);
+    expect(entry.epic_title).toBeNull();
   });
 
   test('AC-9: GET /api/server/status returns pid and port', async () => {
@@ -476,5 +502,85 @@ test.describe('API contracts @fast', () => {
       body: JSON.stringify({ title: 'nope' }),
     });
     expect(resp.status).toBe(404);
+  });
+
+  // --- Time report org-level grouping ---
+
+  test('AC-59: GET /api/time-report?group=org returns org-aggregated today and overall', async () => {
+    await seedSessionHistory({ project_key: 'orgA/proj1/comp1', duration_seconds: 120, cost_usd: 2.00 });
+    const result = await api('time-report?group=org');
+    expect(result).toHaveProperty('today');
+    expect(result).toHaveProperty('overall');
+    expect(result).toHaveProperty('today_total');
+    expect(result).toHaveProperty('overall_total');
+    // Rows should have 'org' field but NOT individual project/component
+    expect(result.overall.length).toBeGreaterThan(0);
+    expect(result.overall[0]).toHaveProperty('org');
+    expect(result.overall[0]).toHaveProperty('sessions');
+    expect(result.overall[0]).toHaveProperty('time_seconds');
+    expect(result.overall[0]).toHaveProperty('cost_usd');
+    // Org-grouped rows must not expose project/component detail
+    expect(result.overall[0]).not.toHaveProperty('project');
+    expect(result.overall[0]).not.toHaveProperty('component');
+  });
+
+  test('AC-60: GET /api/time-report?group=org aggregates across projects in same org', async () => {
+    await seedSessionHistory({ project_key: 'orgB/proj1/comp1', duration_seconds: 100, cost_usd: 1.00 });
+    await seedSessionHistory({ project_key: 'orgB/proj2/comp2', duration_seconds: 200, cost_usd: 3.00 });
+    const result = await api('time-report?group=org');
+    const orgBRows = result.overall.filter(r => r.org === 'orgB');
+    expect(orgBRows).toHaveLength(1);
+    expect(orgBRows[0].sessions).toBe(2);
+    expect(orgBRows[0].time_seconds).toBe(300);
+    expect(orgBRows[0].cost_usd).toBeCloseTo(4.00, 1);
+  });
+
+  test('AC-61: GET /api/time-report?group=org daily returns rows with org and day, no project_key', async () => {
+    await seedSessionHistory({ project_key: 'orgC/proj1/comp1', duration_seconds: 60, cost_usd: 0.50 });
+    const result = await api('time-report?group=org');
+    expect(result).toHaveProperty('daily');
+    expect(result.daily.length).toBeGreaterThan(0);
+    expect(result.daily[0]).toHaveProperty('org');
+    expect(result.daily[0]).toHaveProperty('day');
+    expect(result.daily[0]).toHaveProperty('time_seconds');
+    expect(result.daily[0]).not.toHaveProperty('project');
+    expect(result.daily[0]).not.toHaveProperty('component');
+  });
+
+  test('AC-62: GET /api/time-report?group=org monthly returns rows with org and month, no project_key', async () => {
+    await seedSessionHistory({ project_key: 'orgD/proj1/comp1', duration_seconds: 60, cost_usd: 0.50 });
+    const result = await api('time-report?group=org');
+    expect(result).toHaveProperty('monthly');
+    expect(result.monthly.length).toBeGreaterThan(0);
+    expect(result.monthly[0]).toHaveProperty('org');
+    expect(result.monthly[0]).toHaveProperty('month');
+    expect(result.monthly[0]).toHaveProperty('time_seconds');
+    expect(result.monthly[0]).not.toHaveProperty('project');
+    expect(result.monthly[0]).not.toHaveProperty('component');
+  });
+
+  test('AC-63: GET /api/time-report (no param) still returns project-level data', async () => {
+    await seedSessionHistory({ project_key: 'orgE/proj1/comp1', duration_seconds: 60, cost_usd: 0.50 });
+    const result = await api('time-report');
+    expect(result.overall.length).toBeGreaterThan(0);
+    expect(result.overall[0]).toHaveProperty('project_key');
+    expect(result.overall[0]).toHaveProperty('project');
+    expect(result.overall[0]).toHaveProperty('component');
+  });
+
+  // --- Portfolio tree traversal (special characters in names) ---
+
+  test('AC-64: portfolio tree walk — all projects resolve including dotted names', async () => {
+    const orgs = await api('orgs');
+    expect(orgs.length).toBeGreaterThan(0);
+    for (const org of orgs) {
+      const projects = await api(`org/${org}/projects`);
+      for (const proj of projects) {
+        const resp = await fetch(`${getBase()}/api/project/${org}/${proj}`);
+        expect(resp.ok, `GET /api/project/${org}/${proj} should return 200`).toBe(true);
+        const files = await resp.json();
+        expect(Array.isArray(files), `project ${org}/${proj} should return an array`).toBe(true);
+      }
+    }
   });
 });

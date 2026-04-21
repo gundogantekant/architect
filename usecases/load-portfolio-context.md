@@ -40,6 +40,7 @@ Organization conventions (`organization.json`) are always loaded regardless of t
    - Read `portfolio/<org>/<project>/<component>.json` (see `domain/entities.md` → PortfolioEntry)
    - Filter fields based on the requested depth tier
    - If `portfolio_guides` is present and the tier includes it (standard or full): read each listed file from `portfolio/<org>/<project>/` and include the contents in the context passed to agents
+   - If `portfolio_guides` is absent or empty AND the tier is standard or full: check if `portfolio/<org>/<project>/local-dev-setup.md` exists. If it does, load it as a guide and surface to the orchestrator (not only agent context): "Note: `local-dev-setup.md` found for [project] but not registered in `portfolio_guides`. Run `/onboard <path> rescan` to register it." The orchestrator must relay this note to the user once per session at context-load time.
    - Read `portfolio/<org>/organization.json` for org-level conventions (see `domain/entities.md` → Organization)
    - Return combined context at requested depth
 4. If not found:

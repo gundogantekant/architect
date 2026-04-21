@@ -11,3 +11,4 @@ work/architect.db
 work/architect.db-wal
 work/architect.db-shm
 work/*.bak
+assets/backups/

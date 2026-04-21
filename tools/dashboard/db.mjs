@@ -3,10 +3,28 @@
  * Owns the SQLite connection, WAL mode, migrations, and all domain queries.
  */
 import Database from 'better-sqlite3';
-import { readdirSync, existsSync } from 'node:fs';
+import { readdirSync, existsSync, copyFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 let db = null;
+
+// --- Backup ---
+
+export function backupDatabase(workDir, backupDir) {
+  const dbPath = join(workDir, 'architect.db');
+  if (!existsSync(dbPath)) return null;
+
+  const tmp = new Database(dbPath, { readonly: true });
+  try { tmp.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* ok if no WAL */ }
+  tmp.close();
+
+  mkdirSync(backupDir, { recursive: true });
+  const ts = new Date().toISOString().replace(/:/g, '-').replace(/\.\d+Z$/, '');
+  const dest = join(backupDir, `architect-${ts}.db`);
+  copyFileSync(dbPath, dest);
+  console.log(`Database backup: ${dest}`);
+  return dest;
+}
 
 // --- Init & migrations ---
 
@@ -31,19 +49,75 @@ export async function initDatabaseAsync(workDir, migrationsDir) {
     .filter(f => /^\d{3}-.+\.mjs$/.test(f))
     .sort();
 
+  // Guardrail: detect duplicate version numbers before the runner silently
+  // skips one. The W-951 incident was two files sharing version 008 — the
+  // alphabetically-first applied as v8, the second was skipped for weeks.
+  const byVersion = new Map();
+  for (const file of files) {
+    const v = parseInt(file.slice(0, 3), 10);
+    if (byVersion.has(v)) {
+      const nextFree = Math.max(...byVersion.keys()) + 1;
+      throw new Error(
+        `Duplicate migration version ${v}: "${byVersion.get(v)}" and "${file}". ` +
+        `Rename one to ${String(nextFree).padStart(3, '0')}-<name>.mjs.`
+      );
+    }
+    byVersion.set(v, file);
+  }
+
   for (const file of files) {
     const version = parseInt(file.slice(0, 3), 10);
-    if (applied.has(version)) continue;
+    if (applied.has(version)) {
+      console.log(`Skipping migration ${file} (version ${version} already applied).`);
+      continue;
+    }
 
     console.log(`Applying migration ${file}...`);
     const migration = await import(join(migrationsDir, file));
-    db.transaction(() => {
+    if (migration.noTransaction) {
       migration.up(db, workDir);
       db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(
         version, new Date().toISOString()
       );
-    })();
+    } else {
+      db.transaction(() => {
+        migration.up(db, workDir);
+        db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(
+          version, new Date().toISOString()
+        );
+      })();
+    }
     console.log(`Migration ${file} applied.`);
+  }
+
+  // Schema assertion — detect drift between migrations and the columns/tables
+  // the application code now expects. Catches the class of bug that caused the
+  // W-951 incident (code queried work_item_approvals before its migration ran).
+  // Bypass with ARCHITECT_SKIP_SCHEMA_ASSERT=1 for emergency boot.
+  if (process.env.ARCHITECT_SKIP_SCHEMA_ASSERT !== '1') {
+    // KEEP IN SYNC WHEN ADDING TABLES/COLUMNS (see docs/migrations.md)
+    const expected = {
+      work_items: ['approval_active', 'input_needed', 'status'],
+      work_item_approvals: ['work_item_id', 'identity', 'status'],
+      terminals: ['org_key'],
+      dispatches: ['org_key', 'dispatch_mode', 'worktree_path'],
+      epics: ['id'],
+      schema_migrations: ['version'],
+    };
+    const missing = [];
+    for (const [table, cols] of Object.entries(expected)) {
+      const info = db.pragma(`table_info(${table})`);
+      if (!info.length) { missing.push(`table ${table}`); continue; }
+      const present = new Set(info.map(r => r.name));
+      for (const c of cols) if (!present.has(c)) missing.push(`${table}.${c}`);
+    }
+    if (missing.length) {
+      throw new Error(
+        `Schema drift detected. Missing: ${missing.join(', ')}. ` +
+        `Check for skipped migrations in tmp/dashboard.log. ` +
+        `To bypass in emergency: ARCHITECT_SKIP_SCHEMA_ASSERT=1 dashctl start`
+      );
+    }
   }
 
   return db;
@@ -112,17 +186,21 @@ export function createWorkItem({ project_key, title, status, priority, descripti
   db.prepare(`
     INSERT INTO work_items (id, project_key, title, status, priority, description, epic_id, tags, depends_on, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)
-  `).run(id, project_key, title, status || 'open', priority || 'medium', description || '', epic_id || null, JSON.stringify(tags || []), now, now);
+  `).run(id, project_key, title, status || 'draft', priority || 'medium', description || '', epic_id || null, JSON.stringify(tags || []), now, now);
 
   addWorkItemLog(id, 'Created');
-
-  // If epic_id is set, the link is implicit via the epic_id column
 
   return getWorkItem(id);
 }
 
 export function updateWorkItem(id, fields) {
-  const allowed = ['title', 'status', 'priority', 'description', 'tags', 'depends_on', 'epic_id'];
+  const allowed = [
+    'title', 'status', 'priority', 'description', 'tags', 'depends_on', 'epic_id',
+    'input_needed', 'input_needed_from', 'input_needed_reason', 'input_needed_at',
+    'approval_active', 'approval_mode', 'approval_requested_at', 'approval_resolved_at',
+    'released_at', 'released_version',
+  ];
+  const booleanFields = new Set(['input_needed', 'approval_active']);
   const sets = [];
   const values = [];
   for (const key of allowed) {
@@ -130,6 +208,9 @@ export function updateWorkItem(id, fields) {
       if (key === 'tags' || key === 'depends_on') {
         sets.push(`${key} = ?`);
         values.push(JSON.stringify(fields[key]));
+      } else if (booleanFields.has(key)) {
+        sets.push(`${key} = ?`);
+        values.push(fields[key] ? 1 : 0);
       } else {
         sets.push(`${key} = ?`);
         values.push(fields[key]);
@@ -144,11 +225,114 @@ export function updateWorkItem(id, fields) {
   return getWorkItem(id);
 }
 
+// --- Work Item Approvals ---
+
+export function getWorkItemApprovals(workItemId) {
+  return db.prepare('SELECT * FROM work_item_approvals WHERE work_item_id = ? ORDER BY sort_order, id').all(workItemId).map(hydrateApproval);
+}
+
+export function addWorkItemApproval({ workItemId, identity, sort_order, blocking_work_item_id }) {
+  const now = new Date().toISOString();
+  const info = db.prepare(`
+    INSERT INTO work_item_approvals (work_item_id, identity, status, sort_order, blocking_work_item_id, created_at)
+    VALUES (?, ?, 'pending', ?, ?, ?)
+  `).run(workItemId, identity, sort_order ?? 0, blocking_work_item_id || null, now);
+  activateApprovalFlag(workItemId);
+  return getApprovalById(info.lastInsertRowid);
+}
+
+export function getApprovalById(approvalId) {
+  const row = db.prepare('SELECT * FROM work_item_approvals WHERE id = ?').get(approvalId);
+  return row ? hydrateApproval(row) : null;
+}
+
+export function updateWorkItemApproval(approvalId, { status, reason }) {
+  const now = new Date().toISOString();
+  const sets = [];
+  const values = [];
+  if (status !== undefined) { sets.push('status = ?'); values.push(status); sets.push('decided_at = ?'); values.push(now); }
+  if (reason !== undefined) { sets.push('reason = ?'); values.push(reason); }
+  if (sets.length === 0) return getApprovalById(approvalId);
+  values.push(approvalId);
+  db.prepare(`UPDATE work_item_approvals SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+  const updated = getApprovalById(approvalId);
+  if (updated) resolveApprovalIfComplete(updated.work_item_id);
+  return updated;
+}
+
+function activateApprovalFlag(workItemId) {
+  const now = new Date().toISOString();
+  const current = db.prepare('SELECT approval_active FROM work_items WHERE id = ?').get(workItemId);
+  if (!current || current.approval_active === 1) return;
+  db.prepare(`UPDATE work_items SET approval_active = 1, approval_requested_at = COALESCE(approval_requested_at, ?), approval_resolved_at = NULL, updated_at = ? WHERE id = ?`)
+    .run(now, now, workItemId);
+}
+
+export function resolveApprovalIfComplete(workItemId) {
+  const wi = db.prepare('SELECT approval_mode, approval_active FROM work_items WHERE id = ?').get(workItemId);
+  if (!wi || wi.approval_active !== 1) return;
+  const approvers = db.prepare('SELECT * FROM work_item_approvals WHERE work_item_id = ?').all(workItemId);
+  if (approvers.length === 0) return;
+  const mode = wi.approval_mode || 'all';
+  let resolved = false;
+  if (mode === 'any') {
+    resolved = approvers.some(a => a.status === 'approved');
+  } else if (mode === 'all' || mode === 'sequential') {
+    resolved = approvers.every(a => a.status === 'approved');
+  }
+  if (resolved) {
+    const now = new Date().toISOString();
+    db.prepare(`UPDATE work_items SET approval_active = 0, approval_resolved_at = ?, updated_at = ? WHERE id = ?`).run(now, now, workItemId);
+  }
+}
+
+export function getPendingApprovalsForIdentity(identity) {
+  return db.prepare(`
+    SELECT wia.*, wi.project_key, wi.title
+    FROM work_item_approvals wia
+    JOIN work_items wi ON wi.id = wia.work_item_id
+    WHERE wia.identity = ? AND wia.status = 'pending'
+  `).all(identity);
+}
+
+export function resolveBlockedApprovals(blockingItemId) {
+  const pending = db.prepare(`
+    SELECT id, work_item_id FROM work_item_approvals
+    WHERE blocking_work_item_id = ? AND status = 'pending'
+  `).all(blockingItemId);
+  const now = new Date().toISOString();
+  for (const row of pending) {
+    db.prepare(`UPDATE work_item_approvals SET status = 'approved', decided_at = ?, reason = COALESCE(reason, ?) WHERE id = ?`)
+      .run(now, `auto-approved by blocker ${blockingItemId}=done`, row.id);
+    resolveApprovalIfComplete(row.work_item_id);
+  }
+}
+
+export function getActiveApproverForSequential(workItemId) {
+  const row = db.prepare(`
+    SELECT id FROM work_item_approvals
+    WHERE work_item_id = ? AND status = 'pending'
+    ORDER BY sort_order ASC, id ASC LIMIT 1
+  `).get(workItemId);
+  return row ? row.id : null;
+}
+
 export function deleteWorkItem(id) {
   const item = getWorkItem(id);
   if (!item) return null;
-  db.prepare('DELETE FROM work_items WHERE id = ?').run(id);
-  return item;
+  const now = new Date().toISOString();
+  db.prepare("UPDATE work_items SET status = 'cancelled', updated_at = ? WHERE id = ?").run(now, id);
+  return getWorkItem(id);
+}
+
+export function archiveWorkItem(id) {
+  const item = getWorkItem(id);
+  if (!item) return null;
+  if (item.status !== 'done' && item.status !== 'cancelled') return null;
+  const now = new Date().toISOString();
+  db.prepare("UPDATE work_items SET status = 'archived', updated_at = ? WHERE id = ?").run(now, id);
+  addWorkItemLog(id, 'Archived');
+  return getWorkItem(id);
 }
 
 export function addWorkItemLog(workItemId, summary) {
@@ -324,9 +508,9 @@ export function getEpicProjectKeys(epicId) {
 
 export function saveDispatch(d) {
   db.prepare(`
-    INSERT OR REPLACE INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(d.id, d.work_item_id || null, d.epic_id || null, d.project_key, d.project_path || '', d.title || '', d.permission_mode || 'acceptEdits', d.skip_permissions ? 1 : 0, d.status, d.started_at, d.completed_at || null, d.cost_usd || null, d.pid || null, d.claude_session_id || null);
+    INSERT OR REPLACE INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(d.id, d.work_item_id || null, d.epic_id || null, d.project_key, d.project_path || '', d.title || '', d.permission_mode || 'acceptEdits', d.skip_permissions ? 1 : 0, d.status, d.started_at, d.completed_at || null, d.cost_usd || null, d.pid || null, d.claude_session_id || null, d.worktree_path || null, d.worktree_branch || null, d.source_branch || null, d.dispatch_mode || 'standard');
 }
 
 export function deleteDispatch(id) {
@@ -341,9 +525,9 @@ export function getPersistedDispatches() {
 
 export function saveTerminal(t) {
   db.prepare(`
-    INSERT OR REPLACE INTO terminals (id, type, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, exited_at, pid, tmux_session, claude_session_id, agent_type, head_seq)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(t.id, t.type || 'claude', t.work_item_id || null, t.epic_id || null, t.project_key, t.project_path || '', t.title || '', t.permission_mode || 'acceptEdits', t.skip_permissions ? 1 : 0, t.status, t.started_at, t.exited_at || null, t.pid || null, t.tmux_session || null, t.claude_session_id || null, t.agent_type || 'claude', t.head_seq || 0);
+    INSERT OR REPLACE INTO terminals (id, type, work_item_id, epic_id, project_key, project_path, org_key, title, permission_mode, skip_permissions, status, started_at, exited_at, pid, tmux_session, claude_session_id, agent_type, head_seq)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(t.id, t.type || 'claude', t.work_item_id || null, t.epic_id || null, t.project_key || '', t.project_path || '', t.org_key || null, t.title || '', t.permission_mode || 'acceptEdits', t.skip_permissions ? 1 : 0, t.status, t.started_at, t.exited_at || null, t.pid || null, t.tmux_session || null, t.claude_session_id || null, t.agent_type || 'claude', t.head_seq || 0);
 }
 
 export function updateTerminalClaudeSessionId(id, sessionId) {
@@ -373,6 +557,16 @@ export function deleteCliSession(id) {
 
 export function getPersistedCliSessions() {
   return db.prepare('SELECT * FROM cli_sessions').all();
+}
+
+// --- Lightweight title-only lookups (avoids full-row hydration) ---
+
+export function getWorkItemTitle(id) {
+  return db.prepare('SELECT title FROM work_items WHERE id = ?').get(id)?.title ?? null;
+}
+
+export function getEpicTitle(id) {
+  return db.prepare('SELECT title FROM epics WHERE id = ?').get(id)?.title ?? null;
 }
 
 // --- Session status updates ---
@@ -417,10 +611,12 @@ export function getAllPreferences() {
 export function getBacklog(orgFilter) {
   let items;
   if (orgFilter) {
-    items = db.prepare('SELECT * FROM work_items WHERE project_key LIKE ?').all(orgFilter.toLowerCase() + '/%');
+    items = db.prepare("SELECT * FROM work_items WHERE project_key LIKE ? AND status != 'archived'").all(orgFilter.toLowerCase() + '/%');
   } else {
-    items = db.prepare('SELECT * FROM work_items').all();
+    items = db.prepare("SELECT * FROM work_items WHERE status != 'archived'").all();
   }
+
+  const statsMap = getAllWorkItemStats();
 
   // Group by project_key
   const projects = {};
@@ -431,6 +627,14 @@ export function getBacklog(orgFilter) {
       date: l.logged_at,
       summary: l.summary,
     }));
+    // Attach cumulative agent time stats
+    const stats = statsMap.get(item.id);
+    if (stats) {
+      item.total_time_seconds = stats.total_time_seconds;
+      item.total_cost_usd = stats.total_cost_usd;
+      item.session_count = stats.session_count;
+      item.last_session_at = stats.last_session_at;
+    }
     if (!projects[row.project_key]) projects[row.project_key] = { items: [] };
     projects[row.project_key].items.push(item);
   }
@@ -463,6 +667,14 @@ export function getWorkItemFull(id) {
   // Find project_key
   const row = db.prepare('SELECT project_key FROM work_items WHERE id = ?').get(id);
   if (row) item.project_key = row.project_key;
+  // Attach cumulative agent time stats
+  const stats = getWorkItemStats(id);
+  if (stats) {
+    item.total_time_seconds = stats.total_time_seconds;
+    item.total_cost_usd = stats.total_cost_usd;
+    item.session_count = stats.session_count;
+    item.last_session_at = stats.last_session_at;
+  }
   return item;
 }
 
@@ -496,6 +708,9 @@ export function getEpicFull(id) {
 // --- Hydration helpers ---
 
 function hydrateWorkItem(row) {
+  const approvers = db
+    ? db.prepare('SELECT * FROM work_item_approvals WHERE work_item_id = ? ORDER BY sort_order, id').all(row.id)
+    : [];
   return {
     id: row.id,
     project_key: row.project_key,
@@ -508,6 +723,33 @@ function hydrateWorkItem(row) {
     depends_on: JSON.parse(row.depends_on || '[]'),
     created_at: row.created_at,
     updated_at: row.updated_at,
+    input_needed: !!row.input_needed,
+    input_needed_from: row.input_needed_from || '',
+    input_needed_reason: row.input_needed_reason || '',
+    input_needed_at: row.input_needed_at || '',
+    approval: {
+      active: !!row.approval_active,
+      mode: row.approval_mode || 'all',
+      requested_at: row.approval_requested_at || '',
+      resolved_at: row.approval_resolved_at || '',
+      approvers: approvers.map(hydrateApproval),
+    },
+    released_at: row.released_at || '',
+    released_version: row.released_version || '',
+  };
+}
+
+function hydrateApproval(row) {
+  return {
+    id: row.id,
+    work_item_id: row.work_item_id,
+    identity: row.identity,
+    status: row.status,
+    sort_order: row.sort_order,
+    blocking_work_item_id: row.blocking_work_item_id || '',
+    decided_at: row.decided_at || '',
+    reason: row.reason || '',
+    created_at: row.created_at,
   };
 }
 
@@ -562,17 +804,22 @@ export function recordSessionHistory({ id, type, project_key, work_item_id, epic
   const start = new Date(started_at).getTime();
   const end = new Date(ended_at).getTime();
   const duration_seconds = Math.max(0, (end - start) / 1000);
+  if (isNaN(duration_seconds)) {
+    console.warn(`recordSessionHistory(${id}): NaN duration from ${started_at} → ${ended_at}`);
+    return;
+  }
 
   db.transaction(() => {
     ensureProject(project_key);
-    const result = db.prepare(`
-      INSERT OR IGNORE INTO session_history (id, type, project_key, work_item_id, epic_id, title, status, permission_mode, started_at, ended_at, duration_seconds, cost_usd)
+    db.prepare(`
+      INSERT INTO session_history (id, type, project_key, work_item_id, epic_id, title, status, permission_mode, started_at, ended_at, duration_seconds, cost_usd)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        status = excluded.status,
+        cost_usd = COALESCE(excluded.cost_usd, session_history.cost_usd)
     `).run(id, type, project_key, work_item_id || null, epic_id || null, title || '', status, permission_mode || null, started_at, ended_at, duration_seconds, cost_usd || null);
-    if (result.changes > 0) {
-      db.prepare(`UPDATE projects SET session_count = session_count + 1, total_time_seconds = total_time_seconds + ?, total_cost_usd = total_cost_usd + ? WHERE key = ?`)
-        .run(duration_seconds, cost_usd || 0, project_key);
-    }
+    // Legacy accumulator columns (total_time_seconds, total_cost_usd, session_count)
+    // on projects table are no longer updated. Use project_stats view for live totals.
   })();
 }
 
@@ -596,8 +843,10 @@ export function getTimeReport(todayStart) {
     WHERE sh.ended_at >= ? GROUP BY sh.project_key ORDER BY time_seconds DESC
   `).all(todayStart);
   const overall = db.prepare(`
-    SELECT key AS project_key, org, project, component, session_count AS sessions, total_time_seconds AS time_seconds, total_cost_usd AS cost_usd
-    FROM projects WHERE session_count > 0 ORDER BY total_time_seconds DESC
+    SELECT ps.project_key, p.org, p.project, p.component,
+      ps.session_count AS sessions, ps.total_time_seconds AS time_seconds, ps.total_cost_usd AS cost_usd
+    FROM project_stats ps JOIN projects p ON ps.project_key = p.key
+    ORDER BY time_seconds DESC
   `).all();
   return { today, overall };
 }
@@ -632,6 +881,54 @@ export function getTimeReportMonthly(months = 6) {
   `).all(d.toISOString());
 }
 
+// --- Time report: org-level grouping ---
+
+export function getTimeReportByOrg(todayStart) {
+  const today = db.prepare(`
+    SELECT p.org, p.org AS project_key,
+      COUNT(*) AS sessions, COALESCE(SUM(sh.duration_seconds), 0) AS time_seconds, COALESCE(SUM(sh.cost_usd), 0) AS cost_usd
+    FROM session_history sh JOIN projects p ON sh.project_key = p.key
+    WHERE sh.ended_at >= ? GROUP BY p.org ORDER BY time_seconds DESC
+  `).all(todayStart);
+  const overall = db.prepare(`
+    SELECT p.org, p.org AS project_key,
+      SUM(ps.session_count) AS sessions, SUM(ps.total_time_seconds) AS time_seconds, SUM(ps.total_cost_usd) AS cost_usd
+    FROM project_stats ps JOIN projects p ON ps.project_key = p.key
+    GROUP BY p.org ORDER BY time_seconds DESC
+  `).all();
+  return { today, overall };
+}
+
+export function getTimeReportDailyByOrg(days = 14) {
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  return db.prepare(`
+    SELECT p.org, p.org AS project_key,
+      date(sh.ended_at) AS day,
+      COALESCE(SUM(sh.duration_seconds), 0) AS time_seconds,
+      COALESCE(SUM(sh.cost_usd), 0) AS cost_usd
+    FROM session_history sh JOIN projects p ON sh.project_key = p.key
+    WHERE sh.ended_at >= ?
+    GROUP BY p.org, day
+    ORDER BY day ASC, time_seconds DESC
+  `).all(since);
+}
+
+export function getTimeReportMonthlyByOrg(months = 6) {
+  const d = new Date();
+  d.setMonth(d.getMonth() - months);
+  d.setDate(1); d.setHours(0, 0, 0, 0);
+  return db.prepare(`
+    SELECT p.org, p.org AS project_key,
+      strftime('%Y-%m', sh.ended_at) AS month,
+      COALESCE(SUM(sh.duration_seconds), 0) AS time_seconds,
+      COALESCE(SUM(sh.cost_usd), 0) AS cost_usd
+    FROM session_history sh JOIN projects p ON sh.project_key = p.key
+    WHERE sh.ended_at >= ?
+    GROUP BY p.org, month
+    ORDER BY month ASC, time_seconds DESC
+  `).all(d.toISOString());
+}
+
 export function getProjectStats(key) {
   return db.prepare('SELECT * FROM project_stats WHERE project_key = ?').get(key);
 }
@@ -644,7 +941,17 @@ export function getWorkItemStats(workItemId) {
   return db.prepare('SELECT * FROM work_item_stats WHERE work_item_id = ?').get(workItemId);
 }
 
+export function getAllWorkItemStats() {
+  const rows = db.prepare('SELECT * FROM work_item_stats').all();
+  const map = new Map();
+  for (const r of rows) map.set(r.work_item_id, r);
+  return map;
+}
+
 export function hardDeleteAllTestData() {
+  if (!process.env.WORK_DIR) {
+    throw new Error('hardDeleteAllTestData refused: not in test mode (WORK_DIR not set)');
+  }
   // Only delete items created in the last 2 hours — protects real data from accidental purge.
   // Real work items and epics are days/weeks old; test seeds are always recent.
   const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
@@ -652,5 +959,8 @@ export function hardDeleteAllTestData() {
   db.prepare("DELETE FROM epic_logs WHERE logged_at > ?").run(cutoff);
   db.prepare("DELETE FROM work_items WHERE created_at > ?").run(cutoff);
   db.prepare("DELETE FROM epics WHERE created_at > ?").run(cutoff);
+  db.prepare("DELETE FROM session_history WHERE ended_at > ?").run(cutoff);
+  // Legacy accumulator columns (session_count, total_time_seconds, total_cost_usd) on
+  // projects table are no longer maintained. Use project_stats view for live totals.
   db.pragma('foreign_keys = ON');
 }

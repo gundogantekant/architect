@@ -15,6 +15,7 @@ export default defineConfig({
   globalSetup: './tests/global-setup.mjs',
   globalTeardown: './tests/global-teardown.mjs',
   testDir: './tests',
+  workers: Number(process.env.PW_WORKERS) || 2,
   timeout: 60_000,
   expect: { timeout: 15_000 },
   reporter: [['./tests/progress-reporter.mjs']],

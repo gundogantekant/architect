@@ -37,11 +37,20 @@ export default function serverMgmtRoutes(deps) {
       json(res, db.getSessionHistory(filters));
     }],
 
-    [/^\/api\/time-report$/, 'GET', async (_m, _req, res) => {
+    [/^\/api\/time-report/, 'GET', async (_m, req, res) => {
+      const url = new URL(req.url, 'http://localhost');
+      const group = url.searchParams.get('group');
       const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-      const { today, overall } = db.getTimeReport(todayStart.toISOString());
-      const daily = db.getTimeReportDaily(14);
-      const monthly = db.getTimeReportMonthly(6);
+      let today, overall, daily, monthly;
+      if (group === 'org') {
+        ({ today, overall } = db.getTimeReportByOrg(todayStart.toISOString()));
+        daily = db.getTimeReportDailyByOrg(14);
+        monthly = db.getTimeReportMonthlyByOrg(6);
+      } else {
+        ({ today, overall } = db.getTimeReport(todayStart.toISOString()));
+        daily = db.getTimeReportDaily(14);
+        monthly = db.getTimeReportMonthly(6);
+      }
       const sum = (arr, k) => arr.reduce((s, r) => s + (r[k] || 0), 0);
       json(res, {
         today, overall, daily, monthly,

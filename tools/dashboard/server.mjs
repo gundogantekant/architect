@@ -10,11 +10,11 @@ import * as db from './db.mjs';
 import { EventStream } from './event-stream.mjs';
 import { getAdapter } from './adapters/index.mjs';
 
-import { CLAUDE_BIN, ROOT, PORTFOLIO, WORK, LOGS_DIR, ARCHITECT_KEY, port, VALID_WORK_ITEM_STATUSES, VALID_EPIC_STATUSES, VALID_PRIORITIES, SERVER_START_TIME, DASHCTL_PATH, PID_FILE, LOG_FILE, MIGRATIONS_DIR, TMUX_AVAILABLE } from './constants.mjs';
+import { CLAUDE_BIN, ROOT, PORTFOLIO, WORK, LOGS_DIR, ARCHITECT_KEY, port, VALID_WORK_ITEM_STATUSES, VALID_EPIC_STATUSES, VALID_PRIORITIES, SERVER_START_TIME, DASHCTL_PATH, PID_FILE, LOG_FILE, MIGRATIONS_DIR, TMUX_AVAILABLE, BACKUP_DIR } from './constants.mjs';
 import { json, text, err, safe, readJson, listDirs, listFiles, parseBody, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture, termEventLogPath, generateSeedContent, sleep } from './utils.mjs';
 
 import { dispatches, terminals, cliSessions, saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession } from './state.mjs';
-import { resolveProjectPath, loadPortfolioContext, loadWorkItem, topoSort, loadEpicPlanSnippet, selectAgentsForDispatch, buildDispatchPrompt } from './prompt-builder.mjs';
+import { resolveProjectPath, resolveOrgPath, loadPortfolioContext, loadOrgContext, loadWorkItem, loadResumeContext, topoSort, loadEpicPlanSnippet, selectAgentsForDispatch, buildDispatchPrompt, buildResumePrompt, buildAutoImplementPrompt } from './prompt-builder.mjs';
 
 import { wireTerminalHandlers, injectPrompt } from './pty-manager.mjs';
 import { syncProjectsFromRegistry, broadcastDispatchLine, broadcastDispatchDone, tailLogFile, restoreSessions, extractStreamText, killProcess, killProcessGraceful, wireDispatchHandlers } from './dispatch-manager.mjs';
@@ -23,6 +23,7 @@ import { setupWebSocket } from './ws-router.mjs';
 import staticRoutes from './routes/static.mjs';
 import portfolioRoutes from './routes/portfolio.mjs';
 import workItemRoutes from './routes/work-items.mjs';
+import approvalRoutes from './routes/approvals.mjs';
 import epicRoutes from './routes/epics.mjs';
 import sessionRoutes from './routes/sessions.mjs';
 import dispatchRoutes from './routes/dispatch.mjs';
@@ -36,7 +37,7 @@ const deps = {
   VALID_WORK_ITEM_STATUSES, VALID_EPIC_STATUSES, VALID_PRIORITIES,
   dispatches, terminals, cliSessions,
   wireTerminalHandlers, wireDispatchHandlers, injectPrompt,
-  buildDispatchPrompt, resolveProjectPath, loadPortfolioContext, loadWorkItem, selectAgentsForDispatch, loadEpicPlanSnippet,
+  buildDispatchPrompt, buildResumePrompt, buildAutoImplementPrompt, resolveProjectPath, resolveOrgPath, loadPortfolioContext, loadOrgContext, loadWorkItem, loadResumeContext, selectAgentsForDispatch, loadEpicPlanSnippet,
   broadcastDispatchLine, broadcastDispatchDone, tailLogFile, killProcess, killProcessGraceful, extractStreamText, syncProjectsFromRegistry,
   saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession,
   restoreSessions,
@@ -51,13 +52,14 @@ const deps = {
 const routes = [
   ...staticRoutes(deps),
   ...portfolioRoutes(deps),
+  ...approvalRoutes(deps),
   ...workItemRoutes(deps),
   ...epicRoutes(deps),
   ...sessionRoutes(deps),
   ...dispatchRoutes(deps),
   ...terminalRoutes(deps),
   ...serverMgmtRoutes(deps),
-  ...testEndpointRoutes(deps),
+  ...(process.env.WORK_DIR ? testEndpointRoutes(deps) : []),
 ];
 
 const server = createServer(async (req, res) => {
@@ -147,6 +149,7 @@ function shutdownFlush() {
       d.status = 'interrupted';
       d.completed_at = now;
       saveDispatchToDb(d);
+      archiveSession(d, 'dispatch');
     }
   }
 
@@ -161,6 +164,7 @@ function shutdownFlush() {
       t.status = 'interrupted';
       t.exited_at = now;
       saveTerminalToDb(t);
+      archiveSession(t, 'terminal');
     }
   }
 
@@ -170,6 +174,9 @@ process.on('SIGTERM', () => { shutdownFlush(); process.exit(0); });
 process.on('SIGINT', () => { shutdownFlush(); process.exit(0); });
 
 async function main() {
+  // Phase 0: Backup database
+  db.backupDatabase(WORK, BACKUP_DIR);
+
   // Phase 1: Database
   try {
     await db.initDatabaseAsync(WORK, MIGRATIONS_DIR);
@@ -187,6 +194,16 @@ async function main() {
 
   // Phase 3: Restore sessions
   restoreSessions(wireTerminalHandlers);
+
+  // Phase 3.5: Warn about orphaned worktrees
+  try {
+    const orphans = db.getDb().prepare(
+      "SELECT COUNT(*) as cnt FROM dispatches WHERE worktree_path IS NOT NULL AND status != 'running'"
+    ).get();
+    if (orphans?.cnt > 10) {
+      console.warn(`[worktree] ${orphans.cnt} orphaned dispatch worktrees detected — consider running /worktree cleanup`);
+    }
+  } catch {}
 
   // Phase 4: Start server
   server.listen(port, '127.0.0.1', () => {

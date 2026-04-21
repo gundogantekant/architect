@@ -2,7 +2,7 @@
 
 ## Overview
 
-24 specialized agents organized in 6 categories. The main Claude conversation orchestrates them — subagents cannot spawn other subagents.
+33 specialized agents organized in 7 categories. The main Claude conversation orchestrates them — subagents cannot spawn other subagents.
 
 ## Model Tiers
 
@@ -43,6 +43,29 @@
 | reviewer | opus | 30 | Code review (read-only) |
 | security-auditor | opus | 25 | Security analysis (read-only) |
 
+### Review Board
+
+Context-filtered board of 3–10 agents that evaluate plans, code diffs, and PRs from multiple perspectives. Operates as a two-gate lifecycle (plan gate → `ready`, code gate → `done`). See `domain/rules.md` → Review Board Rules.
+
+**Required (always dispatched)**:
+
+| Agent | Model | Max Turns | Purpose |
+|-------|-------|-----------|---------|
+| tech-reviewer-swe | sonnet | 15 | Clean Code enforcement, testability, performance, security (read-only) |
+| tech-reviewer-arch | sonnet | 15 | Clean Architecture enforcement, layer boundaries, structural soundness (read-only) |
+| tech-reviewer-pm | sonnet | 15 | Scope alignment, risk, milestone impact, dependency tracking (read-only) |
+
+**Context-dependent**:
+
+| Agent | Model | Max Turns | Purpose | Dispatch when |
+|-------|-------|-----------|---------|---------------|
+| tech-reviewer-frontend | sonnet | 15 | Component architecture, state, rendering, accessibility (read-only) | Frontend stack or UI code |
+| tech-reviewer-ux | sonnet | 15 | User flows, interaction design, accessibility, cognitive load (read-only) | User-facing interfaces |
+| tech-reviewer-dx | sonnet | 15 | API surface, CLI ergonomics, Clean Code naming on APIs (read-only) | Developer-facing surfaces |
+| tech-reviewer-dba | sonnet | 15 | Schema design, queries, migrations, Clean Architecture data layer (read-only) | Database usage |
+| tech-reviewer-systems | sonnet | 15 | System boundaries, protocols, cross-subsystem failure modes (read-only) | Multi-subsystem projects |
+| tech-reviewer-iot | sonnet | 15 | Device provisioning, OTA, telemetry, BLE, power management (read-only) | IoT/embedded projects |
+
 ### Operations
 
 | Agent | Model | Max Turns | Purpose |
@@ -77,4 +100,4 @@ Task(subagent_type="scout", model="haiku", prompt="Scan /path/to/project...")
 Task(subagent_type="coder", prompt="Implement feature X based on this plan...")
 ```
 
-Read-only agents (reviewer, security-auditor, performance, strategist, classifier, coordinator) do not modify files — except strategist can write decision documents to `docs/`. The browser agent is interactive (web actions via Playwright) but does not modify code or data files. Implementation agents (coder-*) have file write access.
+Read-only agents (reviewer, security-auditor, performance, strategist, classifier, coordinator, tech-reviewer-*) do not modify files — except strategist can write decision documents to `docs/`. The browser agent is interactive (web actions via Playwright) but does not modify code or data files. Implementation agents (coder-*) have file write access.

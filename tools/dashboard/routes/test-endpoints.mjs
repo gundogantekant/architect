@@ -1,10 +1,13 @@
+import { shouldCreateWorktree } from '../worktree.mjs';
+
 export default function testEndpointRoutes(deps) {
   const {
     db, json, err, parseBody,
-    ROOT, LOGS_DIR, TMUX_AVAILABLE,
+    ROOT, PORTFOLIO, LOGS_DIR, TMUX_AVAILABLE,
     dispatches, terminals, cliSessions,
     wireTerminalHandlers,
     broadcastDispatchLine, broadcastDispatchDone,
+    buildDispatchPrompt, buildResumePrompt, buildAutoImplementPrompt, resolveOrgPath, loadOrgContext, loadPortfolioContext, loadResumeContext, selectAgentsForDispatch,
     saveDispatchToDb, saveTerminalToDb,
     restoreSessions,
     termEventLogPath, generateSeedContent,
@@ -15,9 +18,23 @@ export default function testEndpointRoutes(deps) {
   } = deps;
   return [
     // --- Test endpoints (for E2E test seeding) ---
+
+    [/^\/api\/test\/explain-query$/, 'GET', async (_m, req, res) => {
+      const url = new URL(req.url, 'http://localhost');
+      const query = url.searchParams.get('query');
+      if (query === 'approver_pending') {
+        const identity = url.searchParams.get('identity') || 'probe';
+        const plan = db.getDb().prepare(
+          `EXPLAIN QUERY PLAN SELECT * FROM work_item_approvals WHERE identity = ? AND status = 'pending'`
+        ).all(identity);
+        return json(res, { plan });
+      }
+      return err(res, `unknown query '${query}'`, 400);
+    }],
+
     [/^\/api\/test\/seed-dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { id, status, project_key, title, work_item_id, log_lines, claude_session_id } = body;
+      const { id, status, project_key, title, work_item_id, epic_id: seedEpicId, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch, pid: seedPid, dispatch_mode } = body;
       if (!id) return err(res, 'id is required', 400);
       const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
 
@@ -38,22 +55,26 @@ export default function testEndpointRoutes(deps) {
       const dispatch = {
         id,
         work_item_id: work_item_id || null,
-        epic_id: null,
+        epic_id: seedEpicId || null,
         project_key: project_key || 'test/test/main',
         project_path: ROOT,
         title: title || id,
         permission_mode: 'plan',
         skip_permissions: false,
         status: status || 'completed',
-        needs_input: false,
+        agent_phase: (status || 'completed') === 'running' ? 'generating' : null,
         claude_session_id: claude_session_id || null,
+        worktree_path: worktree_path || null,
+        worktree_branch: worktree_branch || null,
+        source_branch: source_branch || null,
+        dispatch_mode: dispatch_mode || 'standard',
         output,
         lastLines: [],
         wsClients: new Set(),
         started_at: new Date().toISOString(),
         completed_at: status !== 'running' ? new Date().toISOString() : null,
         process: null,
-        pid: null,
+        pid: seedPid || null,
         logPath,
         _testWorkerId,
       };
@@ -69,6 +90,162 @@ export default function testEndpointRoutes(deps) {
       terminals.clear();
       restoreSessions(wireTerminalHandlers);
       json(res, { dispatches: dispatches.size, terminals: terminals.size });
+    }],
+
+    // Build org dispatch prompt without spawning PTY (for contract tests)
+    [/^\/api\/test\/build-org-prompt$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { org_key, additional_instructions } = body;
+      if (!org_key) return err(res, 'org_key required', 400);
+      const projectPath = await resolveOrgPath(org_key);
+      if (!projectPath) return err(res, `Could not resolve org: ${org_key}`, 400);
+      const orgContext = await loadOrgContext(org_key);
+      const prompt = buildDispatchPrompt({
+        workItem: null,
+        projectKey: `${org_key}/*`,
+        projectPath,
+        additionalInstructions: additional_instructions || '',
+        portfolio: null,
+        epicContext: null,
+        orgContext,
+      });
+      json(res, { prompt, project_path: projectPath });
+    }],
+
+    // Build auto-implement prompt without spawning (for contract/prompt tests)
+    [/^\/api\/test\/build-auto-implement-prompt$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { workItem, projectKey, projectPath } = body;
+      const prompt = buildAutoImplementPrompt({
+        workItem: workItem || null,
+        projectKey: projectKey || 'test/test/main',
+        projectPath: projectPath || ROOT,
+        portfolio: null,
+        epicContext: null,
+      });
+      json(res, { prompt });
+    }],
+
+    // Seed a fake portfolio registry entry pointing to a given path (for worktree-failure tests)
+    [/^\/api\/test\/seed-registry-entry$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { project_key, project_path } = body;
+      if (!project_key || !project_path) return err(res, 'project_key and project_path are required', 400);
+      const [org, project, component] = project_key.split('/');
+      const registryPath = join(PORTFOLIO, 'registry.json');
+      let registry = { entries: {} };
+      try { registry = JSON.parse(readFileSync(registryPath, 'utf8')); } catch {}
+      registry.entries[project_path] = { org, project, component };
+      await mkdir(PORTFOLIO, { recursive: true });
+      writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+      json(res, { seeded: true });
+    }],
+
+    // Build dispatch prompt without spawning (for contract/prompt tests)
+    [/^\/api\/test\/build-prompt$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { workItem, projectKey, projectPath, additionalInstructions, contract, epicContext } = body;
+      const prompt = buildDispatchPrompt({
+        workItem: workItem || null,
+        projectKey: projectKey || 'test/test/main',
+        projectPath: projectPath || ROOT,
+        additionalInstructions: additionalInstructions || null,
+        portfolio: null,
+        epicContext: epicContext || null,
+        contract: contract || null,
+      });
+      json(res, { prompt });
+    }],
+
+    [/^\/api\/test\/build-resume-prompt$/, 'POST', async (_m, req, res) => {
+      const { workItem, contract, additionalInstructions } = await parseBody(req);
+      const prompt = buildResumePrompt({ workItem: workItem || null, contract: contract || null, additionalInstructions: additionalInstructions || null });
+      json(res, { prompt });
+    }],
+
+    [/^\/api\/test\/resume-args-preview$/, 'POST', async (_m, req, res) => {
+      const { work_item_id, project_key } = await parseBody(req);
+      const { workItem, portfolio } = await loadResumeContext({ work_item_id: work_item_id || null, project_key: project_key || null });
+      const agentDefs = await selectAgentsForDispatch({ workItem, portfolio });
+      json(res, { has_agents: agentDefs.length > 0, agent_count: agentDefs.length });
+    }],
+
+    // Seed a terminal with org_key support (no real PTY)
+    [/^\/api\/test\/seed-org-terminal$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { org_key, additional_instructions, status: reqStatus } = body;
+      if (!org_key) return err(res, 'org_key required', 400);
+      const projectPath = await resolveOrgPath(org_key);
+      if (!projectPath) return err(res, `Could not resolve org: ${org_key}`, 400);
+      const orgContext = await loadOrgContext(org_key);
+      const prompt = buildDispatchPrompt({
+        workItem: null,
+        projectKey: `${org_key}/*`,
+        projectPath,
+        additionalInstructions: additional_instructions || '',
+        portfolio: null,
+        epicContext: null,
+        orgContext,
+      });
+
+      const id = `T-${Date.now()}`;
+      await mkdir(LOGS_DIR, { recursive: true });
+      const eventStream = new EventStream(id);
+      const termStatus = reqStatus || 'completed';
+      const terminal = {
+        id,
+        type: 'claude',
+        agent_type: 'claude',
+        work_item_id: null,
+        epic_id: null,
+        project_key: `${org_key}/*`,
+        org_key,
+        project_path: projectPath,
+        prompt,
+        title: additional_instructions?.slice(0, 60) || 'Org session',
+        status: termStatus,
+        started_at: new Date().toISOString(),
+        exited_at: termStatus !== 'running' ? new Date().toISOString() : null,
+        permission_mode: 'plan',
+        skip_permissions: false,
+        claude_session_id: null,
+        ptyProcess: null,
+        _skipAutoCleanup: termStatus === 'running',
+        _testWorkerId: req.headers['x-test-worker-id'] ?? null,
+        eventStream,
+        wsClients: eventStream.subscribers,
+        cols: 80,
+        rows: 24,
+        tmux_session: null,
+      };
+      terminals.set(id, terminal);
+      saveTerminalToDb(terminal);
+      json(res, { terminal_id: id, status: terminal.status, project_path: projectPath, prompt });
+    }],
+
+    // Seed a session_history entry (for time report tests)
+    [/^\/api\/test\/seed-session-history$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { id: seedId, project_key, duration_seconds, cost_usd, started_at, ended_at } = body;
+      if (!project_key) return err(res, 'project_key is required', 400);
+      const end = ended_at || new Date().toISOString();
+      const dur = duration_seconds || 300;
+      const start = started_at || new Date(new Date(end).getTime() - dur * 1000).toISOString();
+      const id = seedId || `SH-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      db.recordSessionHistory({
+        id,
+        type: 'test',
+        project_key,
+        work_item_id: null,
+        epic_id: null,
+        title: 'Test session',
+        status: 'completed',
+        permission_mode: 'plan',
+        started_at: start,
+        ended_at: end,
+        cost_usd: cost_usd ?? 0,
+      });
+      json(res, { ok: true, id });
     }],
 
     // Purge all sessions from memory AND DB (for test isolation)
@@ -161,7 +338,7 @@ export default function testEndpointRoutes(deps) {
     // Seed a terminal with EventStream content (no real PTY)
     [/^\/api\/test\/seed-terminal$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { scrollback, status, claude_session_id, lines, withFakeContent, withInjectionEvents, ansiColors, agentType: bodyAgentType } = body;
+      const { scrollback, status, claude_session_id, lines, withFakeContent, withInjectionEvents, ansiColors, agentType: bodyAgentType, work_item_id, epic_id } = body;
       const agentType = bodyAgentType || 'shell';
       const workerId = req.headers['x-test-worker-id'];
       const id = body.id || (workerId !== undefined ? `T-${Date.now()}-${workerId}` : `T-${Date.now()}`);
@@ -203,8 +380,8 @@ export default function testEndpointRoutes(deps) {
         id,
         type: agentType,
         agent_type: agentType,
-        work_item_id: null,
-        epic_id: null,
+        work_item_id: work_item_id || null,
+        epic_id: epic_id || null,
         project_key: 'test/test/main',
         project_path: ROOT,
         title: `Test terminal ${id}`,
@@ -433,6 +610,34 @@ export default function testEndpointRoutes(deps) {
         contains_start: clean.includes(payload.slice(0, 50)),
         contains_end: clean.includes(payload.slice(-50)),
       });
+    }],
+
+    // Test worktree decision logic (W-927)
+    [/^\/api\/test\/worktree-decision$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { permission_mode, work_item_id, worktree_mode, feature_flag } = body;
+      const result = shouldCreateWorktree({
+        permissionMode: permission_mode,
+        workItemId: work_item_id,
+        portfolioEntry: worktree_mode ? { worktree_mode } : null,
+        featureFlag: feature_flag !== false,
+      });
+      json(res, { should_create: result });
+    }],
+
+    // Test prompt builder with worktree context (W-927)
+    [/^\/api\/test\/build-dispatch-prompt$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { project_key, work_item, worktree_context } = body;
+      const portfolio = await loadPortfolioContext(project_key).catch(() => null);
+      const prompt = buildDispatchPrompt({
+        workItem: work_item,
+        projectKey: project_key,
+        projectPath: ROOT,
+        portfolio,
+        worktreeContext: worktree_context || null,
+      });
+      json(res, { prompt });
     }],
   ];
 }

@@ -44,7 +44,7 @@ test.describe('Error paths @behavioral', () => {
     const resp = await fetch(`${getBase()}/api/work-items`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'open' }), // missing title
+      body: JSON.stringify({ status: 'draft' }), // missing title
     });
     expect(resp.status).toBeGreaterThanOrEqual(400);
     expect(resp.status).toBeLessThan(500);

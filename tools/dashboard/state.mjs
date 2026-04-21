@@ -17,13 +17,17 @@ export function saveDispatchToDb(d) {
     cost_usd: d.cost_usd || null,
     pid: d.pid || null,
     claude_session_id: d.claude_session_id || null,
+    worktree_path: d.worktree_path || null,
+    worktree_branch: d.worktree_branch || null,
+    source_branch: d.source_branch || null,
+    dispatch_mode: d.dispatch_mode || 'standard',
   });
 }
 
 export function saveTerminalToDb(t) {
   db.saveTerminal({
     id: t.id, type: t.type || 'claude', work_item_id: t.work_item_id, epic_id: t.epic_id,
-    project_key: t.project_key, project_path: t.project_path,
+    project_key: t.project_key, project_path: t.project_path, org_key: t.org_key || null,
     title: t.title, permission_mode: t.permission_mode || 'acceptEdits',
     skip_permissions: t.skip_permissions || false,
     status: t.status, started_at: t.started_at, exited_at: t.exited_at,
@@ -46,7 +50,11 @@ export function saveCliSessionToDb(c) {
 export function archiveSession(session, type) {
   const endedAt = type === 'cli' ? session.exited_at : (type === 'dispatch' ? session.completed_at : session.exited_at);
   const startedAt = type === 'cli' ? session.registered_at : session.started_at;
-  if (!endedAt || !startedAt || !session.project_key) return;
+  if (!endedAt || !startedAt || !session.project_key) {
+    const missing = [!startedAt && 'startedAt', !endedAt && 'endedAt', !session.project_key && 'project_key'].filter(Boolean).join(', ');
+    console.warn(`archiveSession(${type} ${session.id}): skipped — missing ${missing}`);
+    return;
+  }
   try {
     db.recordSessionHistory({
       id: session.id, type, project_key: session.project_key,
@@ -58,4 +66,15 @@ export function archiveSession(session, type) {
   } catch (e) {
     console.error(`Failed to archive ${type} ${session.id}:`, e.message);
   }
+}
+
+// --- Centralized session finalization: set terminal timestamp + archive ---
+export function finalizeSession(session, type) {
+  const now = new Date().toISOString();
+  if (type === 'dispatch') {
+    if (!session.completed_at) session.completed_at = now;
+  } else {
+    if (!session.exited_at) session.exited_at = now;
+  }
+  archiveSession(session, type);
 }

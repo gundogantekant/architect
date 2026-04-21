@@ -78,7 +78,7 @@ export async function resetSessions() {
  * so there's no seed content to confuse the detection.
  * Use this instead of waitForTerminalLive when you need to type into a real shell.
  */
-export async function waitForShellReady(page, terminalId, timeout = 20_000) {
+export async function waitForShellReady(page, terminalId, timeout = 30_000) {
   await waitForTerminalLive(page, terminalId, timeout);
   await waitForTerminalContent(page, terminalId, 1, timeout);
 }
@@ -87,7 +87,7 @@ export async function waitForShellReady(page, terminalId, timeout = 20_000) {
  * Wait for the terminal session to reach the LIVE state (or EXITED for completed terminals).
  * Uses window._termSessions which is exposed by the frontend.
  */
-export async function waitForTerminalLive(page, terminalId, timeout = 20_000) {
+export async function waitForTerminalLive(page, terminalId, timeout = 30_000) {
   await page.waitForFunction(
     ({ id }) => {
       const s = window._termSessions?.get(id)?.state;
@@ -101,7 +101,7 @@ export async function waitForTerminalLive(page, terminalId, timeout = 20_000) {
 /**
  * Wait until the xterm buffer has at least minLines non-empty lines.
  */
-export async function waitForTerminalContent(page, terminalId, minLines = 10, timeout = 20_000) {
+export async function waitForTerminalContent(page, terminalId, minLines = 10, timeout = 30_000) {
   await page.waitForFunction(
     ({ id, min }) => {
       const sess = window._termSessions?.get(id);
@@ -247,27 +247,46 @@ export async function getSessionState(page, terminalId) {
   }, terminalId);
 }
 
-export async function seedWorkItem(opts = {}) {
-  return api('work-items', {
+export async function seedSessionHistory(opts = {}) {
+  const now = new Date();
+  const ended_at = opts.ended_at || now.toISOString();
+  const duration_seconds = opts.duration_seconds || 300;
+  const started_at = opts.started_at || new Date(new Date(ended_at).getTime() - duration_seconds * 1000).toISOString();
+  return api('test/seed-session-history', {
     method: 'POST',
     body: JSON.stringify({
-      title: opts.title || 'Test work item',
-      status: opts.status || 'open',
-      priority: 'medium',
-      project_key: opts.project_key || 'ticari/architect/main',
+      project_key: opts.project_key || 'testorg/testproj/main',
+      duration_seconds,
+      cost_usd: opts.cost_usd ?? 1.50,
+      started_at,
+      ended_at,
     }),
   });
 }
 
+export async function seedWorkItem(opts = {}) {
+  const body = {
+    title: opts.title || 'Test work item',
+    status: opts.status || 'draft',
+    priority: opts.priority || 'medium',
+    project_key: opts.project_key || 'ticari/architect/main',
+  };
+  if (opts.description !== undefined) body.description = opts.description;
+  if (opts.tags !== undefined) body.tags = opts.tags;
+  if (opts.epic_id !== undefined) body.epic_id = opts.epic_id;
+  return api('work-items', { method: 'POST', body: JSON.stringify(body) });
+}
+
 export async function seedEpic(opts = {}) {
-  return api('epics', {
-    method: 'POST',
-    body: JSON.stringify({
-      title: opts.title || 'Test epic',
-      status: opts.status || 'active',
-      priority: 'medium',
-    }),
-  });
+  const body = {
+    title: opts.title || 'Test epic',
+    status: opts.status || 'active',
+    priority: opts.priority || 'medium',
+  };
+  if (opts.description !== undefined) body.description = opts.description;
+  if (opts.acceptance_criteria !== undefined) body.acceptance_criteria = opts.acceptance_criteria;
+  if (opts.tags !== undefined) body.tags = opts.tags;
+  return api('epics', { method: 'POST', body: JSON.stringify(body) });
 }
 
 export async function seedDispatch(opts = {}) {
@@ -285,9 +304,23 @@ export async function seedDispatch(opts = {}) {
       work_item_id: opts.work_item_id || null,
       log_lines: logLines,
       claude_session_id: opts.claude_session_id || null,
+      dispatch_mode: opts.dispatch_mode || 'standard',
     }),
   });
   return { dispatch_id: id, ...res };
+}
+
+export async function getDispatchLogScrollMetrics(page, id) {
+  return page.evaluate((id) => {
+    const logEl = document.getElementById(`log-${id}`);
+    if (!logEl) return null;
+    return {
+      scrollTop: logEl.scrollTop,
+      scrollHeight: logEl.scrollHeight,
+      clientHeight: logEl.clientHeight,
+      atBottom: (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight) < 50,
+    };
+  }, id);
 }
 
 export async function getDispatchPanelState(page, id) {

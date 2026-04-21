@@ -26,7 +26,7 @@ SESSIONS_FILE="$ROOT/work/sessions.json"
 
 # Service identifiers
 LAUNCHD_LABEL="com.architect.dashboard"
-LAUNCHD_PLIST="$HOME/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
+LAUNCHD_PLIST="${DASHCTL_LAUNCHD_PLIST:-$HOME/Library/LaunchAgents/${LAUNCHD_LABEL}.plist}"
 SYSTEMD_SERVICE="architect-dashboard"
 SYSTEMD_UNIT="$HOME/.config/systemd/user/${SYSTEMD_SERVICE}.service"
 
@@ -34,6 +34,13 @@ SYSTEMD_UNIT="$HOME/.config/systemd/user/${SYSTEMD_SERVICE}.service"
 
 ensure_tmp() {
   mkdir -p "$ROOT/tmp"
+}
+
+is_dashboard_process() {
+  local pid="$1"
+  local cmd
+  cmd="$(ps -o command= -p "$pid" 2>/dev/null)" || return 1
+  [[ "$cmd" == *node* && "$cmd" == *server.mjs* ]]
 }
 
 is_running() {
@@ -47,9 +54,16 @@ is_running() {
     return 1
   fi
   if kill -0 "$pid" 2>/dev/null; then
-    return 0
+    # PID is alive — verify it's actually the dashboard, not a recycled PID
+    if is_dashboard_process "$pid"; then
+      return 0
+    else
+      # PID was recycled to a different process — stale
+      rm -f "$PID_FILE"
+      return 1
+    fi
   else
-    # Stale PID file
+    # Process is dead — stale PID file
     rm -f "$PID_FILE"
     return 1
   fi
@@ -236,28 +250,9 @@ cmd_stop() {
 }
 
 cmd_restart() {
-  local service
-  service="$(detect_service)"
-
-  case "$service" in
-    launchd)
-      echo "Restarting launchd service ($LAUNCHD_LABEL)..."
-      launchctl stop "$LAUNCHD_LABEL" 2>/dev/null || true
-      sleep 1
-      launchctl start "$LAUNCHD_LABEL"
-      echo "Dashboard restarted via launchd"
-      ;;
-    systemd)
-      echo "Restarting systemd service ($SYSTEMD_SERVICE)..."
-      systemctl --user restart "$SYSTEMD_SERVICE"
-      echo "Dashboard restarted via systemd"
-      ;;
-    *)
-      cmd_stop
-      sleep 1
-      cmd_start
-      ;;
-  esac
+  cmd_stop
+  sleep 1
+  cmd_start
 }
 
 cmd_status() {

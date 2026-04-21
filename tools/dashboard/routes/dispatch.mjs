@@ -1,10 +1,51 @@
+import { existsSync } from 'node:fs';
+import { createWorktreeForDispatch, shouldCreateWorktree } from '../worktree.mjs';
+import { AUTO_IMPLEMENTABLE_STATUSES } from '../constants.mjs';
+
+/**
+ * Find an active (running) dispatch for a given work item ID.
+ * Returns the dispatch object or null.
+ */
+function findActiveDispatchForWorkItem(dispatches, workItemId) {
+  for (const d of dispatches.values()) {
+    if (d.work_item_id === workItemId && d.status === 'running') return d;
+  }
+  return null;
+}
+
+/**
+ * Resolve which dependency IDs are not yet in 'done' status.
+ * Returns array of unmet dependency IDs.
+ */
+function resolveUnmetDependencies(db, dependsOn) {
+  if (!dependsOn || !dependsOn.length) return [];
+  return dependsOn.filter(depId => {
+    const dep = db.getWorkItemFull(depId);
+    return !dep || dep.status !== 'done';
+  });
+}
+
+/**
+ * Create a worktree for an auto-implement dispatch (always creates, ignores worktree_mode).
+ * Returns worktree context. Throws on failure — callers must handle with 500.
+ */
+async function createWorktreeForAutoImplement({ projectPath, workItem }) {
+  return await createWorktreeForDispatch({
+    projectPath,
+    portfolioEntry: null,
+    workItemId: workItem.id,
+    workItemTitle: workItem.title || workItem.id,
+    orgConventions: null,
+  });
+}
+
 export default function dispatchRoutes(deps) {
   const {
     db, json, err, parseBody,
     ROOT, LOGS_DIR, CLAUDE_BIN,
     dispatches,
     wireDispatchHandlers,
-    buildDispatchPrompt, resolveProjectPath, loadPortfolioContext, loadWorkItem, selectAgentsForDispatch, loadEpicPlanSnippet,
+    buildDispatchPrompt, buildResumePrompt, buildAutoImplementPrompt, resolveProjectPath, loadPortfolioContext, loadWorkItem, loadResumeContext, selectAgentsForDispatch, loadEpicPlanSnippet,
     broadcastDispatchLine, broadcastDispatchDone, killProcessGraceful,
     saveDispatchToDb, archiveSession,
     isPidAlive,
@@ -30,7 +71,7 @@ export default function dispatchRoutes(deps) {
         title: `Onboard: ${projectPath.split('/').pop()}`,
         permission_mode: 'acceptEdits',
         status: 'running',
-        needs_input: false,
+        agent_phase: 'generating',
         output: [],
         lastLines: [],
         wsClients: new Set(),
@@ -72,7 +113,23 @@ export default function dispatchRoutes(deps) {
     // Create dispatch
     [/^\/api\/dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode } = body;
+      const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode, contract: rawContract } = body;
+
+      // Strip empty-string contract fields per domain/rules.md → Dispatch Contract Rules
+      let contract = null;
+      if (rawContract && typeof rawContract === 'object') {
+        const cleaned = {};
+        for (const [k, v] of Object.entries(rawContract)) {
+          if (k === 'stop_conditions') {
+            if (Array.isArray(v) && v.filter(s => typeof s === 'string' && s.trim()).length) {
+              cleaned[k] = v.filter(s => typeof s === 'string' && s.trim());
+            }
+          } else if (typeof v === 'string' && v.trim()) {
+            cleaned[k] = v;
+          }
+        }
+        contract = Object.keys(cleaned).length ? cleaned : null;
+      }
 
       if (!project_key) {
         return err(res, 'project_key is required', 400);
@@ -126,7 +183,32 @@ export default function dispatchRoutes(deps) {
         }
       }
 
-      const effectiveWorkItem = workItem || (work_item_id ? { id: work_item_id, title: title || '', description: description || '', status: 'open', priority: 'medium', tags: [], session_log: [] } : null);
+      const effectiveWorkItem = workItem || (work_item_id ? { id: work_item_id, title: title || '', description: description || '', status: 'draft', priority: 'medium', tags: [], session_log: [] } : null);
+
+      // Resolve permission mode and skip_permissions independently
+      const resolvedPermMode = permission_mode || 'acceptEdits';
+      const resolvedSkipPerms = skip_permissions === true || skip_permissions === 'true';
+
+      // --- Dispatch-level worktree creation (W-927) ---
+      const featureFlag = (db.getPreference('worktree_at_dispatch') ?? 'true') === 'true';
+      const rawEntry = portfolio?.entry || null;
+      let worktreeContext = null;
+      let effectiveCwd = projectPath;
+
+      if (shouldCreateWorktree({ permissionMode: resolvedPermMode, workItemId: work_item_id, portfolioEntry: rawEntry, featureFlag })) {
+        try {
+          worktreeContext = await createWorktreeForDispatch({
+            projectPath,
+            portfolioEntry: rawEntry,
+            workItemId: work_item_id,
+            workItemTitle: title || effectiveWorkItem?.title || '',
+            orgConventions: portfolio?.org,
+          });
+          effectiveCwd = worktreeContext.worktreePath;
+        } catch (wtErr) {
+          return err(res, `Worktree creation failed: ${wtErr.message}`, 500);
+        }
+      }
 
       const prompt = buildDispatchPrompt({
         workItem: effectiveWorkItem,
@@ -136,14 +218,12 @@ export default function dispatchRoutes(deps) {
         portfolio,
         epicContext,
         relatedProjects,
+        worktreeContext,
+        contract: contract && Object.keys(contract).length ? contract : null,
       });
 
       // Select sub-agents based on work item and portfolio context
       const agentDefs = await selectAgentsForDispatch({ workItem: effectiveWorkItem, portfolio });
-
-      // Resolve permission mode and skip_permissions independently
-      const resolvedPermMode = permission_mode || 'acceptEdits';
-      const resolvedSkipPerms = skip_permissions === true || skip_permissions === 'true';
 
       const dispatch = {
         id,
@@ -155,8 +235,11 @@ export default function dispatchRoutes(deps) {
         permission_mode: resolvedPermMode,
         skip_permissions: resolvedSkipPerms,
         status: 'running',
-        needs_input: false,
+        agent_phase: 'generating',
         claude_session_id: null,
+        worktree_path: worktreeContext?.worktreePath || null,
+        worktree_branch: worktreeContext?.branchName || null,
+        source_branch: worktreeContext?.sourceBranch || null,
         output: [],
         lastLines: [],
         wsClients: new Set(),
@@ -178,15 +261,134 @@ export default function dispatchRoutes(deps) {
           args.push('--agents', JSON.stringify(agentDefs));
         }
         proc = spawn(CLAUDE_BIN, args, {
-          cwd: projectPath,
+          cwd: effectiveCwd,
           stdio: ['pipe', 'pipe', 'pipe'],
           env: { ...process.env, ARCHITECT_ROOT: ROOT },
         });
-      } catch (err) {
-        return json(res, { error: `Failed to spawn claude: ${err.message}` }, 500);
+      } catch (spawnErr) {
+        return json(res, { error: `Failed to spawn claude: ${spawnErr.message}` }, 500);
       }
 
       // Write prompt with backpressure handling to prevent truncation on large prompts
+      if (!proc.stdin.write(prompt)) {
+        await new Promise(r => proc.stdin.once('drain', r));
+      }
+      proc.stdin.end();
+
+      dispatch.process = proc;
+      dispatch.pid = proc.pid;
+      dispatch.logPath = join(LOGS_DIR, `${id}.jsonl`);
+      dispatch.logStream = createWriteStream(dispatch.logPath, { flags: 'a' });
+
+      wireDispatchHandlers(dispatch, proc);
+
+      dispatches.set(id, dispatch);
+      saveDispatchToDb(dispatch);
+      json(res, { dispatch_id: id, status: 'running' });
+    }],
+
+    // Auto-implement: autonomous end-to-end implementation dispatch
+    [/^\/api\/dispatch\/auto-implement$/, 'POST', async (_m, req, res) => {
+      const depth = parseInt(req.headers['x-architect-session-depth'] || '0', 10);
+      if (depth >= 1) {
+        return err(res, 'Auto-implement cannot be triggered from within a dispatch agent (depth ≥ 1).', 403);
+      }
+
+      const body = await parseBody(req);
+      const { work_item_id, project_key, additional_instructions } = body;
+
+      if (!work_item_id) return err(res, 'work_item_id is required', 400);
+      if (!project_key) return err(res, 'project_key is required', 400);
+
+      const workItem = await loadWorkItem(work_item_id);
+      if (!workItem) return err(res, `Work item ${work_item_id} not found`, 404);
+
+      if (!AUTO_IMPLEMENTABLE_STATUSES.includes(workItem.status)) {
+        return err(res, `Work item status '${workItem.status}' cannot be auto-implemented. Must be ${AUTO_IMPLEMENTABLE_STATUSES.join(', ')}.`, 400);
+      }
+
+      const unmetDeps = resolveUnmetDependencies(db, workItem.depends_on || []);
+      if (unmetDeps.length) {
+        return err(res, `Unmet dependencies: ${unmetDeps.join(', ')}. Resolve these before auto-implementing.`, 400);
+      }
+
+      const existingDispatch = findActiveDispatchForWorkItem(dispatches, work_item_id);
+      if (existingDispatch) {
+        return err(res, `A dispatch is already running for this work item.`, 400);
+      }
+
+      const projectPath = await resolveProjectPath(project_key);
+      if (!projectPath) return err(res, `Could not resolve path for project: ${project_key}`, 400);
+
+      const id = `D-${Date.now()}`;
+
+      let portfolio, worktreeContext;
+      try {
+        [portfolio, worktreeContext] = await Promise.all([
+          loadPortfolioContext(project_key),
+          createWorktreeForAutoImplement({ projectPath, workItem }),
+        ]);
+      } catch (worktreeErr) {
+        return err(res, `Failed to create worktree: ${worktreeErr.message}`, 500);
+      }
+
+      const effectiveWorkItem = { ...workItem, additional_instructions: additional_instructions || null };
+
+      const prompt = buildAutoImplementPrompt({
+        workItem: effectiveWorkItem,
+        projectKey: project_key,
+        projectPath,
+        additionalInstructions: additional_instructions || null,
+        portfolio,
+        epicContext: null,
+      });
+
+      const agentDefs = await selectAgentsForDispatch({ workItem: effectiveWorkItem, portfolio });
+
+      const effectiveCwd = worktreeContext?.worktreePath || projectPath;
+
+      const dispatch = {
+        id,
+        work_item_id,
+        epic_id: null,
+        project_key,
+        project_path: projectPath,
+        title: workItem.title || work_item_id,
+        permission_mode: 'acceptEdits',
+        skip_permissions: true,
+        dispatch_mode: 'auto_implement',
+        status: 'running',
+        agent_phase: 'generating',
+        claude_session_id: null,
+        worktree_path: worktreeContext?.worktreePath || null,
+        worktree_branch: worktreeContext?.branchName || null,
+        source_branch: worktreeContext?.sourceBranch || null,
+        output: [],
+        lastLines: [],
+        wsClients: new Set(),
+        started_at: new Date().toISOString(),
+        completed_at: null,
+      };
+
+      let proc;
+      try {
+        const args = ['-p', '--output-format', 'stream-json', '--verbose',
+          '--permission-mode', 'acceptEdits',
+          '--dangerously-skip-permissions',
+          '--add-dir', ROOT,
+        ];
+        if (agentDefs.length) {
+          args.push('--agents', JSON.stringify(agentDefs));
+        }
+        proc = spawn(CLAUDE_BIN, args, {
+          cwd: effectiveCwd,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: { ...process.env, ARCHITECT_ROOT: ROOT },
+        });
+      } catch (spawnErr) {
+        return json(res, { error: `Failed to spawn claude: ${spawnErr.message}` }, 500);
+      }
+
       if (!proc.stdin.write(prompt)) {
         await new Promise(r => proc.stdin.once('drain', r));
       }
@@ -274,8 +476,11 @@ export default function dispatchRoutes(deps) {
         if (workerId !== undefined && d._testWorkerId !== workerId) continue;
         list.push({
           id,
+          title: d.title || null,
           work_item_id: d.work_item_id,
+          work_item_title: d.work_item_id ? db.getWorkItemTitle(d.work_item_id) : null,
           epic_id: d.epic_id || null,
+          epic_title: d.epic_id ? db.getEpicTitle(d.epic_id) : null,
           project_key: d.project_key,
           project_path: d.project_path,
           status: d.status,
@@ -283,10 +488,15 @@ export default function dispatchRoutes(deps) {
           started_at: d.started_at,
           completed_at: d.completed_at,
           last_output: d.lastLines || [],
-          needs_input: d.needs_input || false,
+          agent_phase: d.agent_phase || null,
+          needs_input: d.agent_phase === 'waiting_for_input',
           permission_mode: d.permission_mode || 'acceptEdits',
           skip_permissions: d.skip_permissions || false,
           claude_session_id: d.claude_session_id || null,
+          worktree_path: d.worktree_path || null,
+          worktree_branch: d.worktree_branch || null,
+          source_branch: d.source_branch || null,
+          dispatch_mode: d.dispatch_mode || 'standard',
         });
       }
       json(res, list);
@@ -366,9 +576,16 @@ export default function dispatchRoutes(deps) {
       if (old.status !== 'suspended') return err(res, 'dispatch is not suspended', 400);
       if (!old.claude_session_id) return err(res, 'no session ID available for resume', 400);
 
-      const body = await parseBody(req);
+      let body = {};
+      try { body = await parseBody(req); } catch {}
       const resumeSessionId = old.claude_session_id;
-      const { work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions } = old;
+      const { work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, worktree_path, worktree_branch, source_branch } = old;
+
+      // Validate worktree liveness if one was used
+      const resumeCwd = worktree_path && existsSync(worktree_path) ? worktree_path : project_path;
+      if (worktree_path && !existsSync(worktree_path)) {
+        return err(res, `Worktree was removed (${worktree_path}). Re-dispatch to create a new one.`, 400);
+      }
 
       // Remove old suspended record
       dispatches.delete(m[1]);
@@ -389,8 +606,11 @@ export default function dispatchRoutes(deps) {
         permission_mode: resolvedPermMode,
         skip_permissions: resolvedSkipPerms,
         status: 'running',
-        needs_input: false,
+        agent_phase: 'generating',
         claude_session_id: resumeSessionId,
+        worktree_path: worktree_path || null,
+        worktree_branch: worktree_branch || null,
+        source_branch: source_branch || null,
         output: [],
         lastLines: [],
         wsClients: new Set(),
@@ -398,15 +618,20 @@ export default function dispatchRoutes(deps) {
         completed_at: null,
       };
 
+      const { workItem: freshWorkItem, portfolio } = await loadResumeContext({ work_item_id, project_key });
+
       const args = ['-p', '--output-format', 'stream-json', '--verbose'];
       args.push('--resume', resumeSessionId);
       args.push('--permission-mode', resolvedPermMode === 'plan' ? 'plan' : 'acceptEdits');
       if (resolvedSkipPerms) args.push('--dangerously-skip-permissions');
       args.push('--add-dir', ROOT);
 
+      const agentDefs = await selectAgentsForDispatch({ workItem: freshWorkItem, portfolio });
+      if (agentDefs.length) args.push('--agents', JSON.stringify(agentDefs));
+
       let proc;
       try {
-        proc = spawn(CLAUDE_BIN, args, { cwd: project_path, env: { ...process.env, ARCHITECT_ROOT: ROOT }, stdio: ['pipe', 'pipe', 'pipe'] });
+        proc = spawn(CLAUDE_BIN, args, { cwd: resumeCwd, env: { ...process.env, ARCHITECT_ROOT: ROOT }, stdio: ['pipe', 'pipe', 'pipe'] });
       } catch (e) {
         return err(res, `Failed to spawn resumed dispatch: ${e.message}`, 500);
       }
@@ -418,7 +643,11 @@ export default function dispatchRoutes(deps) {
       dispatch.logStream = createWriteStream(logPath, { flags: 'a' });
       wireDispatchHandlers(dispatch, proc);
 
-      const prompt = body?.additional_instructions || 'Continue where you left off.';
+      const prompt = buildResumePrompt({
+        workItem: freshWorkItem,
+        contract: null,
+        additionalInstructions: body?.additional_instructions || null,
+      });
       proc.stdin.write(prompt + '\n');
       proc.stdin.end();
 

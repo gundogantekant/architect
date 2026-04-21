@@ -8,7 +8,7 @@ The `/work` command provides persistent work item and epic tracking across sessi
 
 | Command | Action |
 |---------|--------|
-| `/work` | Show open and in-progress items |
+| `/work` | Show draft, planned, and in-progress items |
 | `/work add <title> [options]` | Create a work item |
 | `/work show <ID>` | Full detail with session log |
 | `/work update <ID> <status>` | Change status |
@@ -27,10 +27,12 @@ The `/work` command provides persistent work item and epic tracking across sessi
 
 ## Filters for `list`
 
-- `--status <open|in-progress|blocked|done|cancelled>`
+- `--status <draft|planned|in-progress|blocked|in-review|testing|preview|done|cancelled|archived>`
 - `--project <org/project/component>` — supports comma-separated values for multi-project filtering
 - `--org <org-name>` — scope to all projects in an organization
 - `--tag <tag>`
+- `--awaiting-action` — show only items blocked by `input_needed` or `approval_active` flags
+- `?view=stakeholder` (API) — collapse states into simplified stakeholder labels (see State Machine section)
 
 ## Organization & Multi-Project Scoping
 
@@ -67,15 +69,81 @@ Before adding a dependency, the system performs a DFS from the target back throu
 
 Both CLI and dashboard use topological sort (Kahn's algorithm) for work item listings. Items with no dependencies appear first, followed by items whose dependencies are all listed above them. Within the same level, items are sorted by priority (critical > high > medium > low) then by ID.
 
-## Work Item Statuses
+## Work Item States
 
-| Status | Meaning |
-|--------|---------|
-| open | Ready to start |
+### State Machine
+
+| State | Meaning |
+|-------|---------|
+| draft | Created, not yet ready for implementation |
+| planned | Scoped and ready to be dispatched |
 | in-progress | Currently being worked on |
 | blocked | Waiting on dependency or external input |
-| done | Completed |
+| in-review | Implementation complete, under technical review |
+| testing | Passed review, under QA |
+| preview | Deployed to preview/staging, awaiting acceptance |
+| done | Completed and accepted |
 | cancelled | No longer needed |
+| archived | Done or cancelled, closed out |
+
+### Valid Transitions
+
+```
+draft → planned → in-progress → blocked → in-progress (cycle)
+in-progress → in-review → testing → preview → done → archived
+Any → cancelled
+cancelled → draft or archived
+planned → draft (rollback; requires reason)
+in-review / testing / preview → in-progress (rework)
+```
+
+**T1 fast path**: trivial items may skip in-review, testing, and preview:
+`draft → planned → in-progress → done`
+
+### Orthogonal Flags
+
+Flags are independent of state and can be set at any point:
+
+| Flag | Behavior |
+|------|----------|
+| `input_needed` | Blocks all forward transitions until cleared |
+| `approval_active` | Blocks all forward transitions; requires at least one pending approver entry in `work_item_approvals` |
+
+Flags do not change the item's status — they gate the next transition. Backward transitions (e.g. rework, rollback) are always allowed regardless of flags.
+
+### Approval Workflow
+
+- Add an approver: `POST /api/work-items/:id/approvals` with `{"approver": "<name>", "sequential": false}`
+- Set `sequential: true` to require approvals in order (next approver notified only after previous resolves)
+- Resolve an approval: `PATCH /api/work-items/:id/approvals/:approvalId` with `{"resolution": "approved" | "rejected"}`
+- When all approvers resolve, `approval_active` is cleared automatically
+- A rejection returns the item to the previous state and clears the flag
+
+### Stakeholder Projection
+
+The `?view=stakeholder` query param on list/show endpoints collapses internal states into a simplified view:
+
+| Internal States | Stakeholder Label |
+|-----------------|-------------------|
+| draft, planned | Requested |
+| in-progress, blocked | In Progress |
+| in-review, testing, preview | In Review |
+| done | Done |
+| cancelled | Cancelled |
+| archived | Archived |
+
+### Two-Gate Lifecycle
+
+The Review Board operates as two quality gates in the work item lifecycle:
+
+```
+open → [Plan Gate] → ready → in-progress → [Code Gate] → done
+```
+
+- **Plan Gate**: After the planner produces a plan (medium+ complexity), the technical review board evaluates it. On approval, the work item transitions to `ready`.
+- **Code Gate**: After implementation and tests pass, the board evaluates the code diff. On approval, the work item proceeds to commit and `done`.
+
+See `domain/rules.md` → Review Board Rules for full details.
 
 ## Epics
 

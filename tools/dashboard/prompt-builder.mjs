@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ROOT, PORTFOLIO, WORK, ARCHITECT_KEY, port } from './constants.mjs';
 import * as db from './db.mjs';
@@ -12,6 +12,39 @@ export async function resolveProjectPath(projectKey) {
     if (key === projectKey) return path;
   }
   return null;
+}
+
+export async function resolveOrgPath(orgKey) {
+  const orgData = await readJson(join(PORTFOLIO, orgKey, 'organization.json')).catch(() => null);
+  return orgData?.path_root || null;
+}
+
+export async function loadOrgContext(orgKey) {
+  const orgData = await readJson(join(PORTFOLIO, orgKey, 'organization.json')).catch(() => null);
+  if (!orgData) return null;
+
+  // Read all project directories under this org
+  const projectMap = [];
+  try {
+    const entries = await readdir(join(PORTFOLIO, orgKey), { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const projectName = entry.name;
+      // Try to read main.json (default component)
+      const componentData = await readJson(join(PORTFOLIO, orgKey, projectName, 'main.json')).catch(() => null);
+      if (!componentData) continue;
+      projectMap.push({
+        key: `${orgKey}/${projectName}/main`,
+        name: componentData.name || projectName,
+        role: componentData.role || 'unknown',
+        purpose: componentData.brief?.purpose || '',
+        stack: componentData.guidance?.stack_summary || '',
+        path: componentData.path || '',
+      });
+    }
+  } catch { /* org dir listing failed */ }
+
+  return { org: orgData, projectMap };
 }
 
 // Context tier mapping: agent name → tier
@@ -109,6 +142,49 @@ export function loadWorkItem(workItemId) {
   return db.getWorkItemFull(workItemId);
 }
 
+export async function loadResumeContext({ work_item_id, project_key }) {
+  const [workItem, portfolio] = await Promise.all([
+    work_item_id ? loadWorkItem(work_item_id) : null,
+    project_key ? loadPortfolioContext(project_key) : null,
+  ]);
+  return { workItem, portfolio };
+}
+
+export function buildResumePrompt({ workItem, contract, additionalInstructions }) {
+  const lines = ['# Resumed Session', '', 'This is a continuation of your previous session (not a fresh start).', ''];
+
+  if (workItem) {
+    lines.push(`**Work item**: ${workItem.id} — ${workItem.title || ''}`, `**Status**: ${workItem.status || 'unknown'}`, '');
+    const log = workItem.session_log || [];
+    const entries = log.slice(-5);
+    lines.push('**Session log (last 5 entries)**:');
+    if (entries.length) {
+      for (const e of entries) {
+        const ts = e.timestamp ? `[${e.timestamp.slice(0, 16)}] ` : '';
+        lines.push(`- ${ts}${e.summary || ''}`);
+      }
+    } else {
+      lines.push('- None');
+    }
+    lines.push('');
+  }
+
+  if (contract) {
+    const hasScope = contract.scope_boundary && contract.scope_boundary.length;
+    const hasStop = contract.stop_conditions && contract.stop_conditions.length;
+    if (hasScope || hasStop) {
+      lines.push('**Contract reminders**:');
+      if (hasScope) lines.push(`- Scope boundary: ${Array.isArray(contract.scope_boundary) ? contract.scope_boundary.join(', ') : contract.scope_boundary}`);
+      if (hasStop) lines.push(`- Stop conditions: ${Array.isArray(contract.stop_conditions) ? contract.stop_conditions.join('; ') : contract.stop_conditions}`);
+      lines.push('');
+    }
+  }
+
+  lines.push('**Instructions**:');
+  lines.push(additionalInstructions || 'Continue where you left off.');
+
+  return lines.join('\n');
+}
 
 export function topoSort(items) {
   const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -197,7 +273,50 @@ export async function selectAgentsForDispatch({ workItem, portfolio }) {
   return agents;
 }
 
-export function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInstructions, portfolio, epicContext, relatedProjects }) {
+/**
+ * Extract contract fields from structured work item description.
+ * Recognized headers: **Goal**:, **Constraints**:, **Expected Output**:,
+ * **Failure Conditions**:, **Scope Boundary**:, **Stop Conditions**:
+ * Returns null if no recognized headers found.
+ */
+function deriveContractFromDescription(description) {
+  if (!description || typeof description !== 'string') return null;
+
+  const fieldMap = {
+    'Goal': 'goal',
+    'Constraints': 'constraints',
+    'Expected Output': 'expected_output',
+    'Failure Conditions': 'failure_conditions',
+    'Scope Boundary': 'scope_boundary',
+  };
+
+  const contract = {};
+  let foundAny = false;
+
+  for (const [header, key] of Object.entries(fieldMap)) {
+    const pattern = new RegExp(`\\*\\*${header}\\*\\*:\\s*(.+)`, 'i');
+    const match = description.match(pattern);
+    if (match) {
+      contract[key] = match[1].trim();
+      foundAny = true;
+    }
+  }
+
+  // Stop Conditions: multi-line — header line followed by newline-separated items
+  const scPattern = /\*\*Stop Conditions\*\*:\s*\n([\s\S]*?)(?=\n\*\*[A-Z]|\n##|\s*$)/i;
+  const scMatch = description.match(scPattern);
+  if (scMatch) {
+    const items = scMatch[1].split('\n').map(l => l.replace(/^[-*]\s*/, '').trim()).filter(Boolean);
+    if (items.length) {
+      contract.stop_conditions = items;
+      foundAny = true;
+    }
+  }
+
+  return foundAny ? contract : null;
+}
+
+export function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInstructions, portfolio, epicContext, relatedProjects, orgContext, worktreeContext, contract }) {
   const sections = [];
 
   // --- Identity ---
@@ -292,9 +411,14 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
 
   // --- Scope ---
   const scopeLines = ['# Scope', ''];
-  const org = projectKey.split('/')[0];
-  if (org && org !== '–') scopeLines.push(`- **Organization**: ${org}`);
-  scopeLines.push(`- **Project**: ${projectKey}`);
+  if (orgContext) {
+    scopeLines.push(`- **Organization**: ${orgContext.org?.name || 'unknown'}`);
+    scopeLines.push(`- **Scope**: Organization-wide (all projects)`);
+  } else {
+    const org = projectKey.split('/')[0];
+    if (org && org !== '–') scopeLines.push(`- **Organization**: ${org}`);
+    scopeLines.push(`- **Project**: ${projectKey}`);
+  }
   if (workItem) scopeLines.push(`- **Work Item**: ${workItem.id}`);
   if (epicContext) scopeLines.push(`- **Epic**: ${epicContext.id}`);
   sections.push(scopeLines.join('\n'));
@@ -317,6 +441,76 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     awareLines.push('');
     awareLines.push('When you need deeper context about the project, read from the portfolio entry or guides. For cross-project context, query the dashboard API.');
     sections.push(awareLines.join('\n'));
+  }
+
+  // --- Organization Context (org-level dispatch only) ---
+  if (orgContext) {
+    const o = orgContext.org;
+    const lines = ['# Organization Context', ''];
+    if (o.name) lines.push(`**Name**: ${o.name}`);
+    if (o.path_root) lines.push(`**Root Path**: ${o.path_root}`);
+    if (o.conventions) {
+      lines.push('', '**Conventions**:');
+      for (const [k, v] of Object.entries(o.conventions)) {
+        if (v) lines.push(`- ${k}: ${v}`);
+      }
+    }
+    if (o.rules?.length) {
+      lines.push('', '**Rules**:');
+      for (const r of o.rules) lines.push(`- ${r}`);
+    }
+    if (o.cloud_environments) {
+      lines.push('', '**Cloud Environments**:');
+      for (const [name, env] of Object.entries(o.cloud_environments)) {
+        const parts = [`${name}`];
+        if (env.account_id) parts.push(`account=${env.account_id}`);
+        if (env.profile) parts.push(`profile=${env.profile}`);
+        if (env.region) parts.push(`region=${env.region}`);
+        lines.push(`- ${parts.join(', ')}`);
+      }
+    }
+    if (o.coding_standards) {
+      if (o.coding_standards.additional_rules?.length) {
+        lines.push('', '**Org Coding Standards**:');
+        for (const r of o.coding_standards.additional_rules) lines.push(`- ${r}`);
+      }
+      if (o.coding_standards.framework_patterns) {
+        for (const [fw, patterns] of Object.entries(o.coding_standards.framework_patterns)) {
+          if (patterns?.length) {
+            lines.push('', `**${fw} Patterns**:`);
+            for (const p of patterns) lines.push(`- ${p}`);
+          }
+        }
+      }
+    }
+    if (o.design_systems) {
+      lines.push('', '**Design Systems**:');
+      for (const [name, ds] of Object.entries(o.design_systems)) {
+        lines.push(`- **${name}** (${ds.type || 'unknown'}): ${ds.description || ''}`);
+        if (ds.depends_on?.length) lines.push(`  Used by: ${ds.depends_on.join(', ')}`);
+      }
+    }
+    sections.push(lines.join('\n'));
+  }
+
+  // --- Project Map (org-level dispatch only) ---
+  if (orgContext?.projectMap?.length) {
+    const lines = ['# Project Map', '',
+      'All projects in this organization:', '',
+      '| Project | Role | Stack | Purpose |',
+      '|---------|------|-------|---------|',
+    ];
+    for (const p of orgContext.projectMap) {
+      const purpose = (p.purpose || '').slice(0, 80);
+      const stack = (p.stack || '').slice(0, 60);
+      lines.push(`| ${p.name} | ${p.role} | ${stack} | ${purpose} |`);
+    }
+    lines.push('', '**Navigation**:');
+    lines.push(`- Your working directory is the organization root: \`${projectPath || orgContext.org?.path_root || '(unknown)'}\``);
+    lines.push('- To work on a specific project, cd into its subdirectory');
+    lines.push(`- For detailed project context, read \`$ARCHITECT_ROOT/portfolio/<org>/<project>/main.json\` or query \`GET http://127.0.0.1:${port}/api/component/<org>/<project>/main\` on the dashboard API`);
+    lines.push('- You have cross-project awareness — use it to answer questions about the organization as a whole');
+    sections.push(lines.join('\n'));
   }
 
   // --- Layer 1: Project Context (first — stack, structure, conventions, org rules) ---
@@ -384,6 +578,20 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
       lines.push('', '**Rules**:');
       for (const r of o.rules) lines.push(`- ${r}`);
     }
+    if (o.coding_standards) {
+      if (o.coding_standards.additional_rules?.length) {
+        lines.push('', '**Org Coding Standards**:');
+        for (const r of o.coding_standards.additional_rules) lines.push(`- ${r}`);
+      }
+      if (o.coding_standards.framework_patterns) {
+        for (const [fw, patterns] of Object.entries(o.coding_standards.framework_patterns)) {
+          if (patterns?.length) {
+            lines.push('', `**${fw} Patterns**:`);
+            for (const p of patterns) lines.push(`- ${p}`);
+          }
+        }
+      }
+    }
     sections.push(lines.join('\n'));
   }
 
@@ -440,6 +648,32 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     sections.push(`# Task\n\n${additionalInstructions}`);
   }
 
+  // --- Dispatch Contract (value object: goal, constraints, expected output, failure conditions, scope boundary, stop conditions) ---
+  const effectiveContract = contract && typeof contract === 'object' && Object.keys(contract).length
+    ? contract
+    : deriveContractFromDescription(workItem?.description);
+
+  if (effectiveContract) {
+    const fields = [
+      ['Goal', effectiveContract.goal],
+      ['Constraints', effectiveContract.constraints],
+      ['Expected Output', effectiveContract.expected_output],
+      ['Failure Conditions', effectiveContract.failure_conditions],
+    ].filter(([, v]) => typeof v === 'string' && v.trim());
+    if (fields.length) {
+      const lines = ['# Dispatch Contract', ''];
+      for (const [label, value] of fields) lines.push(`**${label}**: ${value}`);
+      if (typeof effectiveContract.scope_boundary === 'string' && effectiveContract.scope_boundary.trim()) {
+        lines.push(`**Scope Boundary**: ${effectiveContract.scope_boundary}`);
+      }
+      if (Array.isArray(effectiveContract.stop_conditions) && effectiveContract.stop_conditions.length) {
+        lines.push('', '**Stop Conditions** (halt and report if any occur):');
+        for (const c of effectiveContract.stop_conditions) lines.push(`- ${c}`);
+      }
+      sections.push(lines.join('\n'));
+    }
+  }
+
   // --- Layer 3: Epic Context (third — lightweight: title, status, progress, plan snippet, AC) ---
   if (epicContext) {
     const lines = ['# Epic Context', ''];
@@ -459,9 +693,9 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     sections.push(lines.join('\n'));
   }
 
-  // --- Constraints ---
+  // --- Dispatch Instructions (supplementary guidance beyond the contract) ---
   if (workItem && additionalInstructions) {
-    sections.push(`# Constraints\n\n${additionalInstructions}`);
+    sections.push(`# Dispatch Instructions\n\n${additionalInstructions}`);
   }
 
   // --- Coding Standards (inline brief — self-contained, no file read required) ---
@@ -516,6 +750,22 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     sections.push(envLines.join('\n'));
   }
 
+  // --- Worktree Context (when dispatch created a worktree) ---
+  if (worktreeContext) {
+    const wtLines = ['# Worktree Context', ''];
+    wtLines.push('You are running in a dedicated worktree — all file changes are isolated from the main branch.');
+    wtLines.push('');
+    wtLines.push(`- **Worktree path**: ${worktreeContext.worktreePath}`);
+    wtLines.push(`- **Source path**: ${projectPath}`);
+    wtLines.push(`- **Branch**: ${worktreeContext.branchName}`);
+    wtLines.push(`- **Originating branch**: ${worktreeContext.sourceBranch}`);
+    wtLines.push('');
+    wtLines.push('**Important**: Do NOT create a new worktree. You are already in one. Step 8 of implement-work-item (worktree creation) is already done.');
+    wtLines.push('- Commit your changes on this branch');
+    wtLines.push('- The worktree was provisioned with all required config files and post-setup commands');
+    sections.push(wtLines.join('\n'));
+  }
+
   // --- Tracking (only when workItem is present) ---
   if (workItem) {
     const trackLines = ['# Tracking', ''];
@@ -538,4 +788,38 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
   }
 
   return sections.join('\n\n');
+}
+
+/**
+ * Build the `# Auto-Implement Mode` section injected into the autonomous dispatch prompt.
+ * References the workflow path rather than embedding its content.
+ */
+function buildAutoImplementSection(workItem) {
+  const id = workItem?.id || 'W-???';
+  return `# Auto-Implement Mode
+
+You are running in autonomous self-organizing mode for work item ${id}.
+
+Follow the workflow at \`$ARCHITECT_ROOT/usecases/implement-work-item.md\` exactly, executing all 15 steps without waiting for user confirmation at intermediate steps.
+
+**EXCEPTION**: If the Technical Review Board blocks after 2 revision cycles at any gate, do NOT proceed. Log the block reason to the work item session log and halt — the dispatch will be marked as failed.
+
+Your session depth is 1. You MUST NOT trigger further dashboard dispatches (POST /api/dispatch or /api/dispatch/auto-implement). All sub-agent work runs in-process via the Agent tool.
+
+When making any API call to the dashboard (curl http://127.0.0.1:3777/...), include the header:
+\`--header "X-Architect-Session-Depth: 1"\``;
+}
+
+/**
+ * Build an autonomous auto-implement dispatch prompt.
+ * Delegates to buildDispatchPrompt for all standard sections, then replaces
+ * the Dispatch Instructions section with the Auto-Implement Mode section.
+ */
+export function buildAutoImplementPrompt(args) {
+  const base = buildDispatchPrompt(args);
+  const autoSection = buildAutoImplementSection(args.workItem);
+  if (base.includes('# Dispatch Instructions')) {
+    return base.replace(/# Dispatch Instructions[\s\S]*?(?=\n# [A-Z]|$)/, autoSection);
+  }
+  return base + '\n\n' + autoSection;
 }
