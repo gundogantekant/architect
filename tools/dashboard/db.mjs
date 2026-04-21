@@ -90,6 +90,36 @@ export async function initDatabaseAsync(workDir, migrationsDir) {
     console.log(`Migration ${file} applied.`);
   }
 
+  // Schema assertion — detect drift between migrations and the columns/tables
+  // the application code now expects. Catches the class of bug that caused the
+  // W-951 incident (code queried work_item_approvals before its migration ran).
+  // Bypass with ARCHITECT_SKIP_SCHEMA_ASSERT=1 for emergency boot.
+  if (process.env.ARCHITECT_SKIP_SCHEMA_ASSERT !== '1') {
+    // KEEP IN SYNC WHEN ADDING TABLES/COLUMNS (see docs/migrations.md)
+    const expected = {
+      work_items: ['approval_active', 'input_needed', 'status'],
+      work_item_approvals: ['work_item_id', 'identity', 'status'],
+      terminals: ['org_key'],
+      dispatches: ['org_key', 'dispatch_mode', 'worktree_path'],
+      epics: ['id'],
+      schema_migrations: ['version'],
+    };
+    const missing = [];
+    for (const [table, cols] of Object.entries(expected)) {
+      const info = db.pragma(`table_info(${table})`);
+      if (!info.length) { missing.push(`table ${table}`); continue; }
+      const present = new Set(info.map(r => r.name));
+      for (const c of cols) if (!present.has(c)) missing.push(`${table}.${c}`);
+    }
+    if (missing.length) {
+      throw new Error(
+        `Schema drift detected. Missing: ${missing.join(', ')}. ` +
+        `Check for skipped migrations in tmp/dashboard.log. ` +
+        `To bypass in emergency: ARCHITECT_SKIP_SCHEMA_ASSERT=1 dashctl start`
+      );
+    }
+  }
+
   return db;
 }
 
