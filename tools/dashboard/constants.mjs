@@ -33,6 +33,18 @@ export const VALID_EPIC_STATUSES = new Set(['draft', 'active', 'done', 'cancelle
 export const VALID_PRIORITIES = new Set(['low', 'medium', 'high', 'critical']);
 export const VALID_APPROVAL_MODES = new Set(['all', 'any', 'sequential']);
 
+// Statuses from which the orchestrator can pick up work and advance it.
+// Includes `blocked` — a blocked item is "stuck but resumable", not terminal.
+// Single source of truth — referenced by routes, UI gate, and contract tests.
+export const DISPATCHABLE_STATUSES = Object.freeze(
+  ['draft', 'planned', 'in-progress', 'blocked']
+);
+
+// Subset for auto-implement (excludes `draft` — require human plan-gate first).
+export const AUTO_IMPLEMENTABLE_STATUSES = Object.freeze(
+  ['planned', 'in-progress', 'blocked']
+);
+
 // Canonical state transition map. Mirrors domain/rules.md → State Transition Table.
 // Contract test SM-17 enforces parity.
 export const VALID_TRANSITIONS = new Map([
