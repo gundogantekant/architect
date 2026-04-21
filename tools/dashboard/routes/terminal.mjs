@@ -62,7 +62,7 @@ export default function terminalRoutes(deps) {
         } catch {}
       }
 
-      const effectiveTermWorkItem = workItem || (work_item_id ? { id: work_item_id, title: title || '', description: description || '', status: 'open', priority: 'medium', tags: [], session_log: [] } : null);
+      const effectiveTermWorkItem = workItem || (work_item_id ? { id: work_item_id, title: title || '', description: description || '', status: 'draft', priority: 'medium', tags: [], session_log: [] } : null);
 
       // Strip empty-string contract fields per domain/rules.md → Dispatch Contract Rules
       let termContract = null;

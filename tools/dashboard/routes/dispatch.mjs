@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { createWorktreeForDispatch, shouldCreateWorktree } from '../worktree.mjs';
+import { AUTO_IMPLEMENTABLE_STATUSES } from '../constants.mjs';
 
 /**
  * Find an active (running) dispatch for a given work item ID.
@@ -182,7 +183,7 @@ export default function dispatchRoutes(deps) {
         }
       }
 
-      const effectiveWorkItem = workItem || (work_item_id ? { id: work_item_id, title: title || '', description: description || '', status: 'open', priority: 'medium', tags: [], session_log: [] } : null);
+      const effectiveWorkItem = workItem || (work_item_id ? { id: work_item_id, title: title || '', description: description || '', status: 'draft', priority: 'medium', tags: [], session_log: [] } : null);
 
       // Resolve permission mode and skip_permissions independently
       const resolvedPermMode = permission_mode || 'acceptEdits';
@@ -302,9 +303,8 @@ export default function dispatchRoutes(deps) {
       const workItem = await loadWorkItem(work_item_id);
       if (!workItem) return err(res, `Work item ${work_item_id} not found`, 404);
 
-      const allowedStatuses = ['open', 'ready', 'in-progress'];
-      if (!allowedStatuses.includes(workItem.status)) {
-        return err(res, `Work item status '${workItem.status}' cannot be auto-implemented. Must be open, ready, or in-progress.`, 400);
+      if (!AUTO_IMPLEMENTABLE_STATUSES.includes(workItem.status)) {
+        return err(res, `Work item status '${workItem.status}' cannot be auto-implemented. Must be ${AUTO_IMPLEMENTABLE_STATUSES.join(', ')}.`, 400);
       }
 
       const unmetDeps = resolveUnmetDependencies(db, workItem.depends_on || []);
