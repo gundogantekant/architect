@@ -29,6 +29,7 @@ test.describe('Worktree dispatch contracts @fast', () => {
         work_item_id: 'W-999',
         worktree_mode: 'auto',
         feature_flag: true,
+        is_git: true,
       }),
     });
     expect(resp.should_create).toBe(true);
@@ -86,6 +87,37 @@ test.describe('Worktree dispatch contracts @fast', () => {
     expect(resp.should_create).toBe(false);
   });
 
+  test('WD-13: shouldCreateWorktree returns false when isGit is false', async () => {
+    const resp = await api('test/worktree-decision', {
+      method: 'POST',
+      body: JSON.stringify({
+        permission_mode: 'acceptEdits',
+        work_item_id: 'W-999',
+        worktree_mode: 'auto',
+        feature_flag: true,
+        is_git: false,
+      }),
+    });
+    expect(resp.should_create).toBe(false);
+  });
+
+  test('WD-14: shouldCreateWorktree backward compat — omitting isGit uses existing logic', async () => {
+    // When isGit is omitted (undefined), the falsy guard fires → returns false.
+    // This is intentional: all updated callers explicitly pass isGit, so undefined
+    // means an untouched caller — conservatively block.
+    const resp = await api('test/worktree-decision', {
+      method: 'POST',
+      body: JSON.stringify({
+        permission_mode: 'acceptEdits',
+        work_item_id: 'W-999',
+        worktree_mode: 'auto',
+        feature_flag: true,
+      }),
+    });
+    // isGit not passed → undefined → !undefined = true → returns false
+    expect(resp.should_create).toBe(false);
+  });
+
   // --- Dispatch record worktree fields ---
 
   test('WD-6: seeded dispatch with worktree fields persists them', async () => {
@@ -112,7 +144,7 @@ test.describe('Worktree dispatch contracts @fast', () => {
     expect(found.source_branch).toBe('main');
   });
 
-  test('WD-13: active dispatches API includes worktree fields', async () => {
+  test('WD-7: active dispatches API includes worktree fields', async () => {
     const id = `D-wt-active-${Date.now()}`;
     await api('test/seed-dispatch', {
       method: 'POST',

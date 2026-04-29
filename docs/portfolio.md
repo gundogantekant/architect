@@ -102,6 +102,14 @@ Full onboarded repo context used by all skills and agents.
 
 `brief`, `doc_paths`, and `portfolio_guides` are optional — absent on entries onboarded before the profiler was added. `portfolio_guides` lists filenames of markdown guides in the same portfolio directory that are auto-loaded into agent context at standard tier and above.
 
+### Non-Git Projects
+
+Projects without a git repository use `worktree_mode: "none"` in their portfolio entry. The profiler sets this automatically during onboarding when `git rev-parse --git-dir` fails.
+
+For these projects, dispatches run in-place on the project directory — no worktree isolation is created. All other dispatch behavior is unchanged.
+
+To manually set this for an existing portfolio entry, update `worktree_mode` to `"none"` in the entry's JSON file, or run `/onboard <path> rescan`.
+
 ## Context Loading
 
 Every skill loads portfolio context as step 1:

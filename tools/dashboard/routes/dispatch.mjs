@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { createWorktreeForDispatch, shouldCreateWorktree } from '../worktree.mjs';
+import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository } from '../worktree.mjs';
 import { AUTO_IMPLEMENTABLE_STATUSES } from '../constants.mjs';
 
 /**
@@ -192,10 +192,11 @@ export default function dispatchRoutes(deps) {
       // --- Dispatch-level worktree creation (W-927) ---
       const featureFlag = (db.getPreference('worktree_at_dispatch') ?? 'true') === 'true';
       const rawEntry = portfolio?.entry || null;
+      const isGit = await isGitRepository(projectPath);
       let worktreeContext = null;
       let effectiveCwd = projectPath;
 
-      if (shouldCreateWorktree({ permissionMode: resolvedPermMode, workItemId: work_item_id, portfolioEntry: rawEntry, featureFlag })) {
+      if (shouldCreateWorktree({ permissionMode: resolvedPermMode, workItemId: work_item_id, portfolioEntry: rawEntry, featureFlag, isGit })) {
         try {
           worktreeContext = await createWorktreeForDispatch({
             projectPath,
@@ -322,11 +323,12 @@ export default function dispatchRoutes(deps) {
 
       const id = `D-${Date.now()}`;
 
+      const isGit = await isGitRepository(projectPath);
       let portfolio, worktreeContext;
       try {
         [portfolio, worktreeContext] = await Promise.all([
           loadPortfolioContext(project_key),
-          createWorktreeForAutoImplement({ projectPath, workItem }),
+          isGit ? createWorktreeForAutoImplement({ projectPath, workItem }) : Promise.resolve(null),
         ]);
       } catch (worktreeErr) {
         return err(res, `Failed to create worktree: ${worktreeErr.message}`, 500);
@@ -403,7 +405,7 @@ export default function dispatchRoutes(deps) {
 
       dispatches.set(id, dispatch);
       saveDispatchToDb(dispatch);
-      json(res, { dispatch_id: id, status: 'running' });
+      json(res, { id, dispatch_id: id, status: 'running', worktree_path: dispatch.worktree_path });
     }],
 
     // Stream dispatch output (SSE)

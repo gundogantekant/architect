@@ -253,9 +253,11 @@ Stored at `portfolio/<org>/<project>/<component>.json`.
   "portfolio_guides": ["string — filenames of markdown guides in the same portfolio directory to auto-load"],
   // portfolio_guides: must include at minimum "local-dev-setup.md" for any project where setup complexity
   // was detected at onboarding. Auto-generated skeleton at onboarding; overwritten on /onboard rescan.
-  "worktree_mode": "auto|explicit (default: auto — 'auto' creates worktrees by default, 'explicit' only when user explicitly requests)",
+  "worktree_mode": "auto|explicit|none (default: auto — 'auto' creates worktrees by default, 'explicit' only when user explicitly requests, 'none' for non-git projects — no worktrees ever created, dispatch works in-place)",
   // worktree_mode: must always be set explicitly. When "explicit" is chosen, a rationale entry in
-  // custom_rules is required per domain/rules.md → Worktree Rules.
+  // custom_rules is required per domain/rules.md → Worktree Rules. "none" is set automatically by
+  // the profiler when the project has no git repository. "none" ≠ "explicit": explicit still allows
+  // on-request worktrees; none means the project cannot support worktrees at all.
   "worktree_setup": {
     "copy_paths": ["string — relative paths to copy from source to worktree"],
     // copy_paths: populated by the profiler via git ls-files --others --ignored --exclude-standard.

@@ -113,7 +113,7 @@ Populate the `<org>/<project>/<component>` placeholders in the Architect section
 
 Detect gitignored runtime configuration files that must be copied to worktrees.
 
-1. Run `git ls-files --others --ignored --exclude-standard` in the project root. This handles all `.gitignore` semantics correctly (negation patterns, path separators, nested `.gitignore` files). If the command fails or the project has no git history, emit empty `worktree_setup` with a note.
+1. Run `git ls-files --others --ignored --exclude-standard` in the project root. This handles all `.gitignore` semantics correctly (negation patterns, path separators, nested `.gitignore` files). If the command fails or the project has no git history, emit empty `worktree_setup` with a note. When `git ls-files` fails (non-git project), also set `"worktree_mode": "none"` in the PortfolioEntry output — this ensures the dispatch infrastructure skips worktree creation for non-git projects.
 2. Filter the output to retain only runtime configuration paths (not build artifacts):
    - **Include in `copy_paths`**: `.env`, `.env.*`, files matching `*.env`, `**/google-services.json`, `**/GoogleService-Info.plist`, `**/firebase_options.dart`, `**/amplifyconfiguration.json`, `**/awsconfiguration.json`, `**/local.properties`, `**/key.properties`
    - **Flag separately** (do not auto-include — binary/large): `*.keystore`, `*.jks`, `*.p8`, `*.p12`. Add a note in the output: "⚠ Signing artifacts detected — add to `copy_paths` manually after confirming they are safe to copy"
