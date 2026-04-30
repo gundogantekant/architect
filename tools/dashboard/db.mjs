@@ -103,6 +103,8 @@ export async function initDatabaseAsync(workDir, migrationsDir) {
       dispatches: ['org_key', 'dispatch_mode', 'worktree_path'],
       epics: ['id'],
       schema_migrations: ['version'],
+      knowledge_syncs: ['id', 'project_key', 'trigger', 'status', 'started_at'],
+      change_log_entries: ['id', 'project_key', 'commit_hash', 'classification'],
     };
     const missing = [];
     for (const [table, cols] of Object.entries(expected)) {
