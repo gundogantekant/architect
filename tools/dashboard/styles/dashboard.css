@@ -295,6 +295,23 @@
   .dismiss-all-btn:hover { background: #fee2e2; color: var(--red); border-color: var(--red); }
   .auto-dismiss-bar { height: 3px; background: var(--red); opacity: 0.5; width: 100%; border-radius: 0 0 8px 8px; transition: width linear; }
 
+  /* Responsive terminal/dispatch panel grid — agents view only */
+  #dispatch-panels {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
+    gap: 16px;
+    align-items: start;
+  }
+  /* MANDATORY: without min-width:0, xterm canvas overflows grid track */
+  #dispatch-panels > .terminal-panel,
+  #dispatch-panels > .dispatch-panel { min-width: 0; margin-bottom: 0; }
+  /* Action buttons span all columns */
+  #dispatch-panels > .kill-all-btn,
+  #dispatch-panels > .dismiss-all-btn { grid-column: 1 / -1; }
+  /* Panel headers must not overflow their grid track */
+  .terminal-panel .terminal-header,
+  .dispatch-panel .dispatch-header { overflow: hidden; }
+
   /* Terminal panels */
   .terminal-panel { background: var(--bg-card); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; margin-bottom: 16px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06); transition: box-shadow 0.2s; }
   .terminal-panel:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
