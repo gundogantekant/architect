@@ -1842,9 +1842,15 @@ async function dispatchWorkItem(workItem, projectKey) {
       cancelId: 'modal-cancel',
       submitId: 'modal-dispatch',
       buildFields: () => `
-        <div style="margin-bottom:14px">
-          <span class="badge badge-${workItem.status || 'draft'}">${esc(workItem.status)}</span>
-          <span class="badge badge-${workItem.priority || 'medium'}">${esc(workItem.priority || 'medium')}</span>
+        <div data-field-group="status-priority" style="display:flex;gap:16px;align-items:flex-start;margin-bottom:14px">
+          <div>
+            <div style="font-size:11px;color:var(--text-muted,#6c7086);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em">Status</div>
+            <span data-field="status" class="badge badge-${workItem.status || 'draft'}">${esc(workItem.status)}</span>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--text-muted,#6c7086);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em">Priority</div>
+            <span data-field="priority" class="badge badge-${workItem.priority || 'medium'}">${esc(workItem.priority || 'medium')}</span>
+          </div>
         </div>
         <div class="field">
           <label>Title</label>
