@@ -175,13 +175,11 @@ test.describe('Auto-Implement Dispatch @fast', () => {
     expect(found.dispatch_mode).toBe('standard');
   });
 
-  // --- Worktree failure handling ---
+  // --- Non-git project handling ---
 
-  test('AI-10: returns 500 when worktree creation fails (non-git project path)', async ({ request }) => {
+  test('AI-10: dispatches in-place for non-git project path (no worktree)', async ({ request }) => {
     const base = getBase();
     const fakeKey = 'test/fake-project/main';
-    // Seed a registry entry pointing to a non-git path so resolveProjectPath succeeds
-    // but createWorktreeForDispatch fails (git operations on /tmp will fail)
     await request.post(`${base}/api/test/seed-registry-entry`, {
       headers: { 'Content-Type': 'application/json' },
       data: { project_key: fakeKey, project_path: '/tmp' },
@@ -191,8 +189,10 @@ test.describe('Auto-Implement Dispatch @fast', () => {
       headers: { 'Content-Type': 'application/json' },
       data: { work_item_id: wi.id, project_key: fakeKey },
     });
-    expect(resp.status()).toBe(500);
+    // Non-git path: isGitRepository('/tmp') = false → no worktree → dispatch in-place
+    expect(resp.status()).toBe(200);
     const body = await resp.json();
-    expect(body.error).toMatch(/worktree/i);
+    expect(body.id).toBeTruthy();
+    expect(body.worktree_path).toBeNull();
   });
 });
