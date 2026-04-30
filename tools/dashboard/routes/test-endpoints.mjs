@@ -1,4 +1,4 @@
-import { shouldCreateWorktree } from '../worktree.mjs';
+import { shouldCreateWorktree, isGitRepository } from '../worktree.mjs';
 
 export default function testEndpointRoutes(deps) {
   const {
@@ -624,6 +624,14 @@ export default function testEndpointRoutes(deps) {
         isGit: is_git,
       });
       json(res, { should_create: result });
+    }],
+
+    // Test isGitRepository error path resilience (W-954)
+    [/^\/api\/test\/is-git-repository$/, 'POST', async (_m, req, res) => {
+      const { path: testPath } = await parseBody(req);
+      if (!testPath) return err(res, 'path is required', 400);
+      const result = await isGitRepository(testPath);
+      json(res, { is_git: result });
     }],
 
     // Test prompt builder with worktree context (W-927)
