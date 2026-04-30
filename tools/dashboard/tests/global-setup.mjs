@@ -36,6 +36,7 @@ export const SPEC_FILES = [
   'approvals',
   'work-item-flags',
   'build-tree',
+  'autonomous-pipeline',
 ];
 
 function getLiveDashboardPorts() {

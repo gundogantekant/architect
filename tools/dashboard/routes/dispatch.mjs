@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository, checkWorktreeReadiness } from '../worktree.mjs';
 import { AUTO_IMPLEMENTABLE_STATUSES } from '../constants.mjs';
+import { triggerMerge } from '../dispatch-manager.mjs';
 
 /**
  * Find an active (running) dispatch for a given work item ID.
@@ -513,6 +514,10 @@ export default function dispatchRoutes(deps) {
           worktree_branch: d.worktree_branch || null,
           source_branch: d.source_branch || null,
           dispatch_mode: d.dispatch_mode || 'standard',
+          completion_sha: d.completion_sha || null,
+          completion_summary: d.completion_summary || null,
+          merge_result: d.merge_result || null,
+          _exitedWithoutSignal: d._exitedWithoutSignal || false,
         });
       }
       json(res, list);
@@ -561,6 +566,68 @@ export default function dispatchRoutes(deps) {
       db.deleteDispatch(m[1]);
       unlinkFile(join(LOGS_DIR, `${m[1]}.jsonl`)).catch(() => {});
       json(res, { status: 'killed', id: m[1] });
+    }],
+
+    // Cancel a pending merge (clears timer, keeps status as merge_pending)
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/merge\/cancel$/, 'POST', async (m, _req, res) => {
+      const dispatch = dispatches.get(m[1]);
+      if (!dispatch) return err(res, 'dispatch not found', 404);
+      if (dispatch.status !== 'merge_pending') return err(res, 'dispatch is not in merge_pending status', 400);
+      if (dispatch._mergeTimer) {
+        clearTimeout(dispatch._mergeTimer);
+        dispatch._mergeTimer = null;
+      }
+      json(res, { status: 'merge_pending', dispatch_id: m[1], cancelled: true });
+    }],
+
+    // Trigger merge (UI/human-only — depth 0 required)
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/merge$/, 'POST', async (m, req, res) => {
+      const depth = parseInt(req.headers['x-architect-session-depth'] || '0', 10);
+      if (depth !== 0) return err(res, 'POST /merge is UI/human-only (X-Architect-Session-Depth must be 0)', 403);
+      const dispatch = dispatches.get(m[1]);
+      if (!dispatch) return err(res, 'dispatch not found', 404);
+      if (dispatch.status !== 'merge_pending') return err(res, 'dispatch is not in merge_pending status', 400);
+      if (dispatch._mergeTimer) {
+        clearTimeout(dispatch._mergeTimer);
+        dispatch._mergeTimer = null;
+      }
+      triggerMerge(dispatch, deps).catch(e => console.error(`[merge] triggerMerge error for ${m[1]}:`, e));
+      json(res, { status: 'merging', dispatch_id: m[1] });
+    }],
+
+    // Signal completion and request merge (agent-only — depth >= 1 required)
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/complete$/, 'POST', async (m, req, res) => {
+      const depth = parseInt(req.headers['x-architect-session-depth'] || '0', 10);
+      if (depth < 1) return err(res, 'POST /complete is agent-only (X-Architect-Session-Depth >= 1 required)', 403);
+      const dispatch = dispatches.get(m[1]);
+      if (!dispatch) return err(res, 'dispatch not found', 404);
+      if (dispatch.status !== 'running') return err(res, `dispatch is not running (status: ${dispatch.status})`, 400);
+
+      // Set _mergeHandled BEFORE any await — prevents close handler from overwriting status
+      dispatch._mergeHandled = true;
+
+      const body = await parseBody(req);
+      const { sha, summary } = body || {};
+
+      dispatch.status = 'merge_pending';
+      dispatch.completion_sha = sha || null;
+      dispatch.completion_summary = summary || null;
+
+      db.updateDispatchMergeResult(m[1], {
+        status: 'merge_pending',
+        completion_sha: sha || null,
+        completion_summary: summary || null,
+      });
+      saveDispatchToDb(dispatch);
+
+      const mergeGate = db.getPreference('merge_gate') ?? 'confirm';
+      if (mergeGate === 'auto') {
+        dispatch._mergeTimer = setTimeout(() => {
+          triggerMerge(dispatch, deps).catch(e => console.error(`[auto-merge] error for ${m[1]}:`, e));
+        }, 10000);
+      }
+
+      json(res, { status: 'merge_pending', dispatch_id: m[1] });
     }],
 
     // Suspend a dispatch (kill process but keep record for resume)

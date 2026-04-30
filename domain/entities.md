@@ -491,7 +491,7 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "additional_instructions": "string (optional)",
   "permission_mode": "string (plan|acceptEdits)",
   "skip_permissions": "boolean (default false, adds --dangerously-skip-permissions flag)",
-  "status": "running|completed|failed|killed|interrupted|suspended",
+  "status": "running|completed|failed|killed|interrupted|suspended|merge_pending|merge_conflict",
   "started_at": "string (ISO 8601)",
   "completed_at": "string (ISO 8601, optional)",
   "session_id": "string (Claude session ID, optional — legacy field)",
@@ -502,9 +502,25 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "worktree_path": "string (absolute path to worktree, null if no worktree — persisted to SQLite)",
   "worktree_branch": "string (worktree branch name, null if no worktree — persisted to SQLite)",
   "source_branch": "string (originating branch the worktree was created from, null if no worktree — persisted to SQLite)",
-  "dispatch_mode": "string ('standard' | 'auto_implement', default 'standard')"
+  "dispatch_mode": "string ('standard' | 'auto_implement', default 'standard')",
+  "completion_sha": "string (SHA of the final implementation commit, optional)",
+  "completion_summary": "string (agent-provided summary, max 500 chars, optional)",
+  "merge_result": "'success'|'conflict'|'aborted' — outcome of the merge attempt, optional"
 }
 ```
+
+## AutonomousCompletionPayload (Value Object)
+
+Request body sent by the agent to POST /api/dispatch/:id/complete to signal that autonomous pipeline execution has completed. Immutable, no identity or lifecycle.
+
+```json
+{
+  "sha": "string — git commit SHA of the final implementation commit",
+  "summary": "string — brief one-line agent-provided summary (max 500 chars)"
+}
+```
+
+Rules: Both fields are required. sha must be a valid git SHA string. summary is informational only. This endpoint is agent-only — callers must supply X-Architect-Session-Depth: 1 header. See domain/rules.md → Autonomous Pipeline Rules.
 
 ## TerminalSession
 
@@ -696,7 +712,8 @@ Key-value pairs stored in the `preferences` table in SQLite. Used for dashboard-
 ```json
 {
   "default_permission_mode": "plan|acceptEdits",
-  "default_skip_permissions": "true|false"
+  "default_skip_permissions": "true|false",
+  "merge_gate": "'confirm'|'auto' (default: 'confirm') — pre-merge gate mode for auto-implement dispatches; confirm=human approves in UI, auto=merge after 10s delay"
 }
 ```
 

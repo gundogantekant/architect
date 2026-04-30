@@ -879,8 +879,21 @@ Follow the workflow at \`$ARCHITECT_ROOT/usecases/implement-work-item.md\` exact
 
 Your session depth is 1. You MUST NOT trigger further dashboard dispatches (POST /api/dispatch or /api/dispatch/auto-implement). All sub-agent work runs in-process via the Agent tool.
 
-When making any API call to the dashboard (curl http://127.0.0.1:3777/...), include the header:
-\`--header "X-Architect-Session-Depth: 1"\``;
+When making any API call to the dashboard (curl http://127.0.0.1:${port}/...), include the header:
+\`--header "X-Architect-Session-Depth: 1"\`
+
+## Completion Signal
+
+After step 12 (commit) succeeds in Auto-Implement Mode, retrieve the commit SHA and signal completion to the dashboard before halting:
+
+  COMMIT_SHA=$(git rev-parse HEAD)
+  curl -s -X POST http://127.0.0.1:${port}/api/dispatch/\${DISPATCH_ID}/complete \\
+    -H 'Content-Type: application/json' \\
+    -H 'X-Architect-Session-Depth: 1' \\
+    -d "{\\"sha\\": \\"\${COMMIT_SHA}\\", \\"summary\\": \\"<one-line summary of what was implemented>\\"}"
+
+The DISPATCH_ID is found in the \`# Tracking\` section of your prompt (the work item dispatch ID, starts with D-).
+After calling this endpoint, halt. Do not proceed to steps 13–16 — the dashboard handles merge-back automatically.`;
 }
 
 /**

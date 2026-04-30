@@ -120,7 +120,7 @@ export function tailLogFile(dispatch) {
 }
 
 // Restore persisted sessions from SQLite with PID liveness checks
-export function restoreSessions(wireTerminalHandlers) {
+export function restoreSessions(wireTerminalHandlers, deps) {
   // Mark legacy rows (no PID) as interrupted
   db.markRunningAsInterrupted();
 
@@ -131,6 +131,26 @@ export function restoreSessions(wireTerminalHandlers) {
   let interruptedTerminals = 0;
 
   for (const d of db.getPersistedDispatches()) {
+    if (d.status === 'merge_pending') {
+      const logPath = join(LOGS_DIR, `${d.id}.jsonl`);
+      let output = [];
+      try { output = readFileSync(logPath, 'utf8').split('\n').filter(l => l.trim()); } catch {}
+      const dispatch = {
+        ...d,
+        output,
+        lastLines: [],
+        wsClients: new Set(),
+        process: null,
+        _mergeHandled: true,
+      };
+      dispatches.set(d.id, dispatch);
+      const mergeGate = db.getPreference('merge_gate') ?? 'confirm';
+      if (mergeGate === 'auto') {
+        setImmediate(() => triggerMerge(dispatch, deps));
+      }
+      // 'confirm' mode: surface in UI, user triggers manually via POST /api/dispatch/:id/merge
+      continue;
+    }
     if (d.status === 'suspended') {
       // Suspended dispatches: load into memory as-is (no running process)
       dispatches.set(d.id, {
@@ -367,7 +387,19 @@ export function wireDispatchHandlers(dispatch, proc) {
   });
 
   proc.on('close', (code) => {
+    if (dispatch._mergeHandled) {
+      // Agent called POST /complete before exiting — status already set to merge_pending.
+      // Do not overwrite status. Just clean up streams and persist.
+      dispatch.process = null;
+      if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
+      if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
+      saveDispatchToDb(dispatch);
+      return;
+    }
     dispatch.status = code === 0 ? 'completed' : 'failed';
+    if (code === 0 && dispatch.dispatch_mode === 'auto_implement') {
+      dispatch._exitedWithoutSignal = true;
+    }
     dispatch.completed_at = new Date().toISOString();
     dispatch.process = null;
     if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
@@ -377,4 +409,51 @@ export function wireDispatchHandlers(dispatch, proc) {
     saveDispatchToDb(dispatch);
     // Keep dispatch in memory for frontend display; auto-cleanup timer handles removal after 30min
   });
+}
+
+/**
+ * Execute the merge-back step for an auto-implement dispatch that has signalled completion.
+ * Called by POST /api/dispatch/:id/merge (UI-triggered) and by restoreSessions (restart recovery).
+ *
+ * @param {Object} dispatch - the in-memory dispatch record
+ * @param {Object} deps - server deps including attemptMerge and db
+ */
+export async function triggerMerge(dispatch, deps) {
+  const { attemptMerge, db: depsDb = db } = deps;
+
+  const result = await attemptMerge({
+    dispatchId: dispatch.id,
+    worktreePath: dispatch.worktree_path,
+    sourceBranch: dispatch.source_branch,
+    projectPath: dispatch.project_path,
+  });
+
+  const now = new Date().toISOString();
+
+  if (result.success) {
+    dispatch.status = 'completed';
+    dispatch.merge_result = 'success';
+    dispatch.completed_at = now;
+    depsDb.updateDispatchMergeResult(dispatch.id, {
+      status: 'completed',
+      completed_at: now,
+      merge_result: 'success',
+    });
+    if (dispatch.work_item_id) {
+      depsDb.updateWorkItem(dispatch.work_item_id, { status: 'done' });
+    }
+    saveDispatchToDb(dispatch);
+    broadcastDispatchDone(dispatch);
+  } else {
+    dispatch.status = 'merge_conflict';
+    dispatch.merge_result = 'conflict';
+    dispatch.completed_at = now;
+    depsDb.updateDispatchMergeResult(dispatch.id, {
+      status: 'merge_conflict',
+      completed_at: now,
+      merge_result: 'conflict',
+    });
+    saveDispatchToDb(dispatch);
+    broadcastDispatchDone(dispatch);
+  }
 }

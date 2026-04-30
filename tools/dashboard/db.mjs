@@ -100,7 +100,7 @@ export async function initDatabaseAsync(workDir, migrationsDir) {
       work_items: ['approval_active', 'input_needed', 'status'],
       work_item_approvals: ['work_item_id', 'identity', 'status', 'sort_order', 'decided_at', 'reason'],
       terminals: ['org_key'],
-      dispatches: ['org_key', 'dispatch_mode', 'worktree_path'],
+      dispatches: ['org_key', 'dispatch_mode', 'worktree_path', 'completion_sha', 'completion_summary', 'merge_result'],
       epics: ['id'],
       schema_migrations: ['version'],
       knowledge_syncs: ['id', 'project_key', 'trigger', 'status', 'started_at'],
@@ -576,6 +576,21 @@ export function getEpicTitle(id) {
 export function updateDispatchStatus(id, status, completed_at) {
   db.prepare('UPDATE dispatches SET status = ?, completed_at = ? WHERE id = ?')
     .run(status, completed_at || null, id);
+}
+
+export function updateDispatchMergeResult(id, { status, completed_at, completion_sha, completion_summary, merge_result } = {}) {
+  const fields = [];
+  const values = [];
+
+  if (status !== undefined) { fields.push('status = ?'); values.push(status); }
+  if (completed_at !== undefined) { fields.push('completed_at = ?'); values.push(completed_at); }
+  if (completion_sha !== undefined) { fields.push('completion_sha = ?'); values.push(completion_sha); }
+  if (completion_summary !== undefined) { fields.push('completion_summary = ?'); values.push(completion_summary); }
+  if (merge_result !== undefined) { fields.push('merge_result = ?'); values.push(merge_result); }
+
+  if (!fields.length) return;
+  values.push(id);
+  db.prepare(`UPDATE dispatches SET ${fields.join(', ')} WHERE id = ?`).run(...values);
 }
 
 export function updateTerminalStatus(id, status, exited_at) {

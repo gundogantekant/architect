@@ -15,7 +15,7 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 - Follow `usecases/load-portfolio-context.md` with depth **standard** (fallback: run scout to detect the stack)
 - Dashboard must be running at `http://127.0.0.1:3777`
 - For medium+ complexity work items, the DispatchPlan must include a `contract` on each step per `domain/rules.md` → Dispatch Contract Rules. If contracts are missing, the orchestrator constructs them from the work item description before dispatching.
-- **Autonomous mode**: When the prompt contains a `# Auto-Implement Mode` section, proceed through all 15 steps without pausing for user confirmation at intermediate gates. The only exception: if a Technical Review Board gate returns `block` after 2 revision cycles, halt and mark the dispatch as failed rather than escalating interactively.
+- **Autonomous mode**: When the prompt contains a `# Auto-Implement Mode` section, proceed through all steps without pausing for user confirmation at intermediate gates. The only exception: if a Technical Review Board gate returns `block` after 2 revision cycles, halt and mark the dispatch as failed. After step 12 (commit) succeeds, call `POST /api/dispatch/${DISPATCH_ID}/complete` (see step 12 sub-step below) and then **halt** — the dashboard handles steps 13–16 (merge-back, cleanup, status update) automatically.
 
 ## Agent(s)
 - **coder** (model: sonnet) — implementation
@@ -70,7 +70,18 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 
 12. **Commit**: Dispatch git-ops to commit in the worktree. Message format: `<W-XXX>: <concise description of changes>`. Commit only relevant files. No Claude attribution per project rules.
 
-13. **Log progress**: `POST /api/work-items/<id>/log` with `{"message": "Implemented: <summary>. Branch: <branch-name>"}`.
+    **Auto-Implement Mode sub-step**: After the commit succeeds, retrieve the commit SHA (`git rev-parse HEAD`) and signal completion to the dashboard:
+    ```
+    curl -s -X POST http://127.0.0.1:${PORT}/api/dispatch/${DISPATCH_ID}/complete \
+      -H 'Content-Type: application/json' \
+      -H 'X-Architect-Session-Depth: 1' \
+      -d '{"sha": "<commit-sha>", "summary": "<one-line summary of what was implemented>"}'
+    ```
+    The `${PORT}` and `${DISPATCH_ID}` values are injected into the prompt by the dashboard at dispatch time. After calling this endpoint, halt. Do not proceed to steps 13–16.
+
+13. **Note (Auto-Implement Mode)**: Steps 13–16 are skipped in Auto-Implement Mode — the dashboard autonomous pipeline handles merge-back confirmation, merge execution, worktree cleanup, and work item status update automatically after receiving the completion signal in step 12.
+
+    **Log progress**: `POST /api/work-items/<id>/log` with `{"message": "Implemented: <summary>. Branch: <branch-name>"}`.
 
 14. **Merge-back confirmation**: Present a one-line summary: "Ready to merge <N> commit(s) from `<branch>` into `<originating_branch>`. Proceed?" Wait for user confirmation before continuing.
 

@@ -31,6 +31,7 @@ import terminalRoutes from './routes/terminal.mjs';
 import serverMgmtRoutes from './routes/server-mgmt.mjs';
 import syncRoutes from './routes/sync.mjs';
 import testEndpointRoutes from './routes/test-endpoints.mjs';
+import { attemptMerge, isMergeLocked } from './merge.mjs';
 
 const deps = {
   db, json, text, err, safe, parseBody, readJson, listDirs, listFiles,
@@ -44,6 +45,7 @@ const deps = {
   restoreSessions,
   termEventLogPath, generateSeedContent, sleep, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture,
   CLAUDE_BIN, TMUX_AVAILABLE, SERVER_START_TIME, DASHCTL_PATH, PID_FILE, LOG_FILE, MIGRATIONS_DIR,
+  attemptMerge, isMergeLocked,
   EventStream, getAdapter, pty,
   spawn, execFileSync, readFile, writeFile, readFileSync, writeFileSync, appendFileSync, existsSync, createWriteStream,
   mkdir, stat, join, extname, dirname, homedir, rename, unlinkFile, renameSync, readdir,
@@ -195,7 +197,7 @@ async function main() {
   syncProjectsFromRegistry();
 
   // Phase 3: Restore sessions
-  restoreSessions(wireTerminalHandlers);
+  restoreSessions(wireTerminalHandlers, deps);
 
   // Phase 3.5: Warn about orphaned worktrees
   try {

@@ -167,7 +167,16 @@
   .dispatch-panel.status-failed, .dispatch-panel.status-killed { border-left-color: var(--red); }
   .dispatch-panel.status-interrupted { border-left-color: #94a3b8; }
   .dispatch-panel.status-suspended, .terminal-panel.status-suspended { border-left-color: #f59e0b; }
+  .dispatch-panel.status-merge_pending { border-left-color: #8b5cf6; }
+  .dispatch-panel.status-merge_conflict { border-left-color: #ef4444; }
   .dispatch-header .status-dot.suspended { background: #f59e0b; }
+  .status-dot.merge_pending { background: #8b5cf6; animation: pulse 1.5s infinite; }
+  .status-dot.merge_conflict { background: #ef4444; }
+  .merge-gate-btn { cursor: pointer; color: #fff; font-size: 11px; border: none; background: #8b5cf6; padding: 3px 10px; border-radius: 4px; margin-left: 4px; }
+  .merge-gate-btn:hover { opacity: 0.85; }
+  .cancel-merge-btn { cursor: pointer; font-size: 11px; border: 1px solid var(--border, #ddd); background: none; padding: 3px 10px; border-radius: 4px; margin-left: 4px; }
+  .exit-no-signal-badge { display: inline-block; font-size: 10px; color: #b45309; border: 1px solid #fde68a; background: #fef3c7; padding: 1px 6px; border-radius: 3px; margin-left: 4px; }
+  .merge-pending-info { padding: 8px 16px; font-size: 12px; background: #f5f3ff; border-top: 1px solid #ddd6fe; }
   .suspended-badge { background: #fef3c7; color: #b45309; font-size: 10px; padding: 1px 6px; border-radius: 3px; margin-left: 4px; }
   .suspend-btn { cursor: pointer; color: #fff; font-size: 11px; border: none; background: #f59e0b; padding: 3px 10px; border-radius: 4px; }
   .suspend-btn:hover { background: #d97706; }
@@ -971,26 +980,51 @@ async function dismissDispatchPanel(id) {
 function finalizeDispatchPanel(dispatch) {
   const panel = document.getElementById(`dispatch-${dispatch.id}`);
   if (panel) {
-    // Update status class
-    panel.className = panel.className.replace(/status-\w+/, `status-${dispatch.status}`);
+    // Update status class (handle multi-word statuses like merge_pending)
+    panel.className = panel.className.replace(/status-[\w]+/, `status-${dispatch.status}`);
     const dot = panel.querySelector('.status-dot');
     if (dot) {
       clearActiveDotClasses(dot);
-      dot.classList.add(dispatch.status === 'completed' ? 'completed' : 'failed');
+      if (dispatch.status === 'completed') {
+        dot.classList.add('completed');
+      } else if (dispatch.status === 'merge_pending') {
+        dot.classList.add('merge_pending');
+      } else if (dispatch.status === 'merge_conflict') {
+        dot.classList.add('merge_conflict');
+      } else {
+        dot.classList.add('failed');
+      }
     }
-    // Hide action buttons, show dismiss
+    const isMergePending = dispatch.status === 'merge_pending';
+    // Hide action buttons, show dismiss — but keep merge buttons visible when merge_pending
     const killBtn = panel.querySelector(`[data-kill-dispatch="${dispatch.id}"]`);
     if (killBtn) killBtn.disabled = true;
     const suspendBtn = panel.querySelector(`[data-suspend-dispatch="${dispatch.id}"]`);
     if (suspendBtn) suspendBtn.style.display = 'none';
+    const mergeGateBtn = panel.querySelector('.merge-gate-btn');
+    if (mergeGateBtn) mergeGateBtn.style.display = isMergePending ? '' : 'none';
+    const cancelMergeBtn = panel.querySelector('.cancel-merge-btn');
+    if (cancelMergeBtn) cancelMergeBtn.style.display = isMergePending ? '' : 'none';
+    const mergePendingInfo = panel.querySelector('.merge-pending-info');
+    if (mergePendingInfo) {
+      if (isMergePending) {
+        const sha = dispatch.completion_sha ? dispatch.completion_sha.slice(0, 8) : '';
+        const summary = dispatch.completion_summary ? esc(dispatch.completion_summary) : '';
+        const target = dispatch.source_branch ? esc(dispatch.source_branch) : 'origin';
+        mergePendingInfo.innerHTML = `Merge pending: <code>${sha}</code> → <strong>${target}</strong>${summary ? `<br><em>${summary}</em>` : ''}`;
+        mergePendingInfo.style.display = '';
+      } else {
+        mergePendingInfo.style.display = 'none';
+      }
+    }
     const dismissBtn = panel.querySelector(`[data-dismiss-dispatch="${dispatch.id}"]`);
-    if (dismissBtn) dismissBtn.style.display = '';
+    if (dismissBtn) dismissBtn.style.display = isMergePending ? 'none' : '';
   }
   if (dispatch.dispatch_mode === 'auto_implement') {
     showAutoImplementToast(dispatch);
   }
   syncSessionState();
-  if (dispatch.status !== 'running' && dispatch.status !== 'suspended') {
+  if (dispatch.status !== 'running' && dispatch.status !== 'suspended' && dispatch.status !== 'merge_pending') {
     scheduleAutoDismiss('dispatch', dispatch.id, dispatch);
   }
 }
@@ -1055,6 +1089,10 @@ async function loadDispatchContent(dispatch) {
         logEl.dataset.replayDone = '1';
       } else if (msg.type === 'done') {
         dispatch.status = msg.status || 'completed';
+        if (msg.completion_sha) dispatch.completion_sha = msg.completion_sha;
+        if (msg.completion_summary) dispatch.completion_summary = msg.completion_summary;
+        if (msg.source_branch) dispatch.source_branch = msg.source_branch;
+        if (msg._exitedWithoutSignal) dispatch._exitedWithoutSignal = msg._exitedWithoutSignal;
         dispatch._ws = null;
         finalizeDispatchPanel(dispatch);
       }
@@ -2010,10 +2048,12 @@ function createSessionPanel(type, info) {
     panel.id = `dispatch-${id}`;
     const isRunning = dispatch.status === 'running';
     const isSuspended = dispatch.status === 'suspended';
+    const isMergePending = dispatch.status === 'merge_pending';
     const skipBadge = dispatch.skip_permissions ? '<span class="auto-badge">[skip-perms]</span>' : '';
     const planBadge = dispatch.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
     const suspendedBadge = isSuspended ? '<span class="suspended-badge">[suspended]</span>' : '';
     const autoImplementBadge = dispatch.dispatch_mode === 'auto_implement' ? '<span class="status-badge badge-open badge-auto">[auto]</span>' : '';
+    const exitNoSignalBadge = dispatch._exitedWithoutSignal ? '<span class="exit-no-signal-badge">exited without completion signal</span>' : '';
     const dKeyParts = (dispatch.project_key || '').split('/').filter(p => p && p !== '*');
     const dBreadcrumb = [];
     if (dKeyParts.length >= 2) dBreadcrumb.push(`${esc(dKeyParts[0])} / ${esc(dKeyParts[1])}`);
@@ -2029,19 +2069,28 @@ function createSessionPanel(type, info) {
         : esc(dispatch.epic_id));
     }
     const dispatchPathStr = dBreadcrumb.join(' · ') || esc(dispatch.id);
+    const mergeSha = dispatch.completion_sha ? dispatch.completion_sha.slice(0, 8) : '';
+    const mergeSummary = dispatch.completion_summary ? esc(dispatch.completion_summary) : '';
+    const mergeTarget = dispatch.source_branch ? esc(dispatch.source_branch) : 'origin';
     panel.innerHTML = `
       <div class="dispatch-header">
         <span class="status-dot ${isRunning ? (dispatch.agent_phase === 'waiting_for_input' ? 'needs-input' : dispatch.agent_phase === 'tool_running' ? 'tool-running' : 'generating') : dispatch.status}" title="${isRunning ? ({generating:'Thinking',tool_running:'Running tool',waiting_for_input:'Needs input'}[dispatch.agent_phase]||'') : ''}"></span>
-        <span class="dispatch-title">${dispatchPathStr}${planBadge}${skipBadge}${suspendedBadge}${autoImplementBadge}</span>
+        <span class="dispatch-title">${dispatchPathStr}${planBadge}${skipBadge}${suspendedBadge}${autoImplementBadge}${exitNoSignalBadge}</span>
         <span class="dispatch-meta">${new Date(dispatch.started_at).toLocaleTimeString()}</span>
         <button class="focus-btn" data-focus-dispatch="${esc(id)}">Focus</button>
         <button class="minimize-btn" data-minimize-dispatch="${esc(id)}">▼</button>
         <button class="suspend-btn" data-suspend-dispatch="${esc(id)}" ${!isRunning ? 'style="display:none"' : ''}>Suspend</button>
         <button class="resume-btn" data-resume-dispatch="${esc(id)}" ${!isSuspended ? 'style="display:none"' : ''}>Resume</button>
+        <button class="merge-gate-btn" data-dispatch-id="${esc(id)}" ${!isMergePending ? 'style="display:none"' : ''}>Merge Now</button>
+        <button class="cancel-merge-btn" data-dispatch-id="${esc(id)}" ${!isMergePending ? 'style="display:none"' : ''}>Cancel Timer</button>
         <button class="kill-btn" data-kill-dispatch="${esc(id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
         <button class="dismiss-btn" data-dismiss-dispatch="${esc(id)}" ${isRunning ? 'style="display:none"' : ''}>✕</button>
       </div>
       <div class="dispatch-log${resolveTermTheme() === 'light' ? ' log-light' : ''}" id="log-${id}"></div>
+      <div class="merge-pending-info" ${!isMergePending ? 'style="display:none"' : ''}>
+        Merge pending: <code>${mergeSha}</code> → <strong>${mergeTarget}</strong>
+        ${mergeSummary ? `<br><em>${mergeSummary}</em>` : ''}
+      </div>
       <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
         <button class="focus-btn" data-focus-dispatch-bottom="${esc(id)}">Focus</button>
         ${sessionIdTag(dispatch.claude_session_id)}
@@ -2135,6 +2184,20 @@ function createSessionPanel(type, info) {
       await dismissDispatchPanel(id);
       syncSessionState();
     };
+    const mergeBtn = panel.querySelector('.merge-gate-btn');
+    if (mergeBtn) {
+      mergeBtn.addEventListener('click', async () => {
+        const dispatchId = mergeBtn.dataset.dispatchId;
+        await fetch(`/api/dispatch/${dispatchId}/merge`, { method: 'POST' });
+      });
+    }
+    const cancelMergeBtn = panel.querySelector('.cancel-merge-btn');
+    if (cancelMergeBtn) {
+      cancelMergeBtn.addEventListener('click', async () => {
+        const dispatchId = cancelMergeBtn.dataset.dispatchId;
+        await fetch(`/api/dispatch/${dispatchId}/merge/cancel`, { method: 'POST' });
+      });
+    }
 
   } else if (type === 'terminal') {
     const terminalInfo = info;
@@ -6713,6 +6776,13 @@ function renderSettingsView(status, config) {
   html += '<option value="expanded"' + (curPanel === 'expanded' ? ' selected' : '') + '>Expanded</option>';
   html += '<option value="minimized"' + (curPanel === 'minimized' ? ' selected' : '') + '>Minimized</option>';
   html += '</select></div>';
+  // Merge gate
+  const curMergeGate = window._prefs.merge_gate || 'confirm';
+  html += '<div style="margin-top:8px"><span class="key">Merge Gate</span> ';
+  html += '<select id="settings-merge-gate" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px">';
+  html += '<option value="confirm"' + (curMergeGate === 'confirm' ? ' selected' : '') + '>confirm (manual approval)</option>';
+  html += '<option value="auto"' + (curMergeGate === 'auto' ? ' selected' : '') + '>auto (10s delay then merge)</option>';
+  html += '</select></div>';
   html += '</div></div>';
 
   // Card 5: Recent Logs
@@ -6856,6 +6926,19 @@ function bindSettingsEvents(status, config) {
         body: JSON.stringify({ default_panel_state: e.target.value }),
       });
       window._prefs.default_panel_state = e.target.value;
+    } catch (err) {
+      alert('Failed to save preference: ' + err.message);
+    }
+  });
+
+  document.getElementById('settings-merge-gate')?.addEventListener('change', async (e) => {
+    try {
+      await fetch('/api/settings/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ merge_gate: e.target.value }),
+      });
+      window._prefs.merge_gate = e.target.value;
     } catch (err) {
       alert('Failed to save preference: ' + err.message);
     }

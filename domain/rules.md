@@ -646,6 +646,10 @@ Canonical list of statuses eligible for the auto-implement endpoint. `constants.
 | `planned` |
 | `in-progress` |
 
+### Agent Completion Signal Obligation
+
+- After step 12 (commit) completes, the agent MUST call `POST /api/dispatch/:id/complete` and then halt. Steps 13–16 of implement-work-item.md are handled server-side by the autonomous pipeline.
+
 ## Auto-Implement Failure Protocol
 
 When the autonomous agent encounters a blocking failure (no user present to decide):
@@ -658,6 +662,60 @@ When the autonomous agent encounters a blocking failure (no user present to deci
 | Commit failure | Log error; halt; preserve worktree |
 
 In all failure cases: dispatch status = 'failed', work item status remains 'in-progress'. User reviews via dashboard and decides next step (retry, fix manually, or discard worktree).
+
+## Autonomous Pipeline Rules
+
+These rules govern the completion signal, pre-merge gate, server-side merge, and cleanup for `auto_implement` dispatches.
+
+### Completion Signal
+
+- The agent MUST call `POST /api/dispatch/:id/complete` (with `X-Architect-Session-Depth: 1` header) after committing. This is the authoritative completion signal.
+- Process exit code 0 WITHOUT a prior POST /complete → dispatch transitions to `completed` (not `merge_pending`) with a UI badge "agent exited without completion signal". No merge is triggered.
+- The endpoint is agent-only (depth ≥ 1). The pre-merge trigger `/merge` is UI/human-only (depth === 0).
+
+### New Dispatch Statuses
+
+- `merge_pending` — agent signalled completion, pre-merge gate is active; WorkItem remains `in-progress`
+- `merge_conflict` — merge was attempted but produced a git conflict; worktree is preserved intact
+- Both statuses are set on `DispatchRequest`, NOT on `WorkItem`. WorkItem is only set to `done` after a successful merge.
+
+### Pre-Merge Gate
+
+Controlled by `DashboardPreferences.merge_gate`:
+- `confirm` (default) — human approves merge in dashboard UI by clicking "Merge Now"
+- `auto` — server merges after a 10-second delay on initial signal; on server restart recovery, merge triggers immediately (no delay)
+
+### Merge Lock
+
+- Server holds an in-memory `Map<dispatch_id, boolean>` lock for concurrent-merge protection
+- Lock acquired synchronously before any `await` in the merge code path
+- Lock released in a `finally` block unconditionally
+
+### Mid-Merge Crash Recovery
+
+- `attemptMerge` checks for `.git/MERGE_HEAD` at the project path at the start of every invocation
+- If found: runs `git merge --abort` to reset the partial merge, then re-attempts
+- This makes `attemptMerge` idempotent on restart
+
+### Cancel
+
+- `POST /api/dispatch/:id/merge/cancel` clears any pending auto-merge timer
+- Dispatch remains in `merge_pending` — user can still trigger merge manually via `POST /api/dispatch/:id/merge`
+- This is a distinct endpoint — never reuse `DELETE /api/dispatch/:id` for cancel
+
+### Session Depth Guards
+
+- `POST /api/dispatch/:id/complete` — requires `X-Architect-Session-Depth >= 1` (agent-only)
+- `POST /api/dispatch/:id/merge` — requires depth `=== 0` (UI/human-only)
+
+### Worktree Cleanup
+
+- On successful merge: worktree directory removed (`git worktree remove --force`), branch deleted (`git branch -d`), dispatch transitions to `completed`, work item to `done`
+- On conflict (`merge_conflict`): worktree is preserved intact for manual resolution. User may run `/pr` to push the branch and open a PR instead.
+
+### No Automatic Retry
+
+On merge failure, dispatch enters `merge_conflict`. No automatic retry. User decides next action.
 
 ### Contract Derivation from Work Item Description
 
