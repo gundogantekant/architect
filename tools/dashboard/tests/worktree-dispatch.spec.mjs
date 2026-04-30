@@ -232,4 +232,59 @@ test.describe('Worktree dispatch contracts @fast', () => {
     expect(found.work_item_id).toBe('W-555');
   });
 
+  // --- Standard dispatch non-git integration (W-954) ---
+
+  test('WD-15: standard /api/dispatch with non-git project path produces worktree_path: null', async ({ request }) => {
+    const base = getBase();
+    const fakeKey = 'test/fake-project-wd15/main';
+    await request.post(`${base}/api/test/seed-registry-entry`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: { project_key: fakeKey, project_path: '/tmp' },
+    });
+    const wi = await seedWorkItem({ title: 'WD-15 test', status: 'planned' });
+    const resp = await request.post(`${base}/api/dispatch`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        project_key: fakeKey,
+        work_item_id: wi.id,
+        permission_mode: 'acceptEdits',
+      },
+    });
+    // Non-git path: isGitRepository('/tmp') = false → shouldCreateWorktree = false → no worktree
+    expect(resp.status()).toBe(200);
+    const body = await resp.json();
+    expect(body.dispatch_id).toBeTruthy();
+
+    // Fetch active list without x-test-worker-id header so real dispatches (untagged) are visible
+    const activeResp = await request.get(`${base}/api/dispatch/active`);
+    expect(activeResp.ok()).toBe(true);
+    const active = await activeResp.json();
+    const dispatch = active.find(d => d.id === body.dispatch_id);
+    expect(dispatch).toBeDefined();
+    expect(dispatch.worktree_path).toBeNull();
+    expect(dispatch.worktree_branch).toBeNull();
+  });
+
+  // --- isGitRepository error path resilience (W-954) ---
+
+  test('WD-16: isGitRepository returns false for non-git, nonexistent, and file paths without throwing', async () => {
+    const nonGitResult = await api('test/is-git-repository', {
+      method: 'POST',
+      body: JSON.stringify({ path: '/tmp' }),
+    });
+    expect(nonGitResult.is_git).toBe(false);
+
+    const missingResult = await api('test/is-git-repository', {
+      method: 'POST',
+      body: JSON.stringify({ path: '/nonexistent-path-wd16-test-99999' }),
+    });
+    expect(missingResult.is_git).toBe(false);
+
+    const fileResult = await api('test/is-git-repository', {
+      method: 'POST',
+      body: JSON.stringify({ path: '/etc/hosts' }),
+    });
+    expect(fileResult.is_git).toBe(false);
+  });
+
 });
