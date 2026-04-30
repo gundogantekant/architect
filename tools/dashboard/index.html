@@ -1254,9 +1254,12 @@ async function initSession(terminalInfo) {
 
           // Click while scrolled up returns the viewport to the input area.
           // This is the intentional gesture for "take me back to where I was typing."
-          containerEl.addEventListener('click', () => {
+          containerEl.addEventListener('click', (e) => {
             if (term) {
-              if (term.hasSelection()) return;
+              const sel = window.getSelection();
+              const selectionIsOutsideTerminal = sel?.type === 'Range' &&
+                !containerEl.contains(sel.anchorNode);
+              if (term.hasSelection() || selectionIsOutsideTerminal) return;
               const buf = term.buffer.active;
               if (buf.viewportY < buf.baseY) {
                 term.scrollToBottom();
