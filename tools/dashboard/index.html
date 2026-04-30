@@ -29,6 +29,9 @@
   .org-name:hover { background: #313244; }
   .org-name .arrow, .sidebar-section-label .arrow { font-size: 10px; transition: transform .15s; display: inline-block; }
   .org-name .arrow.open, .sidebar-section-label .arrow.open { transform: rotate(90deg); }
+  .org-group.org-degraded { opacity: 0.75; }
+  .org-group.org-degraded .org-name { color: #fbbf24; cursor: default; }
+  .org-error-detail { font-size: 11px; color: #888; margin-left: 6px; font-weight: normal; }
   .project-list { padding-left: 16px; }
   .project-item { padding: 4px 16px; font-size: 12.5px; cursor: pointer; border-radius: 4px; margin: 1px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; }
   .signal-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; flex-shrink: 0; }
@@ -2744,83 +2747,98 @@ async function buildTree() {
   const tree = $('#tree');
   tree.innerHTML = '';
   for (const org of orgs) {
-    const projects = await api(`org/${org}/projects`);
-    const orgData = await api(`org/${org}`);
-    orgCache[org] = orgData;
+    try {
+      const projects = await api(`org/${org}/projects`);
+      const orgData = await api(`org/${org}`);
+      orgCache[org] = orgData;
 
-    const group = document.createElement('div');
-    group.className = 'org-group';
+      const group = document.createElement('div');
+      group.className = 'org-group';
 
-    const orgPrefKey = `org_visible_${org}`;
-    const orgVisible = window._prefs[orgPrefKey] !== 'false';
+      const orgPrefKey = `org_visible_${org}`;
+      const orgVisible = window._prefs[orgPrefKey] !== 'false';
 
-    const header = document.createElement('div');
-    header.className = 'org-name';
-    header.style.display = 'flex';
-    header.style.alignItems = 'center';
-    const headerLabel = document.createElement('span');
-    headerLabel.style.flex = '1';
-    headerLabel.style.cursor = 'pointer';
-    headerLabel.innerHTML = `<span class="arrow${orgVisible ? ' open' : ''}">&#9654;</span> ${esc(orgData.name || org)} <span style="font-size:11px;color:#888">(${projects.length})</span>`;
-    headerLabel.onclick = () => {
-      location.hash = `#org/${org}`;
-      const arrow = headerLabel.querySelector('.arrow');
-      const list = group.querySelector('.project-list');
-      const open = arrow.classList.toggle('open');
-      list.style.display = open ? '' : 'none';
-    };
-    header.appendChild(headerLabel);
-    const orgToggle = document.createElement('span');
-    orgToggle.className = 'epic-global-toggle';
-    orgToggle.textContent = orgVisible ? '[on]' : '[off]';
-    orgToggle.title = 'Toggle org visibility in sidebar';
-    orgToggle.onclick = (e) => {
-      e.stopPropagation();
-      const next = !orgVisible;
-      window._prefs[orgPrefKey] = String(next);
-      fetch('/api/settings/preferences', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [orgPrefKey]: String(next) }),
-      }).catch(() => {});
-      buildTree();
-    };
-    header.appendChild(orgToggle);
-
-    const list = document.createElement('div');
-    list.className = 'project-list';
-    if (!orgVisible) list.style.display = 'none';
-
-    // Collect components, then sort by open work item count
-    const componentEntries = [];
-    for (const proj of projects) {
-      try {
-        const files = await api(`project/${org}/${proj}`);
-        const components = files.filter(f => f.endsWith('.json'));
-        for (const file of components) {
-          const comp = file.replace(/\.json$/, '');
-          const key = `${org}/${proj}/${comp}`;
-          componentEntries.push({ org, proj, comp, key });
-        }
-      } catch { /* skip projects whose files cannot be listed */ }
-    }
-    componentEntries.sort((a, b) => countOpenItems(bl, b.key) - countOpenItems(bl, a.key));
-
-    for (const { org: o, proj, comp, key } of componentEntries) {
-      const sig = signalColor(bl, key, sessionsByProject);
-      const item = document.createElement('div');
-      item.className = 'project-item';
-      item.dataset.key = key;
-      item.innerHTML = `<span class="signal-dot ${sig.color}" title="${esc(sig.title || '')}"></span>${esc(proj)} / ${esc(comp)}`;
-      item.onclick = (e) => {
-        e.stopPropagation();
-        location.hash = `#component/${o}/${proj}/${comp}`;
+      const header = document.createElement('div');
+      header.className = 'org-name';
+      header.style.display = 'flex';
+      header.style.alignItems = 'center';
+      const headerLabel = document.createElement('span');
+      headerLabel.style.flex = '1';
+      headerLabel.style.cursor = 'pointer';
+      headerLabel.innerHTML = `<span class="arrow${orgVisible ? ' open' : ''}">&#9654;</span> ${esc(orgData.name || org)} <span style="font-size:11px;color:#888">(${projects.length})</span>`;
+      headerLabel.onclick = () => {
+        location.hash = `#org/${org}`;
+        const arrow = headerLabel.querySelector('.arrow');
+        const list = group.querySelector('.project-list');
+        const open = arrow.classList.toggle('open');
+        list.style.display = open ? '' : 'none';
       };
-      list.appendChild(item);
-    }
+      header.appendChild(headerLabel);
+      const orgToggle = document.createElement('span');
+      orgToggle.className = 'epic-global-toggle';
+      orgToggle.textContent = orgVisible ? '[on]' : '[off]';
+      orgToggle.title = 'Toggle org visibility in sidebar';
+      orgToggle.onclick = (e) => {
+        e.stopPropagation();
+        const next = !orgVisible;
+        window._prefs[orgPrefKey] = String(next);
+        fetch('/api/settings/preferences', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [orgPrefKey]: String(next) }),
+        }).catch(() => {});
+        buildTree();
+      };
+      header.appendChild(orgToggle);
 
-    group.appendChild(header);
-    group.appendChild(list);
-    tree.appendChild(group);
+      const list = document.createElement('div');
+      list.className = 'project-list';
+      if (!orgVisible) list.style.display = 'none';
+
+      // Collect components, then sort by open work item count
+      const componentEntries = [];
+      for (const proj of projects) {
+        try {
+          const files = await api(`project/${org}/${proj}`);
+          const components = files.filter(f => f.endsWith('.json'));
+          for (const file of components) {
+            const comp = file.replace(/\.json$/, '');
+            const key = `${org}/${proj}/${comp}`;
+            componentEntries.push({ org, proj, comp, key });
+          }
+        } catch { /* skip projects whose files cannot be listed */ }
+      }
+      componentEntries.sort((a, b) => countOpenItems(bl, b.key) - countOpenItems(bl, a.key));
+
+      for (const { org: o, proj, comp, key } of componentEntries) {
+        const sig = signalColor(bl, key, sessionsByProject);
+        const item = document.createElement('div');
+        item.className = 'project-item';
+        item.dataset.key = key;
+        item.innerHTML = `<span class="signal-dot ${sig.color}" title="${esc(sig.title || '')}"></span>${esc(proj)} / ${esc(comp)}`;
+        item.onclick = (e) => {
+          e.stopPropagation();
+          location.hash = `#component/${o}/${proj}/${comp}`;
+        };
+        list.appendChild(item);
+      }
+
+      group.appendChild(header);
+      group.appendChild(list);
+      tree.appendChild(group);
+    } catch (err) {
+      // Per-org guard: a transient API failure (e.g. SQLite SQLITE_IOERR) on one org
+      // must not abort the whole tree render. Surface a degraded tile with role="alert"
+      // so the failure is visible, log to DevTools, and continue iterating.
+      console.error('[buildTree] org render failed', { org, err });
+      const group = document.createElement('div');
+      group.className = 'org-group org-degraded';
+      const header = document.createElement('div');
+      header.className = 'org-name';
+      header.setAttribute('role', 'alert');
+      header.innerHTML = `&#9888; ${esc(org)} &mdash; failed to load <span class="org-error-detail">(${esc(err && err.message ? err.message : 'error')})</span>`;
+      group.appendChild(header);
+      tree.appendChild(group);
+    }
   }
 }
 

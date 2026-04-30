@@ -35,6 +35,7 @@ export const SPEC_FILES = [
   'worktree-readiness',
   'approvals',
   'work-item-flags',
+  'build-tree',
 ];
 
 function getLiveDashboardPorts() {
