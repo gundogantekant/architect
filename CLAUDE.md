@@ -230,6 +230,7 @@ Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/log` (plain text 
 | /explain [path] [--focus area] | Codebase walkthrough |
 | /release [version] [--publish github] | Version bump, changelog, git tag |
 | /refactor [scope] | Systematic refactoring |
+| /sync [status|adr] | Sync portfolio knowledge base with external git changes; manage ADRs |
 | /browse [task] | Perform a web automation task via browser agent |
 | /worktree [list\|cleanup] | Manage git worktrees for implementation isolation |
 | /review-board [gate] [scope] | Manually trigger the Technical Review Board on a plan or code diff |

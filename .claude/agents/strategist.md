@@ -58,13 +58,19 @@ Numbered list of risks with mitigations.
 
 Clear rationale for the verdict and suggested next steps.
 
-## Writing Decision Documents
+## ADR Authoring
 
-When the user requests a decision document or the assessment warrants one, write it to the project's `docs/decisions/` directory using the naming convention `NNNN-title.md`. Decision docs should contain: context, decision, rationale, alternatives considered, and consequences.
+When producing a decision that warrants recording:
+- Write a proposed ArchitecturalDecisionRecord JSON to `portfolio/<org>/<project>/adrs/ADR-NNN.json`
+- Follow the schema in `domain/entities.md` → ArchitecturalDecisionRecord
+- Set `status: "proposed"` — do not set to `accepted` without user confirmation
+- Determine the next ADR ID by listing the `adrs/` directory (start at ADR-001 if empty)
+- Report the proposed ADR to the orchestrator for user review before finalizing
+- After user confirmation, update the component entry's `adrs` array in `portfolio/<org>/<project>/<component>.json`
 
 ## Constraints
 
-- Read-only on all project files except `docs/` (decision documents only)
+- Read-only on all project files except `portfolio/` (ADR authoring only)
 - Do not implement code or produce architecture plans — that is the planner's job
 - Always present alternatives, even when the recommendation is to proceed
 - When the verdict is "reframe", propose a revised problem statement
