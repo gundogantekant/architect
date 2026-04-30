@@ -500,3 +500,79 @@
   /* Epic global toggle in sidebar */
   .epic-global-toggle { margin-left: auto; font-size: 10px; cursor: pointer; opacity: 0.6; padding: 2px 6px; border-radius: 3px; }
   .epic-global-toggle:hover { opacity: 1; background: #45475a; }
+
+  /* Sidebar fold */
+  #sidebar { transition: width 0.2s ease, min-width 0.2s ease; }
+
+  .sidebar-toggle {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted, #6c7086);
+    padding: 4px 8px;
+    font-size: 18px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+  .sidebar-toggle:hover { background: rgba(255,255,255,.08); }
+
+  body.sidebar-collapsed #sidebar {
+    width: 48px;
+    min-width: 48px;
+    overflow: hidden;
+  }
+
+  /* Toggle icon direction */
+  body.sidebar-collapsed .sidebar-toggle-icon::after { content: '\203A'; }
+  body:not(.sidebar-collapsed) .sidebar-toggle-icon::after { content: '\2261'; }
+  .sidebar-toggle-icon { font-size: 18px; }
+
+  /* Hide text labels when collapsed — target child text spans, not the item row itself */
+  body.sidebar-collapsed #epic-tree .epic-item > span:not(.nav-avatar),
+  body.sidebar-collapsed #tree .org-name > span:not(.nav-avatar),
+  body.sidebar-collapsed #tree .project-item > span:not(.nav-avatar),
+  body.sidebar-collapsed .sidebar-settings > span:not(.nav-icon),
+  body.sidebar-collapsed .sidebar-section-label,
+  body.sidebar-collapsed .sidebar-project-label,
+  body.sidebar-collapsed .sidebar-epic-sublabel,
+  body.sidebar-collapsed .sidebar-onboard-btn,
+  body.sidebar-collapsed .sidebar-divider,
+  body.sidebar-collapsed .epic-global-toggle,
+  body.sidebar-collapsed #dispatch-badge,
+  body.sidebar-collapsed .dispatch-count,
+  body.sidebar-collapsed .epic-progress,
+  body.sidebar-collapsed .signal-dot,
+  body.sidebar-collapsed .arrow,
+  body.sidebar-collapsed #sessions-sidebar { display: none !important; }
+
+  body.sidebar-collapsed #sidebar h1 > span:not(.dispatch-count):not(.nav-avatar) { display: none !important; }
+  body.sidebar-collapsed #sidebar h1 { padding: 0 0 10px; justify-content: center; border-bottom: 1px solid #313244; }
+
+  /* Show nav avatars only when collapsed */
+  .nav-avatar {
+    display: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--accent, #7c3aed);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  body.sidebar-collapsed .nav-avatar { display: flex; }
+
+  /* Collapsed nav item centering */
+  body.sidebar-collapsed #tree .org-name,
+  body.sidebar-collapsed #tree .project-item,
+  body.sidebar-collapsed #epic-tree .epic-item { justify-content: center; padding: 4px 0; }
+
+  /* Sidebar footer icons when collapsed */
+  body.sidebar-collapsed .sidebar-settings { justify-content: center; padding: 8px 0; }
+  body.sidebar-collapsed #epic-tree,
+  body.sidebar-collapsed #tree { overflow: hidden; }

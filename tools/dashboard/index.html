@@ -13,12 +13,12 @@
 <body>
 
 <nav id="sidebar">
-  <h1>Architect <span id="dispatch-badge" class="dispatch-count empty"></span></h1>
+  <h1>Architect <span id="dispatch-badge" class="dispatch-count empty"></span><button class="sidebar-toggle" data-sidebar-toggle aria-label="Toggle sidebar" title="Toggle sidebar"><span class="sidebar-toggle-icon"></span></button></h1>
   <div id="epic-tree"></div>
   <div id="sessions-sidebar" class="sessions-section"></div>
   <div id="tree"></div>
-  <div class="sidebar-settings" onclick="location.hash='#time-report'">&#9202; Time Report</div>
-  <div class="sidebar-settings" onclick="location.hash='#settings'">&#9881; Settings</div>
+  <div class="sidebar-settings" onclick="location.hash='#time-report'"><span class="nav-icon">&#9202;</span> <span>Time Report</span></div>
+  <div class="sidebar-settings" onclick="location.hash='#settings'"><span class="nav-icon">&#9881;</span> <span>Settings</span></div>
 </nav>
 
 <main id="main">
@@ -292,7 +292,8 @@ async function buildEpicTree() {
         item.dataset.epicStatus = epic.status;
         const color = epicSignalColor(epic, epic.progress);
         const p = epic.progress || { done: 0, total: 0 };
-        item.innerHTML = `<span class="signal-dot ${color}"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis">${esc(epic.id)} ${esc(epic.title)}</span><span class="epic-progress">(${p.done}/${p.total})</span>`;
+        const epicInitial = (epic.id || '?')[0].toUpperCase();
+        item.innerHTML = `<span class="nav-avatar" title="${esc(epic.id + ' ' + epic.title)}">${esc(epicInitial)}</span><span class="signal-dot ${color}"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis">${esc(epic.id)} ${esc(epic.title)}</span><span class="epic-progress">(${p.done}/${p.total})</span>`;
         item.onclick = () => { location.hash = `#epic/${epic.id}`; };
         epicTree.appendChild(item);
       }
@@ -2255,6 +2256,13 @@ async function buildTree() {
     header.className = 'org-name';
     header.style.display = 'flex';
     header.style.alignItems = 'center';
+    const orgInitial = (orgData.name || org || '?')[0].toUpperCase();
+    const orgAvatar = document.createElement('span');
+    orgAvatar.className = 'nav-avatar';
+    orgAvatar.title = orgData.name || org;
+    orgAvatar.textContent = orgInitial;
+    orgAvatar.onclick = (e) => { e.stopPropagation(); location.hash = `#org/${org}`; };
+    header.appendChild(orgAvatar);
     const headerLabel = document.createElement('span');
     headerLabel.style.flex = '1';
     headerLabel.style.cursor = 'pointer';
@@ -2307,7 +2315,8 @@ async function buildTree() {
       const item = document.createElement('div');
       item.className = 'project-item';
       item.dataset.key = key;
-      item.innerHTML = `<span class="signal-dot ${sig.color}" title="${esc(sig.title || '')}"></span>${esc(proj)} / ${esc(comp)}`;
+      const projInitial = (proj || '?')[0].toUpperCase();
+      item.innerHTML = `<span class="nav-avatar" title="${esc(proj + '/' + comp)}">${esc(projInitial)}</span><span class="signal-dot ${sig.color}" title="${esc(sig.title || '')}"></span>${esc(proj)} / ${esc(comp)}`;
       item.onclick = (e) => {
         e.stopPropagation();
         location.hash = `#component/${o}/${proj}/${comp}`;
@@ -6556,6 +6565,23 @@ window.__testDispatchTerminal = async (info) => {
 };
 // Start restoring sessions immediately in parallel with tree building so panels
 // appear within the test's 5 s window regardless of how long the sidebar takes.
+// Sidebar fold — toggle + localStorage persistence
+(function initSidebarFold() {
+  const STORAGE_KEY = 'sidebar-collapsed';
+
+  if (localStorage.getItem(STORAGE_KEY) === 'true') {
+    document.body.classList.add('sidebar-collapsed');
+    document.documentElement.style.setProperty('--sidebar-w', '48px');
+  }
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('[data-sidebar-toggle]')) return;
+    const collapsed = document.body.classList.toggle('sidebar-collapsed');
+    localStorage.setItem(STORAGE_KEY, collapsed);
+    document.documentElement.style.setProperty('--sidebar-w', collapsed ? '48px' : '260px');
+  });
+})();
+
 const _restorePromise = Promise.all([
   restoreDispatches(),
   restoreTerminals(),
