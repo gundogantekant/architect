@@ -610,12 +610,13 @@ export function getAllPreferences() {
 
 // --- Backlog reconstruction (legacy shape for API compat) ---
 
-export function getBacklog(orgFilter) {
+export function getBacklog(orgFilter, includeArchived = false) {
   let items;
+  const archivedClause = includeArchived ? '' : " AND status != 'archived'";
   if (orgFilter) {
-    items = db.prepare("SELECT * FROM work_items WHERE project_key LIKE ? AND status != 'archived'").all(orgFilter.toLowerCase() + '/%');
+    items = db.prepare(`SELECT * FROM work_items WHERE project_key LIKE ?${archivedClause}`).all(orgFilter.toLowerCase() + '/%');
   } else {
-    items = db.prepare("SELECT * FROM work_items WHERE status != 'archived'").all();
+    items = db.prepare(`SELECT * FROM work_items WHERE 1=1${archivedClause}`).all();
   }
 
   const statsMap = getAllWorkItemStats();

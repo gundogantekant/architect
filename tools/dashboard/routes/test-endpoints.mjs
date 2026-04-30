@@ -16,6 +16,9 @@ export default function testEndpointRoutes(deps) {
     appendFileSync, readFileSync, writeFileSync, mkdir, unlinkFile, join,
     execFileSync,
   } = deps;
+
+  const _registryPath = join(PORTFOLIO, 'registry.json');
+
   return [
     // --- Test endpoints (for E2E test seeding) ---
 
@@ -144,12 +147,19 @@ export default function testEndpointRoutes(deps) {
     // Seed a portfolio entry (for worktree-readiness tests)
     [/^\/api\/test\/seed-portfolio-entry$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { project_key, project_path, entry } = body;
+      const { project_key, project_path, entry, org_entry } = body;
       if (!project_key || !entry) return err(res, 'project_key and entry required', 400);
       const [org, project, component] = project_key.split('/');
       const entryPath = join(PORTFOLIO, org, project, `${component}.json`);
       await mkdir(join(PORTFOLIO, org, project), { recursive: true });
       writeFileSync(entryPath, JSON.stringify(entry, null, 2));
+      // Write organization.json: use org_entry if provided, otherwise create minimal stub if missing
+      const orgJsonPath = join(PORTFOLIO, org, 'organization.json');
+      if (org_entry) {
+        writeFileSync(orgJsonPath, JSON.stringify(org_entry, null, 2));
+      } else {
+        try { readFileSync(orgJsonPath); } catch { writeFileSync(orgJsonPath, JSON.stringify({ name: org }, null, 2)); }
+      }
       if (project_path) {
         const registryPath = join(PORTFOLIO, 'registry.json');
         let registry = { entries: {} };
@@ -163,11 +173,15 @@ export default function testEndpointRoutes(deps) {
     // Remove a seeded portfolio entry (cleanup)
     [/^\/api\/test\/seed-portfolio-entry$/, 'DELETE', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { project_key, project_path } = body;
+      const { project_key, project_path, remove_org } = body;
       if (!project_key) return err(res, 'project_key required', 400);
       const [org, project, component] = project_key.split('/');
       const entryPath = join(PORTFOLIO, org, project, `${component}.json`);
       try { await unlinkFile(entryPath); } catch {}
+      // Optionally remove the org-level organization.json (when this was the only entry for the org)
+      if (remove_org) {
+        try { await unlinkFile(join(PORTFOLIO, org, 'organization.json')); } catch {}
+      }
       if (project_path) {
         const registryPath = join(PORTFOLIO, 'registry.json');
         try {
@@ -329,6 +343,8 @@ export default function testEndpointRoutes(deps) {
         terminals.clear();
         // Hard-delete all epics and work items created during tests
         db.hardDeleteAllTestData();
+        // Note: registry.json is NOT restored here — it is shared across parallel test servers
+        // and parallel purge-all calls would race and wipe entries seeded by other servers.
       } else {
         // Worker-scoped purge — delete terminals and dispatches belonging to this worker.
         const toDeleteTerminals = [];

@@ -353,6 +353,28 @@ test.describe('State machine contracts @fast', () => {
     expect([...constantsMap.keys()].sort()).toEqual([...rulesMap.keys()].sort());
   });
 
+  test('SM-19: AUTO_IMPLEMENTABLE_STATUSES matches domain/rules.md eligible statuses table', async () => {
+    const rulesText = readFileSync(join(ROOT, 'domain', 'rules.md'), 'utf8');
+    const eligible = parseAutoImplementEligibleStatuses(rulesText);
+    const mod = await import(join(ROOT, 'tools', 'dashboard', 'constants.mjs'));
+    const constant = mod.AUTO_IMPLEMENTABLE_STATUSES;
+    expect(constant).toBeDefined();
+    expect([...constant].sort()).toEqual([...eligible].sort());
+  });
+
+  test('SM-20: DISPATCHABLE_STATUSES is a strict superset of AUTO_IMPLEMENTABLE_STATUSES', async () => {
+    // relational constraint test — documents intentional asymmetry between manual and automated dispatch
+    const mod = await import(join(ROOT, 'tools', 'dashboard', 'constants.mjs'));
+    const dispatchable = mod.DISPATCHABLE_STATUSES;
+    const autoImplementable = mod.AUTO_IMPLEMENTABLE_STATUSES;
+    expect(dispatchable).toBeDefined();
+    expect(autoImplementable).toBeDefined();
+    for (const status of autoImplementable) {
+      expect(dispatchable, `DISPATCHABLE_STATUSES must contain ${status}`).toContain(status);
+    }
+    expect(dispatchable.length).toBeGreaterThan(autoImplementable.length);
+  });
+
   test('SM-18: composite index idx_wia_identity_status is used for approver_pending query', async () => {
     const item = await seedWorkItem({ title: 'SM-18 index check' });
     await walkToState(item.id, 'testing');
@@ -367,6 +389,25 @@ test.describe('State machine contracts @fast', () => {
     expect(planText).toMatch(/idx_wia_identity_status/);
   });
 });
+
+function parseAutoImplementEligibleStatuses(text) {
+  const start = text.indexOf('### Auto-Implement Eligible Statuses');
+  if (start < 0) throw new Error('Auto-Implement Eligible Statuses section not found in rules.md');
+  const after = text.slice(start);
+  const lines = after.split('\n');
+  const statuses = new Set();
+  let inTable = false;
+  for (const line of lines) {
+    if (line.startsWith('| Status')) { inTable = true; continue; }
+    if (inTable && line.startsWith('|---')) continue;
+    if (inTable) {
+      if (!line.startsWith('|')) break;
+      const cell = line.split('|').map(c => c.trim()).filter((_, i, arr) => i !== 0 && i !== arr.length - 1)[0];
+      if (cell) statuses.add(cell.replace(/`/g, ''));
+    }
+  }
+  return statuses;
+}
 
 function parseRulesTransitionTable(text) {
   const start = text.indexOf('### State Transition Table');

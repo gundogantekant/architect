@@ -637,6 +637,15 @@ Checked before creating an auto-implement dispatch. All conditions must pass; an
 
 Depth is communicated via `X-Architect-Session-Depth` request header. When absent, depth is assumed to be 0 (preserves CLI and browser flows). When present and ≥ 1, reject with 403.
 
+### Auto-Implement Eligible Statuses
+
+Canonical list of statuses eligible for the auto-implement endpoint. `constants.mjs` mirrors this table via `AUTO_IMPLEMENTABLE_STATUSES`. A contract test enforces consistency.
+
+| Status |
+|--------|
+| `planned` |
+| `in-progress` |
+
 ## Auto-Implement Failure Protocol
 
 When the autonomous agent encounters a blocking failure (no user present to decide):

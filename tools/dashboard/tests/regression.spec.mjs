@@ -20,7 +20,19 @@ import {
   getXtermScrollMetrics,
   waitForEventQueueDrain,
   waitForShellReady,
+  api,
 } from './helpers.mjs';
+
+const _REG_PROJECT_KEY = 'ticari/architect/main';
+const _REG_PORTFOLIO_ENTRY = { worktree_mode: 'auto', worktree_setup: { branch: 'main' } };
+
+test.beforeAll(async () => {
+  await api('test/seed-portfolio-entry', {
+    method: 'POST',
+    body: JSON.stringify({ project_key: _REG_PROJECT_KEY, entry: _REG_PORTFOLIO_ENTRY }),
+  });
+});
+
 
 // ============================================================
 // R-1: No blank render on first load

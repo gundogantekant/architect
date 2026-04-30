@@ -10,7 +10,20 @@
  */
 
 import { test, expect } from './fixtures.mjs';
-import { seedWorkItem, seedEpic } from './helpers.mjs';
+import { seedWorkItem, seedEpic, api } from './helpers.mjs';
+
+const _MODAL_PROJECT_KEY = 'ticari/architect/main';
+const _MODAL_PROJECT_PATH = '/Users/tekantgundogan/Documents/architect';
+const _MODAL_PORTFOLIO_ENTRY = { worktree_mode: 'auto', worktree_setup: { branch: 'main' } };
+
+// beforeEach (not beforeAll) so registry entry is re-seeded after each purge-all.
+// project_path is required so resolveProjectPath() can succeed when modals create terminals.
+test.beforeEach(async () => {
+  await api('test/seed-portfolio-entry', {
+    method: 'POST',
+    body: JSON.stringify({ project_key: _MODAL_PROJECT_KEY, project_path: _MODAL_PROJECT_PATH, entry: _MODAL_PORTFOLIO_ENTRY }),
+  });
+});
 
 // ============================================================
 // Modal 1: showDiscussModal

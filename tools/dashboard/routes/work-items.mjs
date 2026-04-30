@@ -85,7 +85,8 @@ export default function workItemRoutes(deps) {
       const orgFilter = reqUrl.searchParams.get('org');
       const view = reqUrl.searchParams.get('view');
       const awaitingAction = reqUrl.searchParams.get('awaiting_action') === 'true';
-      let backlog = db.getBacklog(orgFilter || null);
+      // Stakeholder view includes archived items (STAKEHOLDER_PROJECTION maps 'archived' → 'Archived')
+      let backlog = db.getBacklog(orgFilter || null, view === 'stakeholder');
       if (awaitingAction) backlog = filterAwaitingAction(backlog);
       backlog = projectBacklog(backlog, view);
       json(res, backlog);
