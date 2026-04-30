@@ -33,6 +33,8 @@ export const SPEC_FILES = [
   'state-transitions',
   'auto-implement',
   'worktree-readiness',
+  'approvals',
+  'work-item-flags',
 ];
 
 function getLiveDashboardPorts() {

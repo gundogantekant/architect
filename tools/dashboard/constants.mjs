@@ -35,7 +35,8 @@ export const VALID_APPROVAL_MODES = new Set(['all', 'any', 'sequential']);
 
 // Statuses from which the orchestrator can pick up work and advance it.
 // Includes `blocked` — a blocked item is "stuck but resumable", not terminal.
-// Single source of truth — referenced by routes, UI gate, and contract tests.
+// Not enforced server-side for standard dispatch (human operators dispatch freely).
+// Validated by contract test SM-19 and referenced by AI orchestrators.
 export const DISPATCHABLE_STATUSES = Object.freeze(
   ['draft', 'planned', 'in-progress', 'blocked']
 );
