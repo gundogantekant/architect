@@ -19,6 +19,10 @@
   <div id="tree"></div>
   <div class="sidebar-settings" onclick="location.hash='#time-report'"><span class="nav-icon">&#9202;</span> <span>Time Report</span></div>
   <div class="sidebar-settings" onclick="location.hash='#settings'"><span class="nav-icon">&#9881;</span> <span>Settings</span></div>
+  <a href="#" class="notes-toggle-btn sidebar-settings" data-notes-toggle title="Toggle notes panel" aria-label="Toggle notes panel">
+    <span class="nav-icon">📝</span>
+    <span>Notes</span>
+  </a>
 </nav>
 
 <main id="main">
@@ -6582,6 +6586,41 @@ window.__testDispatchTerminal = async (info) => {
   });
 })();
 
+// Notes panel — toggle + localStorage persistence
+(function initNotes() {
+  const NOTES_CONTENT_KEY = 'dashboard-notes';
+  const NOTES_OPEN_KEY = 'notes-panel-open';
+  const panel = document.getElementById('notes-panel');
+  const textarea = document.getElementById('notes-textarea');
+  if (!panel || !textarea) return;
+
+  // Restore content
+  textarea.value = localStorage.getItem(NOTES_CONTENT_KEY) || '';
+
+  // Restore open state
+  if (localStorage.getItem(NOTES_OPEN_KEY) === 'true') {
+    document.body.classList.add('notes-open');
+  }
+
+  // Auto-save on input
+  textarea.addEventListener('input', () => {
+    localStorage.setItem(NOTES_CONTENT_KEY, textarea.value);
+  });
+
+  // Toggle open/close
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('[data-notes-toggle]')) {
+      e.preventDefault();
+      const open = document.body.classList.toggle('notes-open');
+      localStorage.setItem(NOTES_OPEN_KEY, open);
+    }
+    if (e.target.closest('[data-notes-close]')) {
+      document.body.classList.remove('notes-open');
+      localStorage.setItem(NOTES_OPEN_KEY, 'false');
+    }
+  });
+})();
+
 const _restorePromise = Promise.all([
   restoreDispatches(),
   restoreTerminals(),
@@ -6603,5 +6642,13 @@ Promise.all([buildTree(), buildEpicTree()]).then(async () => {
   setInterval(restoreCliSessions, 10000);
 });
 </script>
+
+<div id="notes-panel" class="notes-panel" aria-label="Notes panel" role="complementary">
+  <div class="notes-panel-header">
+    <span class="notes-panel-title">Notes</span>
+    <button class="notes-panel-close" data-notes-close aria-label="Close notes panel">✕</button>
+  </div>
+  <textarea id="notes-textarea" class="notes-textarea" placeholder="Write notes here..."></textarea>
+</div>
 </body>
 </html>

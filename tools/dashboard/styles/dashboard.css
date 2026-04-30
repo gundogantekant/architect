@@ -576,3 +576,65 @@
   body.sidebar-collapsed .sidebar-settings { justify-content: center; padding: 8px 0; }
   body.sidebar-collapsed #epic-tree,
   body.sidebar-collapsed #tree { overflow: hidden; }
+
+/* Notes panel */
+.notes-panel {
+  position: fixed;
+  right: 0;
+  top: 0;
+  height: 100vh;
+  width: 280px;
+  z-index: 49;
+  background: var(--bg-sidebar);
+  border-left: 1px solid #313244;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.2s ease;
+}
+body.notes-open .notes-panel {
+  transform: translateX(0);
+}
+.notes-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #313244;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-sidebar);
+}
+.notes-panel-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted, #6c7086);
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.notes-panel-close:hover { background: rgba(255,255,255,.08); }
+.notes-textarea {
+  flex: 1;
+  padding: 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-sidebar);
+  font-size: 13px;
+  font-family: inherit;
+  resize: none;
+  outline: none;
+  line-height: 1.5;
+}
+/* Adjust main content when notes open */
+body.notes-open #main {
+  padding-right: 280px;
+}
+/* Notes toggle button — inherits .sidebar-settings styles */
+.notes-toggle-btn { text-decoration: none; }
+/* Hide notes panel on narrow viewports */
+@media (max-width: 767px) {
+  .notes-panel { display: none; }
+  .notes-toggle-btn { display: none !important; }
+}
