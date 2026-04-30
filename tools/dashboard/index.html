@@ -2080,30 +2080,25 @@ function createSessionPanel(type, info) {
         scheduleAutoDismiss('dispatch', id, dispatch);
       } catch {}
     };
-    panel.querySelector(`[data-suspend-dispatch="${id}"]`).onclick = async (e) => {
-      const btn = e.target;
-      btn.disabled = true;
-      try {
-        const resp = await fetch(`/api/dispatch/${id}/suspend`, { method: 'POST' });
-        if (resp.ok) {
-          dispatch.status = 'suspended';
-          panel.className = panel.className.replace(/status-\w+/, 'status-suspended');
-          const dot = panel.querySelector('.status-dot');
-          clearActiveDotClasses(dot);
-          dot.classList.add('suspended');
-          btn.style.display = 'none';
-          panel.querySelector(`[data-kill-dispatch="${id}"]`).disabled = true;
-          const resumeBtn = panel.querySelector(`[data-resume-dispatch="${id}"]`);
-          if (resumeBtn) resumeBtn.style.display = '';
-          const dismissBtn = panel.querySelector(`[data-dismiss-dispatch="${id}"]`);
-          if (dismissBtn) dismissBtn.style.display = '';
-          const titleEl = panel.querySelector('.dispatch-title');
-          if (titleEl && !titleEl.querySelector('.suspended-badge')) {
-            titleEl.insertAdjacentHTML('beforeend', '<span class="suspended-badge">[suspended]</span>');
-          }
-          syncSessionState();
+    panel.querySelector(`[data-suspend-dispatch="${id}"]`).onclick = (e) => {
+      suspendSession(`/api/dispatch/${id}/suspend`, e.target, () => {
+        dispatch.status = 'suspended';
+        panel.className = panel.className.replace(/status-\w+/, 'status-suspended');
+        const dot = panel.querySelector('.status-dot');
+        clearActiveDotClasses(dot);
+        dot.classList.add('suspended');
+        e.target.style.display = 'none';
+        panel.querySelector(`[data-kill-dispatch="${id}"]`).disabled = true;
+        const resumeBtn = panel.querySelector(`[data-resume-dispatch="${id}"]`);
+        if (resumeBtn) resumeBtn.style.display = '';
+        const dismissBtn = panel.querySelector(`[data-dismiss-dispatch="${id}"]`);
+        if (dismissBtn) dismissBtn.style.display = '';
+        const titleEl = panel.querySelector('.dispatch-title');
+        if (titleEl && !titleEl.querySelector('.suspended-badge')) {
+          titleEl.insertAdjacentHTML('beforeend', '<span class="suspended-badge">[suspended]</span>');
         }
-      } catch {}
+        syncSessionState();
+      });
     };
     panel.querySelector(`[data-resume-dispatch="${id}"]`).onclick = async (e) => {
       const btn = e.target;
@@ -2170,7 +2165,7 @@ function createSessionPanel(type, info) {
         <span class="terminal-meta">${new Date(terminalInfo.started_at).toLocaleTimeString()}</span>
         <button class="focus-btn" data-focus-terminal="${esc(id)}">Focus</button>
         <button class="minimize-btn" data-minimize-terminal="${esc(id)}">▼</button>
-        <button class="suspend-btn" data-suspend-terminal="${esc(id)}" ${!isRunning ? 'style="display:none"' : ''}>Suspend</button>
+        <button class="suspend-btn" data-suspend-terminal="${esc(id)}" ${(!isRunning || terminalInfo.agent_type !== 'claude') ? 'style="display:none"' : ''}>Suspend</button>
         <button class="resume-btn" data-resume-terminal="${esc(id)}" ${!isSuspended ? 'style="display:none"' : ''}>Resume</button>
         <button class="kill-btn" data-kill-terminal="${esc(id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
         <button class="dismiss-btn" data-dismiss-terminal="${esc(id)}" ${isRunning ? 'style="display:none"' : ''}>✕</button>
@@ -2218,30 +2213,25 @@ function createSessionPanel(type, info) {
         scheduleAutoDismiss('terminal', id, terminalInfo);
       } catch {}
     };
-    panel.querySelector(`[data-suspend-terminal="${id}"]`).onclick = async (e) => {
-      const btn = e.target;
-      btn.disabled = true;
-      try {
-        const resp = await fetch(`/api/terminal/${id}/suspend`, { method: 'POST' });
-        if (resp.ok) {
-          terminalInfo.status = 'suspended';
-          panel.classList.add('status-suspended');
-          const dot = panel.querySelector('.status-dot');
-          clearActiveDotClasses(dot);
-          dot.classList.add('suspended');
-          btn.style.display = 'none';
-          panel.querySelector(`[data-kill-terminal="${id}"]`).disabled = true;
-          const resumeBtn = panel.querySelector(`[data-resume-terminal="${id}"]`);
-          if (resumeBtn) resumeBtn.style.display = '';
-          const dismissBtn = panel.querySelector(`[data-dismiss-terminal="${id}"]`);
-          if (dismissBtn) dismissBtn.style.display = '';
-          const titleEl = panel.querySelector('.terminal-title');
-          if (titleEl && !titleEl.querySelector('.suspended-badge')) {
-            titleEl.insertAdjacentHTML('beforeend', '<span class="suspended-badge">[suspended]</span>');
-          }
-          syncSessionState();
+    panel.querySelector(`[data-suspend-terminal="${id}"]`).onclick = (e) => {
+      suspendSession(`/api/terminal/${id}/suspend`, e.target, () => {
+        terminalInfo.status = 'suspended';
+        panel.classList.add('status-suspended');
+        const dot = panel.querySelector('.status-dot');
+        clearActiveDotClasses(dot);
+        dot.classList.add('suspended');
+        e.target.style.display = 'none';
+        panel.querySelector(`[data-kill-terminal="${id}"]`).disabled = true;
+        const resumeBtn = panel.querySelector(`[data-resume-terminal="${id}"]`);
+        if (resumeBtn) resumeBtn.style.display = '';
+        const dismissBtn = panel.querySelector(`[data-dismiss-terminal="${id}"]`);
+        if (dismissBtn) dismissBtn.style.display = '';
+        const titleEl = panel.querySelector('.terminal-title');
+        if (titleEl && !titleEl.querySelector('.suspended-badge')) {
+          titleEl.insertAdjacentHTML('beforeend', '<span class="suspended-badge">[suspended]</span>');
         }
-      } catch {}
+        syncSessionState();
+      });
     };
     panel.querySelector(`[data-resume-terminal="${id}"]`).onclick = async (e) => {
       const btn = e.target;
@@ -2547,6 +2537,23 @@ function showToast(message, type, linkText, linkDispatchId) {
   setTimeout(() => { if (toast.parentElement) toast.remove(); }, 10000);
 }
 
+async function suspendSession(endpoint, btn, onSuccess) {
+  btn.disabled = true;
+  try {
+    const resp = await fetch(endpoint, { method: 'POST' });
+    if (resp.ok) {
+      onSuccess();
+    } else {
+      btn.disabled = false;
+      const body = await resp.json().catch(() => ({}));
+      showToast(body.error || 'Suspend failed', 'error');
+    }
+  } catch {
+    btn.disabled = false;
+    showToast('Suspend failed — network error', 'error');
+  }
+}
+
 function showAutoImplementConfirm(workItem, projectKey) {
   const { overlay, close } = createDispatchOverlay({
     title: `Auto-Implement ${workItem.id}`,
@@ -2688,6 +2695,8 @@ function signalColor(bl, key, sessionsByProject) {
     return { color: 'blue', title: 'Agent running tool' };
   if (sessions.some(s => s.status === 'running'))
     return { color: 'orange', title: 'Agent thinking' };
+  if (sessions.some(s => s.status === 'suspended'))
+    return { color: 'orange', title: 'Has suspended sessions' };
   const items = bl?.projects?.[key]?.items;
   if (items && items.length > 0) return { color: 'blue', title: 'Has work items' };
   return { color: 'grey', title: '' };
@@ -5806,7 +5815,7 @@ function renderAgentTile(agent) {
     <div class="agent-tile-badges">${badges}</div>
     <div class="agent-tile-preview">${esc(preview)}</div>
     <div class="agent-tile-footer">
-      <button class="suspend-btn" data-tile-suspend="${esc(agent.type)}:${esc(agent.id)}" ${(agent.status !== 'running' || isCli) ? 'style="display:none"' : ''}>Suspend</button>
+      <button class="suspend-btn" data-tile-suspend="${esc(agent.type)}:${esc(agent.id)}" ${(agent.status !== 'running' || isCli || (agent.type === 'terminal' && agent.agent_type !== 'claude')) ? 'style="display:none"' : ''}>Suspend</button>
       <button class="resume-btn" data-tile-resume="${esc(agent.type)}:${esc(agent.id)}" ${agent.status !== 'suspended' ? 'style="display:none"' : ''}>Resume</button>
       <button class="kill-btn" data-tile-kill="${esc(agent.type)}:${esc(agent.id)}" ${(agent.status !== 'running' || isCli) ? 'disabled' : ''}>Kill</button>
       ${isCli ? '' : `<button class="focus-btn" data-tile-focus="${esc(agent.type)}:${esc(agent.id)}">Focus</button>`}
@@ -5825,7 +5834,7 @@ async function fetchAgentsList() {
     agents.push({ type: 'dispatch', id: d.id, status: d.status, title: d.work_item_id || d.id, work_item_id: d.work_item_id, work_item_title: d.work_item_title || null, project_key: d.project_key, epic_id: d.epic_id, epic_title: d.epic_title || null, started_at: d.started_at, last_output: d.last_output || [], cost_usd: d.cost_usd, claude_session_id: d.claude_session_id, agent_phase: d.agent_phase || null, dispatch_mode: d.dispatch_mode || 'standard' });
   }
   for (const t of terminals) {
-    agents.push({ type: 'terminal', id: t.id, status: t.status, title: t.title || t.id, work_item_id: t.work_item_id, project_key: t.project_key, epic_id: t.epic_id, started_at: t.started_at, last_output: t.last_output || [], claude_session_id: t.claude_session_id });
+    agents.push({ type: 'terminal', id: t.id, status: t.status, title: t.title || t.id, work_item_id: t.work_item_id, project_key: t.project_key, epic_id: t.epic_id, started_at: t.started_at, last_output: t.last_output || [], claude_session_id: t.claude_session_id, agent_type: t.agent_type || t.type || 'claude' });
   }
   for (const c of cliSessions) {
     agents.push({ type: 'cli', id: c.id, status: c.status === 'running' ? 'running' : 'completed', title: c.title, work_item_id: c.work_item_id, project_key: c.project_key, epic_id: c.epic_id, started_at: c.registered_at, last_output: [] });
@@ -5847,7 +5856,8 @@ function renderAgentsView(agents, filters = {}) {
 
   let filtered = agents;
   if (statusFilter === 'active') filtered = filtered.filter(a => a.status === 'running');
-  else if (statusFilter === 'recent') filtered = filtered.filter(a => a.status !== 'running');
+  else if (statusFilter === 'suspended') filtered = filtered.filter(a => a.status === 'suspended');
+  else if (statusFilter === 'recent') filtered = filtered.filter(a => a.status !== 'running' && a.status !== 'suspended');
   if (epicFilter) filtered = filtered.filter(a => a.epic_id === epicFilter);
   if (projectFilter) filtered = filtered.filter(a => a.project_key === projectFilter);
   if (autoOnly) filtered = filtered.filter(a => a.dispatch_mode === 'auto_implement');
@@ -5860,6 +5870,8 @@ function renderAgentsView(agents, filters = {}) {
   html += `<div class="agents-filter-bar">`;
   html += `<span class="filter-tab${statusFilter === 'all' ? ' active' : ''}" data-agents-status="all">All (${agents.length})</span>`;
   html += `<span class="filter-tab${statusFilter === 'active' ? ' active' : ''}" data-agents-status="active">Running (${agents.filter(a => a.status === 'running').length})</span>`;
+  const suspendedCount = agents.filter(a => a.status === 'suspended').length;
+  html += `<span class="filter-tab${statusFilter === 'suspended' ? ' active' : ''}" data-agents-status="suspended">Suspended (${suspendedCount})</span>`;
   html += `<span class="filter-tab${statusFilter === 'recent' ? ' active' : ''}" data-agents-status="recent">Completed</span>`;
   if (allEpics.length) {
     html += `<select id="agents-epic-filter"><option value="">All Epics</option>`;
@@ -5991,24 +6003,20 @@ function bindAgentsEvents(agents, filters) {
 
   // Suspend buttons (agents tile view)
   document.querySelectorAll('[data-tile-suspend]').forEach(btn => {
-    btn.onclick = async (e) => {
+    btn.onclick = (e) => {
       e.stopPropagation();
       const [type, id] = btn.dataset.tileSuspend.split(':');
-      btn.disabled = true;
       const endpoint = type === 'terminal' ? `/api/terminal/${id}/suspend` : `/api/dispatch/${id}/suspend`;
-      try {
-        const resp = await fetch(endpoint, { method: 'POST' });
-        if (resp.ok) {
-          const agent = agents.find(a => a.id === id);
-          if (agent) agent.status = 'suspended';
-          const d = activeDispatches.find(a => a.id === id);
-          if (d) d.status = 'suspended';
-          const t = activeTerminals.find(a => a.id === id);
-          if (t) t.status = 'suspended';
-          syncSessionState();
-          if (location.hash.startsWith('#agents')) route();
-        }
-      } catch {}
+      suspendSession(endpoint, btn, () => {
+        const agent = agents.find(a => a.id === id);
+        if (agent) agent.status = 'suspended';
+        const d = activeDispatches.find(a => a.id === id);
+        if (d) d.status = 'suspended';
+        const t = activeTerminals.find(a => a.id === id);
+        if (t) t.status = 'suspended';
+        syncSessionState();
+        if (location.hash.startsWith('#agents')) route();
+      });
     };
   });
 

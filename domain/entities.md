@@ -525,7 +525,7 @@ Record for an interactive PTY terminal session spawned from the dashboard. Persi
   "exited_at": "string (ISO 8601, null while running)",
   "pid": "number (OS process ID, optional — stored for restart survival)",
   "tmux_session": "string (tmux session name, optional — e.g. architect-T-xxx)",
-  "claude_session_id": "string (Claude CLI session UUID, optional — pre-assigned via --session-id at spawn, used for resume)"
+  "claude_session_id": "string (Claude CLI session UUID — required for suspend/resume; only present when agent_type === 'claude'. Suspend is rejected if absent or if agent_type !== 'claude')"
 }
 ```
 

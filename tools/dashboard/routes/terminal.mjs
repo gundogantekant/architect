@@ -448,6 +448,8 @@ export default function terminalRoutes(deps) {
       const terminal = terminals.get(m[1]);
       if (!terminal) return err(res, 'terminal not found');
       if (terminal.status !== 'running') return err(res, 'terminal is not running', 400);
+      if (terminal.agent_type !== 'claude') return err(res, 'Suspend is only available for Claude sessions', 400);
+      if (!terminal.claude_session_id) return err(res, 'Session ID not yet captured — wait a few seconds and try again', 400);
       if (terminal.ptyProcess) {
         try { terminal.ptyProcess.kill('SIGHUP'); } catch {}
       } else if (terminal.tmux_session && TMUX_AVAILABLE) {
