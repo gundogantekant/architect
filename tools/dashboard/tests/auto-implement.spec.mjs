@@ -194,5 +194,19 @@ test.describe('Auto-Implement Dispatch @fast', () => {
     const body = await resp.json();
     expect(body.id).toBeTruthy();
     expect(body.worktree_path).toBeNull();
+    // Kill the spawned subprocess immediately to avoid orphaned claude processes
+    await request.delete(`${base}/api/dispatch/${body.id}`);
+  });
+
+  test('AI-2b: rejects draft work item', async ({ request }) => {
+    const base = getBase();
+    const wi = await seedWorkItem({ title: 'AI-2b test', status: 'draft' });
+    const resp = await request.post(`${base}/api/dispatch/auto-implement`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: { work_item_id: wi.id, project_key: PROJECT_KEY },
+    });
+    expect(resp.status()).toBe(400);
+    const body = await resp.json();
+    expect(body.error).toMatch(/draft/i);
   });
 });

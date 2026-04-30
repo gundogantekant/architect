@@ -10,7 +10,18 @@
 import { test, expect } from './fixtures.mjs';
 import { seedWorkItem, seedEpic, seedDispatch, api, getBase } from './helpers.mjs';
 
+const COMPONENT_KEY = 'ticari/architect/main';
+const MINIMAL_PORTFOLIO_ENTRY = { worktree_mode: 'auto', worktree_setup: { branch: 'main' } };
+
 test.describe('Work item lifecycle @behavioral', () => {
+
+  test.beforeAll(async () => {
+    await api('test/seed-portfolio-entry', {
+      method: 'POST',
+      body: JSON.stringify({ project_key: COMPONENT_KEY, entry: MINIMAL_PORTFOLIO_ENTRY }),
+    });
+  });
+
 
   test('WF-1: work item appears in component view after creation', async ({ page }) => {
     await seedWorkItem({ title: 'Test task', status: 'draft', project_key: 'ticari/architect/main' });
@@ -23,7 +34,7 @@ test.describe('Work item lifecycle @behavioral', () => {
     await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'planned' }) });
     await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'in-progress' }) });
     await page.goto('/#component/ticari/architect/main');
-    await expect(page.locator('#wi-table').getByText('in-progress')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('#wi-table .badge-in-progress').first()).toBeVisible({ timeout: 15_000 });
   });
 
   test('WF-3: linked dispatch panel appears under work item', async ({ page }) => {
@@ -69,6 +80,8 @@ test.describe('Work item lifecycle @behavioral', () => {
     // Update and verify updated_at changes
     const before = full.updated_at;
     await new Promise(r => setTimeout(r, 50));
+    // draft → planned → in-progress (direct draft→in-progress is invalid per state machine)
+    await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'planned' }) });
     await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'in-progress' }) });
     const after = await api(`work-items/${item.id}`);
     expect(after.updated_at).not.toBe(before);
