@@ -1,4 +1,4 @@
-import { shouldCreateWorktree } from '../worktree.mjs';
+import { shouldCreateWorktree, checkWorktreeReadiness } from '../worktree.mjs';
 
 export default function testEndpointRoutes(deps) {
   const {
@@ -139,6 +139,55 @@ export default function testEndpointRoutes(deps) {
       await mkdir(PORTFOLIO, { recursive: true });
       writeFileSync(registryPath, JSON.stringify(registry, null, 2));
       json(res, { seeded: true });
+    }],
+
+    // Seed a portfolio entry (for worktree-readiness tests)
+    [/^\/api\/test\/seed-portfolio-entry$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { project_key, project_path, entry } = body;
+      if (!project_key || !entry) return err(res, 'project_key and entry required', 400);
+      const [org, project, component] = project_key.split('/');
+      const entryPath = join(PORTFOLIO, org, project, `${component}.json`);
+      await mkdir(join(PORTFOLIO, org, project), { recursive: true });
+      writeFileSync(entryPath, JSON.stringify(entry, null, 2));
+      if (project_path) {
+        const registryPath = join(PORTFOLIO, 'registry.json');
+        let registry = { entries: {} };
+        try { registry = JSON.parse(readFileSync(registryPath, 'utf8')); } catch {}
+        registry.entries[project_path] = { org, project, component };
+        writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+      }
+      json(res, { seeded: true, entry_path: entryPath });
+    }],
+
+    // Remove a seeded portfolio entry (cleanup)
+    [/^\/api\/test\/seed-portfolio-entry$/, 'DELETE', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { project_key, project_path } = body;
+      if (!project_key) return err(res, 'project_key required', 400);
+      const [org, project, component] = project_key.split('/');
+      const entryPath = join(PORTFOLIO, org, project, `${component}.json`);
+      try { await unlinkFile(entryPath); } catch {}
+      if (project_path) {
+        const registryPath = join(PORTFOLIO, 'registry.json');
+        try {
+          const registry = JSON.parse(readFileSync(registryPath, 'utf8'));
+          delete registry.entries[project_path];
+          writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+        } catch {}
+      }
+      json(res, { removed: true });
+    }],
+
+    // Test worktree readiness check logic (W-948)
+    [/^\/api\/test\/worktree-readiness-check$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { portfolio_entry, project_key } = body;
+      const result = checkWorktreeReadiness({
+        portfolioEntry: portfolio_entry || null,
+        projectKey: project_key || 'test/proj/main',
+      });
+      json(res, { warning_result: result });
     }],
 
     // Build dispatch prompt without spawning (for contract/prompt tests)

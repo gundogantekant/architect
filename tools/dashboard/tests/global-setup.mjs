@@ -32,6 +32,7 @@ export const SPEC_FILES = [
   'suspend-resume',
   'state-transitions',
   'auto-implement',
+  'worktree-readiness',
 ];
 
 function getLiveDashboardPorts() {
