@@ -41,8 +41,9 @@ export const DISPATCHABLE_STATUSES = Object.freeze(
 );
 
 // Subset for auto-implement (excludes `draft` — require human plan-gate first).
+// Excludes `blocked` — humans block, humans unblock; automation must not bypass that contract.
 export const AUTO_IMPLEMENTABLE_STATUSES = Object.freeze(
-  ['planned', 'in-progress', 'blocked']
+  ['planned', 'in-progress']
 );
 
 // Canonical state transition map. Mirrors domain/rules.md → State Transition Table.

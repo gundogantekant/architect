@@ -2915,7 +2915,7 @@ function renderWorkItemsTable(items, allWorkItems, tableId) {
     if (canDispatch) {
       const hasActiveDispatch = (window._activeDispatches || []).some(d => d.work_item_id === w.id && d.status === 'running');
       // Keep in sync with constants.mjs AUTO_IMPLEMENTABLE_STATUSES (frontend has no module loader).
-      const isAutoEligible = !hasActiveDispatch && ['planned','in-progress','blocked'].includes(w.status);
+      const isAutoEligible = !hasActiveDispatch && ['planned','in-progress'].includes(w.status);
       html += `<span class="split-btn-group" data-split-wi="${idx}">`;
       html += `<button class="dispatch-btn" data-wi-idx="${idx}">dispatch</button>`;
       html += `<button class="dispatch-chevron" data-chevron-wi="${idx}" title="More dispatch options">▾</button>`;

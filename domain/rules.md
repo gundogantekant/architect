@@ -615,13 +615,22 @@ Empty strings are treated as absent. The prompt-builder strips empty fields and 
 
 Steps without a `contract` field (from pre-existing plans or trivial/small dispatches) remain valid. The prompt-builder gracefully no-ops when the contract is missing or incomplete. No migration is needed for existing DispatchPlans.
 
+### Refine Dispatch (AI Orchestrator Guidance)
+
+Guidance for AI orchestrators only. Not enforced server-side — human operators using the dashboard dispatch freely via standard `/api/dispatch` regardless of work item status.
+
+- When a work item is in `draft` status, AI orchestrators run a refine pass before any full implementation dispatch.
+- Refine pass: analyze the work item title and description, propose values for the four core DispatchContract fields (goal, constraints, expected_output, failure_conditions), then `PATCH /api/work-items/<id>` with the contract payload and `status: 'planned'`.
+- Full implementation dispatch is initiated only after the item reaches `planned`+ with a non-empty `goal`.
+- The auto-implement endpoint enforces this gate at the API boundary (see Auto-Implement Eligibility Rules below) — the standard dispatch endpoint does not.
+
 ## Auto-Implement Eligibility Rules
 
 Checked before creating an auto-implement dispatch. All conditions must pass; any failure returns 400 with a user-facing reason string.
 
 | Condition | Required | Rejection Message |
 |-----------|----------|-------------------|
-| Work item status is `open`, `ready`, or `in-progress` | Yes | "Work item status '<status>' cannot be auto-implemented. Must be open, ready, or in-progress." |
+| Work item status is `planned` or `in-progress` | Yes | "Work item status '<status>' cannot be auto-implemented. Must be planned, in-progress." |
 | All `depends_on` items have status `done` | Yes | "Unmet dependencies: <id1>, <id2>. Resolve these before auto-implementing." |
 | No active dispatch exists for this work_item_id | Yes | "A dispatch is already running for this work item." |
 | Caller session depth must be 0 | Yes | "Auto-implement cannot be triggered from within a dispatch agent (depth ≥ 1)." |
