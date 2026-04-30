@@ -46,6 +46,19 @@ Organization conventions (`organization.json`) are always loaded regardless of t
 4. If not found:
    - Return fallback indicator — caller decides the fallback strategy (see Fallback Strategies below)
 
+### Load Sync Context (standard and full tiers)
+
+After loading portfolio guides, if the tier is `standard` or `full`:
+
+1. Read the component entry's `adrs` array field (list of accepted ADR IDs like `["ADR-001", "ADR-002"]`)
+2. For each ADR ID, read `portfolio/<org>/<project>/adrs/<id>.json`
+3. Query `GET /api/sync/significant?project_key=<encoded-key>` for recent architectural/dependency commits
+4. Query `GET /api/sync/:project_key/history` (first result) for `synced_at` timestamp
+5. Assemble into a `syncContext` object: `{ adrs, recentChanges, lastSyncedAt }`
+6. Include `syncContext` in the returned portfolio object passed to `buildDispatchPrompt()`
+
+If the ADR directory doesn't exist or the sync API returns an empty result, return an empty `syncContext` (no ADRs, no recent changes). Never fail context loading because of missing sync data.
+
 ## Fallback Strategies
 
 Each skill specifies its own fallback when no portfolio entry exists:

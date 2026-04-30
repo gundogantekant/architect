@@ -572,7 +572,7 @@ Structured log entry recorded when the orchestrator detects a condition requirin
 ```json
 {
   "type": "escalation",
-  "trigger": "stale|blocked-chain|epic-stall|cost-anomaly|dispatch-loop",
+  "trigger": "stale|blocked-chain|epic-stall|cost-anomaly|dispatch-loop|portfolio-drift",
   "summary": "string — human-readable description of the escalation",
   "related_items": ["string (W-XXX or E-XXX IDs)"]
 }
@@ -586,6 +586,108 @@ Trigger semantics:
 - `dispatch-loop` — a work item has been dispatched 3+ times without reaching done
 
 See `domain/rules.md` → Project Manager Behavior Rules → Escalation Triggers for detection criteria.
+
+## ArchitecturalDecisionRecord
+
+A typed record of a single architectural decision. Covers decisions made by the human, by the AI architect, or by a dispatched agent (strategist, tech-reviewer-arch). Stored as `portfolio/<org>/<project>/adrs/ADR-NNN.json`, scoped per component.
+
+```json
+{
+  "id": "string — ADR-NNN format, zero-padded, scoped per component (e.g. ADR-001)",
+  "title": "string — concise decision title",
+  "status": "proposed | accepted | deprecated | superseded",
+  "context": "string — what problem or situation prompted this decision (1-4 sentences)",
+  "decision": "string — what was decided and why (1-4 sentences)",
+  "consequences": "string — what changes as a result; trade-offs accepted (1-4 sentences)",
+  "date": "YYYY-MM-DD — date the decision was made or recorded",
+  "tags": ["string — topic tags for filtering (e.g. 'storage', 'agents', 'dispatch')"],
+  "project_key": "string — org/project/component — the component this decision governs",
+  "author": "string — 'architect' | 'human' | 'agent:<agent-name>' — who produced the decision",
+  "source_work_item": "string (W-XXX, optional) — work item that triggered this decision",
+  "superseded_by": "string (ADR-NNN, optional) — ID of the ADR that replaces this one; null unless status=superseded"
+}
+```
+
+Status semantics:
+- `proposed` — drafted but not yet confirmed; NOT injected into agent context
+- `accepted` — confirmed and active; injected into standard/full tier agent context
+- `deprecated` — still applies but discouraged
+- `superseded` — replaced by another ADR (set `superseded_by` to the new ID)
+
+ADRs are indexed in the portfolio component entry via a new optional `adrs` field (array of accepted ADR-NNN IDs). The `adrs/` directory lives alongside the component JSON: `portfolio/<org>/<project>/adrs/`.
+
+## SyncRecord
+
+One row per completed sync run per project in the `knowledge_syncs` SQLite table. Records when a portfolio project's git history was last scanned for external changes.
+
+```json
+{
+  "id": "number (autoincrement)",
+  "project_key": "string (org/project/component)",
+  "trigger": "session_start | scheduled | manual",
+  "status": "pending | running | completed | failed | skipped",
+  "started_at": "string (ISO 8601)",
+  "synced_at": "string (ISO 8601) | null — null until completed",
+  "commit_from": "string (git SHA) | null — HEAD at previous sync (the 'since' anchor)",
+  "commit_to": "string (git SHA) | null — HEAD at this sync completion",
+  "commits_scanned": "number",
+  "significant_count": "number — count of architectural + dependency classified commits",
+  "summary_json": "string (JSON) — array of SyncCommitEntry",
+  "error": "string | null — failure reason when status=failed"
+}
+```
+
+### SyncCommitEntry (embedded in summary_json)
+
+```json
+{
+  "sha": "string — short git hash (8 chars)",
+  "message": "string — first line of commit message",
+  "author": "string",
+  "timestamp": "string (ISO 8601)",
+  "significance": "high | medium | low",
+  "files_touched": ["string — relative file paths"],
+  "adr_candidate": "boolean — true when commit looks like an architectural decision",
+  "adr_candidate_reason": "string | null"
+}
+```
+
+Freshness is computed at read time, not stored:
+- `fresh` — `synced_at` within 6 hours
+- `aging` — `synced_at` 6–24 hours ago
+- `stale` — `synced_at` older than 24 hours, or never synced
+
+## ChangeLogEntry
+
+One row per significant commit detected during portfolio sync, stored in the `change_log_entries` SQLite table. Forms the observable change history for a managed project between sync cycles.
+
+```json
+{
+  "id": "number (autoincrement)",
+  "project_key": "string (org/project/component)",
+  "commit_hash": "string — full SHA-1 git commit hash",
+  "commit_message": "string — first line of commit message",
+  "author": "string — git author name",
+  "committed_at": "string (ISO 8601)",
+  "affected_files": "string (JSON array) — relative file paths changed in this commit",
+  "classification": "architectural | dependency | feature | fix | docs | test | chore",
+  "ai_summary": "string | null — one-sentence plain-English summary; populated for architectural/dependency commits",
+  "detected_at": "string (ISO 8601) — when this entry was inserted by the sync process"
+}
+```
+
+Classification semantics:
+- `architectural` — touches domain layer, schema files, API definitions, root config manifests
+- `dependency` — package manifest changes that add/remove/upgrade dependencies
+- `feature` — new functionality (feat: prefix or additive keywords)
+- `fix` — bug fixes (fix: prefix or fix/patch/resolve keywords)
+- `docs` — documentation-only changes
+- `test` — test file changes only
+- `chore` — build, CI, formatting, everything else
+
+Retention: entries older than 90 days are pruned on each sync run. If a project accumulates more than 100 entries after pruning, the oldest beyond 100 are also removed.
+
+See `domain/rules.md` → Sync Rules for classification heuristics and injection limits.
 
 ## DashboardPreferences
 

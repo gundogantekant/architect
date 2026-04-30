@@ -29,6 +29,7 @@ import sessionRoutes from './routes/sessions.mjs';
 import dispatchRoutes from './routes/dispatch.mjs';
 import terminalRoutes from './routes/terminal.mjs';
 import serverMgmtRoutes from './routes/server-mgmt.mjs';
+import syncRoutes from './routes/sync.mjs';
 import testEndpointRoutes from './routes/test-endpoints.mjs';
 
 const deps = {
@@ -59,6 +60,7 @@ const routes = [
   ...dispatchRoutes(deps),
   ...terminalRoutes(deps),
   ...serverMgmtRoutes(deps),
+  ...syncRoutes(deps),
   ...(process.env.WORK_DIR ? testEndpointRoutes(deps) : []),
 ];
 

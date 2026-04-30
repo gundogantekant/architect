@@ -120,7 +120,6 @@ export async function loadPortfolioContext(projectKey, tier = 'full') {
 
   const entry = filterByTier(rawEntry, tier);
 
-  // Load portfolio guide markdown files (standard+ tiers only)
   let guides = null;
   if (tier !== 'minimal' && rawEntry?.portfolio_guides?.length) {
     const guideDir = join(PORTFOLIO, org, project);
@@ -135,7 +134,33 @@ export async function loadPortfolioContext(projectKey, tier = 'full') {
     if (!guides.length) guides = null;
   }
 
-  return { entry, org: orgData, guides };
+  let syncContext = null;
+  if (tier === 'standard' || tier === 'full') {
+    syncContext = await loadSyncContext(projectKey, rawEntry, org, project);
+  }
+
+  return { entry, org: orgData, guides, syncContext };
+}
+
+async function loadSyncContext(projectKey, rawEntry, org, project) {
+  const adrIds = rawEntry?.adrs || [];
+  const adrDir = join(PORTFOLIO, org, project, 'adrs');
+
+  const [adrs, recentChanges, lastSyncedAt] = await Promise.all([
+    Promise.all(
+      adrIds.map(id => readJson(join(adrDir, `${id}.json`)).catch(() => null))
+    ).then(results => results.filter(a => a && a.status === 'accepted')),
+    fetch(`http://127.0.0.1:${port}/api/sync/significant?project_key=${encodeURIComponent(projectKey)}`)
+      .then(r => r.ok ? r.json() : [])
+      .then(entries => entries.filter(e => e.project_key === projectKey))
+      .catch(() => []),
+    fetch(`http://127.0.0.1:${port}/api/sync/${encodeURIComponent(projectKey)}/history`)
+      .then(r => r.ok ? r.json() : [])
+      .then(rows => rows[0]?.synced_at || null)
+      .catch(() => null),
+  ]);
+
+  return { adrs, recentChanges, lastSyncedAt };
 }
 
 export function loadWorkItem(workItemId) {
@@ -314,6 +339,48 @@ function deriveContractFromDescription(description) {
   }
 
   return foundAny ? contract : null;
+}
+
+function buildAdrSection(syncContext) {
+  if (!syncContext) return null;
+  const { adrs = [], recentChanges = [], lastSyncedAt } = syncContext;
+  if (!adrs.length && !recentChanges.length) return null;
+
+  const lines = ['# Architectural Decisions', ''];
+
+  if (adrs.length) {
+    lines.push('Active decisions governing this project. Follow these when planning or implementing.', '');
+    for (const adr of adrs) {
+      lines.push(`## ${adr.id}: ${adr.title}`);
+      lines.push(`- Status: ${adr.status} (${adr.date})`);
+      lines.push(`- Decision: ${adr.decision}`);
+      lines.push(`- Consequences: ${adr.consequences}`, '');
+    }
+  }
+
+  if (recentChanges.length) {
+    lines.push('## Recent External Changes (since last sync)', '');
+    let charCount = 0;
+    const MAX_CHARS = 3000;
+    for (const c of recentChanges.slice(0, 10)) {
+      const summary = c.ai_summary || c.commit_message.slice(0, 80);
+      const files = (c.affected_files || []).slice(0, 3).join(', ');
+      const shortSha = c.commit_hash.slice(0, 8);
+      const date = c.committed_at.slice(0, 10);
+      const line = `- ${shortSha} [${c.classification}] (${date}): ${summary}${files ? `\n  Files: ${files}` : ''}`;
+      if (charCount + line.length > MAX_CHARS) break;
+      lines.push(line);
+      charCount += line.length;
+    }
+    lines.push('');
+  }
+
+  const syncAge = lastSyncedAt
+    ? `last synced ${Math.round((Date.now() - new Date(lastSyncedAt).getTime()) / 3600000)}h ago`
+    : 'never synced';
+  lines.push(`*Knowledge base: ${syncAge}*`);
+
+  return lines.join('\n');
 }
 
 export function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInstructions, portfolio, epicContext, relatedProjects, orgContext, worktreeContext, contract }) {
@@ -625,6 +692,12 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
       totalLen += g.content.length;
     }
     sections.push(guideLines.join('\n'));
+  }
+
+  // --- Architectural Decisions (ADRs + recent significant changes) ---
+  {
+    const adrSection = buildAdrSection(portfolio?.syncContext);
+    if (adrSection) sections.push(adrSection);
   }
 
   // --- Layer 2: Task Context (second — work item details, description, session log) ---

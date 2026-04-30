@@ -946,7 +946,8 @@ At the start of every conversation, the orchestrator runs a lightweight backgrou
 2. Check for active terminals
 3. Check for in-progress work items across all projects
 4. **Surface a summary only if findings are non-empty**: blocked items, stale dispatches, items needing attention, or cost anomalies
-5. If no findings, proceed silently — do not report "all clear"
+5. **Portfolio sync gate**: For each project with an in-progress or recently-active work item, query `knowledge_syncs` for the last completed sync. If `synced_at` is older than 6 hours or null (never synced), queue a background sync for that project. The sync runs async and non-blocking — it must not delay the first response to the user. If the sync detects commits classified as `architectural` or `dependency`, include a brief drift summary in the session-start surface alongside work item findings.
+6. If no findings, proceed silently — do not report "all clear"
 
 ### Progress Reporting
 
@@ -984,6 +985,7 @@ The orchestrator proactively detects and flags conditions using `EscalationLogEn
 | `epic-stall` | An active epic has had no linked item status change across the last 3 dispatches | Flag to user; suggest reviewing epic scope or priority |
 | `cost-anomaly` | A single dispatch `cost_usd` exceeds 2x the project's average dispatch cost | Flag to user; suggest reviewing the dispatch for inefficiency |
 | `dispatch-loop` | A work item has been dispatched 3+ times (counted via session log entries) without reaching `done` status | Flag to user; suggest manual investigation or scope reduction |
+| `portfolio-drift` | A portfolio project's `change_log_entries` contain unreviewed `architectural` or `dependency` commits AND `knowledge_syncs.synced_at` is older than 24 hours | Surface in session-start block; suggest running `/sync` before dispatching agents on the affected project |
 
 Escalation entries are recorded as session log entries on the affected work item using the `EscalationLogEntry` schema. The orchestrator presents escalations to the user — it does not take autonomous corrective action.
 
@@ -1009,6 +1011,67 @@ No automatic re-dispatch on failure. The orchestrator receives failure informati
 ### Contrast with Current Error Recovery
 
 The existing Error Recovery table (above) defines what agents do when they encounter problems. This policy governs the orchestrator's response to agent-level failures. Both apply: agents follow Error Recovery; the orchestrator follows this policy.
+
+## ADR Creation Rules
+
+An ArchitecturalDecisionRecord is created when a decision affects one or more of: technology stack, data storage strategy, agent dispatch model, Clean Architecture layer boundaries, external dependencies, or performance/security trade-offs.
+
+### Who May Author ADRs
+
+- **orchestrator** — when the user explicitly requests an ADR, or when a self-referential architectural decision is made about the architect system
+- **strategist** — when its assessment warrants a recorded decision; the strategist writes to `portfolio/<org>/<project>/adrs/ADR-NNN.json` (not `docs/decisions/`) and updates the component entry's `adrs` array
+- **tech-reviewer-arch** — when a review uncovers an architectural constraint that should be recorded
+
+### Lifecycle
+
+1. A draft ADR starts with `status: proposed`. It is presented to the user before being written.
+2. On user confirmation, the ADR is written to the portfolio and its ID added to the component entry's `adrs` array.
+3. `status: proposed` ADRs are never injected into agent context.
+4. Only `status: accepted` ADRs are included in the `# Architectural Decisions` section of dispatch prompts (standard and full tiers).
+5. When a decision supersedes an existing ADR: set the old ADR's `status` to `superseded` and `superseded_by` to the new ADR's ID.
+
+### ADR Suggestions from Sync
+
+When the sync process flags a commit as `adr_candidate: true`, the orchestrator surfaces a suggestion to the user: "This commit looks like an architectural decision. Run `/sync adr <project> <sha>` to draft an ADR." This is advisory — no ADR is created without user confirmation.
+
+## Sync Rules
+
+Portfolio sync is the process of scanning a managed project's git history since the last sync anchor (`commit_from`) and recording new commits as `ChangeLogEntry` rows and a `SyncRecord` row.
+
+### Staleness Windows
+
+- **6 hours** (soft threshold): session-start gate triggers a background sync
+- **24 hours** (hard limit): triggers a `portfolio-drift` escalation entry; agents dispatched to the project receive a staleness warning in their `# Project Context` section
+
+### Sync Triggers
+
+1. **Session start** (async, non-blocking): runs when `knowledge_syncs.synced_at` is older than 6 hours for any active project
+2. **Scheduled** (CronCreate, `0 8 * * *`): daily 8 AM scan of all portfolio projects; exits early (skipped) if a project was synced within 4 hours
+3. **Manual** (`/sync` skill): explicit user request, always runs regardless of staleness
+
+### Sync Process
+
+1. Read `knowledge_syncs` for the last `commit_to` SHA per project (the anchor)
+2. Run: `git -C <path> log <commit_from>..HEAD --format="%H %ai %s" --no-merges --name-only 2>/dev/null`
+3. Parse commits and classify each via `sync-classifier.mjs` (heuristic-only, no agent dispatch)
+4. Flag commits with `adr_candidate: true` when message contains architectural-decision language AND affected files include architecture-layer paths
+5. Insert `ChangeLogEntry` rows (unique on `project_key + commit_hash`)
+6. Upsert `SyncRecord` with final counts and `summary_json`
+7. Prune `change_log_entries` to last 90 days and max 100 entries per project
+
+### Agent Context Injection
+
+- Injected at **standard and full tiers only** (not minimal or none)
+- Only `architectural` and `dependency` classified entries are included
+- Capped at 10 entries and 3000 characters total per dispatch
+- Section omitted entirely if no ADRs exist and no significant changes are present
+- When `synced_at` is older than 24 hours, dispatch prompts include a staleness warning in `# Project Context`
+
+### Graceful Degradation
+
+- Repo path not found: log `status=skipped`, continue session silently
+- `git` command fails (network, auth): log `status=failed` with error, preserve previous `commit_to` for retry
+- Sync blocked by a concurrent run (same `project_key` already `running`): log `status=skipped`
 
 ## Skill Execution Policy
 
