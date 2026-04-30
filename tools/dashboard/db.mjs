@@ -98,7 +98,7 @@ export async function initDatabaseAsync(workDir, migrationsDir) {
     // KEEP IN SYNC WHEN ADDING TABLES/COLUMNS (see docs/migrations.md)
     const expected = {
       work_items: ['approval_active', 'input_needed', 'status'],
-      work_item_approvals: ['work_item_id', 'identity', 'status'],
+      work_item_approvals: ['work_item_id', 'identity', 'status', 'sort_order', 'decided_at', 'reason'],
       terminals: ['org_key'],
       dispatches: ['org_key', 'dispatch_mode', 'worktree_path'],
       epics: ['id'],
