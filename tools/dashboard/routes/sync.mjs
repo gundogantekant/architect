@@ -1,5 +1,5 @@
 export default function syncRoutes(deps) {
-  const { json, err, db, parseBody } = deps;
+  const { json, err, db: dbModule, parseBody } = deps;
 
   function computeFreshness(synced_at) {
     if (!synced_at) return 'never';
@@ -11,6 +11,7 @@ export default function syncRoutes(deps) {
 
   return [
     [/^\/api\/sync\/status$/, 'GET', async (_m, _req, res) => {
+      const db = dbModule.getDb();
       const rows = db.prepare(`
         SELECT project_key,
           MAX(synced_at) AS last_synced_at,
@@ -29,6 +30,7 @@ export default function syncRoutes(deps) {
     }],
 
     [/^\/api\/sync\/trigger$/, 'POST', async (_m, req, res) => {
+      const db = dbModule.getDb();
       const body = await parseBody(req);
       if (!body.project_key) return err(res, 'project_key is required', 400);
       const trigger = body.trigger || 'manual';
@@ -42,6 +44,7 @@ export default function syncRoutes(deps) {
     }],
 
     [/^\/api\/sync\/significant$/, 'GET', async (_m, _req, res) => {
+      const db = dbModule.getDb();
       const rows = db.prepare(`
         SELECT id, project_key, commit_hash, commit_message, author,
                committed_at, classification, ai_summary, affected_files
@@ -58,6 +61,7 @@ export default function syncRoutes(deps) {
     }],
 
     [/^\/api\/sync\/([^/]+)\/history$/, 'GET', async (m, _req, res) => {
+      const db = dbModule.getDb();
       const projectKey = decodeURIComponent(m[1]);
       const rows = db.prepare(`
         SELECT id, project_key, trigger, status, started_at, synced_at,
@@ -71,6 +75,7 @@ export default function syncRoutes(deps) {
     }],
 
     [/^\/api\/sync\/(\d+)$/, 'PATCH', async (m, req, res) => {
+      const db = dbModule.getDb();
       const id = Number(m[1]);
       const body = await parseBody(req);
       const allowed = ['status', 'synced_at', 'commit_from', 'commit_to', 'commits_scanned', 'significant_count', 'summary_json', 'error'];
@@ -83,6 +88,7 @@ export default function syncRoutes(deps) {
     }],
 
     [/^\/api\/sync\/entries$/, 'POST', async (_m, req, res) => {
+      const db = dbModule.getDb();
       const body = await parseBody(req);
       if (!Array.isArray(body.entries) || !body.entries.length) return err(res, 'entries array required', 400);
       const insert = db.prepare(`
@@ -107,6 +113,7 @@ export default function syncRoutes(deps) {
     }],
 
     [/^\/api\/sync\/entries\/prune$/, 'POST', async (_m, req, res) => {
+      const db = dbModule.getDb();
       const body = await parseBody(req);
       if (!body.project_key) return err(res, 'project_key is required', 400);
       const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
