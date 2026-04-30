@@ -158,3 +158,22 @@ export function shouldCreateWorktree({ permissionMode, workItemId, portfolioEntr
   const mode = portfolioEntry?.worktree_mode ?? 'auto';
   return mode === 'auto';
 }
+
+/**
+ * Check whether a portfolio entry has worktree_setup configured.
+ * Returns a warning object if the field is absent, null otherwise.
+ *
+ * @param {Object} opts
+ * @param {Object|null} opts.portfolioEntry — PortfolioEntry JSON (may be null/undefined)
+ * @param {string} opts.projectKey — e.g. "org/project/component"
+ * @returns {{ warning: string, require_confirm: true } | null}
+ */
+export function checkWorktreeReadiness({ portfolioEntry, projectKey }) {
+  if (portfolioEntry?.worktree_setup == null) {
+    return {
+      warning: `Warning: ${projectKey} has no \`worktree_setup\` configured. This project was onboarded before worktree setup detection was available. Run \`/onboard <path> rescan\` to detect runtime config files, or proceed knowing the worktree may be missing runtime configuration.`,
+      require_confirm: true,
+    };
+  }
+  return null;
+}

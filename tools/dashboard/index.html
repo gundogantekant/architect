@@ -2554,6 +2554,29 @@ async function suspendSession(endpoint, btn, onSuccess) {
   }
 }
 
+function showConfirmWarning(message) {
+  return new Promise((resolve) => {
+    const { overlay, close } = createDispatchOverlay({
+      title: 'Worktree Configuration Warning',
+      cancelId: 'confirm-warning-cancel',
+      submitId: 'confirm-warning-proceed',
+      submitLabel: 'Proceed anyway',
+      buildFields: () => `
+        <div style="padding:8px 0;color:var(--text-secondary);font-size:13px;line-height:1.5">
+          ${esc(message)}
+        </div>
+      `,
+      onSubmit: async () => {},
+    });
+
+    overlay.querySelector('[data-modal-cancel]').onclick = () => { close(); resolve(false); };
+    overlay.querySelector('[data-modal-submit]').onclick = () => { close(); resolve(true); };
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) { close(); resolve(false); }
+    }, { once: true });
+  });
+}
+
 function showAutoImplementConfirm(workItem, projectKey) {
   const { overlay, close } = createDispatchOverlay({
     title: `Auto-Implement ${workItem.id}`,
@@ -5210,21 +5233,34 @@ async function showEpicDispatchModal(epicId) {
 
       if (!pk) { throw new Error('No project key available for dispatch. Onboard a project first.'); }
 
+      const dispatchBody = {
+        work_item_id: wid,
+        epic_id: epicId,
+        project_key: pk,
+        title: wid ? `${wid} (${epic.title})` : epic.title,
+        additional_instructions: instructions,
+        permission_mode: permMode,
+        skip_permissions: skipPerms,
+      };
       const resp = await fetch('/api/dispatch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          work_item_id: wid,
-          epic_id: epicId,
-          project_key: pk,
-          title: wid ? `${wid} (${epic.title})` : epic.title,
-          additional_instructions: instructions,
-          permission_mode: permMode,
-          skip_permissions: skipPerms,
-        }),
+        body: JSON.stringify(dispatchBody),
       });
-      const result = await resp.json();
+      let result = await resp.json();
       if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
+
+      if (result.require_confirm) {
+        const confirmed = await showConfirmWarning(result.warning);
+        if (!confirmed) return;
+        const confirmResp = await fetch('/api/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...dispatchBody, confirm_worktree_warning: true }),
+        });
+        result = await confirmResp.json();
+        if (!confirmResp.ok) throw new Error(result.error || 'Dispatch failed');
+      }
 
       let projectPath = '';
       if (pk === ARCHITECT_KEY) {

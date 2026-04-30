@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository } from '../worktree.mjs';
+import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository, checkWorktreeReadiness } from '../worktree.mjs';
 import { AUTO_IMPLEMENTABLE_STATUSES } from '../constants.mjs';
 
 /**
@@ -196,7 +196,21 @@ export default function dispatchRoutes(deps) {
       let worktreeContext = null;
       let effectiveCwd = projectPath;
 
-      if (shouldCreateWorktree({ permissionMode: resolvedPermMode, workItemId: work_item_id, portfolioEntry: rawEntry, featureFlag, isGit })) {
+      const willCreateWorktree = shouldCreateWorktree({
+        permissionMode: resolvedPermMode,
+        workItemId: work_item_id,
+        portfolioEntry: rawEntry,
+        featureFlag,
+        isGit,
+      });
+      const readinessWarning = willCreateWorktree && !body.confirm_worktree_warning
+        ? checkWorktreeReadiness({ portfolioEntry: rawEntry, projectKey: project_key })
+        : null;
+      if (readinessWarning) {
+        return json(res, readinessWarning);
+      }
+
+      if (willCreateWorktree) {
         try {
           worktreeContext = await createWorktreeForDispatch({
             projectPath,
