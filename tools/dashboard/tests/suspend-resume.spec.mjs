@@ -6,7 +6,7 @@
  */
 
 import { test, expect } from './fixtures.mjs';
-import { getBase, seedDispatch } from './helpers.mjs';
+import { getBase, seedDispatch, seedTerminal } from './helpers.mjs';
 
 test('SR-1: buildResumePrompt includes work item title and status', async ({ request }) => {
   const resp = await request.post(`${getBase()}/api/test/build-resume-prompt`, {
@@ -109,4 +109,43 @@ test('SR-11: running dispatch panel shows suspend button, not resume button', as
   await expect(page.locator(`#dispatch-${id}`)).toBeVisible({ timeout: 5000 });
   await expect(page.locator(`[data-suspend-dispatch="${id}"]`)).toBeVisible();
   await expect(page.locator(`[data-resume-dispatch="${id}"]`)).not.toBeVisible();
+});
+
+test('SR-12: POST /api/terminal/:id/suspend on shell terminal returns 400', async ({ request }) => {
+  const t = await seedTerminal({ status: 'running', agentType: 'shell' });
+  const resp = await request.post(`${getBase()}/api/terminal/${t.id}/suspend`);
+  expect(resp.status()).toBe(400);
+  const body = await resp.json();
+  expect(body.error).toContain('Claude sessions');
+});
+
+test('SR-13: POST /api/terminal/:id/suspend on Claude terminal with session ID returns 200', async ({ request }) => {
+  const t = await seedTerminal({ status: 'running', agentType: 'claude', claude_session_id: 'fake-sr13' });
+  const resp = await request.post(`${getBase()}/api/terminal/${t.id}/suspend`);
+  expect(resp.status()).toBe(200);
+  const body = await resp.json();
+  expect(body.status).toBe('suspended');
+});
+
+test('SR-14: POST /api/terminal/:id/suspend on Claude terminal without session ID returns 400', async ({ request }) => {
+  const t = await seedTerminal({ status: 'running', agentType: 'claude' });
+  const resp = await request.post(`${getBase()}/api/terminal/${t.id}/suspend`);
+  expect(resp.status()).toBe(400);
+  const body = await resp.json();
+  expect(body.error).toMatch(/session/i);
+});
+
+test('SR-15: POST /api/terminal/:id/resume with no claude_session_id returns 400', async ({ request }) => {
+  const t = await seedTerminal({ status: 'suspended', agentType: 'claude' });
+  const resp = await request.post(`${getBase()}/api/terminal/${t.id}/resume`);
+  expect(resp.status()).toBe(400);
+});
+
+test('SR-16: GET /api/dispatch/active includes suspended dispatch after DB roundtrip', async ({ request }) => {
+  const { dispatch_id } = await seedDispatch({ status: 'suspended', claude_session_id: 'fake-sr16' });
+  const resp = await request.get(`${getBase()}/api/dispatch/active`);
+  const list = await resp.json();
+  const found = list.find(d => d.id === dispatch_id);
+  expect(found).toBeDefined();
+  expect(found.status).toBe('suspended');
 });
