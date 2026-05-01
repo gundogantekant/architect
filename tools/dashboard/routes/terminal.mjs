@@ -514,7 +514,7 @@ export default function terminalRoutes(deps) {
         terminal.eventStream.subscribers.clear();
       }
       terminal.ptyProcess = null;
-      archiveSession(terminal, 'terminal').catch(e => console.error('[suspend terminal] archiveSession:', e.message));
+      await archiveSession(terminal, 'terminal').catch(e => console.error('[suspend terminal] archiveSession:', e.message));
       await saveTerminalToDb(terminal);
       json(res, { status: 'suspended', id: m[1], claude_session_id: terminal.claude_session_id });
     }],

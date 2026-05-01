@@ -75,8 +75,8 @@ export function wireTerminalHandlers(terminal) {
     if (terminal.tmux_session) {
       try { execFileSync('tmux', ['kill-session', '-t', terminal.tmux_session], { stdio: 'ignore' }); } catch {}
     }
-    try { archiveSession(terminal, 'terminal'); } catch {}
-    try { saveTerminalToDb(terminal); } catch {}
+    archiveSession(terminal, 'terminal').catch(e => console.error('[onExit] archiveSession:', e.message));
+    saveTerminalToDb(terminal).catch(e => console.error('[onExit] saveTerminalToDb:', e.message));
     // Keep terminal in memory for frontend display; auto-cleanup timer handles removal after 10min
   });
 }
