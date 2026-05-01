@@ -201,11 +201,57 @@ export async function assertSchema() {
   }
 
   // Log whether the approval trigger is present
-  const constraintCheck = await pool.query(
+  const triggerCheck = await pool.query(
     `SELECT tgname FROM pg_trigger WHERE tgrelid = 'work_items'::regclass AND tgname = 'trg_approval_active_requires_pending'`
   );
-  if (constraintCheck.rows.length === 0) {
-    console.warn('Schema warning: trg_approval_active_requires_pending trigger not found on work_items');
+  if (triggerCheck.rows.length === 0) {
+    console.warn('[db] schema warning: trg_approval_active_requires_pending trigger not found on work_items');
+  }
+
+  // Verify CHECK constraints exist on tables that declare them.
+  // Query actual constraint names so we don't hardcode DB-generated suffixes.
+  const checkConstraintsResult = await pool.query(`
+    SELECT conrelid::regclass::text AS table_name, conname
+    FROM pg_constraint
+    WHERE contype = 'c'
+      AND conrelid = ANY(ARRAY[
+        'work_items'::regclass,
+        'work_item_approvals'::regclass,
+        'knowledge_syncs'::regclass,
+        'change_log_entries'::regclass
+      ]::oid[])
+  `);
+  const checksByTable = {};
+  for (const row of checkConstraintsResult.rows) {
+    if (!checksByTable[row.table_name]) checksByTable[row.table_name] = [];
+    checksByTable[row.table_name].push(row.conname);
+  }
+
+  // work_items must have CHECK constraints covering status and priority.
+  const workItemChecks = checksByTable['work_items'] ?? [];
+  if (!workItemChecks.some(n => n.includes('status'))) {
+    console.warn('[db] schema warning: no CHECK constraint covering status found on work_items');
+  }
+  if (!workItemChecks.some(n => n.includes('priority'))) {
+    console.warn('[db] schema warning: no CHECK constraint covering priority found on work_items');
+  }
+
+  // work_item_approvals must have a CHECK constraint covering status.
+  const approvalChecks = checksByTable['work_item_approvals'] ?? [];
+  if (!approvalChecks.some(n => n.includes('status'))) {
+    console.warn('[db] schema warning: no CHECK constraint covering status found on work_item_approvals');
+  }
+
+  // knowledge_syncs must have a CHECK constraint covering status.
+  const syncChecks = checksByTable['knowledge_syncs'] ?? [];
+  if (!syncChecks.some(n => n.includes('status'))) {
+    console.warn('[db] schema warning: no CHECK constraint covering status found on knowledge_syncs');
+  }
+
+  // change_log_entries must have a CHECK constraint covering classification.
+  const changeLogChecks = checksByTable['change_log_entries'] ?? [];
+  if (!changeLogChecks.some(n => n.includes('classification'))) {
+    console.warn('[db] schema warning: no CHECK constraint covering classification found on change_log_entries');
   }
 }
 
@@ -213,8 +259,20 @@ export async function closeDatabase() {
   return pool?.end();
 }
 
-export function getDb() {
-  return pool;
+// @internal - use named exports instead
+async function withTransaction(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // --- Backup ---
@@ -253,14 +311,16 @@ async function nextId(name) {
     'UPDATE sequences SET next_val = next_val + 1 WHERE name = $1 RETURNING next_val - 1 AS val',
     [name]
   );
-  if (result.rows.length === 0) {
-    await pool.query(
-      'INSERT INTO sequences (name, next_val) VALUES ($1, 2) ON CONFLICT (name) DO UPDATE SET next_val = sequences.next_val + 1',
-      [name]
-    );
-    return 1;
-  }
-  return Number(result.rows[0].val);
+  if (result.rows.length > 0) return Number(result.rows[0].val);
+
+  // Sequences row missing — insert and atomically retrieve the allocated ID.
+  const fallback = await pool.query(
+    `INSERT INTO sequences (name, next_val) VALUES ($1, 2)
+     ON CONFLICT (name) DO UPDATE SET next_val = sequences.next_val + 1
+     RETURNING next_val - 1 AS val`,
+    [name]
+  );
+  return Number(fallback.rows[0].val);
 }
 
 export async function nextWorkItemId() {
@@ -1054,12 +1114,13 @@ export async function upsertProject({ key, org, project, component, path, role }
   `, [key, org, project, component, path || '', role || '', now]);
 }
 
-export async function ensureProject(key) {
-  const existing = await pool.query('SELECT key FROM projects WHERE key = $1', [key]).then(r => r.rows[0] ?? null);
+export async function ensureProject(key, client = null) {
+  const query = client ? client.query.bind(client) : pool.query.bind(pool);
+  const existing = await query('SELECT key FROM projects WHERE key = $1', [key]).then(r => r.rows[0] ?? null);
   if (existing) return;
   const parts = key.split('/');
   const now = new Date().toISOString();
-  await pool.query(
+  await query(
     `INSERT INTO projects (key, org, project, component, path, role, synced_at) VALUES ($1, $2, $3, $4, '', '', $5) ON CONFLICT DO NOTHING`,
     [key, parts[0] || key, parts[1] || '', parts[2] || '', now]
   );
@@ -1084,10 +1145,8 @@ export async function recordSessionHistory({ id, type, project_key, work_item_id
     return;
   }
 
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await ensureProject(project_key);
+  await withTransaction(async (client) => {
+    await ensureProject(project_key, client);
     await client.query(`
       INSERT INTO session_history (id, type, project_key, work_item_id, epic_id, title, status, permission_mode, started_at, ended_at, duration_seconds, cost_usd)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
@@ -1095,13 +1154,7 @@ export async function recordSessionHistory({ id, type, project_key, work_item_id
         status = EXCLUDED.status,
         cost_usd = COALESCE(EXCLUDED.cost_usd, session_history.cost_usd)
     `, [id, type, project_key, work_item_id || null, epic_id || null, title || '', status, permission_mode || null, started_at, ended_at, duration_seconds, cost_usd || null]);
-    await client.query('COMMIT');
-  } catch (e) {
-    await client.query('ROLLBACK');
-    throw e;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function getSessionHistory({ project_key, epic_id, work_item_id, limit, offset } = {}) {
@@ -1241,21 +1294,13 @@ export async function hardDeleteAllTestData() {
     throw new Error('hardDeleteAllTestData refused: not in test mode (WORK_DIR not set)');
   }
   const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  await withTransaction(async (client) => {
     await client.query('SET CONSTRAINTS ALL DEFERRED');
     await client.query('DELETE FROM epic_logs WHERE logged_at > $1', [cutoff]);
     await client.query('DELETE FROM work_items WHERE created_at > $1', [cutoff]);
     await client.query('DELETE FROM epics WHERE created_at > $1', [cutoff]);
     await client.query('DELETE FROM session_history WHERE ended_at > $1', [cutoff]);
-    await client.query('COMMIT');
-  } catch (e) {
-    await client.query('ROLLBACK');
-    throw e;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 // --- Knowledge Sync functions (for sync.mjs routes) ---
@@ -1328,10 +1373,8 @@ export async function countOrphanedWorktrees() {
 export async function addChangeLogEntries(entries) {
   if (!entries.length) return 0;
   const now = new Date().toISOString();
-  const client = await pool.connect();
-  let inserted = 0;
-  try {
-    await client.query('BEGIN');
+  return withTransaction(async (client) => {
+    let inserted = 0;
     for (const e of entries) {
       const result = await client.query(`
         INSERT INTO change_log_entries
@@ -1345,14 +1388,8 @@ export async function addChangeLogEntries(entries) {
       ]);
       inserted += result.rowCount;
     }
-    await client.query('COMMIT');
-  } catch (e) {
-    await client.query('ROLLBACK');
-    throw e;
-  } finally {
-    client.release();
-  }
-  return inserted;
+    return inserted;
+  });
 }
 
 export async function pruneChangeLogEntries(projectKey) {
