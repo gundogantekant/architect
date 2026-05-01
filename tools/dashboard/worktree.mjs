@@ -141,19 +141,22 @@ export async function createWorktreeForDispatch({ projectPath, portfolioEntry, w
 
 /**
  * Check if dispatch-level worktree creation should happen.
- * Reads domain rules from portfolio entry — does NOT own decision logic.
+ * Owns the full worktree creation decision, including git-repository detection.
  *
  * @param {Object} opts
  * @param {string} opts.permissionMode — 'plan' | 'acceptEdits'
  * @param {string|null} opts.workItemId — W-XXX or null
  * @param {Object|null} opts.portfolioEntry — PortfolioEntry JSON
  * @param {boolean} opts.featureFlag — worktree_at_dispatch preference
- * @returns {boolean}
+ * @param {string|null} opts.projectPath — absolute path to the target project
+ * @returns {Promise<boolean>}
  */
-export function shouldCreateWorktree({ permissionMode, workItemId, portfolioEntry, featureFlag, isGit }) {
+export async function shouldCreateWorktree({ permissionMode, workItemId, portfolioEntry, featureFlag, projectPath }) {
   if (!featureFlag) return false;
   if (permissionMode !== 'acceptEdits') return false;
   if (!workItemId) return false;
+  if (!projectPath) return false;
+  const isGit = await isGitRepository(projectPath);
   if (!isGit) return false;
   const mode = portfolioEntry?.worktree_mode ?? 'auto';
   return mode === 'auto';

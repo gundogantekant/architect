@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository, checkWorktreeReadiness } from '../worktree.mjs';
+import { createWorktreeForDispatch, shouldCreateWorktree, checkWorktreeReadiness } from '../worktree.mjs';
 import { AUTO_IMPLEMENTABLE_STATUSES } from '../constants.mjs';
 import { triggerMerge } from '../dispatch-manager.mjs';
 
@@ -23,20 +23,6 @@ function resolveUnmetDependencies(db, dependsOn) {
   return dependsOn.filter(depId => {
     const dep = db.getWorkItemFull(depId);
     return !dep || dep.status !== 'done';
-  });
-}
-
-/**
- * Create a worktree for an auto-implement dispatch (always creates, ignores worktree_mode).
- * Returns worktree context. Throws on failure — callers must handle with 500.
- */
-async function createWorktreeForAutoImplement({ projectPath, workItem }) {
-  return await createWorktreeForDispatch({
-    projectPath,
-    portfolioEntry: null,
-    workItemId: workItem.id,
-    workItemTitle: workItem.title || workItem.id,
-    orgConventions: null,
   });
 }
 
@@ -193,16 +179,15 @@ export default function dispatchRoutes(deps) {
       // --- Dispatch-level worktree creation (W-927) ---
       const featureFlag = (db.getPreference('worktree_at_dispatch') ?? 'true') === 'true';
       const rawEntry = portfolio?.entry || null;
-      const isGit = await isGitRepository(projectPath);
       let worktreeContext = null;
       let effectiveCwd = projectPath;
 
-      const willCreateWorktree = shouldCreateWorktree({
+      const willCreateWorktree = await shouldCreateWorktree({
         permissionMode: resolvedPermMode,
         workItemId: work_item_id,
         portfolioEntry: rawEntry,
         featureFlag,
-        isGit,
+        projectPath,
       });
       const readinessWarning = willCreateWorktree && !body.confirm_worktree_warning
         ? checkWorktreeReadiness({ portfolioEntry: rawEntry, projectKey: project_key })
@@ -338,15 +323,31 @@ export default function dispatchRoutes(deps) {
 
       const id = `D-${Date.now()}`;
 
-      const isGit = await isGitRepository(projectPath);
-      let portfolio, worktreeContext;
-      try {
-        [portfolio, worktreeContext] = await Promise.all([
-          loadPortfolioContext(project_key),
-          isGit ? createWorktreeForAutoImplement({ projectPath, workItem }) : Promise.resolve(null),
-        ]);
-      } catch (worktreeErr) {
-        return err(res, `Failed to create worktree: ${worktreeErr.message}`, 500);
+      const featureFlag = (db.getPreference('worktree_at_dispatch') ?? 'true') === 'true';
+      const portfolio = await loadPortfolioContext(project_key);
+      const rawEntry = portfolio?.entry || null;
+      let worktreeContext = null;
+
+      const willCreateWorktree = await shouldCreateWorktree({
+        permissionMode: 'acceptEdits',  // auto-implement always runs in acceptEdits mode
+        workItemId: work_item_id,
+        portfolioEntry: rawEntry,
+        featureFlag,
+        projectPath,
+      });
+
+      if (willCreateWorktree) {
+        try {
+          worktreeContext = await createWorktreeForDispatch({
+            projectPath,
+            portfolioEntry: rawEntry,
+            workItemId: work_item_id,
+            workItemTitle: workItem.title || work_item_id,
+            orgConventions: portfolio?.org,
+          });
+        } catch (worktreeErr) {
+          return err(res, `Failed to create worktree: ${worktreeErr.message}`, 500);
+        }
       }
 
       const effectiveWorkItem = { ...workItem, additional_instructions: additional_instructions || null };

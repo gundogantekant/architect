@@ -56,6 +56,7 @@ test.describe('Worktree dispatch contracts @fast', () => {
         work_item_id: 'W-999',
         worktree_mode: 'explicit',
         feature_flag: true,
+        is_git: true,  // ensure the mode check is actually reached
       }),
     });
     expect(resp.should_create).toBe(false);
@@ -101,10 +102,9 @@ test.describe('Worktree dispatch contracts @fast', () => {
     expect(resp.should_create).toBe(false);
   });
 
-  test('WD-14: shouldCreateWorktree backward compat — omitting isGit uses existing logic', async () => {
-    // When isGit is omitted (undefined), the falsy guard fires → returns false.
-    // This is intentional: all updated callers explicitly pass isGit, so undefined
-    // means an untouched caller — conservatively block.
+  test('WD-14: shouldCreateWorktree returns false when project_path and is_git are both omitted', async () => {
+    // No project_path and no is_git provided → effectivePath = null in test endpoint
+    // → shouldCreateWorktree receives projectPath: null → !projectPath guard fires → returns false.
     const resp = await api('test/worktree-decision', {
       method: 'POST',
       body: JSON.stringify({
@@ -114,7 +114,6 @@ test.describe('Worktree dispatch contracts @fast', () => {
         feature_flag: true,
       }),
     });
-    // isGit not passed → undefined → !undefined = true → returns false
     expect(resp.should_create).toBe(false);
   });
 
