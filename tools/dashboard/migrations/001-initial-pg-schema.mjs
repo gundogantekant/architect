@@ -112,7 +112,8 @@ export async function up(client) {
       dispatch_mode TEXT NOT NULL DEFAULT 'standard',
       completion_sha TEXT,
       completion_summary TEXT,
-      merge_result TEXT
+      merge_result TEXT,
+      pipeline_stage TEXT
     )
   `);
 
