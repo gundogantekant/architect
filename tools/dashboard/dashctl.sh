@@ -553,6 +553,40 @@ cmd_uninstall() {
   esac
 }
 
+cmd_sync_install() {
+  local plist_name="com.architect.repo-sync"
+  local plist_src="$DASHBOARD_DIR/../repo-sync/com.architect.repo-sync.plist"
+  local plist_dst="$HOME/Library/LaunchAgents/${plist_name}.plist"
+  local node_bin
+  node_bin=$(find_node)
+
+  if [ -z "$node_bin" ]; then
+    echo "node not found; install Node.js first" >&2
+    exit 1
+  fi
+
+  # Substitute placeholders
+  sed -e "s|NODE_BINARY_PLACEHOLDER|${node_bin}|g" \
+      -e "s|ARCHITECT_ROOT_PLACEHOLDER|${ROOT}|g" \
+      "$plist_src" > "$plist_dst"
+
+  launchctl load "$plist_dst"
+  echo "Installed and loaded ${plist_name}"
+}
+
+cmd_sync_uninstall() {
+  local plist_name="com.architect.repo-sync"
+  local plist_dst="$HOME/Library/LaunchAgents/${plist_name}.plist"
+
+  if [ -f "$plist_dst" ]; then
+    launchctl unload "$plist_dst" 2>/dev/null || true
+    rm "$plist_dst"
+    echo "Unloaded and removed ${plist_name}"
+  else
+    echo "${plist_name} is not installed"
+  fi
+}
+
 cmd_reset() {
   local confirm=false
 
@@ -686,6 +720,8 @@ Commands:
   reset [--confirm]    DESTROY ALL DATA: wipe PostgreSQL volume and restart with empty DB
   install              Install auto-start service (launchd/systemd)
   uninstall            Remove auto-start service
+  sync-install         Install repo-sync launchd agent (runs at 08:00 and 20:00)
+  sync-uninstall       Remove repo-sync launchd agent
   help                 Show this help
 
 Database commands:
@@ -717,8 +753,10 @@ case "${1:-help}" in
   logs)        shift; cmd_logs "$@" ;;
   fresh)       shift; cmd_fresh "$@" ;;
   reset)       shift; cmd_reset "$@" ;;
-  install)     cmd_install ;;
-  uninstall)   cmd_uninstall ;;
+  install)          cmd_install ;;
+  uninstall)        cmd_uninstall ;;
+  sync-install)     cmd_sync_install ;;
+  sync-uninstall)   cmd_sync_uninstall ;;
   db:up)       cmd_db_up ;;
   db:down)     cmd_db_down ;;
   db:logs)     cmd_db_logs ;;

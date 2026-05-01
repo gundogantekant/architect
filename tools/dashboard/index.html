@@ -17,6 +17,7 @@
   <div id="epic-tree"></div>
   <div id="sessions-sidebar" class="sessions-section"></div>
   <div id="tree"></div>
+  <div class="sidebar-settings" onclick="navigate('repos')"><span class="nav-icon">&#128193;</span> <span>Repos</span></div>
   <div class="sidebar-settings" onclick="location.hash='#time-report'"><span class="nav-icon">&#9202;</span> <span>Time Report</span></div>
   <div class="sidebar-settings" onclick="location.hash='#settings'"><span class="nav-icon">&#9881;</span> <span>Settings</span></div>
   <a href="#" class="notes-toggle-btn sidebar-settings" data-notes-toggle title="Toggle notes panel" aria-label="Toggle notes panel">
@@ -2646,6 +2647,7 @@ function renderComponentView(org, proj, comp, data, workItems, files, projectEpi
   const tabs = ['Board', 'Overview', 'Docs'];
   let html = `<div class="card"><h2>${esc(data.name || `${proj}/${comp}`)}</h2>`;
   html += `<span class="badge badge-role">${esc(data.role || 'unknown')}</span>`;
+  html += `<div id="sync-freshness-${esc(`${org}/${proj}/${comp}`)}" style="font-size:12px;color:var(--text-light);margin:6px 0 2px"></div>`;
   html += `<div class="tabs" id="comp-tabs">`;
   tabs.forEach((t, i) => {
     html += `<div class="tab${i === 0 ? ' active' : ''}" data-tab="${i}">${t}</div>`;
@@ -6480,6 +6482,193 @@ function showReconnectingOverlay() {
 
 
 
+// --- Navigate helper (used by sidebar and repo/adr views) ---
+function navigate(fragment) {
+  location.hash = '#' + fragment;
+}
+window.navigate = navigate;
+
+// --- timeAgo helper ---
+function timeAgo(isoString) {
+  if (!isoString) return '—';
+  const ms = Date.now() - new Date(isoString).getTime();
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return s + 's ago';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm ago';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + 'h ago';
+  const d = Math.floor(h / 24);
+  return d + 'd ago';
+}
+
+// --- Repos view ---
+function renderReposView(repos) {
+  const main = $('#main');
+  main.innerHTML = `
+    <div class="card">
+      <h2>NeuronicPBM Repos (${repos.length} total)</h2>
+      <div style="margin-bottom:12px">
+        <input type="text" id="repo-search" placeholder="Search repos..." style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:260px" />
+      </div>
+      <table class="wi-table">
+        <thead>
+          <tr>
+            <th>Repo</th>
+            <th>Branch</th>
+            <th>Last Updated</th>
+            <th>Portfolio</th>
+            <th>Sync</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${repos.map(r => `
+            <tr data-repo-name="${esc(r.github_repo_name)}">
+              <td><a href="https://github.com/NeuronicPBM/${esc(r.github_repo_name)}" target="_blank">${esc(r.github_repo_name)}</a></td>
+              <td>${esc(r.default_branch || '—')}</td>
+              <td>${r.last_github_updated_at ? timeAgo(r.last_github_updated_at) : '—'}</td>
+              <td>${r.portfolio_key ? `<span class="badge badge-blue">${esc(r.portfolio_key)}</span>` : '<span class="muted">—</span>'}</td>
+              <td>${r.sync_enabled ? '<span class="badge badge-green">synced</span>' : '<span class="muted">off</span>'}</td>
+              <td>
+                ${!r.sync_enabled
+                  ? `<button class="btn btn-sm btn-primary repo-toggle" data-name="${esc(r.github_repo_name)}" data-enabled="false">Include</button>`
+                  : `<button class="btn btn-sm repo-toggle" data-name="${esc(r.github_repo_name)}" data-enabled="true">Remove</button>`
+                }
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      <div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button id="btn-seed-repos" class="btn btn-secondary">Refresh from GitHub</button>
+        <button id="btn-sync-now" class="btn btn-primary">Sync Now</button>
+        <a href="#adrs" onclick="navigate('adrs')" class="btn btn-sm">View ADRs →</a>
+      </div>
+    </div>
+  `;
+}
+
+function bindReposEvents() {
+  const searchInput = document.getElementById('repo-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', e => {
+      const val = e.target.value.toLowerCase();
+      document.querySelectorAll('tbody [data-repo-name]').forEach(tr => {
+        const name = tr.dataset.repoName.toLowerCase();
+        tr.style.display = name.includes(val) ? '' : 'none';
+      });
+    });
+  }
+
+  document.querySelectorAll('.repo-toggle').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      const btn = e.currentTarget;
+      const name = btn.dataset.name;
+      const enabled = btn.dataset.enabled === 'true';
+      btn.disabled = true;
+      btn.textContent = '...';
+      try {
+        await fetch(`/api/repos/${encodeURIComponent(name)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sync_enabled: !enabled }),
+        });
+        navigate('repos');
+      } catch {
+        btn.disabled = false;
+        btn.textContent = enabled ? 'Remove' : 'Include';
+      }
+    });
+  });
+
+  const seedBtn = document.getElementById('btn-seed-repos');
+  if (seedBtn) {
+    seedBtn.addEventListener('click', async () => {
+      seedBtn.disabled = true;
+      const orig = seedBtn.textContent;
+      seedBtn.textContent = 'Seeding...';
+      try {
+        await fetch('/api/repos/seed', { method: 'POST' });
+        navigate('repos');
+      } catch {
+        seedBtn.disabled = false;
+        seedBtn.textContent = orig;
+      }
+    });
+  }
+
+  const syncBtn = document.getElementById('btn-sync-now');
+  if (syncBtn) {
+    syncBtn.addEventListener('click', async () => {
+      try {
+        await fetch('/api/repo-sync/run-now', { method: 'POST' });
+        alert('Sync started — check tmp/repo-sync.log for progress');
+      } catch {
+        alert('Sync request failed');
+      }
+    });
+  }
+}
+
+// --- ADRs view ---
+function renderAdrsView(adrs) {
+  const main = $('#main');
+  main.innerHTML = `
+    <div class="card">
+      <h2>ADR Candidates (${adrs.length})</h2>
+      <p class="muted">Architecture Decision Records identified from org-wide sync. Human inspection only.</p>
+      <table class="wi-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Title</th>
+            <th>Type</th>
+            <th>Repos</th>
+            <th>Date</th>
+            <th>Detail</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${adrs.map(adr => `
+            <tr>
+              <td><code>${esc(String(adr.id))}</code></td>
+              <td>${esc(adr.title || '—')}</td>
+              <td><span class="badge">${esc(adr.type || '—')}</span></td>
+              <td>${(adr.repos || []).map(r => esc(r)).join(', ')}</td>
+              <td>${adr.created_at ? new Date(adr.created_at).toLocaleDateString() : '—'}</td>
+              <td><button class="btn btn-sm adr-detail" data-id="${esc(String(adr.id))}">View</button></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+  document.querySelectorAll('.adr-detail').forEach(btn => {
+    btn.addEventListener('click', () => {
+      navigate('adr/' + btn.dataset.id);
+    });
+  });
+}
+
+function renderAdrDetailView(adr) {
+  const main = $('#main');
+  main.innerHTML = `
+    <div class="card">
+      <a href="#adrs" onclick="navigate('adrs')" style="font-size:13px;color:var(--accent);display:inline-block;margin-bottom:12px">← Back to ADRs</a>
+      <h2>${esc(adr.title || 'ADR ' + adr.id)}</h2>
+      <div style="margin-bottom:12px">
+        <span class="badge">${esc(adr.type || '—')}</span>
+      </div>
+      <dl class="kv">
+        <dt>Repos</dt><dd>${(adr.repos || []).map(r => `<span class="tag">${esc(r)}</span>`).join(' ') || '—'}</dd>
+        <dt>Date</dt><dd>${adr.created_at ? new Date(adr.created_at).toLocaleDateString() : '—'}</dd>
+        <dt>Detail Path</dt><dd><pre style="margin:0;font-size:12px">${esc(adr.detail_path || '—')}</pre></dd>
+      </dl>
+    </div>
+  `;
+}
+
 // --- Router ---
 async function route() {
   const hash = location.hash.slice(1);
@@ -6604,6 +6793,7 @@ async function route() {
   if (parts[0] === 'component' && parts.length >= 4) {
     const [, org, proj, comp] = parts;
     try {
+      const projectKey = `${org}/${proj}/${comp}`;
       const [data, bl, files] = await Promise.all([
         api(`component/${org}/${proj}/${comp}`),
         getBacklog(),
@@ -6611,7 +6801,7 @@ async function route() {
       ]);
 
       // Match work items (case-insensitive)
-      const projKey = `${org}/${proj}/${comp}`.toLowerCase();
+      const projKey = projectKey.toLowerCase();
       const workItems = [];
       if (bl.projects) {
         for (const [key, val] of Object.entries(bl.projects)) {
@@ -6628,10 +6818,70 @@ async function route() {
 
       main.innerHTML = renderComponentView(org, proj, comp, data, workItems, files, projectEpics);
       bindTabs();
-      setActive(`${org}/${proj}/${comp}`);
+      setActive(projectKey);
+
+      // Inject sync freshness indicator — parallel fetch, non-blocking
+      (async () => {
+        try {
+          const [syncResult] = await Promise.allSettled([
+            fetch('/api/sync/status?project_key=' + encodeURIComponent(projectKey)).then(r => r.json()),
+          ]);
+          if (syncResult.status === 'fulfilled') {
+            const syncData = syncResult.value;
+            const lastSyncedAt = syncData.last_synced_at;
+            const status = syncData.status || 'unknown';
+            let color = 'blue';
+            if (status === 'fresh') color = 'green';
+            else if (status === 'aging') color = 'medium';
+            else if (status === 'stale') color = 'blocked';
+            const freshnessHtml = lastSyncedAt
+              ? `Last synced: ${timeAgo(lastSyncedAt)} <span class="badge badge-${color}">${esc(status)}</span>`
+              : `<span class="badge badge-${color}">${esc(status)}</span>`;
+            const freshEl = document.getElementById(`sync-freshness-${projectKey}`);
+            if (freshEl) freshEl.innerHTML = freshnessHtml;
+          }
+        } catch { /* sync status is optional — ignore failures */ }
+      })();
     } catch (e) {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
     }
+    placeSessionPanels();
+    return;
+  }
+
+  if (parts[0] === 'repos') {
+    try {
+      const repos = await fetch('/api/repos').then(r => r.json());
+      renderReposView(repos);
+      bindReposEvents();
+    } catch (e) {
+      main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading repos: ${esc(String(e))}</p></div>`;
+    }
+    setActive('');
+    placeSessionPanels();
+    return;
+  }
+
+  if (parts[0] === 'adrs') {
+    try {
+      const adrs = await fetch('/api/adrs?org=neuronic&limit=50').then(r => r.json());
+      renderAdrsView(adrs);
+    } catch (e) {
+      main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading ADRs: ${esc(String(e))}</p></div>`;
+    }
+    setActive('');
+    placeSessionPanels();
+    return;
+  }
+
+  if (parts[0] === 'adr' && parts[1]) {
+    try {
+      const adr = await fetch(`/api/adrs/${encodeURIComponent(parts[1])}`).then(r => r.json());
+      renderAdrDetailView(adr);
+    } catch (e) {
+      main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading ADR: ${esc(String(e))}</p></div>`;
+    }
+    setActive('');
     placeSessionPanels();
     return;
   }

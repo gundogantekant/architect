@@ -662,6 +662,7 @@ One row per completed sync run per project in the `knowledge_syncs` PostgreSQL t
   "id": "number (autoincrement)",
   "project_key": "string (org/project/component)",
   "trigger": "session_start | scheduled | manual",
+  "sync_source": "'local' | 'remote' — 'local' for /sync skill runs, 'remote' for scheduled pulls",
   "status": "pending | running | completed | failed | skipped",
   "started_at": "string (ISO 8601)",
   "synced_at": "string (ISO 8601) | null — null until completed",
@@ -725,6 +726,55 @@ Classification semantics:
 Retention: entries older than 90 days are pruned on each sync run. If a project accumulates more than 100 entries after pruning, the oldest beyond 100 are also removed.
 
 See `domain/rules.md` → Sync Rules for classification heuristics and injection limits.
+
+## RepoSyncConfig
+
+One row per GitHub repository participating in scheduled remote syncs. Stored in the `repo_sync_configs` PostgreSQL table.
+
+```json
+{
+  "github_repo_name": "string (PK) — GitHub repository name (without org prefix)",
+  "github_org": "string — GitHub organisation; defaults to 'NeuronicPBM'",
+  "default_branch": "string — branch to fetch and mirror; defaults to 'main'",
+  "local_path": "string | null — absolute path to work/mirrors/<name>; null until first clone",
+  "portfolio_key": "string | null — org/project/component if registered in portfolio; null otherwise",
+  "sync_enabled": "boolean — whether this repo participates in scheduled syncs",
+  "last_github_updated_at": "string (TIMESTAMPTZ) | null — last push time from GitHub API",
+  "created_at": "string (TIMESTAMPTZ)",
+  "updated_at": "string (TIMESTAMPTZ)"
+}
+```
+
+## OrgActivitySummary
+
+Not persisted to the database — written as a file artifact to `~/.architect/portfolio/neuronic/sync-log.md` (appended) after each scheduled sync pass that produced new commits.
+
+```json
+{
+  "generated_at": "string (ISO 8601) — timestamp of summary generation",
+  "sync_run_id": "string — identifies the triggering sync pass",
+  "repos_synced": ["string — github_repo_name values for repos that had new commits"],
+  "technical_changelog": "string (Markdown) — org-wide narrative of changes",
+  "developer_activity": "string (Markdown table) — columns: Developer | Repos | Summary",
+  "repository_summaries": "string (Markdown) — one subsection per repo with commit highlights",
+  "adr_candidates": [{ "$ref": "AdrCandidate" }]
+}
+```
+
+### AdrCandidate (embedded in OrgActivitySummary)
+
+```json
+{
+  "id": "string — ADR-YYYYMMDD-NNN format",
+  "org_key": "string — organisation identifier",
+  "title": "string",
+  "type": "'architectural' | 'dependency' | 'feature' | 'api-contract'",
+  "repos": ["string — github_repo_name values for repos that surfaced this candidate"],
+  "sync_run_id": "string | null",
+  "detail_path": "string — absolute path to portfolio/neuronic/adrs/<id>.md",
+  "created_at": "string (TIMESTAMPTZ)"
+}
+```
 
 ## DashboardPreferences
 
