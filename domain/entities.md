@@ -404,6 +404,27 @@ Resolution semantics (per parent WorkItem's `approval.mode`):
 
 Maximum 20 approvers per work item (enforced at API layer).
 
+## WorkItemLite
+
+Lightweight projection of WorkItem used in search results. Excludes approval sub-query fields and state-machine flags. Returned by `GET /api/work-items/search`.
+
+Fields: `id`, `title`, `status`, `priority`, `description`, `project_key`, `epic_id`, `tags`, `depends_on`, `created_at`, `updated_at`.
+
+## WorkItemSearchResult
+
+Response type for `GET /api/work-items/search`.
+
+```json
+{
+  "items": [{ "$ref": "WorkItemLite" }],
+  "query": {
+    "keywords": ["string"],
+    "total": "number — total matching items before 20-item cap",
+    "has_more": "boolean — true when total > 20"
+  }
+}
+```
+
 ## Epic
 
 Top-level entity in `work/backlog.json` under the `epics` array. Epics group work items across projects into strategic goals.
