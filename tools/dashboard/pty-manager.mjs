@@ -7,6 +7,17 @@ import * as db from './db.mjs';
 
 // Shared terminal handler wiring (used for fresh spawn and restore)
 export function wireTerminalHandlers(terminal) {
+  terminal.ptyProcess.on('error', (err) => {
+    console.error(JSON.stringify({
+      type: 'pty_error',
+      errno: err.code,
+      message: err.message,
+      pid: terminal.ptyProcess?.pid,
+      session_id: terminal.id,
+      timestamp: new Date().toISOString(),
+    }));
+  });
+
   terminal.ptyProcess.onData((data) => {
     // Append to EventStream
     const event = terminal.eventStream.append('data', data);
@@ -87,7 +98,7 @@ export async function injectPrompt(terminal) {
     const CHUNK_DELAY = 100;
     for (let i = 0; i < prompt.length; i += CHUNK_SIZE) {
       const chunk = prompt.slice(i, i + CHUNK_SIZE);
-      terminal.ptyProcess.write(chunk);
+      try { terminal.ptyProcess.write(chunk); } catch {}
       if (i + CHUNK_SIZE < prompt.length) await sleep(CHUNK_DELAY);
     }
     terminal.ptyProcess.write('\x1b[201~');

@@ -159,11 +159,17 @@ export default function terminalRoutes(deps) {
               cwd: projectPath,
               env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
             });
+            ptyProcess.on('error', (err) => {
+              console.error(JSON.stringify({ type: 'pty_error', errno: err.code, message: err.message, pid: ptyProcess.pid, session_id: id, timestamp: new Date().toISOString() }));
+            });
           } else {
             ptyProcess = pty.spawn(CLAUDE_BIN, ptyArgs, {
               name: 'xterm-256color', cols: 80, rows: 24,
               cwd: projectPath,
               env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
+            });
+            ptyProcess.on('error', (err) => {
+              console.error(JSON.stringify({ type: 'pty_error', errno: err.code, message: err.message, pid: ptyProcess.pid, session_id: id, timestamp: new Date().toISOString() }));
             });
           }
         } else if (agentType === 'shell') {
@@ -181,6 +187,9 @@ export default function terminalRoutes(deps) {
             cwd: projectPath,
             env: shellEnv,
           });
+          ptyProcess.on('error', (err) => {
+            console.error(JSON.stringify({ type: 'pty_error', errno: err.code, message: err.message, pid: ptyProcess.pid, session_id: id, timestamp: new Date().toISOString() }));
+          });
         } else {
           // Other adapters: spawn shell as fallback
           const shellBin = process.env.SHELL || '/bin/zsh';
@@ -189,6 +198,9 @@ export default function terminalRoutes(deps) {
             name: 'xterm-256color', cols: 80, rows: 24,
             cwd: projectPath,
             env: { ...process.env, TERM: 'xterm-256color' },
+          });
+          ptyProcess.on('error', (err) => {
+            console.error(JSON.stringify({ type: 'pty_error', errno: err.code, message: err.message, pid: ptyProcess.pid, session_id: id, timestamp: new Date().toISOString() }));
           });
         }
       } catch (spawnErr) {
@@ -303,11 +315,17 @@ export default function terminalRoutes(deps) {
             cwd: projectPath,
             env: { ...process.env, TERM: 'xterm-256color' },
           });
+          ptyProcess.on('error', (err) => {
+            console.error(JSON.stringify({ type: 'pty_error', errno: err.code, message: err.message, pid: ptyProcess.pid, session_id: id, timestamp: new Date().toISOString() }));
+          });
         } else {
           ptyProcess = pty.spawn(shellBin, [], {
             name: 'xterm-256color', cols: 80, rows: 24,
             cwd: projectPath,
             env: { ...process.env, TERM: 'xterm-256color' },
+          });
+          ptyProcess.on('error', (err) => {
+            console.error(JSON.stringify({ type: 'pty_error', errno: err.code, message: err.message, pid: ptyProcess.pid, session_id: id, timestamp: new Date().toISOString() }));
           });
         }
       } catch (e) {
@@ -544,11 +562,17 @@ export default function terminalRoutes(deps) {
             cwd: project_path,
             env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
           });
+          ptyProcess.on('error', (err) => {
+            console.error(JSON.stringify({ type: 'pty_error', errno: err.code, message: err.message, pid: ptyProcess.pid, session_id: id, timestamp: new Date().toISOString() }));
+          });
         } else {
           ptyProcess = pty.spawn(CLAUDE_BIN, ptyArgs, {
             name: 'xterm-256color', cols: 80, rows: 24,
             cwd: project_path,
             env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
+          });
+          ptyProcess.on('error', (err) => {
+            console.error(JSON.stringify({ type: 'pty_error', errno: err.code, message: err.message, pid: ptyProcess.pid, session_id: id, timestamp: new Date().toISOString() }));
           });
         }
       } catch (e) {

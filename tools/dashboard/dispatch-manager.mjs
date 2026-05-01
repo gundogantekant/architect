@@ -2,7 +2,7 @@ import { readFileSync, existsSync, createWriteStream, appendFileSync } from 'nod
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { dispatches, terminals, cliSessions, saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession } from './state.mjs';
-import { isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture, termEventLogPath } from './utils.mjs';
+import { isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture, termEventLogPath, sleep } from './utils.mjs';
 import { PORTFOLIO, WORK, LOGS_DIR, TMUX_AVAILABLE } from './constants.mjs';
 import * as db from './db.mjs';
 import { EventStream } from './event-stream.mjs';
@@ -120,7 +120,7 @@ export function tailLogFile(dispatch) {
 }
 
 // Restore persisted sessions from SQLite with PID liveness checks
-export function restoreSessions(wireTerminalHandlers, deps) {
+export async function restoreSessions(wireTerminalHandlers, deps) {
   // Mark legacy rows (no PID) as interrupted
   db.markRunningAsInterrupted();
 
@@ -200,50 +200,72 @@ export function restoreSessions(wireTerminalHandlers, deps) {
     }
   }
 
-  for (const t of db.getPersistedTerminals()) {
-    // Load EventStream from JSONL log
-    const eventLogPath = termEventLogPath(t.id);
-    let eventStream;
-    if (existsSync(eventLogPath)) {
-      const content = readFileSync(eventLogPath, 'utf8');
-      eventStream = EventStream.fromJSONL(content, t.id);
-    } else {
-      eventStream = new EventStream(t.id);
-    }
+  const persistedTerminals = db.getPersistedTerminals();
+  const BATCH_SIZE = 5;
+  const BATCH_DELAY_MS = 100;
 
-    if (t.status === 'suspended') {
-      // Suspended terminals: load into memory as-is (no running process)
-      terminals.set(t.id, {
-        ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
-        cols: t.cols || 80, rows: t.rows || 24,
-      });
-      continue;
-    }
+  for (let batchStart = 0; batchStart < persistedTerminals.length; batchStart += BATCH_SIZE) {
+    if (batchStart > 0) await sleep(BATCH_DELAY_MS);
+    const batch = persistedTerminals.slice(batchStart, batchStart + BATCH_SIZE);
 
-    if (t.status === 'running') {
-      if (t.tmux_session && TMUX_AVAILABLE && tmuxSessionExists(t.tmux_session)) {
-        // Re-attach to tmux session
-        reconnectedTerminals++;
-        try {
-          const ptyProcess = pty.spawn('tmux', ['attach-session', '-t', t.tmux_session], {
-            name: 'xterm-256color', cols: t.cols || 80, rows: t.rows || 24,
-            env: { ...process.env, TERM: 'xterm-256color' },
+    for (const t of batch) {
+      const eventLogPath = termEventLogPath(t.id);
+      let eventStream;
+      if (existsSync(eventLogPath)) {
+        const content = readFileSync(eventLogPath, 'utf8');
+        eventStream = EventStream.fromJSONL(content, t.id);
+      } else {
+        eventStream = new EventStream(t.id);
+      }
+
+      if (t.status === 'suspended') {
+        terminals.set(t.id, {
+          ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
+          cols: t.cols || 80, rows: t.rows || 24,
+        });
+        continue;
+      }
+
+      if (t.status === 'running') {
+        if (t.tmux_session && TMUX_AVAILABLE && tmuxSessionExists(t.tmux_session)) {
+          reconnectedTerminals++;
+          try {
+            const ptyProcess = pty.spawn('tmux', ['attach-session', '-t', t.tmux_session], {
+              name: 'xterm-256color', cols: t.cols || 80, rows: t.rows || 24,
+              env: { ...process.env, TERM: 'xterm-256color' },
+            });
+            const terminal = {
+              ...t,
+              ptyProcess,
+              eventStream,
+              wsClients: eventStream.subscribers,
+              cols: t.cols || 80,
+              rows: t.rows || 24,
+              _adapter: getAdapter(t.agent_type || 'claude'),
+              _accumulated: '',
+            };
+            wireTerminalHandlers(terminal);
+            terminals.set(t.id, terminal);
+            console.log(`Terminal ${t.id}: tmux session ${t.tmux_session} re-attached`);
+          } catch (e) {
+            interruptedTerminals++;
+            t.status = 'interrupted';
+            t.exited_at = now;
+            db.updateTerminalStatus(t.id, 'interrupted', now);
+            archiveSession(t, 'terminal');
+            terminals.set(t.id, {
+              ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
+              cols: t.cols || 80, rows: t.rows || 24,
+            });
+          }
+        } else if (t.pid && isPidAlive(t.pid)) {
+          reconnectedTerminals++;
+          terminals.set(t.id, {
+            ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
+            alive_but_detached: true, cols: t.cols || 80, rows: t.rows || 24,
           });
-          const terminal = {
-            ...t,
-            ptyProcess,
-            eventStream,
-            wsClients: eventStream.subscribers,
-            cols: t.cols || 80,
-            rows: t.rows || 24,
-            _adapter: getAdapter(t.agent_type || 'claude'),
-            _accumulated: '',
-          };
-          wireTerminalHandlers(terminal);
-          terminals.set(t.id, terminal);
-          console.log(`Terminal ${t.id}: tmux session ${t.tmux_session} re-attached`);
-        } catch (e) {
-          // tmux attach failed — mark interrupted
+          console.log(`Terminal ${t.id}: PID ${t.pid} alive but no tmux — marked as detached`);
+        } else {
           interruptedTerminals++;
           t.status = 'interrupted';
           t.exited_at = now;
@@ -254,32 +276,12 @@ export function restoreSessions(wireTerminalHandlers, deps) {
             cols: t.cols || 80, rows: t.rows || 24,
           });
         }
-      } else if (t.pid && isPidAlive(t.pid)) {
-        // PID alive but no tmux — alive but detached
-        reconnectedTerminals++;
-        terminals.set(t.id, {
-          ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
-          alive_but_detached: true, cols: t.cols || 80, rows: t.rows || 24,
-        });
-        console.log(`Terminal ${t.id}: PID ${t.pid} alive but no tmux — marked as detached`);
       } else {
-        // Dead — mark interrupted, archive to session_history
-        interruptedTerminals++;
-        t.status = 'interrupted';
-        t.exited_at = now;
-        db.updateTerminalStatus(t.id, 'interrupted', now);
-        archiveSession(t, 'terminal');
         terminals.set(t.id, {
           ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
           cols: t.cols || 80, rows: t.rows || 24,
         });
       }
-    } else {
-      // Non-running terminal (completed/failed/killed/interrupted) — load into memory with EventStream
-      terminals.set(t.id, {
-        ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
-        cols: t.cols || 80, rows: t.rows || 24,
-      });
     }
   }
 
