@@ -37,6 +37,11 @@ export const SPEC_FILES = [
   'work-item-flags',
   'build-tree',
   'autonomous-pipeline',
+  'sidebar-fold',
+  'notes-sidebar',
+  'copy-fix',
+  'terminal-grid',
+  'modal-layout',
 ];
 
 function getLiveDashboardPorts() {
