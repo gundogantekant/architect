@@ -25,7 +25,7 @@ const _OD_PORTFOLIO_ENTRY = {
   name: 'architect',
   role: 'SDLC orchestrator',
   brief: { purpose: 'Manages software development lifecycle' },
-  guidance: { stack_summary: 'Node.js, SQLite, Playwright' },
+  guidance: { stack_summary: 'Node.js, PostgreSQL, Playwright' },
   worktree_mode: 'auto',
   worktree_setup: { branch: 'main' },
 };

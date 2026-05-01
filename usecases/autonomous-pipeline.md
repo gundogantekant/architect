@@ -19,7 +19,7 @@ Defines the server-side pipeline lifecycle for `auto_implement` dispatches. This
 
 ## Restart Recovery
 
-When the dashboard server restarts with a `merge_pending` dispatch in SQLite:
+When the dashboard server restarts with a `merge_pending` dispatch in PostgreSQL:
 - `merge_gate=auto` → merge triggers immediately via `setImmediate` (no 10-second delay — delay is initial UX only)
 - `merge_gate=confirm` → dispatch surfaces in UI with "Merge Now" button; no automatic action
 

@@ -816,7 +816,7 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     const envLines = ['# Environment', ''];
     envLines.push(`You are running in the target project directory: ${projectPath || '(unknown)'}`);
     envLines.push(`The architect project (portfolio, backlog, domain rules) is at: ${ROOT}`);
-    envLines.push(`- Backlog: SQLite at ${ROOT}/work/architect.db (use dashboard API)`);
+    envLines.push(`- Backlog: PostgreSQL via dashboard API at http://127.0.0.1:${port}`);
     envLines.push(`- Dashboard API: http://127.0.0.1:${port}`);
     envLines.push('');
     envLines.push('Use the architect project to look up cross-project context, related tasks, domain rules, or use-case workflows when needed. Your primary work should happen in the current directory (the target project).');

@@ -101,7 +101,7 @@ export default function serverMgmtRoutes(deps) {
         auto_start: autoStart,
         log_file: LOG_FILE,
         pid_file: PID_FILE,
-        database_file: join(WORK, 'architect.db'),
+        database: 'postgresql',
         portfolio_dir: PORTFOLIO,
       });
     }],

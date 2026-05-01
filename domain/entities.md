@@ -322,7 +322,7 @@ Stored at `portfolio/<org>/organization.json`.
 
 ## WorkItem
 
-Stored in SQLite (`work_items` table). The project key (`org/project/component`) provides the project context, so items do not carry a redundant `project` field.
+Stored in PostgreSQL (`work_items` table). The project key (`org/project/component`) provides the project context, so items do not carry a redundant `project` field.
 
 ```json
 {
@@ -381,7 +381,7 @@ Directories are created lazily on first write. The `notes` field on WorkItem is 
 
 ## WorkItemApproval
 
-Stored in SQLite (`work_item_approvals` table). Normalized approver records supporting sequential ordering and cross-project blocking dependencies.
+Stored in PostgreSQL (`work_item_approvals` table). Normalized approver records supporting sequential ordering and cross-project blocking dependencies.
 
 ```json
 {
@@ -458,7 +458,7 @@ Status semantics:
 
 ## WorkBacklog
 
-Backed by SQLite at `work/architect.db`. Migrations handle versioning. The API still returns this shape for backward compatibility.
+Backed by PostgreSQL (Docker, `tools/dashboard/docker-compose.yml`). Migrations run automatically on startup. The API returns this shape:
 
 ```json
 {
@@ -489,7 +489,7 @@ Tracks an active worktree created for implementation isolation.
 
 ## AgentPhase
 
-Ephemeral (in-memory only, not persisted to SQLite) state derived from stream-json events during a dispatch session's lifetime. Tracks what the dispatched agent is currently doing. Reset to null when the dispatch reaches a terminal status.
+Ephemeral (in-memory only, not persisted to PostgreSQL) state derived from stream-json events during a dispatch session's lifetime. Tracks what the dispatched agent is currently doing. Reset to null when the dispatch reaches a terminal status.
 
 Values:
 - `worktree_setup` — dispatch infrastructure is creating and provisioning the worktree before agent spawn
@@ -500,7 +500,7 @@ Values:
 
 ## DispatchRequest
 
-Record created when the dashboard dispatches a Claude agent for a work item. Persisted to SQLite `dispatches` table (excluding process handles and listeners). Output streamed to `work/logs/D-xxx.jsonl`. On restart, sessions with live PIDs are reconnected via log file tailing; others are marked `interrupted`.
+Record created when the dashboard dispatches a Claude agent for a work item. Persisted to PostgreSQL `dispatches` table (excluding process handles and listeners). Output streamed to `work/logs/D-xxx.jsonl`. On restart, sessions with live PIDs are reconnected via log file tailing; others are marked `interrupted`.
 
 ```json
 {
@@ -519,10 +519,10 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "claude_session_id": "string (Claude CLI session UUID, optional — captured from stream-json init event, used for resume)",
   "cost_usd": "number (total cost, optional)",
   "pid": "number (OS process ID, optional — stored for restart survival)",
-  "agent_phase": "AgentPhase (ephemeral, in-memory only — not persisted to SQLite, derived from live stream-json event parsing or log replay)",
-  "worktree_path": "string (absolute path to worktree, null if no worktree — persisted to SQLite)",
-  "worktree_branch": "string (worktree branch name, null if no worktree — persisted to SQLite)",
-  "source_branch": "string (originating branch the worktree was created from, null if no worktree — persisted to SQLite)",
+  "agent_phase": "AgentPhase (ephemeral, in-memory only — not persisted to PostgreSQL, derived from live stream-json event parsing or log replay)",
+  "worktree_path": "string (absolute path to worktree, null if no worktree — persisted to PostgreSQL)",
+  "worktree_branch": "string (worktree branch name, null if no worktree — persisted to PostgreSQL)",
+  "source_branch": "string (originating branch the worktree was created from, null if no worktree — persisted to PostgreSQL)",
   "dispatch_mode": "string ('standard' | 'auto_implement', default 'standard')",
   "completion_sha": "string (SHA of the final implementation commit, optional)",
   "completion_summary": "string (agent-provided summary, max 500 chars, optional)",
@@ -545,7 +545,7 @@ Rules: Both fields are required. sha must be a valid git SHA string. summary is 
 
 ## TerminalSession
 
-Record for an interactive PTY terminal session spawned from the dashboard. Persisted to SQLite `terminals` table (excluding ptyProcess, scrollback, wsClients). When tmux is available, terminals are wrapped in tmux sessions for restart survival. On restart, tmux sessions are re-attached; PID-only sessions are marked as detached; dead sessions are marked `interrupted`.
+Record for an interactive PTY terminal session spawned from the dashboard. Persisted to PostgreSQL `terminals` table (excluding ptyProcess, scrollback, wsClients). When tmux is available, terminals are wrapped in tmux sessions for restart survival. On restart, tmux sessions are re-attached; PID-only sessions are marked as detached; dead sessions are marked `interrupted`.
 
 ```json
 {
@@ -586,7 +586,7 @@ Record for a CLI session registered externally via the dashboard API. Read-only 
 
 ## SessionsFile
 
-Sessions are persisted in SQLite tables (`dispatches`, `terminals`, `cli_sessions`) in `work/architect.db`. Dispatch output is logged to `work/logs/D-xxx.jsonl` files. On startup, sessions with live PIDs (or tmux sessions) are reconnected; legacy sessions without PIDs are marked `interrupted`. The API returns this shape for backward compatibility:
+Sessions are persisted in PostgreSQL tables (`dispatches`, `terminals`, `cli_sessions`). Dispatch output is logged to `work/logs/D-xxx.jsonl` files. On startup, sessions with live PIDs (or tmux sessions) are reconnected; legacy sessions without PIDs are marked `interrupted`. The API returns this shape:
 
 ```json
 {
@@ -655,7 +655,7 @@ ADRs are indexed in the portfolio component entry via a new optional `adrs` fiel
 
 ## SyncRecord
 
-One row per completed sync run per project in the `knowledge_syncs` SQLite table. Records when a portfolio project's git history was last scanned for external changes.
+One row per completed sync run per project in the `knowledge_syncs` PostgreSQL table. Records when a portfolio project's git history was last scanned for external changes.
 
 ```json
 {
@@ -696,7 +696,7 @@ Freshness is computed at read time, not stored:
 
 ## ChangeLogEntry
 
-One row per significant commit detected during portfolio sync, stored in the `change_log_entries` SQLite table. Forms the observable change history for a managed project between sync cycles.
+One row per significant commit detected during portfolio sync, stored in the `change_log_entries` PostgreSQL table. Forms the observable change history for a managed project between sync cycles.
 
 ```json
 {
@@ -728,7 +728,7 @@ See `domain/rules.md` → Sync Rules for classification heuristics and injection
 
 ## DashboardPreferences
 
-Key-value pairs stored in the `preferences` table in SQLite. Used for dashboard-wide settings.
+Key-value pairs stored in the `preferences` table in PostgreSQL. Used for dashboard-wide settings.
 
 ```json
 {
