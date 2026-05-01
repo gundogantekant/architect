@@ -524,6 +524,37 @@ export default function dispatchRoutes(deps) {
       json(res, list);
     }],
 
+    // List suspended dispatches only
+    [/^\/api\/dispatch\/suspended$/, 'GET', async (_m, req, res) => {
+      const workerId = req.headers['x-test-worker-id'];
+      const list = [];
+      for (const [id, d] of dispatches) {
+        if (workerId !== undefined && d._testWorkerId !== workerId) continue;
+        if (d.status !== 'suspended') continue;
+        list.push({
+          id,
+          title: d.title || null,
+          work_item_id: d.work_item_id,
+          work_item_title: d.work_item_id ? db.getWorkItemTitle(d.work_item_id) : null,
+          epic_id: d.epic_id || null,
+          epic_title: d.epic_id ? db.getEpicTitle(d.epic_id) : null,
+          project_key: d.project_key,
+          project_path: d.project_path,
+          status: d.status,
+          started_at: d.started_at,
+          completed_at: d.completed_at,
+          permission_mode: d.permission_mode || 'acceptEdits',
+          skip_permissions: d.skip_permissions || false,
+          claude_session_id: d.claude_session_id || null,
+          worktree_path: d.worktree_path || null,
+          worktree_branch: d.worktree_branch || null,
+          source_branch: d.source_branch || null,
+          dispatch_mode: d.dispatch_mode || 'standard',
+        });
+      }
+      json(res, list);
+    }],
+
     // Kill all dispatches (must be before :id route)
     [/^\/api\/dispatch\/all$/, 'DELETE', async (_m, _req, res) => {
       let killed = 0;

@@ -725,11 +725,17 @@ function _placeSessionPanelsNow() {
   }
 
   // 4. Insert global container only if it has panels and isn't already in DOM
+  const main = $('#main');
   if (globalHasPanels && !globalContainer.parentElement) {
-    const main = $('#main');
     main.insertBefore(globalContainer, main.firstChild);
   } else if (!globalHasPanels && globalContainer.parentElement) {
     globalContainer.remove();
+  }
+
+  // Re-anchor suspended-sessions panel after route changes clear main.innerHTML
+  const suspendedContainer = document.getElementById('suspended-sessions');
+  if (suspendedContainer && suspendedContainer.parentElement !== main) {
+    main.insertBefore(suspendedContainer, main.firstChild);
   }
 
   // All containers are now in the document — safe to call loadDispatchContent
@@ -1469,13 +1475,12 @@ async function restoreTerminals() {
         }
         continue;
       }
+      if (t.status === 'suspended') continue;
       const terminalInfo = { ...t };
       activeTerminals.push(terminalInfo);
       createTerminalPanel(terminalInfo);
       if (t.status === 'running') {
         toConnect.push(terminalInfo);
-      } else if (t.status === 'suspended') {
-        // Suspended terminal — keep panel visible (no WebSocket needed)
       } else {
         // Exited terminal — connect WS to load scrollback into xterm, then finalize
         toConnect.push(terminalInfo);
@@ -1603,6 +1608,7 @@ function createSessionPanel(type, info) {
           titleEl.insertAdjacentHTML('beforeend', '<span class="suspended-badge">[suspended]</span>');
         }
         syncSessionState();
+        refreshSuspendedPanel();
       });
     };
     panel.querySelector(`[data-resume-dispatch="${id}"]`).onclick = async (e) => {
@@ -1736,6 +1742,7 @@ function createSessionPanel(type, info) {
           titleEl.insertAdjacentHTML('beforeend', '<span class="suspended-badge">[suspended]</span>');
         }
         syncSessionState();
+        refreshSuspendedPanel();
       });
     };
     panel.querySelector(`[data-resume-terminal="${id}"]`).onclick = async (e) => {
@@ -2147,6 +2154,148 @@ function showAutoImplementConfirm(workItem, projectKey) {
   });
 }
 
+async function refreshSuspendedPanel() {
+  try {
+    const [suspDispatches, suspTerminals] = await Promise.all([
+      api('dispatch/suspended'),
+      api('terminal/suspended'),
+    ]);
+    const all = [
+      ...suspDispatches.map(d => ({ ...d, _stype: 'dispatch', _suspendedAt: d.completed_at || d.started_at })),
+      ...suspTerminals.map(t => ({ ...t, _stype: 'terminal', _suspendedAt: t.exited_at || t.started_at })),
+    ];
+
+    let container = document.getElementById('suspended-sessions');
+    if (all.length === 0) {
+      if (container) container.remove();
+      return;
+    }
+
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'suspended-sessions';
+      container.className = 'card';
+      container.style.marginBottom = '20px';
+    }
+
+    let html = `<h3 style="margin:0 0 12px 0;font-size:15px;font-weight:600">Suspended Sessions <span style="font-size:12px;font-weight:400;background:#fef3c7;color:#b45309;padding:2px 8px;border-radius:3px;margin-left:6px">${all.length}</span></h3>`;
+    html += '<div style="display:flex;flex-direction:column;gap:8px">';
+    for (const s of all) {
+      const keyParts = (s.project_key || '').split('/').filter(p => p && p !== '*');
+      const projectLabel = keyParts.length >= 2 ? `${esc(keyParts[0])} / ${esc(keyParts[1])}` : (keyParts[0] ? esc(keyParts[0]) : '');
+      const wiBadge = s.work_item_id ? `<span class="suspended-badge" style="margin-left:0">${esc(s.work_item_id)}</span>` : '';
+      const suspendedAgo = s._suspendedAt ? `suspended ${formatElapsed(s._suspendedAt)} ago` : 'suspended';
+      html += `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-left:3px solid #f59e0b;border-radius:6px;flex-wrap:wrap">
+        <span class="status-dot suspended" style="flex-shrink:0"></span>
+        ${wiBadge}
+        <span style="font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${projectLabel || esc(s.title || s.id)}</span>
+        <span style="font-size:11px;color:var(--text-light);white-space:nowrap">${esc(suspendedAgo)}</span>
+        <span class="suspended-badge">[suspended]</span>
+        <button class="resume-btn" data-susp-resume-${s._stype}="${esc(s.id)}">Resume</button>
+        <button class="dismiss-btn" data-susp-dismiss-${s._stype}="${esc(s.id)}">✕</button>
+      </div>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+
+    for (const s of all) {
+      const resumeBtn = container.querySelector(`[data-susp-resume-${s._stype}="${CSS.escape(s.id)}"]`);
+      const dismissBtn = container.querySelector(`[data-susp-dismiss-${s._stype}="${CSS.escape(s.id)}"]`);
+
+      if (s._stype === 'dispatch') {
+        resumeBtn.onclick = async (e) => {
+          e.target.disabled = true;
+          try {
+            const resp = await fetch(`/api/dispatch/${s.id}/resume`, { method: 'POST' });
+            if (resp.ok) {
+              const result = await resp.json();
+              const existing = activeDispatches.find(d => d.id === s.id);
+              if (existing) {
+                const idx = activeDispatches.indexOf(existing);
+                if (idx !== -1) activeDispatches.splice(idx, 1);
+                const panel = sessionPanels.get(`dispatch:${s.id}`);
+                if (panel?.parentElement) panel.remove();
+                sessionPanels.delete(`dispatch:${s.id}`);
+              }
+              const newDispatch = {
+                id: result.dispatch_id,
+                work_item_id: s.work_item_id,
+                work_item_title: s.work_item_title,
+                epic_id: s.epic_id,
+                project_key: s.project_key,
+                permission_mode: s.permission_mode,
+                skip_permissions: s.skip_permissions,
+                agent_phase: 'generating',
+                status: 'running',
+                started_at: new Date().toISOString(),
+              };
+              activeDispatches.push(newDispatch);
+              createDispatchPanel(newDispatch);
+              placeSessionPanels();
+              loadDispatchContent(newDispatch);
+              syncSessionState();
+              await refreshSuspendedPanel();
+            } else {
+              e.target.disabled = false;
+            }
+          } catch { e.target.disabled = false; }
+        };
+        dismissBtn.onclick = async () => {
+          try {
+            await fetch(`/api/dispatch/${s.id}`, { method: 'DELETE' });
+            const idx = activeDispatches.findIndex(d => d.id === s.id);
+            if (idx !== -1) activeDispatches.splice(idx, 1);
+            const panel = sessionPanels.get(`dispatch:${s.id}`);
+            if (panel?.parentElement) panel.remove();
+            sessionPanels.delete(`dispatch:${s.id}`);
+          } catch {}
+          await refreshSuspendedPanel();
+          syncSessionState();
+        };
+      } else {
+        resumeBtn.onclick = async (e) => {
+          e.target.disabled = true;
+          try {
+            const resp = await fetch(`/api/terminal/${s.id}/resume`, { method: 'POST' });
+            if (resp.ok) {
+              const existing = activeTerminals.find(t => t.id === s.id);
+              if (existing) {
+                const idx = activeTerminals.indexOf(existing);
+                if (idx !== -1) activeTerminals.splice(idx, 1);
+                const panel = sessionPanels.get(`terminal:${s.id}`);
+                if (panel?.parentElement) panel.remove();
+                sessionPanels.delete(`terminal:${s.id}`);
+              }
+              await refreshSuspendedPanel();
+              await restoreTerminals();
+              syncSessionState();
+            } else {
+              e.target.disabled = false;
+            }
+          } catch { e.target.disabled = false; }
+        };
+        dismissBtn.onclick = async () => {
+          try {
+            await fetch(`/api/terminal/${s.id}`, { method: 'DELETE' });
+            const idx = activeTerminals.findIndex(t => t.id === s.id);
+            if (idx !== -1) activeTerminals.splice(idx, 1);
+            const panel = sessionPanels.get(`terminal:${s.id}`);
+            if (panel?.parentElement) panel.remove();
+            sessionPanels.delete(`terminal:${s.id}`);
+          } catch {}
+          await refreshSuspendedPanel();
+          syncSessionState();
+        };
+      }
+    }
+
+    const main = $('#main');
+    if (!container.parentElement || container.parentElement !== main) {
+      main.insertBefore(container, main.firstChild);
+    }
+  } catch {}
+}
+
 // Restore active dispatches on page load
 async function restoreDispatches() {
   try {
@@ -2159,6 +2308,7 @@ async function restoreDispatches() {
         existing.status = d.status;
         continue;
       }
+      if (d.status === 'suspended') continue;
       const dispatch = { ...d, title: d.work_item_id, agent_phase: d.agent_phase || null };
       activeDispatches.push(dispatch);
       createDispatchPanel(dispatch);
@@ -6644,6 +6794,7 @@ const _restorePromise = Promise.all([
   restoreDispatches(),
   restoreTerminals(),
   restoreCliSessions(),
+  refreshSuspendedPanel(),
 ]);
 Promise.all([buildTree(), buildEpicTree()]).then(async () => {
   startSessionsSidebarRefresh();
@@ -6659,6 +6810,7 @@ Promise.all([buildTree(), buildEpicTree()]).then(async () => {
   setInterval(restoreDispatches, 10000);
   setInterval(restoreTerminals, 10000);
   setInterval(restoreCliSessions, 10000);
+  setInterval(refreshSuspendedPanel, 10000);
 });
 </script>
 
