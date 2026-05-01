@@ -27,7 +27,7 @@ function buildAdminConfig() {
     // Connect to postgres maintenance DB to create/drop test databases.
     database: 'postgres',
     user: process.env.ARCHITECT_PG_USER ?? 'architect',
-    password: process.env.ARCHITECT_PG_PASSWORD,
+    password: process.env.ARCHITECT_PG_PASSWORD ?? 'architect',
     connectionTimeoutMillis: 5000,
   };
 }
@@ -157,6 +157,9 @@ export function spawnTestServer(port, workDir, dbName) {
     // Override the database name — host/port/user/password come from the
     // ambient environment, matching the real PostgreSQL instance.
     ARCHITECT_PG_DB: dbName,
+    // Ensure password default is always propagated to the child process even
+    // when the ambient env does not have ARCHITECT_PG_PASSWORD set.
+    ARCHITECT_PG_PASSWORD: process.env.ARCHITECT_PG_PASSWORD ?? 'architect',
   };
 
   const proc = spawn(process.execPath, [SERVER], {

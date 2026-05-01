@@ -35,7 +35,7 @@ function buildPoolConfig() {
     port: parseInt(process.env.ARCHITECT_PG_PORT ?? '5432', 10),
     database: process.env.ARCHITECT_PG_DB ?? 'architect',
     user: process.env.ARCHITECT_PG_USER ?? 'architect',
-    password: process.env.ARCHITECT_PG_PASSWORD,
+    password: process.env.ARCHITECT_PG_PASSWORD ?? 'architect',
     max: parseInt(process.env.PG_POOL_MAX ?? '10', 10),
     idleTimeoutMillis: parseInt(process.env.PG_POOL_IDLE_TIMEOUT_MS ?? '30000', 10),
     connectionTimeoutMillis: parseInt(process.env.PG_CONNECTION_TIMEOUT_MS ?? '5000', 10),
