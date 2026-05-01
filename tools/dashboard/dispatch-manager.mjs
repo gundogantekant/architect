@@ -181,7 +181,7 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
         d.status = 'interrupted';
         d.completed_at = now;
         await db.updateDispatchStatus(d.id, 'interrupted', now);
-        archiveSession(d, 'dispatch').catch(e => console.error('[restore] archiveSession dispatch:', e.message));
+        await archiveSession(d, 'dispatch').catch(e => console.error('[restore] archiveSession dispatch:', e.message));
         const logPath = join(LOGS_DIR, `${d.id}.jsonl`);
         let output = [];
         try { output = readFileSync(logPath, 'utf8').split('\n').filter(l => l.trim()); } catch {}
@@ -252,7 +252,7 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
             t.status = 'interrupted';
             t.exited_at = now;
             await db.updateTerminalStatus(t.id, 'interrupted', now);
-            archiveSession(t, 'terminal').catch(err => console.error('[restore] archiveSession terminal:', err.message));
+            await archiveSession(t, 'terminal').catch(err => console.error('[restore] archiveSession terminal:', err.message));
             terminals.set(t.id, {
               ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
               cols: t.cols || 80, rows: t.rows || 24,
@@ -270,7 +270,7 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
           t.status = 'interrupted';
           t.exited_at = now;
           await db.updateTerminalStatus(t.id, 'interrupted', now);
-          archiveSession(t, 'terminal').catch(err => console.error('[restore] archiveSession terminal:', err.message));
+          await archiveSession(t, 'terminal').catch(err => console.error('[restore] archiveSession terminal:', err.message));
           terminals.set(t.id, {
             ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
             cols: t.cols || 80, rows: t.rows || 24,
@@ -291,7 +291,7 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
     } else {
       // Dead or exited CLI session — archive then clean up
       if (!c.exited_at) c.exited_at = now;
-      archiveSession(c, 'cli').catch(e => console.error('[restore] archiveSession cli:', e.message));
+      await archiveSession(c, 'cli').catch(e => console.error('[restore] archiveSession cli:', e.message));
       await db.deleteCliSession(c.id);
     }
   }
