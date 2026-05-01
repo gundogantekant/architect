@@ -1588,6 +1588,9 @@ function createSessionPanel(type, info) {
         : esc(terminalInfo.epic_id));
     }
     const termPathStr = tBreadcrumb.join(' · ') || esc(terminalInfo.title || 'Terminal');
+    const termContainerBody = isSuspended
+      ? '<div class="terminal-suspended-placeholder">Session suspended — click Resume to continue</div>'
+      : '<div class="terminal-loading">Connecting</div>';
     panel.innerHTML = `
       <div class="terminal-header">
         <span class="status-dot ${isRunning ? 'running' : terminalInfo.status}"></span>
@@ -1600,7 +1603,7 @@ function createSessionPanel(type, info) {
         <button class="kill-btn" data-kill-terminal="${esc(id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
         <button class="dismiss-btn" data-dismiss-terminal="${esc(id)}" ${isRunning ? 'style="display:none"' : ''}>✕</button>
       </div>
-      <div class="terminal-container" id="term-container-${id}"><div class="terminal-loading">Connecting</div></div>
+      <div class="terminal-container" id="term-container-${id}">${termContainerBody}</div>
       <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
         <button class="focus-btn" data-focus-terminal-bottom="${esc(id)}">Focus</button>
         <span class="agent-badge" data-agent="${esc(terminalInfo.agent_type || 'claude')}">[${esc((terminalInfo.agent_type || 'claude').charAt(0).toUpperCase() + (terminalInfo.agent_type || 'claude').slice(1))}]</span>
