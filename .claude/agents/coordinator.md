@@ -53,6 +53,16 @@ Produce a full DispatchPlan for medium+ complexity work. You receive a Classifie
 
 Return a single JSON block matching the DispatchPlan schema in `domain/entities.md`. Key fields: `target_project` (all five fields), `classification`, `execution_plan` (workflow, steps with `parallel_with` and `contract`), optional `clarifications_needed`, optional `suggested_work_item` (medium+ only), optional `skip_reason`. Each step must include a `contract` field (with `goal`, `constraints`, `expected_output`, `failure_conditions`) when classification complexity is medium or large. See `domain/entities.md` → DispatchContract.
 
+## Isolated Work Mandate — Gate Steps (medium+ complexity required)
+
+For every medium+ complexity DispatchPlan, the steps array MUST include:
+1. A plan-gate step BEFORE any implementation (coder-*, planner) step:
+   `{ order: N, agent: "review-board", phase: "plan", board: ["tech-reviewer-swe", "tech-reviewer-arch", "tech-reviewer-pm", "tech-reviewer-dx"], purpose: "Plan Gate: validate approach before implementation begins" }`
+2. A code-gate step as the LAST step before any git-ops/merge/PR step:
+   `{ order: M, agent: "review-board", phase: "code", board: [...context-filtered per Code Gate Board rules], verify_contract: true, purpose: "Code Gate: verify implementation quality and E2E criteria satisfaction" }`
+
+Omitting these steps for medium+ complexity is a failure condition.
+
 ## Constraints
 
 - Read-only on all files — do not modify anything

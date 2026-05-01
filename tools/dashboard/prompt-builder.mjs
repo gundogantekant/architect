@@ -1,8 +1,10 @@
 import { readFile, readdir } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, PORTFOLIO, WORK, ARCHITECT_KEY, port } from './constants.mjs';
 import * as db from './db.mjs';
 import { readJson } from './utils.mjs';
+import { isMediumOrAbove } from './utils/complexity.mjs';
 
 export async function resolveProjectPath(projectKey) {
   if (projectKey === ARCHITECT_KEY) return ROOT;
@@ -402,6 +404,22 @@ function buildAdrSection(syncContext) {
   return lines.join('\n');
 }
 
+function buildMandateSection(complexity) {
+  if (!['medium', 'large'].includes(complexity)) {
+    return '> This dispatch follows the Isolated Work Mandate defined in `domain/rules.md` → Isolated Work Mandate.';
+  }
+  try {
+    const rulesPath = join(ROOT, 'domain', 'rules.md');
+    const content = readFileSync(rulesPath, 'utf8');
+    const start = content.indexOf('## Isolated Work Mandate');
+    if (start === -1) return '';
+    const nextSection = content.indexOf('\n## ', start + 1);
+    return nextSection === -1 ? content.slice(start) : content.slice(start, nextSection);
+  } catch {
+    return '';
+  }
+}
+
 export function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInstructions, portfolio, epicContext, relatedProjects, orgContext, worktreeContext, contract }) {
   const sections = [];
 
@@ -795,6 +813,13 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
   // --- Dispatch Instructions (supplementary guidance beyond the contract) ---
   if (workItem && additionalInstructions) {
     sections.push(`# Dispatch Instructions\n\n${additionalInstructions}`);
+  }
+
+  // --- Isolated Work Mandate (always present; full section for medium+, one-liner for trivial/small) ---
+  {
+    const complexity = isMediumOrAbove(workItem) ? 'medium' : 'small';
+    const mandateContent = buildMandateSection(complexity);
+    sections.push(`# Isolated Work Mandate\n\n${mandateContent}`);
   }
 
   // --- Coding Standards (inline brief — self-contained, no file read required) ---

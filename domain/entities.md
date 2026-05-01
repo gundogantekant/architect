@@ -528,9 +528,20 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "dispatch_mode": "string ('standard' | 'auto_implement', default 'standard')",
   "completion_sha": "string (SHA of the final implementation commit, optional)",
   "completion_summary": "string (agent-provided summary, max 500 chars, optional)",
-  "merge_result": "'success'|'conflict'|'aborted' — outcome of the merge attempt, optional"
+  "merge_result": "'success'|'conflict'|'aborted' — outcome of the merge attempt, optional",
+  "plan_gate_passed": "boolean | null     // null until plan gate runs; true if approved, false if blocked",
+  "plan_gate_passed_at": "string | null   // ISO 8601 timestamp when plan gate resolved; null until then",
+  "code_gate_passed": "boolean | null     // null until code gate runs; true if approved, false if blocked",
+  "code_gate_passed_at": "string | null   // ISO 8601 timestamp when code gate resolved; null until then",
+  "contract_satisfied": "boolean | null   // null until code gate; set true when all e2e_test_criteria confirmed passing",
+  "contract_satisfied_at": "string | null // ISO 8601 timestamp when contract satisfaction was confirmed"
 }
 ```
+
+CompleteDispatchRequest validation:
+- For medium+ complexity dispatches: reject completion if code_gate_passed !== true
+- For trivial/small dispatches: gate fields may be null (backward compatible; no rejection)
+- Complexity is determined by getComplexityLevel(workItem) — see Isolated Work Mandate
 
 ## AutonomousCompletionPayload (Value Object)
 

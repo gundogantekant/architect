@@ -2,6 +2,23 @@ import { existsSync } from 'node:fs';
 import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository, checkWorktreeReadiness } from '../worktree.mjs';
 import { AUTO_IMPLEMENTABLE_STATUSES, PIPELINE_STAGES, PORTFOLIO } from '../constants.mjs';
 import { triggerMerge } from '../dispatch-manager.mjs';
+import { isMediumOrAbove } from '../utils/complexity.mjs';
+
+function validateContractForComplexity(workItem, contract) {
+  if (!isMediumOrAbove(workItem)) return null;
+  const violations = [];
+  const coreFields = ['goal', 'constraints', 'expected_output', 'failure_conditions'];
+  for (const field of coreFields) {
+    if (!contract?.[field]?.trim()) {
+      violations.push({ field, message: `required for medium+ complexity` });
+    }
+  }
+  const criteria = contract?.e2e_test_criteria;
+  if (!criteria || criteria.length === 0) {
+    violations.push({ field: 'e2e_test_criteria', message: 'must have >= 1 entry for medium+ complexity' });
+  }
+  return violations.length > 0 ? violations : null;
+}
 
 /**
  * Find an active (running) dispatch for a given work item ID.
@@ -107,8 +124,9 @@ export default function dispatchRoutes(deps) {
       let contract = null;
       if (rawContract && typeof rawContract === 'object') {
         const cleaned = {};
+        const ARRAY_FIELDS = new Set(['stop_conditions', 'e2e_test_criteria']);
         for (const [k, v] of Object.entries(rawContract)) {
-          if (k === 'stop_conditions') {
+          if (ARRAY_FIELDS.has(k)) {
             if (Array.isArray(v) && v.filter(s => typeof s === 'string' && s.trim()).length) {
               cleaned[k] = v.filter(s => typeof s === 'string' && s.trim());
             }
@@ -172,6 +190,13 @@ export default function dispatchRoutes(deps) {
       }
 
       const effectiveWorkItem = workItem || (work_item_id ? { id: work_item_id, title: title || '', description: description || '', status: 'draft', priority: 'medium', tags: [], session_log: [] } : null);
+
+      // Validate contract completeness for medium+ complexity before proceeding.
+      // Runs on rawContract (pre-strip) so empty-string fields are caught as missing.
+      const contractViolations = validateContractForComplexity(effectiveWorkItem, rawContract);
+      if (contractViolations) {
+        return json(res, { error: 'Contract incomplete', violations: contractViolations }, 422);
+      }
 
       // Resolve permission mode and skip_permissions independently
       const resolvedPermMode = permission_mode || 'acceptEdits';
