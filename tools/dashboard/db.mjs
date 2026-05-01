@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 
@@ -115,16 +116,16 @@ export async function runMigrations(migrationsDir) {
       }
 
       console.log(`Applying migration ${file}...`);
-      const migration = await import(join(migrationsDir, file));
+      const migration = await import(pathToFileURL(resolve(migrationsDir, file)).href);
 
       if (migration.noTransaction) {
         await migration.up(client);
-        await client.query('INSERT INTO schema_migrations (version, applied_at) VALUES ($1, NOW())', [version]);
+        await client.query('INSERT INTO schema_migrations (version, applied_at) VALUES ($1, NOW()) ON CONFLICT (version) DO NOTHING', [version]);
       } else {
         await client.query('BEGIN');
         try {
           await migration.up(client);
-          await client.query('INSERT INTO schema_migrations (version, applied_at) VALUES ($1, NOW())', [version]);
+          await client.query('INSERT INTO schema_migrations (version, applied_at) VALUES ($1, NOW()) ON CONFLICT (version) DO NOTHING', [version]);
           await client.query('COMMIT');
         } catch (err) {
           await client.query('ROLLBACK');
