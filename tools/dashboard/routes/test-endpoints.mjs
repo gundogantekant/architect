@@ -699,6 +699,12 @@ export default function testEndpointRoutes(deps) {
       json(res, { is_git: result });
     }],
 
+    // Diagnostic: return current PORTFOLIO path (for PP-1 test)
+    [/^\/api\/_diag\/portfolio-path$/, 'GET', async (_m, _req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ path: deps.PORTFOLIO }));
+    }],
+
     // Test prompt builder with worktree context (W-927)
     [/^\/api\/test\/build-dispatch-prompt$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);

@@ -90,7 +90,7 @@ export function termEventLogPath(id) {
 export function generateSeedContent(n = 500) {
   const lines = [];
   const commits = ['a1b2c3d', 'e4f5g6h', '7i8j9k0', 'l1m2n3o', 'p4q5r6s'];
-  const files = ['src/index.mjs', 'src/db.mjs', 'tools/dashboard/server.mjs', 'domain/entities.md', 'portfolio/registry.json'];
+  const files = ['src/index.mjs', 'src/db.mjs', 'tools/dashboard/server.mjs', 'domain/entities.md', 'portfolio/registry.json']; // synthetic test seed content — not a live read
 
   for (let i = 0; i < n; i++) {
     const r = i % 7;

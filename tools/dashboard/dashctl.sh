@@ -420,6 +420,17 @@ install_launchd() {
 </plist>
 PLIST
 
+  if [ -n "${PORTFOLIO_DIR:-}" ]; then
+    # Inject PORTFOLIO_DIR into the plist EnvironmentVariables dict before closing </dict>
+    sed -i '' 's|    <key>PATH</key>|    <key>PATH</key>|' "$LAUNCHD_PLIST"
+    python3 -c "
+import plistlib, sys
+with open('$LAUNCHD_PLIST', 'rb') as f: p = plistlib.load(f)
+p.setdefault('EnvironmentVariables', {})['PORTFOLIO_DIR'] = '${PORTFOLIO_DIR}'
+with open('$LAUNCHD_PLIST', 'wb') as f: plistlib.dump(p, f)
+" 2>/dev/null || true
+  fi
+
   # Load the service
   launchctl load -w "$LAUNCHD_PLIST" 2>/dev/null || true
 
@@ -448,6 +459,13 @@ Restart=on-failure
 RestartSec=10
 StandardOutput=append:${LOG_FILE}
 StandardError=append:${LOG_FILE}
+UNIT
+
+  if [ -n "${PORTFOLIO_DIR:-}" ]; then
+    echo "Environment=PORTFOLIO_DIR=${PORTFOLIO_DIR}" >> "$SYSTEMD_UNIT"
+  fi
+
+  cat >> "$SYSTEMD_UNIT" <<UNIT
 
 [Install]
 WantedBy=default.target

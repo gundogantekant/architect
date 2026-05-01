@@ -135,3 +135,50 @@ test('SB-5: after expanding a collapsed sidebar with active terminal, xterm term
   expect(termSize.cols).toBeGreaterThan(0);
   expect(termSize.rows).toBeGreaterThan(0);
 });
+
+test('SB-6: toggle button stays within visible 48px area at 1440px viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+  const toggle = page.locator('[data-sidebar-toggle]');
+  await expect(toggle).toBeVisible({ timeout: 5000 });
+
+  await toggle.click();
+  await page.waitForTimeout(300);
+
+  const sidebarBox = await page.locator('#sidebar').boundingBox();
+  expect(sidebarBox.width).toBeLessThan(80);
+
+  const toggleBox = await toggle.boundingBox();
+  expect(toggleBox).not.toBeNull();
+  expect(toggleBox.width).toBeGreaterThan(0);
+  expect(toggleBox.x + toggleBox.width).toBeLessThanOrEqual(sidebarBox.x + sidebarBox.width + 1);
+
+  // Must be re-clickable (toggle back)
+  await toggle.click();
+  await page.waitForTimeout(300);
+  const expanded = await page.locator('#sidebar').boundingBox();
+  expect(expanded.width).toBeGreaterThanOrEqual(240);
+});
+
+test('SB-7: clicking the "Architect" text area (not the icon) also toggles sidebar', async ({ page }) => {
+  await page.goto('/');
+  const header = page.locator('#sidebar h1');
+  await expect(header).toBeVisible({ timeout: 5000 });
+  const initial = await page.locator('#sidebar').boundingBox();
+  expect(initial.width).toBeGreaterThanOrEqual(240);
+
+  const box = await header.boundingBox();
+  await page.mouse.click(box.x + 20, box.y + box.height / 2);
+  await page.waitForTimeout(300);
+
+  const collapsed = await page.locator('#sidebar').boundingBox();
+  expect(collapsed.width).toBeLessThan(80);
+});
+
+test('SB-8: h1 area shows pointer cursor indicating clickability', async ({ page }) => {
+  await page.goto('/');
+  const header = page.locator('#sidebar h1');
+  await expect(header).toBeVisible({ timeout: 5000 });
+  const cursor = await header.evaluate(el => getComputedStyle(el).cursor);
+  expect(cursor).toBe('pointer');
+});

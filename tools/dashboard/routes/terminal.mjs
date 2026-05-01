@@ -1,7 +1,7 @@
 export default function terminalRoutes(deps) {
   const {
     db, json, err, parseBody,
-    ROOT, LOGS_DIR, CLAUDE_BIN, TMUX_AVAILABLE,
+    ROOT, PORTFOLIO, LOGS_DIR, CLAUDE_BIN, TMUX_AVAILABLE,
     terminals,
     wireTerminalHandlers, injectPrompt,
     buildDispatchPrompt, resolveProjectPath, resolveOrgPath, loadPortfolioContext, loadOrgContext, loadWorkItem, selectAgentsForDispatch, loadEpicPlanSnippet,
@@ -150,20 +150,20 @@ export default function terminalRoutes(deps) {
             execFileSync('tmux', [
               'new-session', '-d', '-s', tmuxName, '-x', '80', '-y', '24',
               'sh', '-c', shellCmd,
-            ], { cwd: projectPath, env: { ...process.env, ARCHITECT_ROOT: ROOT } });
+            ], { cwd: projectPath, env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO } });
             // Enable mouse support so SGR wheel sequences reach the inner application
             try { execFileSync('tmux', ['set-option', '-t', tmuxName, '-g', 'mouse', 'on']); } catch {}
             // Attach node-pty to the tmux session for WebSocket streaming
             ptyProcess = pty.spawn('tmux', ['attach-session', '-t', tmuxName], {
               name: 'xterm-256color', cols: 80, rows: 24,
               cwd: projectPath,
-              env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT },
+              env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
             });
           } else {
             ptyProcess = pty.spawn(CLAUDE_BIN, ptyArgs, {
               name: 'xterm-256color', cols: 80, rows: 24,
               cwd: projectPath,
-              env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT },
+              env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
             });
           }
         } else if (agentType === 'shell') {
@@ -507,17 +507,17 @@ export default function terminalRoutes(deps) {
           execFileSync('tmux', [
             'new-session', '-d', '-s', tmuxName, '-x', '80', '-y', '24',
             'sh', '-c', shellCmd,
-          ], { cwd: project_path, env: { ...process.env, ARCHITECT_ROOT: ROOT } });
+          ], { cwd: project_path, env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO } });
           ptyProcess = pty.spawn('tmux', ['attach-session', '-t', tmuxName], {
             name: 'xterm-256color', cols: 80, rows: 24,
             cwd: project_path,
-            env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT },
+            env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
           });
         } else {
           ptyProcess = pty.spawn(CLAUDE_BIN, ptyArgs, {
             name: 'xterm-256color', cols: 80, rows: 24,
             cwd: project_path,
-            env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT },
+            env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
           });
         }
       } catch (e) {

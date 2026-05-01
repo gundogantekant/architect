@@ -1,4 +1,5 @@
 import { resolve, join } from 'node:path';
+import { homedir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 
 export const CLAUDE_BIN = (() => {
@@ -11,7 +12,8 @@ export const CLAUDE_BIN = (() => {
 })();
 
 export const ROOT = resolve(import.meta.dirname, '..', '..');
-export const PORTFOLIO = join(ROOT, 'portfolio');
+export const LEGACY_PORTFOLIO = join(ROOT, 'portfolio');
+export const PORTFOLIO = process.env.PORTFOLIO_DIR || join(homedir(), '.architect', 'portfolio');
 export const WORK = process.env.WORK_DIR || join(ROOT, 'work');
 export const LOGS_DIR = join(WORK, 'logs');
 export const ARCHITECT_KEY = '\u2013/architect/\u2013';

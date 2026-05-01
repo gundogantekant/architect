@@ -92,7 +92,7 @@ export function spawnTestServer(port, workDir) {
   try { rmSync(join(workDir, 'architect.db-wal')); } catch {}
 
   const proc = spawn(process.execPath, [SERVER], {
-    env: { ...process.env, PORT: String(port), WORK_DIR: workDir },
+    env: { ...process.env, PORT: String(port), WORK_DIR: workDir, PORTFOLIO_DIR: join(workDir, 'portfolio') },
     stdio: 'ignore',
     detached: true,
   });

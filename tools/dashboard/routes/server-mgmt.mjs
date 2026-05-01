@@ -1,7 +1,7 @@
 export default function serverMgmtRoutes(deps) {
   const {
     db, json, text, err, parseBody,
-    port, ROOT, WORK, LOG_FILE, PID_FILE, DASHCTL_PATH, SERVER_START_TIME,
+    port, ROOT, PORTFOLIO, WORK, LOG_FILE, PID_FILE, DASHCTL_PATH, SERVER_START_TIME,
     dispatches, terminals, cliSessions,
     syncProjectsFromRegistry,
     spawn, execFileSync, readFile, homedir, existsSync, join,
@@ -102,6 +102,7 @@ export default function serverMgmtRoutes(deps) {
         log_file: LOG_FILE,
         pid_file: PID_FILE,
         database_file: join(WORK, 'architect.db'),
+        portfolio_dir: PORTFOLIO,
       });
     }],
 
