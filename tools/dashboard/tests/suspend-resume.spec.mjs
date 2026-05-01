@@ -183,3 +183,25 @@ test('SR-19: GET /api/terminal/active still returns all statuses', async ({ requ
   expect(list.find(t => t.id === suspended.id)).toBeDefined();
   expect(list.find(t => t.id === running.id)).toBeDefined();
 });
+
+test('SR-20: suspended dispatch panel exists in DOM after page load (not skipped)', async ({ page }) => {
+  const { dispatch_id: id } = await seedDispatch({ status: 'suspended', claude_session_id: 'fake-sr20' });
+  await page.goto('/');
+  // Panel must be created and carry status-suspended class
+  await expect(page.locator(`#dispatch-${id}`)).toBeVisible({ timeout: 5000 });
+  const cls = await page.locator(`#dispatch-${id}`).getAttribute('class');
+  expect(cls).toContain('status-suspended');
+  // Resume button must be visible in the inline panel
+  await expect(page.locator(`[data-resume-dispatch="${id}"]`)).toBeVisible();
+});
+
+test('SR-21: suspended terminal panel exists in DOM after page load (not skipped)', async ({ page }) => {
+  const t = await seedTerminal({ status: 'suspended', agentType: 'claude', claude_session_id: 'fake-sr21' });
+  await page.goto('/');
+  // Panel must be created and carry status-suspended class
+  await expect(page.locator(`#terminal-${t.id}`)).toBeVisible({ timeout: 5000 });
+  const cls = await page.locator(`#terminal-${t.id}`).getAttribute('class');
+  expect(cls).toContain('status-suspended');
+  // Resume button must be visible in the inline panel
+  await expect(page.locator(`[data-resume-terminal="${t.id}"]`)).toBeVisible();
+});

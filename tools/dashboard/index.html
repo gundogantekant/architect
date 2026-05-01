@@ -1281,34 +1281,21 @@ async function initSession(terminalInfo) {
 
 function destroyTerminal(terminalInfo) {
   const sessionState = terminalInfo._sessionState;
-  if (!sessionState) return;
+  if (sessionState) {
+    if (sessionState._resizeTimer) { clearTimeout(sessionState._resizeTimer); sessionState._resizeTimer = null; }
+    if (sessionState._resizeObserver) { sessionState._resizeObserver.disconnect(); sessionState._resizeObserver = null; }
+    if (sessionState._wsManager) { sessionState._wsManager.disconnect(); sessionState._wsManager = null; }
+    if (sessionState._eventQueue) { sessionState._eventQueue.destroy(); sessionState._eventQueue = null; }
+    if (sessionState._term) { try { sessionState._term.dispose(); } catch {} sessionState._term = null; }
+    sessionState.state = 'DISCONNECTED';
+  }
 
-  // 1. Clear resize timer
-  if (sessionState._resizeTimer) { clearTimeout(sessionState._resizeTimer); sessionState._resizeTimer = null; }
-
-  // 2. Disconnect resize observer
-  if (sessionState._resizeObserver) { sessionState._resizeObserver.disconnect(); sessionState._resizeObserver = null; }
-
-  // 3. Disconnect WS (no reconnect)
-  if (sessionState._wsManager) { sessionState._wsManager.disconnect(); sessionState._wsManager = null; }
-
-  // 4. Destroy event queue
-  if (sessionState._eventQueue) { sessionState._eventQueue.destroy(); sessionState._eventQueue = null; }
-
-  // 5. Dispose xterm
-  if (sessionState._term) { try { sessionState._term.dispose(); } catch {} sessionState._term = null; }
-
-  sessionState.state = 'DISCONNECTED';
-
-  // Clean up from global map
   if (window._termSessions) window._termSessions.delete(terminalInfo.id);
 
-  // Remove panel from DOM
   const panel = document.getElementById(`terminal-${terminalInfo.id}`);
   if (panel && panel.parentElement) panel.remove();
   sessionPanels.delete('terminal:' + terminalInfo.id);
 
-  // Remove from activeTerminals
   const idx = activeTerminals.findIndex(t => t.id === terminalInfo.id);
   if (idx !== -1) activeTerminals.splice(idx, 1);
 }
@@ -1401,7 +1388,12 @@ async function restoreTerminals() {
         }
         continue;
       }
-      if (t.status === 'suspended') continue;
+      if (t.status === 'suspended') {
+        const suspended = { ...t };
+        activeTerminals.push(suspended);
+        createTerminalPanel(suspended);
+        continue; // no WS connection for suspended placeholders
+      }
       const terminalInfo = { ...t };
       activeTerminals.push(terminalInfo);
       createTerminalPanel(terminalInfo);
@@ -1562,6 +1554,7 @@ function createSessionPanel(type, info) {
           placeSessionPanels();
           loadDispatchContent(newDispatch);
           syncSessionState();
+          await refreshSuspendedPanel();
         }
       } catch {}
     };
@@ -1678,6 +1671,8 @@ function createSessionPanel(type, info) {
         const resp = await fetch(`/api/terminal/${id}/resume`, { method: 'POST' });
         if (resp.ok) {
           await dismissTerminalPanel(id);
+          await refreshSuspendedPanel();
+          await restoreTerminals();
           syncSessionState();
         }
       } catch {}
@@ -2234,7 +2229,12 @@ async function restoreDispatches() {
         existing.status = d.status;
         continue;
       }
-      if (d.status === 'suspended') continue;
+      if (d.status === 'suspended') {
+        const suspended = { ...d, title: d.work_item_id, agent_phase: null };
+        activeDispatches.push(suspended);
+        createDispatchPanel(suspended);
+        continue; // no content loading for suspended placeholders
+      }
       const dispatch = { ...d, title: d.work_item_id, agent_phase: d.agent_phase || null };
       activeDispatches.push(dispatch);
       createDispatchPanel(dispatch);
