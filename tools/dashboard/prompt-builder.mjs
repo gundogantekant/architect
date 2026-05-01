@@ -497,9 +497,9 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     awareLines.push('');
     const [pOrg, pProject, pComponent] = (projectKey || '').split('/');
     if (pOrg && pProject && pComponent) {
-      awareLines.push(`- **Portfolio entry**: \`$ARCHITECT_ROOT/portfolio/${pOrg}/${pProject}/${pComponent}.json\``);
+      awareLines.push(`- **Portfolio entry**: \`$ARCHITECT_PORTFOLIO_DIR/${pOrg}/${pProject}/${pComponent}.json\``);
       if (portfolio?.guides?.length) {
-        awareLines.push(`- **Portfolio guides**: ${portfolio.guides.map(g => g.filename).join(', ')} (in \`$ARCHITECT_ROOT/portfolio/${pOrg}/${pProject}/\`)`);
+        awareLines.push(`- **Portfolio guides**: ${portfolio.guides.map(g => g.filename).join(', ')} (in \`$ARCHITECT_PORTFOLIO_DIR/${pOrg}/${pProject}/\`)`);
       }
     }
     awareLines.push(`- **Domain rules**: \`$ARCHITECT_ROOT/domain/rules.md\` — business rules and constraints`);
@@ -575,7 +575,7 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     lines.push('', '**Navigation**:');
     lines.push(`- Your working directory is the organization root: \`${projectPath || orgContext.org?.path_root || '(unknown)'}\``);
     lines.push('- To work on a specific project, cd into its subdirectory');
-    lines.push(`- For detailed project context, read \`$ARCHITECT_ROOT/portfolio/<org>/<project>/main.json\` or query \`GET http://127.0.0.1:${port}/api/component/<org>/<project>/main\` on the dashboard API`);
+    lines.push(`- For detailed project context, read \`$ARCHITECT_PORTFOLIO_DIR/<org>/<project>/main.json\` or query \`GET http://127.0.0.1:${port}/api/component/<org>/<project>/main\` on the dashboard API`);
     lines.push('- You have cross-project awareness — use it to answer questions about the organization as a whole');
     sections.push(lines.join('\n'));
   }
@@ -684,7 +684,7 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     for (const g of portfolio.guides) {
       if (totalLen + g.content.length > MAX_GUIDE_CHARS) {
         guideLines.push(`## ${g.filename}`, '',
-          `(truncated — read full file at \`$ARCHITECT_ROOT/portfolio/${pOrg}/${pProject}/${g.filename}\`)`, '',
+          `(truncated — read full file at \`$ARCHITECT_PORTFOLIO_DIR/${pOrg}/${pProject}/${g.filename}\`)`, '',
           g.content.slice(0, MAX_GUIDE_CHARS - totalLen), '');
         break;
       }

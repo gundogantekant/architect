@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
-import { createWorktreeForDispatch, shouldCreateWorktree, checkWorktreeReadiness } from '../worktree.mjs';
-import { AUTO_IMPLEMENTABLE_STATUSES } from '../constants.mjs';
+import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository, checkWorktreeReadiness } from '../worktree.mjs';
+import { AUTO_IMPLEMENTABLE_STATUSES, PORTFOLIO } from '../constants.mjs';
 import { triggerMerge } from '../dispatch-manager.mjs';
 
 /**
@@ -71,7 +71,7 @@ export default function dispatchRoutes(deps) {
         proc = spawn(CLAUDE_BIN, ['-p', '--output-format', 'stream-json', '--verbose'], {
           cwd: ROOT,
           stdio: ['pipe', 'pipe', 'pipe'],
-          env: { ...process.env, ARCHITECT_ROOT: ROOT },
+          env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
         });
       } catch (err) {
         return json(res, { error: `Failed to spawn claude: ${err.message}` }, 500);
@@ -264,7 +264,7 @@ export default function dispatchRoutes(deps) {
         proc = spawn(CLAUDE_BIN, args, {
           cwd: effectiveCwd,
           stdio: ['pipe', 'pipe', 'pipe'],
-          env: { ...process.env, ARCHITECT_ROOT: ROOT },
+          env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
         });
       } catch (spawnErr) {
         return json(res, { error: `Failed to spawn claude: ${spawnErr.message}` }, 500);
@@ -401,7 +401,7 @@ export default function dispatchRoutes(deps) {
         proc = spawn(CLAUDE_BIN, args, {
           cwd: effectiveCwd,
           stdio: ['pipe', 'pipe', 'pipe'],
-          env: { ...process.env, ARCHITECT_ROOT: ROOT },
+          env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
         });
       } catch (spawnErr) {
         return json(res, { error: `Failed to spawn claude: ${spawnErr.message}` }, 500);
@@ -715,7 +715,7 @@ export default function dispatchRoutes(deps) {
 
       let proc;
       try {
-        proc = spawn(CLAUDE_BIN, args, { cwd: resumeCwd, env: { ...process.env, ARCHITECT_ROOT: ROOT }, stdio: ['pipe', 'pipe', 'pipe'] });
+        proc = spawn(CLAUDE_BIN, args, { cwd: resumeCwd, env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO }, stdio: ['pipe', 'pipe', 'pipe'] });
       } catch (e) {
         return err(res, `Failed to spawn resumed dispatch: ${e.message}`, 500);
       }

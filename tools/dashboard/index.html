@@ -13,7 +13,7 @@
 <body>
 
 <nav id="sidebar">
-  <h1>Architect <span id="dispatch-badge" class="dispatch-count empty"></span><button class="sidebar-toggle" data-sidebar-toggle aria-label="Toggle sidebar" title="Toggle sidebar"><span class="sidebar-toggle-icon"></span></button></h1>
+  <h1><span class="sidebar-title">Architect</span> <span id="dispatch-badge" class="dispatch-count empty"></span><button class="sidebar-toggle" data-sidebar-toggle aria-label="Toggle sidebar" title="Toggle sidebar"><span class="sidebar-toggle-icon"></span></button></h1>
   <div id="epic-tree"></div>
   <div id="sessions-sidebar" class="sessions-section"></div>
   <div id="tree"></div>
@@ -6154,6 +6154,7 @@ function renderSettingsView(status, config) {
   html += '<div><span class="key">Platform</span> ' + platform + '</div>';
   html += '<div><span class="key">Dispatches</span> ' + (sessions.dispatches_active || 0) + ' active / ' + (sessions.dispatches_total || 0) + ' total</div>';
   html += '<div><span class="key">Terminals</span> ' + (sessions.terminals_active || 0) + ' active / ' + (sessions.terminals_total || 0) + ' total</div>';
+  html += '<div><span class="key">Portfolio</span> <span style="font-family:monospace;font-size:11px;word-break:break-all">' + (config.portfolio_dir || '—') + '</span></div>';
   html += '</div></div>';
 
   // Card 2: Actions
@@ -6589,6 +6590,15 @@ window.__testDispatchTerminal = async (info) => {
 
   document.addEventListener('click', (e) => {
     if (!e.target.closest('[data-sidebar-toggle]')) return;
+    const collapsed = document.body.classList.toggle('sidebar-collapsed');
+    localStorage.setItem(STORAGE_KEY, collapsed);
+    document.documentElement.style.setProperty('--sidebar-w', collapsed ? '48px' : '260px');
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (!e.target.closest('[data-sidebar-toggle]')) return;
+    e.preventDefault();
     const collapsed = document.body.classList.toggle('sidebar-collapsed');
     localStorage.setItem(STORAGE_KEY, collapsed);
     document.documentElement.style.setProperty('--sidebar-w', collapsed ? '48px' : '260px');

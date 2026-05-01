@@ -42,6 +42,7 @@ export const SPEC_FILES = [
   'copy-fix',
   'terminal-grid',
   'modal-layout',
+  'portfolio-persistence',
 ];
 
 function getLiveDashboardPorts() {
