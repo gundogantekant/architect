@@ -1276,6 +1276,33 @@ open → [Plan Gate] → ready → in-progress → [Code Gate] → done
 5. `plan-then-execute` workflow — Plan Gate runs after planner produces task decomposition.
 6. Any coordinator dispatch that includes a planner step — Plan Gate runs after planner completes.
 
+## Isolated Work Mandate
+
+These rules apply to all medium+ complexity dispatches without exception. They are enforced at the API boundary, injected into every dispatch prompt, and required in every coordinator DispatchPlan.
+
+### Core Rules
+1. **Worktree required**: Every medium+ dispatch must execute in an isolated git worktree. The worktree branches off the currently checked-out branch at dispatch time (source_branch). Never branch off main by default.
+2. **Complete contract required**: Every medium+ dispatch must have a complete DispatchContract with all four core fields (goal, constraints, expected_output, failure_conditions) plus e2e_test_criteria (minimum 1 entry; 3+ for large complexity).
+3. **Plan Gate required**: Every medium+ DispatchPlan must include a plan-gate review step (Review Board) before any implementation agent runs. Board: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx.
+4. **Code Gate required**: Every medium+ DispatchPlan must include a code-gate review step as the final pre-merge step. The code gate must verify contract satisfaction (each e2e_test_criteria item is implemented and passing). Board: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod, plus tech-reviewer-dba if DB changes present, tech-reviewer-security if auth/secrets present.
+5. **Base branch merge**: Merge always targets source_branch (the originating branch captured at worktree creation time). Never hardcode main as merge target.
+
+### Ticket Gate (Orchestrator Behavior Extension)
+For medium+ complexity, after the coordinator produces a DispatchPlan:
+1. Surface the plan to the user immediately (visibility is non-blocking).
+2. Simultaneously dispatch a Ticket Gate board review (same board as Plan Gate Board) as an async parallel step.
+3. Incorporate board feedback before proceeding to dispatch any implementation agent.
+4. If board blocks, revise the plan (max 2 revision cycles) before dispatching.
+5. Override note: This extends the existing rule that surfaces coordinator output for user approval — plan is visible immediately but implementation dispatch is gated on board clearance.
+
+### Recursion Guard
+Gate reviews (Ticket Gate, Plan Gate, Code Gate) are read-only, depth-1 dispatches. They do NOT trigger further gate reviews. Maximum gate recursion depth: 1.
+
+### Named Board Compositions
+- **Ticket Gate Board** (identical to Plan Gate Board): tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx
+- **Plan Gate Board**: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx
+- **Code Gate Board**: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod; add tech-reviewer-dba if DB schema changes present; add tech-reviewer-security if authentication, secrets, or external data involved
+
 ## External Action Rules
 
 - **Never post comments, reviews, or any content to GitHub pull requests unless the user explicitly requests it.** This applies to all agents, skills, and orchestrator actions. Read-only operations (fetching PR diffs, viewing comments, reading PR metadata) are always allowed. The restriction covers `gh pr comment`, `gh pr review`, and any GitHub API call that writes to a PR.

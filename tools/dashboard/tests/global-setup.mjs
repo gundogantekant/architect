@@ -43,6 +43,7 @@ export const SPEC_FILES = [
   'terminal-grid',
   'modal-layout',
   'portfolio-persistence',
+  'dispatch-mandate',
 ];
 
 function getLiveDashboardPorts() {
