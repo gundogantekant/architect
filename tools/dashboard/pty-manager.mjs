@@ -7,6 +7,17 @@ import * as db from './db.mjs';
 
 // Shared terminal handler wiring (used for fresh spawn and restore)
 export function wireTerminalHandlers(terminal) {
+  terminal.ptyProcess.on('error', (err) => {
+    console.error(JSON.stringify({
+      type: 'pty_error',
+      errno: err.code,
+      message: err.message,
+      pid: terminal.ptyProcess?.pid,
+      session_id: terminal.id,
+      timestamp: new Date().toISOString(),
+    }));
+  });
+
   terminal.ptyProcess.onData((data) => {
     // Append to EventStream
     const event = terminal.eventStream.append('data', data);
@@ -25,7 +36,7 @@ export function wireTerminalHandlers(terminal) {
       if (sessionId) {
         terminal.claude_session_id = sessionId;
         terminal._accumulated = '';
-        db.updateTerminalClaudeSessionId(terminal.id, sessionId);
+        db.updateTerminalClaudeSessionId(terminal.id, sessionId).catch(e => console.error('[pty] updateTerminalClaudeSessionId:', e.message));
         // Emit meta event
         const metaEvent = terminal.eventStream.append('meta', { key: 'claude_session_id', value: sessionId });
         try { appendFileSync(termEventLogPath(terminal.id), JSON.stringify(metaEvent) + '\n'); } catch {}
@@ -64,8 +75,8 @@ export function wireTerminalHandlers(terminal) {
     if (terminal.tmux_session) {
       try { execFileSync('tmux', ['kill-session', '-t', terminal.tmux_session], { stdio: 'ignore' }); } catch {}
     }
-    try { archiveSession(terminal, 'terminal'); } catch {}
-    try { saveTerminalToDb(terminal); } catch {}
+    archiveSession(terminal, 'terminal').catch(e => console.error('[onExit] archiveSession:', e.message));
+    saveTerminalToDb(terminal).catch(e => console.error('[onExit] saveTerminalToDb:', e.message));
     // Keep terminal in memory for frontend display; auto-cleanup timer handles removal after 10min
   });
 }
@@ -87,7 +98,7 @@ export async function injectPrompt(terminal) {
     const CHUNK_DELAY = 100;
     for (let i = 0; i < prompt.length; i += CHUNK_SIZE) {
       const chunk = prompt.slice(i, i + CHUNK_SIZE);
-      terminal.ptyProcess.write(chunk);
+      try { terminal.ptyProcess.write(chunk); } catch {}
       if (i + CHUNK_SIZE < prompt.length) await sleep(CHUNK_DELAY);
     }
     terminal.ptyProcess.write('\x1b[201~');

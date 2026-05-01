@@ -10,19 +10,19 @@ export default function serverMgmtRoutes(deps) {
     // --- Projects & Time Report endpoints ---
 
     [/^\/api\/projects$/, 'GET', async (_m, _req, res) => {
-      json(res, db.getAllProjects());
+      json(res, await db.getAllProjects());
     }],
 
     [/^\/api\/projects\/sync$/, 'POST', async (_m, _req, res) => {
-      const count = syncProjectsFromRegistry();
+      const count = await syncProjectsFromRegistry();
       json(res, { synced: count });
     }],
 
     [/^\/api\/projects\/(.+)\/stats$/, 'GET', async (m, _req, res) => {
       const key = decodeURIComponent(m[1]);
-      const project = db.getProject(key);
+      const project = await db.getProject(key);
       if (!project) return err(res, 'project not found');
-      const recentSessions = db.getSessionHistory({ project_key: key, limit: 20 });
+      const recentSessions = await db.getSessionHistory({ project_key: key, limit: 20 });
       json(res, { ...project, recent_sessions: recentSessions });
     }],
 
@@ -34,7 +34,7 @@ export default function serverMgmtRoutes(deps) {
       }
       filters.limit = parseInt(url.searchParams.get('limit') || '50', 10);
       filters.offset = parseInt(url.searchParams.get('offset') || '0', 10);
-      json(res, db.getSessionHistory(filters));
+      json(res, await db.getSessionHistory(filters));
     }],
 
     [/^\/api\/time-report/, 'GET', async (_m, req, res) => {
@@ -43,13 +43,13 @@ export default function serverMgmtRoutes(deps) {
       const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
       let today, overall, daily, monthly;
       if (group === 'org') {
-        ({ today, overall } = db.getTimeReportByOrg(todayStart.toISOString()));
-        daily = db.getTimeReportDailyByOrg(14);
-        monthly = db.getTimeReportMonthlyByOrg(6);
+        ({ today, overall } = await db.getTimeReportByOrg(todayStart.toISOString()));
+        daily = await db.getTimeReportDailyByOrg(14);
+        monthly = await db.getTimeReportMonthlyByOrg(6);
       } else {
-        ({ today, overall } = db.getTimeReport(todayStart.toISOString()));
-        daily = db.getTimeReportDaily(14);
-        monthly = db.getTimeReportMonthly(6);
+        ({ today, overall } = await db.getTimeReport(todayStart.toISOString()));
+        daily = await db.getTimeReportDaily(14);
+        monthly = await db.getTimeReportMonthly(6);
       }
       const sum = (arr, k) => arr.reduce((s, r) => s + (r[k] || 0), 0);
       json(res, {
@@ -108,15 +108,15 @@ export default function serverMgmtRoutes(deps) {
 
     // --- Preferences endpoints ---
     [/^\/api\/settings\/preferences$/, 'GET', async (_m, _req, res) => {
-      json(res, db.getAllPreferences());
+      json(res, await db.getAllPreferences());
     }],
 
     [/^\/api\/settings\/preferences$/, 'PUT', async (_m, req, res) => {
       const body = await parseBody(req);
       for (const [key, value] of Object.entries(body)) {
-        db.setPreference(key, String(value));
+        await db.setPreference(key, String(value));
       }
-      json(res, db.getAllPreferences());
+      json(res, await db.getAllPreferences());
     }],
 
     // Server action (restart, stop, fresh, install, uninstall)

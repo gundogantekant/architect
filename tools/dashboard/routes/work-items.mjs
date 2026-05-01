@@ -86,14 +86,14 @@ export default function workItemRoutes(deps) {
       const view = reqUrl.searchParams.get('view');
       const awaitingAction = reqUrl.searchParams.get('awaiting_action') === 'true';
       // Stakeholder view includes archived items (STAKEHOLDER_PROJECTION maps 'archived' → 'Archived')
-      let backlog = db.getBacklog(orgFilter || null, view === 'stakeholder');
+      let backlog = await db.getBacklog(orgFilter || null, view === 'stakeholder');
       if (awaitingAction) backlog = filterAwaitingAction(backlog);
       backlog = projectBacklog(backlog, view);
       json(res, backlog);
     }],
 
     [/^\/api\/sequences\/next$/, 'GET', async (_m, _req, res) => {
-      json(res, db.peekNextIds());
+      json(res, await db.peekNextIds());
     }],
 
     // NOTE: This route MUST stay before the /:id catch-all below to avoid
@@ -104,14 +104,14 @@ export default function workItemRoutes(deps) {
       const keywords = raw.trim().split(/\s+/).filter(Boolean).slice(0, 10);
       if (keywords.length === 0) return err(res, 'q is required', 400);
       const projectKey = reqUrl.searchParams.get('project_key') || undefined;
-      const allMatches = db.searchWorkItems(keywords, projectKey);
+      const allMatches = await db.searchWorkItems(keywords, projectKey);
       const total = allMatches.length;
       const has_more = total > 20;
       json(res, { items: allMatches.slice(0, 20), query: { keywords, total, has_more } });
     }],
 
     [/^\/api\/work-items\/([A-Za-z0-9_-]+)$/, 'GET', async (m, _req, res) => {
-      const item = db.getWorkItemFull(m[1]);
+      const item = await db.getWorkItemFull(m[1]);
       if (!item) return err(res, 'work item not found', 404);
       json(res, item);
     }],
@@ -120,12 +120,12 @@ export default function workItemRoutes(deps) {
       const reqUrl = new URL(req.url, 'http://localhost');
       const approverPending = reqUrl.searchParams.get('approver_pending');
       if (approverPending) {
-        const rows = db.getPendingApprovalsForIdentity(approverPending);
+        const rows = await db.getPendingApprovalsForIdentity(approverPending);
         const itemIds = [...new Set(rows.map(r => r.work_item_id))];
-        const items = itemIds.map(id => db.getWorkItemFull(id)).filter(Boolean);
+        const items = (await Promise.all(itemIds.map(id => db.getWorkItemFull(id)))).filter(Boolean);
         return json(res, items);
       }
-      json(res, db.getAllWorkItems());
+      json(res, await db.getAllWorkItems());
     }],
 
     [/^\/api\/work-items$/, 'POST', async (_m, req, res) => {
@@ -138,13 +138,13 @@ export default function workItemRoutes(deps) {
       if (priority && !VALID_PRIORITIES.has(priority)) {
         return err(res, `invalid priority '${priority}', must be one of: ${[...VALID_PRIORITIES].join(', ')}`, 400);
       }
-      const item = db.createWorkItem({ project_key, title, status, priority, description, tags, epic_id });
+      const item = await db.createWorkItem({ project_key, title, status, priority, description, tags, epic_id });
       json(res, item, 201);
     }],
 
     [/^\/api\/work-items\/([A-Za-z0-9_-]+)$/, 'PATCH', async (m, req, res) => {
       const itemId = m[1];
-      const existing = db.getWorkItem(itemId);
+      const existing = await db.getWorkItem(itemId);
       if (!existing) return err(res, 'work item not found', 404);
       const body = await parseBody(req);
 
@@ -169,31 +169,31 @@ export default function workItemRoutes(deps) {
 
       const prevStatus = existing.status;
       try {
-        const updated = db.updateWorkItem(itemId, body);
+        await db.updateWorkItem(itemId, body);
 
         if (body.status && body.status !== prevStatus) {
           let summary = `Status: ${prevStatus} → ${body.status}`;
           if (prevStatus === 'planned' && body.status === 'draft' && body.reason) {
             summary += ` (reason: ${body.reason})`;
           }
-          db.addWorkItemLog(itemId, summary);
-          if (body.status === 'done' && db.resolveBlockedApprovals) db.resolveBlockedApprovals(itemId);
+          await db.addWorkItemLog(itemId, summary);
+          if (body.status === 'done' && db.resolveBlockedApprovals) await db.resolveBlockedApprovals(itemId);
         }
-        json(res, db.getWorkItemFull(itemId));
+        json(res, await db.getWorkItemFull(itemId));
       } catch (e) {
         return err(res, e.message, 400);
       }
     }],
 
     [/^\/api\/work-items\/([A-Za-z0-9_-]+)$/, 'DELETE', async (m, _req, res) => {
-      const deleted = db.deleteWorkItem(m[1]);
+      const deleted = await db.deleteWorkItem(m[1]);
       if (!deleted) return err(res, 'work item not found', 404);
       json(res, { deleted: m[1] });
     }],
 
     // Archive work item (done/cancelled → archived)
     [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/archive$/, 'POST', async (m, _req, res) => {
-      const archived = db.archiveWorkItem(m[1]);
+      const archived = await db.archiveWorkItem(m[1]);
       if (!archived) return err(res, 'work item not found or not archivable (must be done or cancelled)', 404);
       json(res, archived);
     }],
@@ -205,15 +205,15 @@ export default function workItemRoutes(deps) {
       const { message, summary } = body;
       const logMsg = message || summary;
       if (!logMsg) return err(res, 'message is required', 400);
-      const existing = db.getWorkItem(itemId);
+      const existing = await db.getWorkItem(itemId);
       if (!existing) return err(res, 'work item not found', 404);
-      db.addWorkItemLog(itemId, logMsg);
-      json(res, db.getWorkItemFull(itemId));
+      await db.addWorkItemLog(itemId, logMsg);
+      json(res, await db.getWorkItemFull(itemId));
     }],
 
     [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/input-needed$/, 'PATCH', async (m, req, res) => {
       const itemId = m[1];
-      const existing = db.getWorkItem(itemId);
+      const existing = await db.getWorkItem(itemId);
       if (!existing) return err(res, 'work item not found', 404);
       const body = await parseBody(req);
       const patch = { input_needed: !!body.active };
@@ -226,14 +226,14 @@ export default function workItemRoutes(deps) {
         patch.input_needed_reason = null;
         patch.input_needed_at = null;
       }
-      const updated = db.updateWorkItem(itemId, patch);
-      db.addWorkItemLog(itemId, body.active ? `Input needed from ${body.from || 'unspecified'}` : 'Input flag cleared');
-      json(res, db.getWorkItemFull(itemId));
+      await db.updateWorkItem(itemId, patch);
+      await db.addWorkItemLog(itemId, body.active ? `Input needed from ${body.from || 'unspecified'}` : 'Input flag cleared');
+      json(res, await db.getWorkItemFull(itemId));
     }],
 
     [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/released$/, 'PATCH', async (m, req, res) => {
       const itemId = m[1];
-      const existing = db.getWorkItem(itemId);
+      const existing = await db.getWorkItem(itemId);
       if (!existing) return err(res, 'work item not found', 404);
       if (existing.status !== 'done') {
         return err(res, `released metadata only settable when status=done (current: ${existing.status})`, 400);
@@ -243,9 +243,9 @@ export default function workItemRoutes(deps) {
         released_at: body.released_at || new Date().toISOString(),
         released_version: body.released_version || '',
       };
-      db.updateWorkItem(itemId, patch);
-      db.addWorkItemLog(itemId, `Released ${patch.released_version || '(no version)'}`);
-      json(res, db.getWorkItemFull(itemId));
+      await db.updateWorkItem(itemId, patch);
+      await db.addWorkItemLog(itemId, `Released ${patch.released_version || '(no version)'}`);
+      json(res, await db.getWorkItemFull(itemId));
     }],
 
     [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/depend$/, 'POST', async (m, req, res) => {
@@ -255,11 +255,11 @@ export default function workItemRoutes(deps) {
       if (!targets || !targets.length) return err(res, 'targets array is required', 400);
       const added = [];
       for (const tid of targets) {
-        try { db.addDependency(itemId, tid); added.push(tid); }
+        try { await db.addDependency(itemId, tid); added.push(tid); }
         catch (e) { return err(res, e.message, 400); }
       }
-      if (added.length) db.addWorkItemLog(itemId, `Added dependencies: ${added.join(', ')}`);
-      json(res, db.getWorkItemFull(itemId));
+      if (added.length) await db.addWorkItemLog(itemId, `Added dependencies: ${added.join(', ')}`);
+      json(res, await db.getWorkItemFull(itemId));
     }],
 
     [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/depend$/, 'DELETE', async (m, req, res) => {
@@ -267,12 +267,12 @@ export default function workItemRoutes(deps) {
       const body = await parseBody(req);
       const { targets } = body;
       if (!targets || !targets.length) return err(res, 'targets array is required', 400);
-      const existing = db.getWorkItem(itemId);
+      const existing = await db.getWorkItem(itemId);
       if (!existing) return err(res, 'work item not found', 404);
       const removed = targets.filter(t => existing.depends_on.includes(t));
-      for (const tid of removed) db.removeDependency(itemId, tid);
-      if (removed.length) db.addWorkItemLog(itemId, `Removed dependencies: ${removed.join(', ')}`);
-      json(res, db.getWorkItemFull(itemId));
+      for (const tid of removed) await db.removeDependency(itemId, tid);
+      if (removed.length) await db.addWorkItemLog(itemId, `Removed dependencies: ${removed.join(', ')}`);
+      json(res, await db.getWorkItemFull(itemId));
     }],
 
     [/^\/api\/work-items\/(W-\d+)\/plan$/, 'GET', async (m, _req, res) => {

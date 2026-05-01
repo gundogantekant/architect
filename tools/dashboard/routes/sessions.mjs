@@ -26,7 +26,7 @@ export default function sessionRoutes(deps) {
         exited_at: null,
       };
       cliSessions.set(id, session);
-      saveCliSessionToDb(session);
+      await saveCliSessionToDb(session);
       json(res, { id, status: session.status, registered_at: session.registered_at }, 201);
     }],
 
@@ -45,8 +45,8 @@ export default function sessionRoutes(deps) {
       if (!session) return err(res, 'CLI session not found', 404);
       session.status = 'exited';
       session.exited_at = new Date().toISOString();
-      saveCliSessionToDb(session);
-      archiveSession(session, 'cli');
+      await saveCliSessionToDb(session);
+      await archiveSession(session, 'cli');
       cliSessions.delete(m[1]);
       json(res, { status: 'exited', id: m[1] });
     }],

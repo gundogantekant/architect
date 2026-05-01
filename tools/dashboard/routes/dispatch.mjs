@@ -18,12 +18,13 @@ function findActiveDispatchForWorkItem(dispatches, workItemId) {
  * Resolve which dependency IDs are not yet in 'done' status.
  * Returns array of unmet dependency IDs.
  */
-function resolveUnmetDependencies(db, dependsOn) {
+async function resolveUnmetDependencies(db, dependsOn) {
   if (!dependsOn || !dependsOn.length) return [];
-  return dependsOn.filter(depId => {
-    const dep = db.getWorkItemFull(depId);
-    return !dep || dep.status !== 'done';
-  });
+  const results = await Promise.all(dependsOn.map(async depId => {
+    const dep = await db.getWorkItemFull(depId);
+    return (!dep || dep.status !== 'done') ? depId : null;
+  }));
+  return results.filter(Boolean);
 }
 
 export default function dispatchRoutes(deps) {
@@ -91,7 +92,7 @@ export default function dispatchRoutes(deps) {
       wireDispatchHandlers(dispatch, proc);
 
       dispatches.set(id, dispatch);
-      saveDispatchToDb(dispatch);
+      await saveDispatchToDb(dispatch);
       json(res, { dispatch_id: id, status: 'running' });
     }],
 
@@ -140,7 +141,7 @@ export default function dispatchRoutes(deps) {
       let epicContext = null;
       if (epic_id) {
         try {
-          const epicFull = db.getEpicFull(epic_id);
+          const epicFull = await db.getEpicFull(epic_id);
           if (epicFull) {
             const planSnippet = await loadEpicPlanSnippet(epic_id);
             epicContext = {
@@ -177,7 +178,7 @@ export default function dispatchRoutes(deps) {
       const resolvedSkipPerms = skip_permissions === true || skip_permissions === 'true';
 
       // --- Dispatch-level worktree creation (W-927) ---
-      const featureFlag = (db.getPreference('worktree_at_dispatch') ?? 'true') === 'true';
+      const featureFlag = ((await db.getPreference('worktree_at_dispatch')) ?? 'true') === 'true';
       const rawEntry = portfolio?.entry || null;
       let worktreeContext = null;
       let effectiveCwd = projectPath;
@@ -284,7 +285,7 @@ export default function dispatchRoutes(deps) {
       wireDispatchHandlers(dispatch, proc);
 
       dispatches.set(id, dispatch);
-      saveDispatchToDb(dispatch);
+      await saveDispatchToDb(dispatch);
       json(res, { dispatch_id: id, status: 'running' });
     }],
 
@@ -308,7 +309,7 @@ export default function dispatchRoutes(deps) {
         return err(res, `Work item status '${workItem.status}' cannot be auto-implemented. Must be ${AUTO_IMPLEMENTABLE_STATUSES.join(', ')}.`, 400);
       }
 
-      const unmetDeps = resolveUnmetDependencies(db, workItem.depends_on || []);
+      const unmetDeps = await resolveUnmetDependencies(db, workItem.depends_on || []);
       if (unmetDeps.length) {
         return err(res, `Unmet dependencies: ${unmetDeps.join(', ')}. Resolve these before auto-implementing.`, 400);
       }
@@ -323,7 +324,7 @@ export default function dispatchRoutes(deps) {
 
       const id = `D-${Date.now()}`;
 
-      const featureFlag = (db.getPreference('worktree_at_dispatch') ?? 'true') === 'true';
+      const featureFlag = ((await db.getPreference('worktree_at_dispatch')) ?? 'true') === 'true';
       const portfolio = await loadPortfolioContext(project_key);
       const rawEntry = portfolio?.entry || null;
       let worktreeContext = null;
@@ -420,7 +421,7 @@ export default function dispatchRoutes(deps) {
       wireDispatchHandlers(dispatch, proc);
 
       dispatches.set(id, dispatch);
-      saveDispatchToDb(dispatch);
+      await saveDispatchToDb(dispatch);
       json(res, { id, dispatch_id: id, status: 'running', worktree_path: dispatch.worktree_path });
     }],
 
@@ -489,16 +490,15 @@ export default function dispatchRoutes(deps) {
     // List dispatches (returns all including completed/failed/interrupted)
     [/^\/api\/dispatch\/active$/, 'GET', async (_m, req, res) => {
       const workerId = req.headers['x-test-worker-id'];
-      const list = [];
-      for (const [id, d] of dispatches) {
-        if (workerId !== undefined && d._testWorkerId !== workerId) continue;
-        list.push({
+      const list = await Promise.all([...dispatches].map(async ([id, d]) => {
+        if (workerId !== undefined && d._testWorkerId !== workerId) return null;
+        return {
           id,
           title: d.title || null,
           work_item_id: d.work_item_id,
-          work_item_title: d.work_item_id ? db.getWorkItemTitle(d.work_item_id) : null,
+          work_item_title: d.work_item_id ? await db.getWorkItemTitle(d.work_item_id) : null,
           epic_id: d.epic_id || null,
-          epic_title: d.epic_id ? db.getEpicTitle(d.epic_id) : null,
+          epic_title: d.epic_id ? await db.getEpicTitle(d.epic_id) : null,
           project_key: d.project_key,
           project_path: d.project_path,
           status: d.status,
@@ -519,25 +519,24 @@ export default function dispatchRoutes(deps) {
           completion_summary: d.completion_summary || null,
           merge_result: d.merge_result || null,
           _exitedWithoutSignal: d._exitedWithoutSignal || false,
-        });
-      }
-      json(res, list);
+        };
+      }));
+      json(res, list.filter(Boolean));
     }],
 
     // List suspended dispatches only
     [/^\/api\/dispatch\/suspended$/, 'GET', async (_m, req, res) => {
       const workerId = req.headers['x-test-worker-id'];
-      const list = [];
-      for (const [id, d] of dispatches) {
-        if (workerId !== undefined && d._testWorkerId !== workerId) continue;
-        if (d.status !== 'suspended') continue;
-        list.push({
+      const list = await Promise.all([...dispatches].map(async ([id, d]) => {
+        if (workerId !== undefined && d._testWorkerId !== workerId) return null;
+        if (d.status !== 'suspended') return null;
+        return {
           id,
           title: d.title || null,
           work_item_id: d.work_item_id,
-          work_item_title: d.work_item_id ? db.getWorkItemTitle(d.work_item_id) : null,
+          work_item_title: d.work_item_id ? await db.getWorkItemTitle(d.work_item_id) : null,
           epic_id: d.epic_id || null,
-          epic_title: d.epic_id ? db.getEpicTitle(d.epic_id) : null,
+          epic_title: d.epic_id ? await db.getEpicTitle(d.epic_id) : null,
           project_key: d.project_key,
           project_path: d.project_path,
           status: d.status,
@@ -550,9 +549,9 @@ export default function dispatchRoutes(deps) {
           worktree_branch: d.worktree_branch || null,
           source_branch: d.source_branch || null,
           dispatch_mode: d.dispatch_mode || 'standard',
-        });
-      }
-      json(res, list);
+        };
+      }));
+      json(res, list.filter(Boolean));
     }],
 
     // Kill all dispatches (must be before :id route)
@@ -571,8 +570,8 @@ export default function dispatchRoutes(deps) {
         if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
         if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
         broadcastDispatchDone(dispatch);
-        archiveSession(dispatch, 'dispatch');
-        saveDispatchToDb(dispatch);
+        archiveSession(dispatch, 'dispatch').catch(e => console.error('[kill all] archiveSession:', e.message));
+        saveDispatchToDb(dispatch).catch(e => console.error('[kill all] saveDispatchToDb:', e.message));
         killed++;
       }
       json(res, { killed });
@@ -592,10 +591,10 @@ export default function dispatchRoutes(deps) {
       dispatch.completed_at = new Date().toISOString();
       if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
       if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
-      archiveSession(dispatch, 'dispatch');
+      archiveSession(dispatch, 'dispatch').catch(e => console.error('[kill dispatch] archiveSession:', e.message));
       broadcastDispatchDone(dispatch);
       dispatches.delete(m[1]);
-      db.deleteDispatch(m[1]);
+      await db.deleteDispatch(m[1]);
       unlinkFile(join(LOGS_DIR, `${m[1]}.jsonl`)).catch(() => {});
       json(res, { status: 'killed', id: m[1] });
     }],
@@ -645,14 +644,14 @@ export default function dispatchRoutes(deps) {
       dispatch.completion_sha = sha || null;
       dispatch.completion_summary = summary || null;
 
-      db.updateDispatchMergeResult(m[1], {
+      await db.updateDispatchMergeResult(m[1], {
         status: 'merge_pending',
         completion_sha: sha || null,
         completion_summary: summary || null,
       });
-      saveDispatchToDb(dispatch);
+      await saveDispatchToDb(dispatch);
 
-      const mergeGate = db.getPreference('merge_gate') ?? 'confirm';
+      const mergeGate = (await db.getPreference('merge_gate')) ?? 'confirm';
       if (mergeGate === 'auto') {
         dispatch._mergeTimer = setTimeout(() => {
           triggerMerge(dispatch, deps).catch(e => console.error(`[auto-merge] error for ${m[1]}:`, e));
@@ -678,9 +677,9 @@ export default function dispatchRoutes(deps) {
       dispatch.completed_at = new Date().toISOString();
       if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
       if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
-      archiveSession(dispatch, 'dispatch');
+      archiveSession(dispatch, 'dispatch').catch(e => console.error('[suspend dispatch] archiveSession:', e.message));
       broadcastDispatchDone(dispatch);
-      saveDispatchToDb(dispatch);
+      await saveDispatchToDb(dispatch);
       json(res, { status: 'suspended', id: m[1], claude_session_id: dispatch.claude_session_id });
     }],
 
@@ -704,7 +703,7 @@ export default function dispatchRoutes(deps) {
 
       // Remove old suspended record
       dispatches.delete(m[1]);
-      db.deleteDispatch(m[1]);
+      await db.deleteDispatch(m[1]);
 
       // Create new dispatch with --resume flag
       const id = `D-${Date.now()}`;
@@ -767,7 +766,7 @@ export default function dispatchRoutes(deps) {
       proc.stdin.end();
 
       dispatches.set(id, dispatch);
-      saveDispatchToDb(dispatch);
+      await saveDispatchToDb(dispatch);
       json(res, { dispatch_id: id, status: 'running', resumed_from: m[1] });
     }],
   ];

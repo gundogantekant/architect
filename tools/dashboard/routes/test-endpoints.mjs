@@ -25,9 +25,7 @@ export default function testEndpointRoutes(deps) {
       const query = url.searchParams.get('query');
       if (query === 'approver_pending') {
         const identity = url.searchParams.get('identity') || 'probe';
-        const plan = db.getDb().prepare(
-          `EXPLAIN QUERY PLAN SELECT * FROM work_item_approvals WHERE identity = ? AND status = 'pending'`
-        ).all(identity);
+        const plan = await db.explainApproverPendingQuery(identity);
         return json(res, { plan });
       }
       return err(res, `unknown query '${query}'`, 400);
@@ -81,7 +79,7 @@ export default function testEndpointRoutes(deps) {
       };
 
       dispatches.set(id, dispatch);
-      saveDispatchToDb(dispatch);
+      await saveDispatchToDb(dispatch);
       json(res, { dispatch_id: id, status: dispatch.status });
     }],
 
@@ -89,7 +87,7 @@ export default function testEndpointRoutes(deps) {
     [/^\/api\/test\/reset-sessions$/, 'POST', async (_m, _req, res) => {
       dispatches.clear();
       terminals.clear();
-      restoreSessions(wireTerminalHandlers);
+      await restoreSessions(wireTerminalHandlers);
       json(res, { dispatches: dispatches.size, terminals: terminals.size });
     }],
 
@@ -280,7 +278,7 @@ export default function testEndpointRoutes(deps) {
         tmux_session: null,
       };
       terminals.set(id, terminal);
-      saveTerminalToDb(terminal);
+      await saveTerminalToDb(terminal);
       json(res, { terminal_id: id, status: terminal.status, project_path: projectPath, prompt });
     }],
 
@@ -293,7 +291,7 @@ export default function testEndpointRoutes(deps) {
       const dur = duration_seconds || 300;
       const start = started_at || new Date(new Date(end).getTime() - dur * 1000).toISOString();
       const id = seedId || `SH-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      db.recordSessionHistory({
+      await db.recordSessionHistory({
         id,
         type: 'test',
         project_key,
@@ -315,14 +313,16 @@ export default function testEndpointRoutes(deps) {
 
       if (workerId === undefined) {
         // Global purge — no worker header means global-setup.mjs or manual call; clear everything.
+        const deleteDispatchPromises = [];
         for (const [id, d] of dispatches) {
           if (d.process) try { d.process.kill('SIGKILL'); } catch {}
           if (d._tailInterval) clearInterval(d._tailInterval);
           if (d.logStream) try { d.logStream.end(); } catch {}
           broadcastDispatchDone(d);
-          db.deleteDispatch(id);
+          deleteDispatchPromises.push(db.deleteDispatch(id));
         }
         const ptyExitPromises = [];
+        const deleteTerminalPromises = [];
         for (const [id, t] of terminals) {
           if (t.ptyProcess) {
             ptyExitPromises.push(new Promise(r => { t.ptyProcess.onExit(() => r()); setTimeout(r, 2000); }));
@@ -333,20 +333,22 @@ export default function testEndpointRoutes(deps) {
             for (const [, sub] of t.eventStream.subscribers) { try { sub.ws.close(); } catch {} }
             t.eventStream.subscribers.clear();
           }
-          db.deleteTerminal(id);
+          deleteTerminalPromises.push(db.deleteTerminal(id));
         }
-        // Wait for PTY processes to fully exit (max 2s) before responding
+        // Wait for PTY processes to fully exit (max 2s) and DB deletes before responding
         if (ptyExitPromises.length > 0) await Promise.all(ptyExitPromises);
+        await Promise.all([...deleteDispatchPromises, ...deleteTerminalPromises]);
         dispatches.clear();
         terminals.clear();
         // Hard-delete all epics and work items created during tests
-        db.hardDeleteAllTestData();
+        await db.hardDeleteAllTestData();
         // Note: registry.json is NOT restored here — it is shared across parallel test servers
         // and parallel purge-all calls would race and wipe entries seeded by other servers.
       } else {
         // Worker-scoped purge — delete terminals and dispatches belonging to this worker.
         const toDeleteTerminals = [];
         const workerPtyExits = [];
+        const workerDeleteTerminalPromises = [];
         for (const [id, t] of terminals) {
           if (t._testWorkerId !== workerId) continue;
           if (t.ptyProcess) {
@@ -358,23 +360,26 @@ export default function testEndpointRoutes(deps) {
             for (const [, sub] of t.eventStream.subscribers) { try { sub.ws.close(); } catch {} }
             t.eventStream.subscribers.clear();
           }
-          db.deleteTerminal(id);
+          workerDeleteTerminalPromises.push(db.deleteTerminal(id));
           toDeleteTerminals.push(id);
         }
         if (workerPtyExits.length > 0) await Promise.all(workerPtyExits);
+        await Promise.all(workerDeleteTerminalPromises);
         for (const id of toDeleteTerminals) terminals.delete(id);
 
         // Worker-scoped dispatch purge — only delete dispatches belonging to this worker.
         const toDeleteDispatches = [];
+        const workerDeleteDispatchPromises = [];
         for (const [id, d] of dispatches) {
           if (d._testWorkerId !== workerId) continue;
           if (d.process) try { d.process.kill('SIGKILL'); } catch {}
           if (d._tailInterval) clearInterval(d._tailInterval);
           if (d.logStream) try { d.logStream.end(); } catch {}
           broadcastDispatchDone(d);
-          db.deleteDispatch(id);
+          workerDeleteDispatchPromises.push(db.deleteDispatch(id));
           toDeleteDispatches.push(id);
         }
+        await Promise.all(workerDeleteDispatchPromises);
         for (const id of toDeleteDispatches) dispatches.delete(id);
       }
 
@@ -466,7 +471,7 @@ export default function testEndpointRoutes(deps) {
       };
 
       terminals.set(id, terminal);
-      saveTerminalToDb(terminal);
+      await saveTerminalToDb(terminal);
       json(res, { terminal_id: id, status: terminal.status });
     }],
 
@@ -552,7 +557,7 @@ export default function testEndpointRoutes(deps) {
 
       wireTerminalHandlers(terminal);
       terminals.set(id, terminal);
-      saveTerminalToDb(terminal);
+      await saveTerminalToDb(terminal);
 
       // Write prompt using same chunked method — this runs ASYNC while client connects
       const CHUNK_SIZE = 1024;
