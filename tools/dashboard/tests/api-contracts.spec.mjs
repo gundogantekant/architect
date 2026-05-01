@@ -406,7 +406,7 @@ test.describe('API contracts @fast', () => {
     expect(typeof result.port).toBe('number');
     expect(result).toHaveProperty('log_file');
     expect(result).toHaveProperty('pid_file');
-    expect(result).toHaveProperty('database_file');
+    expect(result.database).toBe('postgresql');
   });
 
   test('AC-46: GET /api/server/logs returns text', async () => {
