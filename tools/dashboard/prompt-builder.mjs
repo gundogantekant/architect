@@ -338,6 +338,25 @@ function deriveContractFromDescription(description) {
     }
   }
 
+  // Success Criteria: single-line
+  const successPattern = /\*\*Success Criteria\*\*:\s*(.+)/i;
+  const successMatch = description.match(successPattern);
+  if (successMatch) {
+    contract.success_criteria = successMatch[1].trim();
+    foundAny = true;
+  }
+
+  // E2E Test Criteria: multi-line — header line followed by newline-separated items
+  const e2ePattern = /\*\*E2E Test Criteria\*\*:\s*\n([\s\S]*?)(?=\n\*\*[A-Z]|\n##|\s*$)/i;
+  const e2eMatch = description.match(e2ePattern);
+  if (e2eMatch) {
+    const items = e2eMatch[1].split('\n').map(l => l.replace(/^[-*]\s*/, '').trim()).filter(Boolean);
+    if (items.length) {
+      contract.e2e_test_criteria = items;
+      foundAny = true;
+    }
+  }
+
   return foundAny ? contract : null;
 }
 
@@ -743,6 +762,13 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
         lines.push('', '**Stop Conditions** (halt and report if any occur):');
         for (const c of effectiveContract.stop_conditions) lines.push(`- ${c}`);
       }
+      if (typeof effectiveContract.success_criteria === 'string' && effectiveContract.success_criteria.trim()) {
+        lines.push(`**Success Criteria**: ${effectiveContract.success_criteria}`);
+      }
+      if (Array.isArray(effectiveContract.e2e_test_criteria) && effectiveContract.e2e_test_criteria.length) {
+        lines.push('', '**E2E Test Criteria** (implement one test case per entry):');
+        for (const c of effectiveContract.e2e_test_criteria) lines.push(`- ${c}`);
+      }
       sections.push(lines.join('\n'));
     }
   }
@@ -873,7 +899,7 @@ function buildAutoImplementSection(workItem) {
 
 You are running in autonomous self-organizing mode for work item ${id}.
 
-Follow the workflow at \`$ARCHITECT_ROOT/usecases/implement-work-item.md\` exactly, executing all 15 steps without waiting for user confirmation at intermediate steps.
+Follow the workflow at \`$ARCHITECT_ROOT/usecases/implement-work-item.md\` exactly, executing all steps without waiting for user confirmation at intermediate steps.
 
 **EXCEPTION**: If the Technical Review Board blocks after 2 revision cycles at any gate, do NOT proceed. Log the block reason to the work item session log and halt — the dispatch will be marked as failed.
 
@@ -881,6 +907,21 @@ Your session depth is 1. You MUST NOT trigger further dashboard dispatches (POST
 
 When making any API call to the dashboard (curl http://127.0.0.1:${port}/...), include the header:
 \`--header "X-Architect-Session-Depth: 1"\`
+
+## Blocking Questions Protocol
+
+If at any point you encounter a decision that cannot be resolved from context, portfolio knowledge, or the work item description, do NOT guess. Take these actions immediately:
+1. Set the input_needed flag: \`curl -s -X PATCH http://127.0.0.1:${port}/api/work-items/${id} -H 'Content-Type: application/json' -H 'X-Architect-Session-Depth: 1' -d '{"input_needed": true, "input_needed_reason": "<specific question>", "input_needed_from": "user"}'\`
+2. Log the halt: \`curl -s -X POST http://127.0.0.1:${port}/api/work-items/${id}/log -H 'Content-Type: application/json' -H 'X-Architect-Session-Depth: 1' -d '{"summary": "Halted: input needed — <question>"}'\`
+3. Halt immediately. The user will re-dispatch with the answer in Additional Instructions.
+On re-dispatch: read the session log to find the prior question, read additional_instructions for the answer, then clear the flag and resume.
+
+## Pipeline Stage Reporting
+
+Report your current stage at each major step using:
+\`curl -s -X PUT http://127.0.0.1:${port}/api/dispatch/\${DISPATCH_ID}/stage -H 'Content-Type: application/json' -H 'X-Architect-Session-Depth: 1' -d '{"stage": "<stage>"}'\`
+
+Report these stages: investigating (step 4), implementing (step 9), testing (step 10), code_review (step 11), committing (step 12).
 
 ## Completion Signal
 

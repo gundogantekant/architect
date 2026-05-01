@@ -113,6 +113,12 @@ export const DASHCTL_PATH = join(import.meta.dirname, 'dashctl.sh');
 export const PID_FILE = join(ROOT, 'tmp', 'dashboard.pid');
 export const LOG_FILE = join(ROOT, 'tmp', 'dashboard.log');
 
+export const PIPELINE_STAGES = Object.freeze([
+  'worktree_setup', 'investigating', 'planning', 'plan_review',
+  'implementing', 'testing', 'code_review', 'committing',
+  'merge_pending', 'done',
+]);
+
 export const MIGRATIONS_DIR = join(import.meta.dirname, 'migrations');
 export const BACKUP_DIR = join(ROOT, 'assets', 'backups');
 

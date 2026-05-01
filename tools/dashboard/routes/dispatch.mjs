@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository, checkWorktreeReadiness } from '../worktree.mjs';
-import { AUTO_IMPLEMENTABLE_STATUSES, PORTFOLIO } from '../constants.mjs';
+import { AUTO_IMPLEMENTABLE_STATUSES, PIPELINE_STAGES, PORTFOLIO } from '../constants.mjs';
 import { triggerMerge } from '../dispatch-manager.mjs';
 
 /**
@@ -518,10 +518,65 @@ export default function dispatchRoutes(deps) {
           completion_sha: d.completion_sha || null,
           completion_summary: d.completion_summary || null,
           merge_result: d.merge_result || null,
+          pipeline_stage: d.pipeline_stage || null,
           _exitedWithoutSignal: d._exitedWithoutSignal || false,
         };
       }));
       json(res, list.filter(Boolean));
+    }],
+
+    // List autonomous (auto-implement) dispatches only
+    [/^\/api\/dispatch\/autonomous$/, 'GET', async (_m, req, res) => {
+      const workerId = req.headers['x-test-worker-id'];
+      const list = await Promise.all([...dispatches].map(async ([id, d]) => {
+        if (workerId !== undefined && d._testWorkerId !== workerId) return null;
+        if (d.dispatch_mode !== 'auto_implement') return null;
+        return {
+          id,
+          title: d.title || null,
+          work_item_id: d.work_item_id,
+          work_item_title: d.work_item_id ? await db.getWorkItemTitle(d.work_item_id) : null,
+          epic_id: d.epic_id || null,
+          epic_title: d.epic_id ? await db.getEpicTitle(d.epic_id) : null,
+          project_key: d.project_key,
+          project_path: d.project_path,
+          status: d.status,
+          cost_usd: d.cost_usd || null,
+          started_at: d.started_at,
+          completed_at: d.completed_at,
+          last_output: d.lastLines || [],
+          agent_phase: d.agent_phase || null,
+          needs_input: d.agent_phase === 'waiting_for_input',
+          permission_mode: d.permission_mode || 'acceptEdits',
+          skip_permissions: d.skip_permissions || false,
+          claude_session_id: d.claude_session_id || null,
+          worktree_path: d.worktree_path || null,
+          worktree_branch: d.worktree_branch || null,
+          source_branch: d.source_branch || null,
+          dispatch_mode: 'auto_implement',
+          completion_sha: d.completion_sha || null,
+          completion_summary: d.completion_summary || null,
+          merge_result: d.merge_result || null,
+          pipeline_stage: d.pipeline_stage || null,
+        };
+      }));
+      json(res, list.filter(Boolean));
+    }],
+
+    // Update pipeline stage for an autonomous dispatch (agent-only: depth >= 1)
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/stage$/, 'PUT', async (m, req, res) => {
+      const depth = parseInt(req.headers['x-architect-session-depth'] ?? '0', 10);
+      if (depth < 1) return err(res, 'pipeline stage updates are agent-only (depth >= 1)', 403);
+      const dispatch = dispatches.get(m[1]);
+      if (!dispatch) return err(res, 'dispatch not found', 404);
+      const body = await parseBody(req);
+      const { stage } = body;
+      if (!stage || !PIPELINE_STAGES.includes(stage)) {
+        return err(res, `invalid stage: must be one of ${PIPELINE_STAGES.join(', ')}`, 400);
+      }
+      dispatch.pipeline_stage = stage;
+      await db.updatePipelineStage(m[1], stage);
+      json(res, { id: m[1], pipeline_stage: stage });
     }],
 
     // List suspended dispatches only

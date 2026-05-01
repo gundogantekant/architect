@@ -262,6 +262,13 @@ async function buildEpicTree() {
   agentsLabel.onclick = () => { location.hash = '#agents'; };
   epicTree.appendChild(agentsLabel);
 
+  // AUTONOMOUS label
+  const autoLabel = document.createElement('div');
+  autoLabel.className = 'sidebar-section-label';
+  autoLabel.innerHTML = 'AUTONOMOUS <span id="autonomous-badge" class="agents-badge empty"></span>';
+  autoLabel.onclick = () => { location.hash = '#autonomous'; };
+  epicTree.appendChild(autoLabel);
+
   // Onboard button — always visible
   const onboardBtn = document.createElement('div');
   onboardBtn.className = 'sidebar-onboard-btn';
@@ -291,6 +298,12 @@ function updateDispatchBadge() {
     const total = activeDispatches.length + activeTerminals.length + activeCliSessions.length;
     if (total > 0) { agentsBadge.textContent = total; agentsBadge.classList.remove('empty'); }
     else { agentsBadge.classList.add('empty'); }
+  }
+  const autoBadge = document.getElementById('autonomous-badge');
+  if (autoBadge) {
+    const autoCount = activeDispatches.filter(d => d.dispatch_mode === 'auto_implement').length;
+    if (autoCount > 0) { autoBadge.textContent = autoCount; autoBadge.classList.remove('empty'); }
+    else { autoBadge.classList.add('empty'); }
   }
   refreshSessionsSidebar();
 }
@@ -5478,6 +5491,81 @@ async function fetchAgentsList() {
   return agents;
 }
 
+const PIPELINE_STAGE_ORDER = [
+  'worktree_setup', 'investigating', 'planning', 'plan_review',
+  'implementing', 'testing', 'code_review', 'committing',
+  'merge_pending', 'done',
+];
+
+function renderPipelineStageBar(currentStage) {
+  const dots = PIPELINE_STAGE_ORDER.map(s => {
+    const isCurrent = s === currentStage;
+    const isPast = currentStage && PIPELINE_STAGE_ORDER.indexOf(s) < PIPELINE_STAGE_ORDER.indexOf(currentStage);
+    const label = s.replace(/_/g, ' ');
+    const color = isCurrent ? 'var(--accent)' : isPast ? 'var(--green)' : 'var(--muted)';
+    return `<span title="${label}" style="width:10px;height:10px;border-radius:50%;display:inline-block;background:${color};margin:0 2px;"></span>`;
+  }).join('');
+  const label = currentStage ? currentStage.replace(/_/g, ' ') : 'pending';
+  return `<div style="display:flex;align-items:center;gap:6px;margin-top:4px;">${dots}<span style="font-size:11px;color:var(--muted)">${esc(label)}</span></div>`;
+}
+
+function renderAutonomousView(dispatches) {
+  if (!dispatches.length) {
+    return '<div class="card" style="text-align:center;padding:32px;"><p style="color:var(--muted)">No autonomous dispatches found.</p><p style="font-size:13px;color:var(--muted)">Use the dispatch modal with "Accept Edits" mode on a planned work item to start one.</p></div>';
+  }
+
+  const byProject = {};
+  for (const d of dispatches) {
+    const key = d.project_key || 'unknown';
+    if (!byProject[key]) byProject[key] = [];
+    byProject[key].push(d);
+  }
+
+  let html = '<div style="padding:16px;">';
+  html += '<h2 style="margin:0 0 16px;font-size:18px;">Autonomous Workflows</h2>';
+
+  for (const [projectKey, items] of Object.entries(byProject)) {
+    const running = items.filter(d => d.status === 'running').length;
+    html += `<div style="margin-bottom:20px;">`;
+    html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">`;
+    html += `<span style="font-size:13px;font-weight:600;color:var(--fg)">${esc(projectKey)}</span>`;
+    if (running > 0) html += `<span style="font-size:11px;background:var(--accent);color:#fff;padding:1px 6px;border-radius:10px;">${running} running</span>`;
+    html += `</div>`;
+
+    for (const d of items) {
+      const statusColor = d.status === 'running' ? 'var(--green)' : d.status === 'failed' ? 'var(--red)' : d.status === 'merge_pending' ? 'var(--accent)' : 'var(--muted)';
+      const elapsed = d.started_at ? Math.round((Date.now() - new Date(d.started_at)) / 60000) + 'm' : '';
+      html += `<div class="card" style="margin-bottom:8px;padding:12px;" data-dispatch-id="${esc(d.id)}">`;
+      html += `<div style="display:flex;justify-content:space-between;align-items:flex-start;">`;
+      html += `<div>`;
+      html += `<span style="font-size:13px;font-weight:500;">${esc(d.work_item_id || d.id)}${d.work_item_title ? ': ' + esc(d.work_item_title) : ''}</span>`;
+      html += `</div>`;
+      html += `<div style="display:flex;gap:8px;align-items:center;font-size:12px;">`;
+      html += `<span style="color:${statusColor}">${esc(d.status)}</span>`;
+      if (elapsed) html += `<span style="color:var(--muted)">${elapsed}</span>`;
+      if (d.cost_usd) html += `<span style="color:var(--muted)">$${d.cost_usd.toFixed(3)}</span>`;
+      if (d.status === 'merge_pending') html += `<button class="btn btn-sm auto-merge-btn" data-id="${esc(d.id)}" style="padding:2px 8px;font-size:11px;">Merge Now</button>`;
+      html += `</div></div>`;
+      html += renderPipelineStageBar(d.pipeline_stage);
+      if (d.completion_summary) html += `<div style="font-size:12px;color:var(--muted);margin-top:4px;">${esc(d.completion_summary)}</div>`;
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+function bindAutonomousEvents() {
+  document.querySelectorAll('.auto-merge-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      await fetch(`/api/dispatch/${id}/merge`, { method: 'POST' });
+      location.reload();
+    });
+  });
+}
+
 function renderAgentsView(agents, filters = {}) {
   const statusFilter = filters.status || 'all';
   const epicFilter = filters.epic || '';
@@ -6518,6 +6606,19 @@ async function route() {
       main.innerHTML = renderAgentsView(agents, filters);
       bindAgentsEvents(agents, filters);
       startAgentsTileRefresh(agents, filters);
+    } catch (e) {
+      main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
+    }
+    setActive('');
+    placeSessionPanels();
+    return;
+  }
+
+  if (parts[0] === 'autonomous') {
+    try {
+      const dispatches = await api('dispatch/autonomous');
+      main.innerHTML = renderAutonomousView(dispatches);
+      bindAutonomousEvents();
     } catch (e) {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
     }

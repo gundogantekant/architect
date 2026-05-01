@@ -167,11 +167,13 @@ Defines the success criteria for a single dispatch step. Immutable, compared by 
   "expected_output": "string — the specific artifact or structure the agent must produce (1-3 sentences)",
   "failure_conditions": "string — what makes the output unacceptable (1-3 sentences)",
   "scope_boundary": "string | null — files/directories the agent must NOT modify; null for trivial/small",
-  "stop_conditions": "string[] | null — conditions requiring the agent to halt and report; null for trivial/small"
+  "stop_conditions": "string[] | null — conditions requiring the agent to halt and report; null for trivial/small",
+  "success_criteria": "string | null — user-visible conditions defining done (1–3 sentences); required for medium+, null for trivial/small",
+  "e2e_test_criteria": "string[] | null — specific E2E test scenarios the agent must implement; required for medium+ (3+ for large), null for trivial/small"
 }
 ```
 
-**Rules**: All four core fields (goal, constraints, expected_output, failure_conditions) are required when the contract is present. `scope_boundary` is required for large complexity, optional for medium, absent for trivial/small. `stop_conditions` is required for large complexity (3+ conditions), optional for medium, absent for trivial/small. Each string field should be 1–3 sentences. Empty strings are treated as absent (see `domain/rules.md` → Dispatch Contract Rules). The coordinator produces contracts as part of the DispatchPlan; the prompt-builder renders them in the dispatch prompt.
+**Rules**: All four core fields (goal, constraints, expected_output, failure_conditions) are required when the contract is present. `scope_boundary` is required for large complexity, optional for medium, absent for trivial/small. `stop_conditions` is required for large complexity (3+ conditions), optional for medium, absent for trivial/small. `success_criteria` is required for medium+, null for trivial/small. `e2e_test_criteria` is required for medium+ (3+ entries for large), null for trivial/small. Each string field should be 1–3 sentences. Empty strings are treated as absent (see `domain/rules.md` → Dispatch Contract Rules). The coordinator produces contracts as part of the DispatchPlan; the prompt-builder renders them in the dispatch prompt.
 
 ## ScoutReport
 
