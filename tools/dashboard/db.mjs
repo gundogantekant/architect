@@ -189,9 +189,11 @@ export async function assertSchema() {
     preferences: ['key', 'value'],
     projects: ['key', 'org', 'project', 'component', 'path', 'role', 'synced_at'],
     session_history: ['id', 'type', 'project_key', 'work_item_id', 'epic_id', 'title', 'status', 'permission_mode', 'started_at', 'ended_at', 'duration_seconds', 'cost_usd'],
-    knowledge_syncs: ['id', 'project_key', 'trigger', 'status', 'started_at', 'synced_at', 'commit_from', 'commit_to', 'commits_scanned', 'significant_count', 'summary_json', 'error'],
+    knowledge_syncs: ['id', 'project_key', 'trigger', 'status', 'started_at', 'synced_at', 'commit_from', 'commit_to', 'commits_scanned', 'significant_count', 'summary_json', 'error', 'sync_source'],
     change_log_entries: ['id', 'project_key', 'commit_hash', 'commit_message', 'author', 'committed_at', 'affected_files', 'classification', 'ai_summary', 'detected_at'],
     schema_migrations: ['version', 'applied_at', 'notes'],
+    repo_sync_config: ['github_repo_name', 'github_org', 'default_branch', 'local_path', 'portfolio_key', 'sync_enabled', 'last_github_updated_at', 'created_at', 'updated_at'],
+    adrs: ['id', 'org_key', 'title', 'type', 'repos', 'sync_run_id', 'detail_path', 'created_at'],
   };
 
   const missing = [];
@@ -236,7 +238,8 @@ export async function assertSchema() {
         'work_items'::regclass,
         'work_item_approvals'::regclass,
         'knowledge_syncs'::regclass,
-        'change_log_entries'::regclass
+        'change_log_entries'::regclass,
+        'adrs'::regclass
       ]::oid[])
   `);
   const checksByTable = {};
@@ -260,10 +263,19 @@ export async function assertSchema() {
     console.warn('[db] schema warning: no CHECK constraint covering status found on work_item_approvals');
   }
 
-  // knowledge_syncs must have a CHECK constraint covering status.
+  // knowledge_syncs must have CHECK constraints covering status and sync_source.
   const syncChecks = checksByTable['knowledge_syncs'] ?? [];
   if (!syncChecks.some(n => n.includes('status'))) {
     console.warn('[db] schema warning: no CHECK constraint covering status found on knowledge_syncs');
+  }
+  if (!syncChecks.some(n => n.includes('sync_source'))) {
+    console.warn('[db] schema warning: no CHECK constraint covering sync_source found on knowledge_syncs');
+  }
+
+  // adrs must have a CHECK constraint covering type.
+  const adrChecks = checksByTable['adrs'] ?? [];
+  if (!adrChecks.some(n => n.includes('type'))) {
+    console.warn('[db] schema warning: no CHECK constraint covering type found on adrs');
   }
 
   // change_log_entries must have a CHECK constraint covering classification.
@@ -1427,6 +1439,97 @@ export async function pruneChangeLogEntries(projectKey) {
       )
     `, [projectKey]);
   }
+}
+
+export async function getChangeLogEntries(projectKey, since) {
+  const params = since ? [projectKey, since] : [projectKey];
+  const sinceClause = since ? 'AND committed_at > $2' : '';
+  return pool.query(`
+    SELECT id, project_key, commit_hash, commit_message, author, committed_at,
+           classification, ai_summary, affected_files
+    FROM change_log_entries
+    WHERE project_key = $1 ${sinceClause}
+    ORDER BY committed_at DESC
+    LIMIT 10
+  `, params).then(r => r.rows);
+}
+
+// --- Repo Sync Config functions ---
+
+export async function getRepoSyncConfigs() {
+  return pool.query(
+    'SELECT * FROM repo_sync_config ORDER BY github_repo_name'
+  ).then(r => r.rows);
+}
+
+export async function getEnabledRepos() {
+  return pool.query(
+    'SELECT * FROM repo_sync_config WHERE sync_enabled = TRUE AND local_path IS NOT NULL ORDER BY github_repo_name'
+  ).then(r => r.rows);
+}
+
+export async function upsertRepoSyncConfig(row) {
+  const now = new Date().toISOString();
+  await pool.query(`
+    INSERT INTO repo_sync_config
+      (github_repo_name, github_org, default_branch, local_path, portfolio_key, sync_enabled, last_github_updated_at, created_at, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    ON CONFLICT (github_repo_name) DO UPDATE SET
+      github_org             = EXCLUDED.github_org,
+      default_branch         = EXCLUDED.default_branch,
+      local_path             = COALESCE(EXCLUDED.local_path, repo_sync_config.local_path),
+      portfolio_key          = COALESCE(EXCLUDED.portfolio_key, repo_sync_config.portfolio_key),
+      last_github_updated_at = COALESCE(EXCLUDED.last_github_updated_at, repo_sync_config.last_github_updated_at),
+      updated_at             = $9
+  `, [
+    row.github_repo_name,
+    row.github_org ?? 'NeuronicPBM',
+    row.default_branch ?? 'main',
+    row.local_path ?? null,
+    row.portfolio_key ?? null,
+    row.sync_enabled ?? false,
+    row.last_github_updated_at ?? null,
+    row.created_at ?? now,
+    now,
+  ]);
+}
+
+export async function setRepoSyncEnabled(name, enabled) {
+  await pool.query(
+    'UPDATE repo_sync_config SET sync_enabled = $2, updated_at = NOW() WHERE github_repo_name = $1',
+    [name, enabled]
+  );
+}
+
+// --- ADR functions ---
+
+export async function getAdrs(orgKey, limit = 50) {
+  return pool.query(
+    'SELECT * FROM adrs WHERE org_key = $1 ORDER BY created_at DESC LIMIT $2',
+    [orgKey, limit]
+  ).then(r => r.rows);
+}
+
+export async function getAdr(id) {
+  return pool.query('SELECT * FROM adrs WHERE id = $1', [id]).then(r => r.rows[0] ?? null);
+}
+
+export async function createAdr(adr) {
+  const now = new Date().toISOString();
+  await pool.query(`
+    INSERT INTO adrs (id, org_key, title, type, repos, sync_run_id, detail_path, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    ON CONFLICT (id) DO NOTHING
+  `, [
+    adr.id,
+    adr.org_key,
+    adr.title,
+    adr.type,
+    JSON.stringify(adr.repos ?? []),
+    adr.sync_run_id ?? null,
+    adr.detail_path,
+    adr.created_at ?? now,
+  ]);
 }
 
 // --- Test-support query (for test-endpoints.mjs explain-query route) ---

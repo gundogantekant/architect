@@ -31,6 +31,8 @@ import dispatchRoutes from './routes/dispatch.mjs';
 import terminalRoutes from './routes/terminal.mjs';
 import serverMgmtRoutes from './routes/server-mgmt.mjs';
 import syncRoutes from './routes/sync.mjs';
+import reposRoutes from './routes/repos.mjs';
+import adrsRoutes from './routes/adrs.mjs';
 import testEndpointRoutes from './routes/test-endpoints.mjs';
 import { attemptMerge, isMergeLocked } from './merge.mjs';
 
@@ -64,6 +66,8 @@ const routes = [
   ...terminalRoutes(deps),
   ...serverMgmtRoutes(deps),
   ...syncRoutes(deps),
+  ...reposRoutes(deps),
+  ...adrsRoutes(deps),
   ...(process.env.WORK_DIR ? testEndpointRoutes(deps) : []),
 ];
 

@@ -54,6 +54,15 @@ export default function syncRoutes(deps) {
       json(res, { updated: id });
     }],
 
+    [/^\/api\/sync\/entries$/, 'GET', async (_m, req, res) => {
+      const url = new URL(req.url, 'http://localhost');
+      const project_key = url.searchParams.get('project_key');
+      const since = url.searchParams.get('since') || null;
+      if (!project_key) return err(res, 'project_key required', 400);
+      const rows = await dbModule.getChangeLogEntries(project_key, since);
+      json(res, rows);
+    }],
+
     [/^\/api\/sync\/entries$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
       if (!Array.isArray(body.entries) || !body.entries.length) return err(res, 'entries array required', 400);
