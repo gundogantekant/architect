@@ -176,8 +176,8 @@ async function shutdownFlush() {
     new Promise(resolve => setTimeout(resolve, 5000)),
   ]);
 }
-process.on('SIGTERM', () => { shutdownFlush().finally(() => process.exit(0)); });
-process.on('SIGINT', () => { shutdownFlush().finally(() => process.exit(0)); });
+process.on('SIGTERM', () => { server.close(); shutdownFlush().finally(() => process.exit(0)); });
+process.on('SIGINT', () => { server.close(); shutdownFlush().finally(() => process.exit(0)); });
 
 async function main() {
   // Phase 0: Backup database (best-effort — do not block startup on failure)
