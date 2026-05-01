@@ -237,9 +237,11 @@ test.describe('Worktree dispatch contracts @fast', () => {
   test('WD-15: standard /api/dispatch with non-git project path produces worktree_path: null', async ({ request }) => {
     const base = getBase();
     const fakeKey = 'test/fake-project-wd15/main';
+    // Use /var/tmp (distinct from AI-10's /tmp) to avoid a shared-registry key collision
+    // between parallel test servers. Both paths are non-git and exist on POSIX systems.
     await request.post(`${base}/api/test/seed-registry-entry`, {
       headers: { 'Content-Type': 'application/json' },
-      data: { project_key: fakeKey, project_path: '/tmp' },
+      data: { project_key: fakeKey, project_path: '/var/tmp' },
     });
     const wi = await seedWorkItem({ title: 'WD-15 test', status: 'planned' });
     const resp = await request.post(`${base}/api/dispatch`, {
@@ -250,7 +252,7 @@ test.describe('Worktree dispatch contracts @fast', () => {
         permission_mode: 'acceptEdits',
       },
     });
-    // Non-git path: isGitRepository('/tmp') = false → shouldCreateWorktree = false → no worktree
+    // Non-git path: isGitRepository('/var/tmp') = false → shouldCreateWorktree = false → no worktree
     expect(resp.status()).toBe(200);
     const body = await resp.json();
     expect(body.dispatch_id).toBeTruthy();
