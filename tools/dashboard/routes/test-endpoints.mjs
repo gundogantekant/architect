@@ -17,8 +17,6 @@ export default function testEndpointRoutes(deps) {
     execFileSync,
   } = deps;
 
-  const _registryPath = join(PORTFOLIO, 'registry.json');
-
   return [
     // --- Test endpoints (for E2E test seeding) ---
 
