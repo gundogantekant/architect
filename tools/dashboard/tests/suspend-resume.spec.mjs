@@ -205,3 +205,13 @@ test('SR-21: suspended terminal panel exists in DOM after page load (not skipped
   // Resume button must be visible in the inline panel
   await expect(page.locator(`[data-resume-terminal="${t.id}"]`)).toBeVisible();
 });
+
+test('SR-22: suspended terminal panel body shows placeholder text, not "Connecting"', async ({ page }) => {
+  const t = await seedTerminal({ status: 'suspended', agentType: 'claude', claude_session_id: 'fake-sr22' });
+  await page.goto('/');
+  await expect(page.locator(`#terminal-${t.id}`)).toBeVisible({ timeout: 5000 });
+  // _defaultExpanded fixture starts panels expanded — body is visible without interaction
+  const bodyText = await page.locator(`#term-container-${t.id}`).textContent();
+  expect(bodyText).toContain('Session suspended');
+  expect(bodyText).not.toContain('Connecting');
+});
