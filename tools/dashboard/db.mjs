@@ -182,6 +182,40 @@ export function getAllWorkItems() {
   return rows.map(hydrateWorkItem);
 }
 
+export function searchWorkItems(keywords, projectKey) {
+  const activeItems = projectKey
+    ? db.prepare('SELECT * FROM work_items WHERE project_key = ? AND status NOT IN (\'done\',\'cancelled\',\'archived\')').all(projectKey)
+    : db.prepare('SELECT * FROM work_items WHERE status NOT IN (\'done\',\'cancelled\',\'archived\')').all();
+
+  const escapedPatterns = keywords.map(kw => '%' + kw.replace(/[%_]/g, '\\$&') + '%');
+
+  const scoredItems = activeItems
+    .map(row => {
+      const haystack = ((row.title || '') + ' ' + (row.description || '')).toLowerCase();
+      const score = escapedPatterns.filter(pat => {
+        const literal = pat.slice(1, -1).replace(/\\([%_])/g, '$1');
+        return haystack.includes(literal);
+      }).length;
+      return { row, score };
+    })
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  return scoredItems.map(({ row }) => ({
+    id: row.id,
+    title: row.title,
+    status: row.status,
+    priority: row.priority,
+    description: row.description,
+    project_key: row.project_key,
+    epic_id: row.epic_id || '',
+    tags: JSON.parse(row.tags || '[]'),
+    depends_on: JSON.parse(row.depends_on || '[]'),
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }));
+}
+
 export function createWorkItem({ project_key, title, status, priority, description, tags, epic_id }) {
   const id = nextWorkItemId();
   const now = new Date().toISOString();

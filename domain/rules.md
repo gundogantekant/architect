@@ -415,8 +415,8 @@ The pre-dispatch check does NOT run when:
 
 | Check | Method | Flags |
 |-------|--------|-------|
-| Already Done | `git log --oneline -20 --grep=<term> -i` + `GET /api/work-items?project_key=<key>` filtered by status `done` | Commit messages or done work items whose titles match extracted keywords |
-| In-Progress Conflict | `GET /api/work-items?project_key=<key>` filtered by status `in-progress` or `open` + `GET /api/dispatch/active` | Open/in-progress items or active dispatches whose titles overlap the request |
+| Already Done | `git log --oneline -20 --grep=<term> -i` + `GET /api/work-items/search?q=<terms>&project_key=<key>` filtered locally to `status=done` | Commit messages or done work items matching keywords |
+| Open Items Overlap | `GET /api/work-items/search?q=<terms>&project_key=<key>` (returns non-terminal items only) + `GET /api/dispatch/active` | Items in any non-terminal status (draft, planned, in-progress, blocked, in-review, testing, preview) that overlap the request |
 | Recent Changes Staleness | `git log --oneline -5 -- <path>` (when the request mentions specific files or modules) | Recent commits touching the same area the request targets |
 
 ### Keyword Extraction
@@ -432,9 +432,11 @@ Example: "add dark mode toggle to settings" → terms: `dark-mode`, `toggle`, `s
 
 | Condition | Severity |
 |-----------|----------|
-| 1 keyword match in git log or backlog title | `minor` |
-| 2+ keyword matches across git log and/or backlog | `major` |
-| Exact title match on a done work item | `critical` |
+| 1 keyword match in git log or done item title | `minor` |
+| 1+ keyword match on a draft or planned item | `major` |
+| 2+ keyword matches across git log and/or open backlog | `major` |
+| Exact title match on any open (non-terminal) item | `critical` |
+| Active dispatch whose item title matches 2+ keywords | `critical` |
 
 ### Orchestrator Behavior on Findings
 
@@ -442,8 +444,17 @@ Example: "add dark mode toggle to settings" → terms: `dark-mode`, `toggle`, `s
 |--------|----------|
 | `clear` | Proceed silently. Do not mention the check to the user. |
 | `warning` (all minor) | Mention findings briefly, proceed without blocking. |
-| `warning` (any major) | Present findings with evidence, ask user for confirmation before proceeding. |
+| `warning` (any major on open item) | Present the matching item: "I found an existing tracked item: **W-XXX — [title]** (status: planned). Should I dispatch on that item instead?" Block until user confirms yes or no. |
 | `conflict` (any critical) | Present findings, strongly recommend reviewing evidence before proceeding. User can override. |
+
+### Haiku Semantic Disambiguation
+
+When keyword search returns exactly 1 candidate with a score of 1 (single weak hit) AND the request is abstract or generic (no specific file or component names mentioned), the orchestrator may present the candidate for user confirmation before deciding to proceed or reuse the existing item.
+
+- **Condition**: 1 result, score = 1, request contains no file or module names
+- **Action**: Present the candidate title and ask: "This may relate to **W-XXX — [title]**. Are these the same topic?"
+- **Fallback**: If user says no or does not respond — proceed with original flow
+- **Skip when**: 0 candidates; exact title match (score ≥ 2 or title overlap is unambiguous); request is specific (file or component names present)
 
 ### Presentation Format
 

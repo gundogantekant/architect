@@ -35,7 +35,7 @@ The orchestrator evaluates whether a pre-dispatch check is warranted based on th
 3. If `classification.type` is in {feature, bugfix, refactor, maintenance} AND `classification.complexity` >= small:
    a. Extract 2–5 keywords from the user's request (entity names, action verbs, file/module names)
    b. Run `git log --oneline -20 --grep=<term> -i` for each keyword on the target project
-   c. Query `GET /api/work-items?project_key=<key>` and filter done/in-progress/open items by title match
+   c. Query `GET /api/work-items/search?q=<terms>&project_key=<key>` to find all non-terminal items matching keywords; also check any `done` items in results for the Already Done check
    d. Query `GET /api/dispatch/active` and filter by work item title match
    e. If request mentions specific files: `git log --oneline -5 -- <path>`
    f. Score matches into a `PreDispatchCheckResult` (see `domain/entities.md`)

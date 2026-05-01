@@ -96,6 +96,20 @@ export default function workItemRoutes(deps) {
       json(res, db.peekNextIds());
     }],
 
+    // NOTE: This route MUST stay before the /:id catch-all below to avoid
+    // "search" being treated as a work item ID.
+    [/^\/api\/work-items\/search$/, 'GET', async (_m, req, res) => {
+      const reqUrl = new URL(req.url, 'http://localhost');
+      const raw = reqUrl.searchParams.get('q') || '';
+      const keywords = raw.trim().split(/\s+/).filter(Boolean).slice(0, 10);
+      if (keywords.length === 0) return err(res, 'q is required', 400);
+      const projectKey = reqUrl.searchParams.get('project_key') || undefined;
+      const allMatches = db.searchWorkItems(keywords, projectKey);
+      const total = allMatches.length;
+      const has_more = total > 20;
+      json(res, { items: allMatches.slice(0, 20), query: { keywords, total, has_more } });
+    }],
+
     [/^\/api\/work-items\/([A-Za-z0-9_-]+)$/, 'GET', async (m, _req, res) => {
       const item = db.getWorkItemFull(m[1]);
       if (!item) return err(res, 'work item not found', 404);
