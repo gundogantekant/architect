@@ -14,7 +14,8 @@ export default function portfolioRoutes(deps) {
     // Org detail
     [/^\/api\/org\/([a-zA-Z0-9_-]+)$/, 'GET', async (m, _req, res) => {
       if (!safe(m[1])) return err(res, 'invalid org', 400);
-      json(res, await readJson(join(PORTFOLIO, m[1], 'organization.json')));
+      const data = await readJson(join(PORTFOLIO, m[1], 'organization.json')).catch(() => ({ name: m[1] }));
+      json(res, data);
     }],
 
     // Org projects
