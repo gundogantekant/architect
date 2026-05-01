@@ -482,7 +482,7 @@ export default function terminalRoutes(deps) {
         }
         terminal.eventStream.subscribers.clear();
       }
-      archiveSession(terminal, 'terminal').catch(e => console.error('[kill terminal] archiveSession:', e.message));
+      await archiveSession(terminal, 'terminal').catch(e => console.error('[kill terminal] archiveSession:', e.message));
       if (terminal.agents_file) unlinkFile(terminal.agents_file).catch(() => {});
       terminals.delete(m[1]);
       await db.deleteTerminal(m[1]);
