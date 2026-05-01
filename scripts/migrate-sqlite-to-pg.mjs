@@ -11,11 +11,14 @@
  * verification.
  */
 
-import Database from 'better-sqlite3';
-import pg from 'pg';
+// Resolve dependencies from tools/dashboard/node_modules — the script has no node_modules of its own
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { join, dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
+const _require = createRequire(join(dirname(fileURLToPath(import.meta.url)), '../tools/dashboard/package.json'));
+const Database = _require('better-sqlite3');
+const pg = _require('pg');
 
 // Return TIMESTAMPTZ values as ISO strings to match db.mjs behaviour.
 pg.types.setTypeParser(1114, (val) => val);
@@ -61,10 +64,13 @@ function toBool(val) {
   return Boolean(val);
 }
 
-function toJsonb(val) {
-  if (val === null || val === undefined) return null;
-  if (typeof val === 'string') return JSON.parse(val);
-  return val;
+// pg driver needs a JSON *string* for JSONB columns (it would interpret a JS array as a PG array literal)
+function toJsonb(val, fallback = null) {
+  if (val === null || val === undefined) return fallback !== null ? JSON.stringify(fallback) : null;
+  if (typeof val === 'string') {
+    try { JSON.parse(val); return val; } catch { return JSON.stringify(fallback ?? null); }
+  }
+  return JSON.stringify(val);
 }
 
 // ── Table definitions (import order respects FK dependencies) ─────────────────
@@ -160,7 +166,7 @@ async function migrateEpics(sqlite, pgClient) {
       [
         row.id, row.title, row.status, row.priority, row.description ?? '',
         row.acceptance_criteria ?? '', row.target_date ?? null,
-        toJsonb(row.tags) ?? [],
+        toJsonb(row.tags, []),
         row.created_at, row.updated_at,
       ]
     );
@@ -192,7 +198,7 @@ async function migrateWorkItems(sqlite, pgClient) {
       [
         row.id, row.project_key, row.title, row.status, row.priority,
         row.description ?? '', row.epic_id ?? null,
-        toJsonb(row.tags) ?? [], toJsonb(row.depends_on) ?? [],
+        toJsonb(row.tags, []), toJsonb(row.depends_on, []),
         row.created_at, row.updated_at,
         toBool(row.input_needed), row.input_needed_from ?? null,
         row.input_needed_reason ?? null, row.input_needed_at ?? null,
@@ -402,7 +408,7 @@ async function migrateKnowledgeSyncs(sqlite, pgClient) {
         row.started_at, row.synced_at ?? null,
         row.commit_from ?? null, row.commit_to ?? null,
         row.commits_scanned ?? 0, row.significant_count ?? 0,
-        toJsonb(row.summary_json) ?? [],
+        toJsonb(row.summary_json, []),
         row.error ?? null,
       ]
     );
@@ -427,7 +433,7 @@ async function migrateChangeLogEntries(sqlite, pgClient) {
       [
         row.id, row.project_key, row.commit_hash, row.commit_message,
         row.author ?? '', row.committed_at,
-        toJsonb(row.affected_files) ?? [],
+        toJsonb(row.affected_files, []),
         row.classification, row.ai_summary ?? null, row.detected_at,
       ]
     );
