@@ -297,7 +297,11 @@ cmd_stop() {
 
 cmd_restart() {
   cmd_stop
-  sleep 1
+  local tries=0
+  while port_in_use && [ $tries -lt 10 ]; do
+    sleep 0.5
+    tries=$((tries + 1))
+  done
   cmd_start
 }
 
