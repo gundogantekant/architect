@@ -33,11 +33,30 @@
 </main>
 
 <script type="module">
-const $ = s => document.querySelector(s);
-const api = path => fetch('/api/' + path).then(r => r.ok ? r.json() : Promise.reject(r.statusText));
-const apiText = path => fetch('/api/' + path).then(r => r.ok ? r.text() : Promise.reject(r.statusText));
+import { api, apiText } from '/js/api.mjs';
+import { $, esc, ACTIVE_DOT_CLASSES, clearActiveDotClasses, fmtDate,
+         getRouteTitle, updateTitle, topoSort, isBlockedByDeps, epicSignalColor } from '/js/utils.mjs';
+import {
+  backlog, setBacklog,
+  orgCache, setOrgCache, resetOrgCache,
+  epicCache, setEpicCache,
+  markedLoaded, setMarkedLoaded,
+  xtermLoaded, setXtermLoaded, xtermModules, setXtermModules,
+  activeDispatches, activeTerminals, activeCliSessions,
+  sessionPanels, sessionCollapseState,
+  sessionsSidebarInterval, setSessionsSidebarInterval,
+  agentsTileInterval, setAgentsTileInterval,
+  agentsFullRefreshInterval, setAgentsFullRefreshInterval,
+  settingsRefreshTimer, setSettingsRefreshTimer,
+  activeFocusPopup, setActiveFocusPopup,
+  setPrefs, getPrefs,
+} from '/js/state.mjs';
 
-let markedLoaded = false;
+async function loadPreferences() {
+  try { setPrefs(await api('settings/preferences')); } catch {}
+}
+loadPreferences();
+
 async function loadMarked() {
   if (markedLoaded) return;
   try {
@@ -55,8 +74,8 @@ async function loadMarked() {
         document.head.appendChild(s);
       })
     ]);
-    markedLoaded = true;
-  } catch { markedLoaded = false; }
+    setMarkedLoaded(true);
+  } catch { setMarkedLoaded(false); }
 }
 loadMarked();
 
@@ -68,62 +87,7 @@ function renderMd(text) {
   return '<pre>' + esc(text) + '</pre>';
 }
 
-function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-const ACTIVE_DOT_CLASSES = ['running', 'generating', 'tool-running', 'needs-input'];
-function clearActiveDotClasses(dot) { dot.classList.remove(...ACTIVE_DOT_CLASSES); }
 
-function getRouteTitle() {
-  const hash = location.hash.slice(1);
-  if (!hash) return null;
-  const parts = hash.split('/');
-  if (parts[0] === 'epics') return 'Epics';
-  if (parts[0] === 'agents' || hash.startsWith('agents?')) return 'Agents';
-  if (parts[0] === 'settings') return 'Settings';
-  if (parts[0] === 'time-report') return 'Time Report';
-  if (parts[0] === 'epic' && parts[1]) return `E-${parts[1]}`;
-  if (parts[0] === 'org' && parts[1]) return parts[1];
-  if (parts[0] === 'component' && parts.length >= 4) return `${parts[2]}/${parts[3]}`;
-  return null;
-}
-
-function updateTitle(subtitle) {
-  document.title = subtitle ? `Architect \u2014 ${subtitle}` : 'Architect';
-}
-
-function fmtDate(s) {
-  if (!s) return '—';
-  try { return new Date(s).toLocaleDateString(); } catch { return s; }
-}
-
-function topoSort(items) {
-  const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
-  const cmp = (a, b) => (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2) || a.id.localeCompare(b.id);
-  const itemMap = new Map(items.map(i => [i.id, i]));
-  const inDeg = new Map(items.map(i => [i.id, 0]));
-  for (const item of items) {
-    for (const dep of (item.depends_on || [])) {
-      if (itemMap.has(dep)) inDeg.set(item.id, (inDeg.get(item.id) || 0) + 1);
-    }
-  }
-  const queue = items.filter(i => inDeg.get(i.id) === 0).sort(cmp);
-  const sorted = [], done = new Set();
-  while (queue.length) {
-    const item = queue.shift();
-    sorted.push(item);
-    done.add(item.id);
-    const ready = items.filter(i => !done.has(i.id) && !queue.some(q => q.id === i.id) &&
-      (i.depends_on || []).every(d => !itemMap.has(d) || done.has(d)));
-    queue.push(...ready.sort(cmp));
-  }
-  return [...sorted, ...items.filter(i => !done.has(i.id))];
-}
-
-// --- Global preferences ---
-window._prefs = { default_permission_mode: 'acceptEdits', default_skip_permissions: 'false' };
-async function loadPreferences() {
-  try { window._prefs = await api('settings/preferences'); } catch {}
-}
-loadPreferences();
 
 function permissionModeSelect(id, defaultMode) {
   const mode = defaultMode || window._prefs.default_permission_mode || 'acceptEdits';
@@ -208,43 +172,18 @@ function createDispatchOverlay(opts) {
   return { overlay, close };
 }
 
-// Helper: check if work item is blocked by incomplete dependencies
-function isBlockedByDeps(item, allItems) {
-  if (!item.depends_on || !item.depends_on.length) return { blocked: false, pending: [] };
-  const itemMap = new Map(allItems.map(i => [i.id, i]));
-  const pending = item.depends_on.filter(depId => {
-    const dep = itemMap.get(depId);
-    return dep && dep.status !== 'done';
-  });
-  return { blocked: pending.length > 0, pending };
-}
 
-// --- Data cache ---
-let backlog = null;
-let orgCache = {};
 
 async function getBacklog() {
-  if (!backlog) backlog = await api('backlog');
+  if (!backlog) setBacklog(await api('backlog'));
   return backlog;
 }
 
-let epicCache = null;
 async function getEpics() {
-  epicCache = await api('epics');
+  setEpicCache(await api('epics'));
   return epicCache;
 }
 
-function epicSignalColor(epic, progress) {
-  if (epic.status === 'draft') return 'grey';
-  if (epic.status === 'done') return 'green';
-  if (epic.status === 'cancelled') return 'grey';
-  if (epic.status === 'archived') return 'grey';
-  const items = progress || { done: 0, total: 0 };
-  if (items.total === 0) return 'grey';
-  if (items.done === items.total) return 'green';
-  if (epic.priority === 'critical' || epic.priority === 'high') return 'red';
-  return 'yellow';
-}
 
 async function buildEpicTree() {
   const epicTree = document.getElementById('epic-tree');
@@ -335,8 +274,6 @@ async function buildEpicTree() {
   epicTree.appendChild(divider);
 }
 
-// --- Dispatch state ---
-const activeDispatches = [];
 
 function updateDispatchBadge() {
   const badge = $('#dispatch-badge');
@@ -998,8 +935,6 @@ class TerminalEventQueue {
 }
 
 // --- xterm.js dynamic loading ---
-let xtermLoaded = false;
-let xtermModules = null;
 
 async function loadXterm() {
   if (xtermLoaded) return xtermModules;
@@ -1009,8 +944,8 @@ async function loadXterm() {
       import('/vendor/xterm-addon-fit.mjs'),
       import('/vendor/xterm-addon-web-links.mjs'),
     ]);
-    xtermModules = { Terminal: xtermMod.Terminal, FitAddon: fitMod.FitAddon, WebLinksAddon: webLinksMod.WebLinksAddon };
-    xtermLoaded = true;
+    setXtermModules({ Terminal: xtermMod.Terminal, FitAddon: fitMod.FitAddon, WebLinksAddon: webLinksMod.WebLinksAddon });
+    setXtermLoaded(true);
     return xtermModules;
   } catch (e) {
     console.error('Failed to load xterm.js:', e);
@@ -1378,15 +1313,6 @@ function destroyTerminal(terminalInfo) {
   if (idx !== -1) activeTerminals.splice(idx, 1);
 }
 
-// --- Terminal state ---
-const activeTerminals = [];
-
-// --- CLI session state ---
-const activeCliSessions = [];
-
-// --- Session Panel Registry ---
-const sessionPanels = new Map(); // "dispatch:{id}", "terminal:{id}", or "cli:{id}" → DOM element
-const sessionCollapseState = new Map(); // same key → boolean
 
 // Load persisted collapse state
 try {
@@ -2407,7 +2333,7 @@ async function buildTree() {
   for (const org of orgs) {
     const projects = await api(`org/${org}/projects`);
     const orgData = await api(`org/${org}`);
-    orgCache[org] = orgData;
+    setOrgCache(org, orgData);
 
     const group = document.createElement('div');
     group.className = 'org-group';
@@ -2954,7 +2880,7 @@ function bindTabs() {
         const resp = await fetch(`/api/work-items/${wi.id}`, { method: 'DELETE' });
         const result = await resp.json();
         if (!resp.ok) throw new Error(result.error || 'Delete failed');
-        backlog = null;
+        setBacklog(null);
         await buildTree();
         route();
       } catch (e) {
@@ -3024,7 +2950,7 @@ function bindTabs() {
           body: JSON.stringify({ message }),
         });
         if (!resp.ok) throw new Error('Failed');
-        backlog = null;
+        setBacklog(null);
         route();
       } catch (e) {
         alert('Error: ' + e.message);
@@ -3079,7 +3005,7 @@ function bindTabs() {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ board_epics_grouped: window._prefs.board_epics_grouped }),
       }).catch(() => {});
-      backlog = null;
+      setBacklog(null);
       route();
     };
   }
@@ -3089,8 +3015,8 @@ function bindTabs() {
   if (createEpicBtn) {
     createEpicBtn.onclick = async () => {
       await showEpicModal(null);
-      epicCache = null;
-      backlog = null;
+      setEpicCache(null);
+      setBacklog(null);
       await buildEpicTree();
       route();
     };
@@ -3167,7 +3093,7 @@ function showStatusDropdown(badge, itemId, currentStatus) {
           body: JSON.stringify({ status: s }),
         });
         if (!resp.ok) { const r = await resp.json(); throw new Error(r.error || 'Failed'); }
-        backlog = null; epicCache = null;
+        setBacklog(null); setEpicCache(null);
         await Promise.all([buildTree(), buildEpicTree()]);
         route();
       } catch (err) {
@@ -3489,7 +3415,7 @@ function showWorkItemModal(existingItem = null) {
       if (!resp.ok) throw new Error(result.error || 'Failed');
 
       overlay.remove();
-      backlog = null; epicCache = null; // bust cache
+      setBacklog(null); setEpicCache(null); // bust cache
       await Promise.all([buildTree(), buildEpicTree()]);
       route();
     } catch (e) {
@@ -3951,7 +3877,7 @@ function bindEpicListEvents() {
       if (!confirm(`Delete epic ${eid}? This will unlink all work items and mark it as cancelled.`)) return;
       try {
         await fetch(`/api/epics/${eid}`, { method: 'DELETE' });
-        backlog = null; epicCache = null;
+        setBacklog(null); setEpicCache(null);
         await buildEpicTree();
         route();
       } catch (e) {
@@ -3972,7 +3898,7 @@ function bindEpicListEvents() {
       try {
         const resp = await fetch(`/api/epics/${eid}/archive`, { method: 'POST' });
         if (!resp.ok) throw new Error('Archive failed');
-        backlog = null; epicCache = null;
+        setBacklog(null); setEpicCache(null);
         await buildEpicTree();
         route();
       } catch (e) {
@@ -4195,7 +4121,7 @@ function bindEpicDetailEvents(epicId) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ work_item_id: wid }),
       });
-      backlog = null; epicCache = null;
+      setBacklog(null); setEpicCache(null);
       await buildEpicTree();
       route();
     };
@@ -4216,7 +4142,7 @@ function bindEpicDetailEvents(epicId) {
     try {
       const resp = await fetch(`/api/epics/${epicId}/archive`, { method: 'POST' });
       if (!resp.ok) throw new Error('Archive failed');
-      backlog = null; epicCache = null;
+      setBacklog(null); setEpicCache(null);
       await buildEpicTree();
       location.hash = '#epics';
       route();
@@ -4232,7 +4158,7 @@ function bindEpicDetailEvents(epicId) {
     try {
       const resp = await fetch(`/api/epics/${epicId}`, { method: 'DELETE' });
       if (!resp.ok) throw new Error('Delete failed');
-      backlog = null; epicCache = null;
+      setBacklog(null); setEpicCache(null);
       await buildEpicTree();
       location.hash = '#epics';
       route();
@@ -4320,7 +4246,7 @@ function bindEpicDetailEvents(epicId) {
         const resp = await fetch(`/api/work-items/${wi.id}`, { method: 'DELETE' });
         const result = await resp.json();
         if (!resp.ok) throw new Error(result.error || 'Delete failed');
-        backlog = null; epicCache = null;
+        setBacklog(null); setEpicCache(null);
         await Promise.all([buildTree(), buildEpicTree()]);
         route();
       } catch (e) {
@@ -4646,7 +4572,7 @@ async function showEpicModal(existingEpic = null) {
       const result = await resp.json();
       if (!resp.ok) throw new Error(result.error || 'Failed');
       overlay.remove();
-      backlog = null; epicCache = null;
+      setBacklog(null); setEpicCache(null);
       await buildEpicTree();
       if (isEdit) location.hash = `#epic/${existingEpic.id}`;
       route();
@@ -4723,7 +4649,7 @@ async function showLinkItemModal(epicId) {
       });
       if (!resp.ok) throw new Error('Link failed');
       overlay.remove();
-      backlog = null; epicCache = null;
+      setBacklog(null); setEpicCache(null);
       await buildEpicTree();
       route();
     } catch (e) {
@@ -4821,7 +4747,7 @@ async function showCreateEpicTaskModal(epicId) {
       if (!linkResp.ok) throw new Error('Link failed');
 
       overlay.remove();
-      backlog = null; epicCache = null;
+      setBacklog(null); setEpicCache(null);
       await buildEpicTree();
       route();
     } catch (e) {
@@ -5207,16 +5133,14 @@ function refreshSessionsSidebar() {
   updateProjectSignalDots();
 }
 
-let sessionsSidebarInterval = null;
 function startSessionsSidebarRefresh() {
   buildSessionsSidebar();
   refreshSessionsSidebar();
   if (sessionsSidebarInterval) clearInterval(sessionsSidebarInterval);
-  sessionsSidebarInterval = setInterval(refreshSessionsSidebar, 3000);
+  setSessionsSidebarInterval(setInterval(refreshSessionsSidebar, 3000));
 }
 
 // --- Focus Popup ---
-let activeFocusPopup = null;
 
 function openFocusPopup(type, id) {
   closeFocusPopup();
@@ -5395,7 +5319,7 @@ function openFocusPopup(type, id) {
   overlay.appendChild(popup);
   document.body.appendChild(overlay);
 
-  activeFocusPopup = { overlay, popup, type, id, sourceEl, parentEl };
+  setActiveFocusPopup({ overlay, popup, type, id, sourceEl, parentEl });
 
   // Close handlers
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeFocusPopup(); });
@@ -5454,7 +5378,7 @@ function closeFocusPopup() {
   if (escHandler) document.removeEventListener('keydown', escHandler);
   if (headerInterval) clearInterval(headerInterval);
   overlay.remove();
-  activeFocusPopup = null;
+  setActiveFocusPopup(null);
 
   // Restore route-based title
   updateTitle(getRouteTitle());
@@ -5464,8 +5388,6 @@ function closeFocusPopup() {
 }
 
 // --- Agents View ---
-let agentsTileInterval = null;
-let agentsFullRefreshInterval = null;
 
 function renderAgentTile(agent) {
   const isCli = agent.type === 'cli';
@@ -5814,25 +5736,25 @@ function parseAgentsFilters(hash) {
 function startAgentsTileRefresh(agents, filters) {
   stopAgentsTileRefresh();
   // Update elapsed times every 3s
-  agentsTileInterval = setInterval(() => {
+  setAgentsTileInterval(setInterval(() => {
     document.querySelectorAll('.agent-tile-elapsed[data-started]').forEach(el => {
       el.textContent = formatElapsed(el.dataset.started);
     });
-  }, 3000);
+  }, 3000));
   // Full refresh every 15s
-  agentsFullRefreshInterval = setInterval(async () => {
+  setAgentsFullRefreshInterval(setInterval(async () => {
     if (!location.hash.startsWith('#agents')) { stopAgentsTileRefresh(); return; }
     const freshAgents = await fetchAgentsList();
     const main = $('#main');
     main.innerHTML = renderAgentsView(freshAgents, filters);
     bindAgentsEvents(freshAgents, filters);
     placeSessionPanels();
-  }, 15000);
+  }, 15000));
 }
 
 function stopAgentsTileRefresh() {
-  if (agentsTileInterval) { clearInterval(agentsTileInterval); agentsTileInterval = null; }
-  if (agentsFullRefreshInterval) { clearInterval(agentsFullRefreshInterval); agentsFullRefreshInterval = null; }
+  if (agentsTileInterval) { clearInterval(agentsTileInterval); setAgentsTileInterval(null); }
+  if (agentsFullRefreshInterval) { clearInterval(agentsFullRefreshInterval); setAgentsFullRefreshInterval(null); }
 }
 
 async function showQuickDispatchModal() {
@@ -6377,20 +6299,19 @@ function renderSettingsView(status, config) {
   return html;
 }
 
-let settingsRefreshTimer = null;
 
 function bindSettingsEvents(status, config) {
   loadSettingsLogs();
   document.getElementById('settings-log-box')?.classList.toggle('log-light', resolveTermTheme() === 'light');
 
   if (settingsRefreshTimer) clearInterval(settingsRefreshTimer);
-  settingsRefreshTimer = setInterval(async () => {
+  setSettingsRefreshTimer(setInterval(async () => {
     try {
       const s = await api('server/status');
       const el = document.getElementById('settings-uptime');
       if (el) el.textContent = formatUptime(s.uptime_seconds);
     } catch {}
-  }, 5000);
+  }, 5000));
 
   document.getElementById('settings-restart')?.addEventListener('click', async () => {
     if (!confirm('Restart the dashboard server?')) return;
@@ -6563,7 +6484,7 @@ async function route() {
 
   updateTitle(getRouteTitle());
   stopAgentsTileRefresh();
-  if (settingsRefreshTimer) { clearInterval(settingsRefreshTimer); settingsRefreshTimer = null; }
+  if (settingsRefreshTimer) { clearInterval(settingsRefreshTimer); setSettingsRefreshTimer(null); }
 
   if (!hash) {
     main.innerHTML = `<div class="card"><h2>Portfolio Dashboard</h2><p style="color:var(--text-light);font-size:14px">Select an organization or project from the sidebar.</p></div>`;
@@ -6652,7 +6573,7 @@ async function route() {
     const org = parts[1];
     try {
       const data = orgCache[org] || await api(`org/${org}`);
-      orgCache[org] = data;
+      setOrgCache(org, data);
       // Compute org sessions from active dispatches + terminals (project-scoped + org-scoped)
       const orgSessions = [
         ...activeDispatches.filter(d => (d.project_key && d.project_key.startsWith(org + '/')) || d.org_key === org).map(d => ({ type: 'dispatch', id: d.id, status: d.status, title: d.work_item_id || d.title || d.id, work_item_id: d.work_item_id, project_key: d.project_key, org_key: d.org_key, started_at: d.started_at })),

@@ -61,5 +61,26 @@ export default function staticRoutes(deps) {
         res.writeHead(404); res.end('Not found');
       }
     }],
+
+    // Static: /js/ ES6 modules (no-cache + ETag + 304, consistent with /styles/)
+    [/^\/js\/([a-zA-Z0-9._-]+\.mjs)$/, 'GET', async (m, req, res) => {
+      const filename = m[1];
+      const filePath = join(__dirname, 'js', filename);
+      try {
+        const [content, fileStat] = await Promise.all([readFile(filePath), stat(filePath)]);
+        const etag = `"${fileStat.mtimeMs}"`;
+        if (req.headers['if-none-match'] === etag) {
+          res.writeHead(304); res.end(); return;
+        }
+        res.writeHead(200, {
+          'Content-Type': 'application/javascript',
+          'Cache-Control': 'no-cache, must-revalidate',
+          'ETag': etag,
+        });
+        res.end(content);
+      } catch {
+        res.writeHead(404); res.end('Not found');
+      }
+    }],
   ];
 }
