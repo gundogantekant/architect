@@ -169,6 +169,19 @@ cmd_start() {
   local NODE_BIN
   NODE_BIN="$(find_node)"
 
+  # Auto-install production dependencies if pg is absent
+  local NPM_BIN
+  NPM_BIN="$(command -v npm 2>/dev/null || echo "$(dirname "$NODE_BIN")/npm")"
+  if [ ! -d "$DASHBOARD_DIR/node_modules/pg" ]; then
+    echo "Installing dashboard dependencies (first run or after migration)..."
+    if ! "$NPM_BIN" ci --omit=dev --prefer-offline --prefix "$DASHBOARD_DIR" >> "$LOG_FILE" 2>&1; then
+      echo "Error: Failed to install dashboard dependencies. Check logs:"
+      echo "  $LOG_FILE"
+      return 1
+    fi
+    echo "Dependencies installed."
+  fi
+
   echo "Starting dashboard server..."
   nohup "$NODE_BIN" "$SERVER_SCRIPT" --port "$PORT" >> "$LOG_FILE" 2>&1 &
   local pid=$!
