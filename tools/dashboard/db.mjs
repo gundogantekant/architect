@@ -183,7 +183,7 @@ export async function assertSchema() {
     work_item_logs: ['id', 'work_item_id', 'logged_at', 'summary'],
     epics: ['id', 'title', 'status', 'priority', 'description', 'acceptance_criteria', 'target_date', 'tags', 'created_at', 'updated_at'],
     epic_logs: ['id', 'epic_id', 'logged_at', 'summary'],
-    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'merge_result'],
+    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'merge_result', 'pipeline_stage'],
     terminals: ['id', 'type', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'exited_at', 'pid', 'tmux_session', 'claude_session_id', 'agent_type', 'head_seq'],
     cli_sessions: ['id', 'project_key', 'work_item_id', 'epic_id', 'title', 'pid', 'status', 'registered_at', 'exited_at'],
     preferences: ['key', 'value'],
@@ -772,8 +772,8 @@ export async function getEpicProjectKeys(epicId) {
 
 export async function saveDispatch(d) {
   await pool.query(`
-    INSERT INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+    INSERT INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode, pipeline_stage)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
     ON CONFLICT (id) DO UPDATE SET
       work_item_id = EXCLUDED.work_item_id,
       epic_id = EXCLUDED.epic_id,
@@ -791,14 +791,19 @@ export async function saveDispatch(d) {
       worktree_path = EXCLUDED.worktree_path,
       worktree_branch = EXCLUDED.worktree_branch,
       source_branch = EXCLUDED.source_branch,
-      dispatch_mode = EXCLUDED.dispatch_mode
+      dispatch_mode = EXCLUDED.dispatch_mode,
+      pipeline_stage = EXCLUDED.pipeline_stage
   `, [
     d.id, d.work_item_id || null, d.epic_id || null, d.project_key, d.project_path || '',
     d.title || '', d.permission_mode || 'acceptEdits', d.skip_permissions ?? false,
     d.status, d.started_at, d.completed_at || null, d.cost_usd || null, d.pid || null,
     d.claude_session_id || null, d.worktree_path || null, d.worktree_branch || null,
-    d.source_branch || null, d.dispatch_mode || 'standard',
+    d.source_branch || null, d.dispatch_mode || 'standard', d.pipeline_stage || null,
   ]);
+}
+
+export async function updatePipelineStage(id, stage) {
+  await pool.query('UPDATE dispatches SET pipeline_stage = $1 WHERE id = $2', [stage, id]);
 }
 
 export async function deleteDispatch(id) {

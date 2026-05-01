@@ -589,12 +589,12 @@ Every dispatch step for medium+ complexity work must carry a DispatchContract (s
 
 ### Complexity-Scaled Contract Detail
 
-| Complexity | Core Fields (4) | scope_boundary | stop_conditions |
-|------------|-----------------|----------------|-----------------|
-| trivial | None | None | None |
-| small | None | None | None |
-| medium | Required, 1-2 sentences each | Optional | Optional |
-| large | Required, 2-3 sentences with measurable criteria | Required | Required (3+) |
+| Complexity | Core Fields (4) | scope_boundary | stop_conditions | success_criteria | e2e_test_criteria |
+|------------|-----------------|----------------|-----------------|-----------------|-------------------|
+| trivial | None | None | None | None | None |
+| small | None | None | None | None | None |
+| medium | Required, 1-2 sentences each | Optional | Optional | Required | Required |
+| large | Required, 2-3 sentences with measurable criteria | Required | Required (3+) | Required | Required (3+) |
 
 ### Who Produces
 
@@ -738,6 +738,8 @@ When no explicit contract is provided and the work item description contains str
 - `**Failure Conditions**:` → failure_conditions
 - `**Scope Boundary**:` → scope_boundary
 - `**Stop Conditions**:` → stop_conditions (newline-separated items become array entries)
+- `**Success Criteria**:` → success_criteria
+- `**E2E Test Criteria**:` → e2e_test_criteria (newline-separated items become array entries)
 
 Only fields with matching headers are populated. Free-form descriptions without these sections produce no derived contract. Explicitly provided contracts (via dispatch modal or coordinator) take precedence over derived contracts.
 

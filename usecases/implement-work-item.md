@@ -43,9 +43,16 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
    - If `approval_active` flag is set, inform user that approval is pending and halt — do not proceed until the flag is cleared.
    - If `depends_on` contains items that are not `done`, warn user about unmet dependencies.
 
+2b. **Blocking question protocol** (applies at any step during execution): If at any point during steps 4–12 the agent encounters a decision that cannot be resolved from context, portfolio knowledge, or the work item description, do NOT guess. Take these actions immediately:
+   1. `PATCH /api/work-items/<id>` with `{"input_needed": true, "input_needed_reason": "<specific question>", "input_needed_from": "user"}`
+   2. `POST /api/work-items/<id>/log` with `{"summary": "Halted: input needed — <question>"}`
+   3. Halt immediately — do not continue implementing.
+
+   On re-dispatch: the user provides the answer via "Additional Instructions". The agent reads the session log to find the halt reason, then reads `additional_instructions` for the answer before resuming. On re-dispatch, clear the flag: `PATCH /api/work-items/<id>` with `{"input_needed": false}`.
+
 3. **Update status**: `PATCH /api/work-items/<id>` with `{"status": "in-progress"}`.
 
-4. **Brief investigation**: Read relevant files based on work item description and portfolio context. Keep exploration to understanding the change surface — identify which files need changes, what patterns exist, any dependencies or constraints. Do not do a full codebase scan.
+4. **Brief investigation**: Read relevant files based on work item description and portfolio context. Keep exploration to understanding the change surface — identify which files need changes, what patterns exist, any dependencies or constraints. Do not do a full codebase scan. **Auto-Implement Mode**: report stage — `PUT /api/dispatch/${DISPATCH_ID}/stage` with `{"stage": "investigating"}`.
 
 5. **Plan implementation**: Produce a bullet-point plan (max 5 points) covering: files to modify/create, approach summary, test strategy. If the work item has a stored `plan.md` artifact, use it as the basis instead of generating from scratch. Present to user for confirmation. If rejected, refine or abort.
 
@@ -55,20 +62,21 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
    - All `approve` → update work item status to `ready`. Proceed to user confirmation (step 5 already handles this).
    Skip this step for trivial/small complexity or when the plan was provided by the user.
 
-7. **Write contract tests** (if applicable per `domain/rules.md` → Contract-First Planning Rules): When the plan introduces new API endpoints, UI interactions, or dispatch flows, write E2E/integration tests that encode the expected behavior before implementation. Verify they fail (red). Trivial changes are exempt.
+7. **Write contract tests** (if applicable per `domain/rules.md` → Contract-First Planning Rules): When the plan introduces new API endpoints, UI interactions, or dispatch flows, write E2E/integration tests that encode the expected behavior before implementation. When `contract.e2e_test_criteria` is present, use each entry directly as a test scenario description — each criterion becomes one test case. Verify all tests fail (red) before implementation. Trivial changes are exempt.
 
 8. **Worktree check**: If a `# Worktree Context` section is present in your prompt (i.e., the dispatch infrastructure already created a worktree and set your working directory to it), skip worktree creation and proceed to step 9. Otherwise, follow `usecases/manage-worktree.md` → create, using the work item ID as the ticket ID (branch and directory will be named `W-<id>`). Respect the portfolio entry's `worktree_mode` field — if `"explicit"`, work in-place.
 
-9. **Implement changes**: Dispatch coder agent in the worktree with: portfolio context, work item details, the approved plan, the coding standards brief from `domain/rules.md`, and the full DispatchContract (goal, constraints, expected output, failure conditions, scope_boundary, stop_conditions) from the DispatchPlan step. For medium+ complexity, the agent must follow `domain/rules.md` → Long-Running Session Rules (phase-based progress checkpoints, scope boundary self-enforcement, stop condition protocol).
+9. **Implement changes**: Dispatch coder agent in the worktree with: portfolio context, work item details, the approved plan, the coding standards brief from `domain/rules.md`, and the full DispatchContract (goal, constraints, expected output, failure conditions, scope_boundary, stop_conditions, success_criteria, e2e_test_criteria) from the DispatchPlan step. For medium+ complexity, the agent must follow `domain/rules.md` → Long-Running Session Rules (phase-based progress checkpoints, scope boundary self-enforcement, stop condition protocol). **Auto-Implement Mode**: report stage — `PUT /api/dispatch/${DISPATCH_ID}/stage` with `{"stage": "implementing"}`.
 
-10. **Run tests**: Dispatch tester agent in the worktree. Run existing test suite if available. Write new tests if new code warrants them and the project has test infrastructure. If contract tests were written in step 7, verify they now pass (green). If tests fail: dispatch coder to fix, then re-run tester (max 2 iterations). If no test framework is detected, skip and note it in the output.
+10. **Run tests**: Dispatch tester agent in the worktree. Run existing test suite if available. Write new tests if new code warrants them and the project has test infrastructure. If contract tests were written in step 7, verify they now pass (green). If tests fail: dispatch coder to fix, then re-run tester (max 2 iterations). If no test framework is detected, skip and note it in the output. **Auto-Implement Mode**: report stage — `PUT /api/dispatch/${DISPATCH_ID}/stage` with `{"stage": "testing"}`.
 
-11. **Review Board — Code Gate** (for all non-trivial code changes per `domain/rules.md` → Review Board Rules): Assemble the review board using context-based composition rules. Dispatch all selected tech-reviewer-* agents **in parallel** with the implementation diff (artifact_type=diff), target project portfolio context, and the DispatchContract so reviewers can evaluate whether the implementation meets the stated goals and does not violate the stated constraints. Collect `TechReviewVerdict` from each. Apply aggregation rules:
+11. **Review Board — Code Gate** (for all non-trivial code changes per `domain/rules.md` → Review Board Rules): Assemble the review board using context-based composition rules. Dispatch all selected tech-reviewer-* agents **in parallel** with the implementation diff (artifact_type=diff), target project portfolio context, and the DispatchContract so reviewers can evaluate whether the implementation meets the stated goals and does not violate the stated constraints. When `success_criteria` is present in the contract, include it in each reviewer's prompt so they can evaluate whether the implementation satisfies the stated done conditions. Collect `TechReviewVerdict` from each. Apply aggregation rules:
     - Any `block` → dispatch coder to fix, re-review (max 2 cycles). If still blocked, escalate to user.
     - Any `revise` (no `block`) → present to user WITH revision concerns highlighted. User decides: accept, request fix, or override.
     - All `approve` → proceed to commit.
+    **Auto-Implement Mode**: report stage — `PUT /api/dispatch/${DISPATCH_ID}/stage` with `{"stage": "code_review"}`.
 
-12. **Commit**: Dispatch git-ops to commit in the worktree. Message format: `<W-XXX>: <concise description of changes>`. Commit only relevant files. No Claude attribution per project rules.
+12. **Commit**: Dispatch git-ops to commit in the worktree. Message format: `<W-XXX>: <concise description of changes>`. Commit only relevant files. No Claude attribution per project rules. **Auto-Implement Mode**: report stage — `PUT /api/dispatch/${DISPATCH_ID}/stage` with `{"stage": "committing"}` before dispatching git-ops.
 
     **Auto-Implement Mode sub-step**: After the commit succeeds, retrieve the commit SHA (`git rev-parse HEAD`) and signal completion to the dashboard:
     ```
