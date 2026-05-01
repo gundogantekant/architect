@@ -32,7 +32,7 @@ let pool = null;
 function buildPoolConfig() {
   return {
     host: process.env.ARCHITECT_PG_HOST ?? '127.0.0.1',
-    port: parseInt(process.env.ARCHITECT_PG_PORT ?? '5432', 10),
+    port: parseInt(process.env.ARCHITECT_PG_PORT ?? '3778', 10),
     database: process.env.ARCHITECT_PG_DB ?? 'architect',
     user: process.env.ARCHITECT_PG_USER ?? 'architect',
     password: process.env.ARCHITECT_PG_PASSWORD ?? 'architect',

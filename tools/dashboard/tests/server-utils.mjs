@@ -23,7 +23,7 @@ const PRODUCTION_DB = process.env.ARCHITECT_PG_DB ?? 'architect';
 function buildAdminConfig() {
   return {
     host: process.env.ARCHITECT_PG_HOST ?? '127.0.0.1',
-    port: parseInt(process.env.ARCHITECT_PG_PORT ?? '5432', 10),
+    port: parseInt(process.env.ARCHITECT_PG_PORT ?? '3778', 10),
     // Connect to postgres maintenance DB to create/drop test databases.
     database: 'postgres',
     user: process.env.ARCHITECT_PG_USER ?? 'architect',

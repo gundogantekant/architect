@@ -4,7 +4,7 @@ services:
     container_name: architect-postgres
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${ARCHITECT_PG_PORT:-5432}:5432"
+      - "127.0.0.1:${ARCHITECT_PG_PORT:-3778}:5432"
     environment:
       POSTGRES_DB: ${ARCHITECT_PG_DB:-architect}
       POSTGRES_USER: ${ARCHITECT_PG_USER:-architect}
