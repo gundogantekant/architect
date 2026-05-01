@@ -616,7 +616,7 @@ cmd_sync_install() {
       -e "s|ARCHITECT_ROOT_PLACEHOLDER|${ROOT}|g" \
       "$plist_src" > "$plist_dst"
 
-  launchctl load "$plist_dst"
+  launchctl bootstrap "gui/$(id -u)" "$plist_dst"
   echo "Installed and loaded ${plist_name}"
 }
 
@@ -625,7 +625,7 @@ cmd_sync_uninstall() {
   local plist_dst="$HOME/Library/LaunchAgents/${plist_name}.plist"
 
   if [ -f "$plist_dst" ]; then
-    launchctl unload "$plist_dst" 2>/dev/null || true
+    launchctl bootout "gui/$(id -u)" "$plist_dst" 2>/dev/null || true
     rm "$plist_dst"
     echo "Unloaded and removed ${plist_name}"
   else
