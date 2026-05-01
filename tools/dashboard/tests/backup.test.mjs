@@ -16,7 +16,7 @@ const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'migr
 function buildAdminConfig() {
   return {
     host: process.env.ARCHITECT_PG_HOST ?? '127.0.0.1',
-    port: parseInt(process.env.ARCHITECT_PG_PORT ?? '5432', 10),
+    port: parseInt(process.env.ARCHITECT_PG_PORT ?? '3778', 10),
     database: 'postgres',
     user: process.env.ARCHITECT_PG_USER ?? 'architect',
     password: process.env.ARCHITECT_PG_PASSWORD,

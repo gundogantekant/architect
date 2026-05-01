@@ -26,6 +26,8 @@ SESSIONS_FILE="$ROOT/work/sessions.json"
 COMPOSE_FILE="$DASHBOARD_DIR/docker-compose.yml"
 PG_USER="${ARCHITECT_PG_USER:-architect}"
 PG_DB="${ARCHITECT_PG_DB:-architect}"
+PG_HOST="${ARCHITECT_PG_HOST:-127.0.0.1}"
+PG_PORT="${ARCHITECT_PG_PORT:-3778}"
 
 # Service identifiers
 LAUNCHD_LABEL="com.architect.dashboard"
@@ -147,6 +149,17 @@ ensure_postgres() {
 
 cmd_start() {
   ensure_tmp
+
+  if docker info >/dev/null 2>&1 && [ "$PG_PORT" != "5432" ]; then
+    local existing_host_port
+    existing_host_port="$(docker inspect --format '{{range $p,$conf := .NetworkSettings.Ports}}{{if eq $p "5432/tcp"}}{{(index $conf 0).HostPort}}{{end}}{{end}}' architect-postgres 2>/dev/null || echo '')"
+    if [ "$existing_host_port" = "5432" ]; then
+      echo "Warning: PostgreSQL container found on port 5432 (old default)."
+      echo "  Set ARCHITECT_PG_PORT=5432 in your environment to keep using it,"
+      echo "  or run 'dashctl.sh db:down' first to let docker compose recreate it on port $PG_PORT."
+    fi
+  fi
+
   ensure_postgres
 
   if is_running; then
@@ -210,11 +223,16 @@ cmd_start() {
   echo "  Log: $LOG_FILE"
 }
 
+_stop_postgres() {
+  if docker info >/dev/null 2>&1; then
+    docker compose -f "$COMPOSE_FILE" stop postgres 2>/dev/null || true
+    echo "PostgreSQL stopped."
+  fi
+}
+
 cmd_stop() {
-  # PostgreSQL is intentionally NOT stopped here. All work item data, sessions,
-  # and backlog live in the named Docker volume. Stopping PG on dashboard stop
-  # would require a full startup sequence (health wait) on every restart.
-  # Use 'dashctl.sh db:down' to stop PostgreSQL explicitly.
+  local exit_code=0
+
   if is_running; then
     local pid
     pid="$(get_pid)"
@@ -222,77 +240,81 @@ cmd_stop() {
 
     kill "$pid" 2>/dev/null || true
 
-    # Wait up to 10 seconds for graceful shutdown
     local tries=0
     while [ $tries -lt 20 ]; do
       if ! kill -0 "$pid" 2>/dev/null; then
         rm -f "$PID_FILE"
         echo "Dashboard stopped"
-        return 0
+        break
       fi
       sleep 0.5
       tries=$((tries + 1))
     done
 
-    # Force kill
-    echo "Graceful shutdown timed out, sending SIGKILL..."
-    kill -9 "$pid" 2>/dev/null || true
-    rm -f "$PID_FILE"
-    echo "Dashboard killed"
-    return 0
-  fi
-
-  # Not managed via PID file — check if a service owns the port
-  local service
-  service="$(detect_service)"
-
-  if [ "$service" = "launchd" ] && port_in_use; then
-    echo "Stopping launchd service ($LAUNCHD_LABEL)..."
-    launchctl stop "$LAUNCHD_LABEL" 2>/dev/null || true
-    local tries=0
-    while [ $tries -lt 20 ]; do
-      if ! port_in_use; then
-        echo "Dashboard stopped"
-        return 0
-      fi
-      sleep 0.5
-      tries=$((tries + 1))
-    done
-    echo "Warning: port $PORT still in use after service stop"
-    return 1
-
-  elif [ "$service" = "systemd" ] && port_in_use; then
-    echo "Stopping systemd service ($SYSTEMD_SERVICE)..."
-    systemctl --user stop "$SYSTEMD_SERVICE" 2>/dev/null || true
-    echo "Dashboard stopped"
-    return 0
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "Graceful shutdown timed out, sending SIGKILL..."
+      kill -9 "$pid" 2>/dev/null || true
+      rm -f "$PID_FILE"
+      echo "Dashboard killed"
+    fi
 
   else
-    if port_in_use; then
-      local orphan_pid
-      orphan_pid="$(get_port_pid)"
-      if [ -n "$orphan_pid" ]; then
-        echo "Stopping orphaned dashboard process (PID $orphan_pid)..."
-        kill "$orphan_pid" 2>/dev/null || true
-        local tries=0
-        while [ $tries -lt 20 ]; do
-          if ! port_in_use; then
-            echo "Dashboard stopped"
-            return 0
-          fi
-          sleep 0.5
-          tries=$((tries + 1))
-        done
-        kill -9 "$orphan_pid" 2>/dev/null || true
-        echo "Dashboard killed"
-      else
-        echo "Port $PORT is in use but could not identify the process"
+    local service
+    service="$(detect_service)"
+
+    if [ "$service" = "launchd" ] && port_in_use; then
+      echo "Stopping launchd service ($LAUNCHD_LABEL)..."
+      launchctl stop "$LAUNCHD_LABEL" 2>/dev/null || true
+      local tries=0
+      while [ $tries -lt 20 ]; do
+        if ! port_in_use; then
+          echo "Dashboard stopped"
+          break
+        fi
+        sleep 0.5
+        tries=$((tries + 1))
+      done
+      if port_in_use; then
+        echo "Warning: port $PORT still in use after service stop"
+        exit_code=1
       fi
+
+    elif [ "$service" = "systemd" ] && port_in_use; then
+      echo "Stopping systemd service ($SYSTEMD_SERVICE)..."
+      systemctl --user stop "$SYSTEMD_SERVICE" 2>/dev/null || true
+      echo "Dashboard stopped"
+
     else
-      echo "Dashboard is not running"
+      if port_in_use; then
+        local orphan_pid
+        orphan_pid="$(get_port_pid)"
+        if [ -n "$orphan_pid" ]; then
+          echo "Stopping orphaned dashboard process (PID $orphan_pid)..."
+          kill "$orphan_pid" 2>/dev/null || true
+          local tries=0
+          while [ $tries -lt 20 ]; do
+            if ! port_in_use; then
+              echo "Dashboard stopped"
+              break
+            fi
+            sleep 0.5
+            tries=$((tries + 1))
+          done
+          if port_in_use; then
+            kill -9 "$orphan_pid" 2>/dev/null || true
+            echo "Dashboard killed"
+          fi
+        else
+          echo "Port $PORT is in use but could not identify the process"
+        fi
+      else
+        echo "Dashboard is not running"
+      fi
     fi
-    return 0
   fi
+
+  _stop_postgres
+  return $exit_code
 }
 
 cmd_restart() {
@@ -361,6 +383,30 @@ cmd_status() {
   fi
   echo "  Log:     $LOG_FILE"
   echo "  PID file: $PID_FILE"
+
+  echo ""
+  echo "  Database:"
+  echo "  PG Port:   127.0.0.1:${PG_PORT}"
+  echo "  PG DB:     ${PG_DB}"
+  echo "  Data vol:  architect_pgdata"
+  if docker info >/dev/null 2>&1; then
+    local pg_running
+    pg_running="$(docker compose -f "$COMPOSE_FILE" ps --status running postgres 2>/dev/null | grep -c postgres || echo 0)"
+    if [ "${pg_running:-0}" -gt 0 ] 2>/dev/null; then
+      echo "  PG Status: Running"
+    else
+      echo "  PG Status: Stopped"
+    fi
+    local vol_path
+    vol_path="$(docker volume inspect architect_pgdata --format '{{.Mountpoint}}' 2>/dev/null || echo 'volume not found')"
+    local os_note=""
+    if [ "$(uname -s)" = "Darwin" ]; then
+      os_note=" (Docker Desktop VM path)"
+    fi
+    echo "  Data path: $vol_path$os_note"
+  else
+    echo "  PG Status: Docker not running"
+  fi
 }
 
 cmd_logs() {
@@ -606,8 +652,6 @@ cmd_db_dump() {
   TIMESTAMP="$(date -u +%Y-%m-%dT%H-%M-%S)"
   local DEST="$BACKUP_DIR/architect-${TIMESTAMP}.dump"
 
-  local PG_HOST="${ARCHITECT_PG_HOST:-127.0.0.1}"
-  local PG_PORT="${ARCHITECT_PG_PORT:-5432}"
   local PG_PASSWORD="${ARCHITECT_PG_PASSWORD:-}"
   local args=(-h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -Fc -f "$DEST" "$PG_DB")
 
@@ -631,8 +675,6 @@ cmd_db_restore() {
     exit 1
   fi
 
-  local PG_HOST="${ARCHITECT_PG_HOST:-127.0.0.1}"
-  local PG_PORT="${ARCHITECT_PG_PORT:-5432}"
   local PG_PASSWORD="${ARCHITECT_PG_PASSWORD:-}"
   local args=(-h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DB" "$FILE")
 
@@ -678,8 +720,8 @@ Usage: dashctl.sh <command> [options]
 
 Commands:
   start                Start PostgreSQL (if not running) then the dashboard server
-  stop                 Stop the dashboard server gracefully (PostgreSQL keeps running)
-  restart              Restart the server (service-aware: uses launchctl/systemctl when installed)
+  stop                 Stop the dashboard server and PostgreSQL container gracefully
+  restart              Restart dashboard and PostgreSQL (full cycle, adds ~5–30s for postgres startup)
   status               Show server status, PID, port, uptime
   logs [-n N] [-f]     Tail the log file (default: last 50 lines)
   fresh [--clear-sessions]  Stop, optionally clear sessions, start
@@ -689,8 +731,8 @@ Commands:
   help                 Show this help
 
 Database commands:
-  db:up                Start PostgreSQL container
-  db:down              Stop PostgreSQL container (data volume preserved)
+  db:up                Start PostgreSQL container only
+  db:down              Stop PostgreSQL container only, keeping dashboard server running (data volume preserved)
   db:logs              Follow PostgreSQL container logs
   db:psql              Open psql shell in the running PostgreSQL container
   db:dump              Dump the database to assets/backups/ with a timestamp
@@ -703,8 +745,11 @@ Environment:
   PID file: $PID_FILE
   Log file: $LOG_FILE
   Port:     $PORT
+  PG host:  $PG_HOST
+  PG port:  $PG_PORT
   PG user:  $PG_USER
   PG DB:    $PG_DB
+  Data vol: architect_pgdata
 HELP
 }
 
