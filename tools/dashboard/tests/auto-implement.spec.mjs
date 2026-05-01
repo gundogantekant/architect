@@ -209,4 +209,74 @@ test.describe('Auto-Implement Dispatch @fast', () => {
     const body = await resp.json();
     expect(body.error).toMatch(/draft/i);
   });
+
+  test('AI-11: worktree_at_dispatch feature flag off → no worktree for git project', async ({ request }) => {
+    const base = getBase();
+    // Get the server root (a known git repo) and seed a self-contained project entry
+    const rootResp = await api('test/root-path');
+    const rootPath = rootResp.root;
+    const ai11Key = 'test/flag-off-ai11/main';
+    await request.post(`${base}/api/test/seed-registry-entry`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: { project_key: ai11Key, project_path: rootPath },
+    });
+
+    // Disable the worktree feature flag
+    await api('settings/preferences', {
+      method: 'PUT',
+      body: JSON.stringify({ worktree_at_dispatch: 'false' }),
+    });
+    try {
+      const wi = await seedWorkItem({ title: 'AI-11 test', status: 'planned' });
+      const resp = await request.post(`${base}/api/dispatch/auto-implement`, {
+        headers: { 'Content-Type': 'application/json' },
+        data: { work_item_id: wi.id, project_key: ai11Key },
+      });
+      expect(resp.status()).toBe(200);
+      const body = await resp.json();
+      expect(body.worktree_path).toBeNull();
+      await request.delete(`${base}/api/dispatch/${body.id}`);
+    } finally {
+      // Always restore the feature flag to prevent dirty state for other tests
+      await api('settings/preferences', {
+        method: 'PUT',
+        body: JSON.stringify({ worktree_at_dispatch: 'true' }),
+      });
+    }
+  });
+
+  test('AI-12: worktree_mode "none" in portfolio entry is respected by auto-implement', async ({ request }) => {
+    const base = getBase();
+    // Get the server's root path (a known git repo)
+    const rootResp = await api('test/root-path');
+    const rootPath = rootResp.root;
+
+    const noneKey = 'test/no-worktree-ai12/main';
+    await request.post(`${base}/api/test/seed-portfolio-entry`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        project_key: noneKey,
+        project_path: rootPath,
+        entry: { worktree_mode: 'none', worktree_setup: {} },
+      },
+    });
+
+    try {
+      const wi = await seedWorkItem({ title: 'AI-12 test', status: 'planned' });
+      const resp = await request.post(`${base}/api/dispatch/auto-implement`, {
+        headers: { 'Content-Type': 'application/json' },
+        data: { work_item_id: wi.id, project_key: noneKey },
+      });
+      expect(resp.status()).toBe(200);
+      const body = await resp.json();
+      expect(body.worktree_path).toBeNull();
+      await request.delete(`${base}/api/dispatch/${body.id}`);
+    } finally {
+      // Clean up the seeded portfolio entry
+      await request.delete(`${base}/api/test/seed-portfolio-entry`, {
+        headers: { 'Content-Type': 'application/json' },
+        data: { project_key: noneKey, project_path: rootPath },
+      });
+    }
+  });
 });

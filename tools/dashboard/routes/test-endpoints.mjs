@@ -677,16 +677,22 @@ export default function testEndpointRoutes(deps) {
       });
     }],
 
-    // Test worktree decision logic (W-927)
+    // Test worktree decision logic (W-927, updated W-958)
+    // Accepts project_path (new) or is_git boolean (backward compat: true→ROOT, false→/tmp).
+    // NOTE: ROOT must be a git repository for backward-compat mapping of is_git: true to work.
     [/^\/api\/test\/worktree-decision$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { permission_mode, work_item_id, worktree_mode, feature_flag, is_git } = body;
-      const result = shouldCreateWorktree({
+      const { permission_mode, work_item_id, worktree_mode, feature_flag, project_path, is_git } = body;
+      const effectivePath = project_path !== undefined ? project_path
+        : is_git === true ? ROOT
+        : is_git === false ? '/tmp'
+        : null;
+      const result = await shouldCreateWorktree({
         permissionMode: permission_mode,
         workItemId: work_item_id,
         portfolioEntry: worktree_mode ? { worktree_mode } : null,
         featureFlag: feature_flag !== false,
-        isGit: is_git,
+        projectPath: effectivePath,
       });
       json(res, { should_create: result });
     }],
@@ -697,6 +703,11 @@ export default function testEndpointRoutes(deps) {
       if (!testPath) return err(res, 'path is required', 400);
       const result = await isGitRepository(testPath);
       json(res, { is_git: result });
+    }],
+
+    // Test utility: return server ROOT path (a known git repository) for integration tests
+    [/^\/api\/test\/root-path$/, 'GET', (_m, _req, res) => {
+      json(res, { root: ROOT });
     }],
 
     // Test prompt builder with worktree context (W-927)
