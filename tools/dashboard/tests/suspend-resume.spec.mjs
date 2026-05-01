@@ -83,20 +83,20 @@ test('SR-8: resume-args-preview returns agent info for known project', async () 
   expect(typeof result.agent_count).toBe('number');
 });
 
-test('SR-9: after resume click, old suspended panel disappears', async ({ page }) => {
+test('SR-9: after resume click, old suspended entry disappears from suspended panel', async ({ page }) => {
   const { dispatch_id: id } = await seedDispatch({ status: 'suspended', claude_session_id: 'fake-session-sr9' });
   await page.goto('/');
-  await expect(page.locator(`#dispatch-${id}`)).toBeVisible({ timeout: 5000 });
-  await page.locator(`[data-resume-dispatch="${id}"]`).click();
-  await expect(page.locator(`#dispatch-${id}`)).not.toBeVisible({ timeout: 10000 });
+  await expect(page.locator(`[data-susp-resume-dispatch="${id}"]`)).toBeVisible({ timeout: 5000 });
+  await page.locator(`[data-susp-resume-dispatch="${id}"]`).click();
+  await expect(page.locator(`[data-susp-resume-dispatch="${id}"]`)).not.toBeVisible({ timeout: 10000 });
 });
 
-test('SR-10: after resume click, a new dispatch panel with a different ID appears', async ({ page }) => {
+test('SR-10: after resume click, a new running dispatch panel appears', async ({ page }) => {
   const { dispatch_id: id } = await seedDispatch({ status: 'suspended', claude_session_id: 'fake-session-sr10' });
   await page.goto('/');
-  await expect(page.locator(`[data-resume-dispatch="${id}"]`)).toBeVisible({ timeout: 5000 });
-  await page.locator(`[data-resume-dispatch="${id}"]`).click();
-  // Wait for a dispatch panel that is NOT the old suspended panel
+  await expect(page.locator(`[data-susp-resume-dispatch="${id}"]`)).toBeVisible({ timeout: 5000 });
+  await page.locator(`[data-susp-resume-dispatch="${id}"]`).click();
+  // Wait for a dispatch panel that is NOT the old suspended entry
   await page.waitForFunction((oldId) => {
     const panels = document.querySelectorAll('[id^="dispatch-D-"]');
     return Array.from(panels).some(p => p.id !== `dispatch-${oldId}`);
@@ -148,4 +148,38 @@ test('SR-16: GET /api/dispatch/active includes suspended dispatch after DB round
   const found = list.find(d => d.id === dispatch_id);
   expect(found).toBeDefined();
   expect(found.status).toBe('suspended');
+});
+
+test('SR-17: GET /api/terminal/suspended returns only suspended terminals', async ({ request }) => {
+  const suspended = await seedTerminal({ status: 'suspended', agentType: 'claude', claude_session_id: 'fake-sr17' });
+  const running = await seedTerminal({ status: 'running', agentType: 'claude' });
+  const resp = await request.get(`${getBase()}/api/terminal/suspended`);
+  expect(resp.status()).toBe(200);
+  const list = await resp.json();
+  expect(Array.isArray(list)).toBe(true);
+  expect(list.find(t => t.id === suspended.id)).toBeDefined();
+  expect(list.find(t => t.id === running.id)).toBeUndefined();
+  expect(list.every(t => t.status === 'suspended')).toBe(true);
+});
+
+test('SR-18: GET /api/dispatch/suspended returns only suspended dispatches', async ({ request }) => {
+  const { dispatch_id: suspendedId } = await seedDispatch({ status: 'suspended', claude_session_id: 'fake-sr18' });
+  const { dispatch_id: runningId } = await seedDispatch({ status: 'running' });
+  const resp = await request.get(`${getBase()}/api/dispatch/suspended`);
+  expect(resp.status()).toBe(200);
+  const list = await resp.json();
+  expect(Array.isArray(list)).toBe(true);
+  expect(list.find(d => d.id === suspendedId)).toBeDefined();
+  expect(list.find(d => d.id === runningId)).toBeUndefined();
+  expect(list.every(d => d.status === 'suspended')).toBe(true);
+});
+
+test('SR-19: GET /api/terminal/active still returns all statuses', async ({ request }) => {
+  const suspended = await seedTerminal({ status: 'suspended', agentType: 'claude', claude_session_id: 'fake-sr19-s' });
+  const running = await seedTerminal({ status: 'running', agentType: 'claude' });
+  const resp = await request.get(`${getBase()}/api/terminal/active`);
+  expect(resp.status()).toBe(200);
+  const list = await resp.json();
+  expect(list.find(t => t.id === suspended.id)).toBeDefined();
+  expect(list.find(t => t.id === running.id)).toBeDefined();
 });

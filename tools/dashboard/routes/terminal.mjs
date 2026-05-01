@@ -384,6 +384,37 @@ export default function terminalRoutes(deps) {
       json(res, list);
     }],
 
+    // List suspended terminals only
+    [/^\/api\/terminal\/suspended$/, 'GET', async (_m, req, res) => {
+      const workerId = req.headers['x-test-worker-id'];
+      const list = [];
+      for (const [id, t] of terminals) {
+        if (workerId !== undefined && t._testWorkerId !== workerId) continue;
+        if (t.status !== 'suspended') continue;
+        list.push({
+          id,
+          type: t.type || 'claude',
+          agent_type: t.agent_type || t.type || 'claude',
+          work_item_id: t.work_item_id,
+          work_item_title: t.work_item_id ? db.getWorkItemTitle(t.work_item_id) : null,
+          epic_id: t.epic_id || null,
+          epic_title: t.epic_id ? db.getEpicTitle(t.epic_id) : null,
+          project_key: t.project_key,
+          project_path: t.project_path,
+          title: t.title,
+          status: t.status,
+          started_at: t.started_at,
+          exited_at: t.exited_at,
+          permission_mode: t.permission_mode || 'acceptEdits',
+          skip_permissions: t.skip_permissions || false,
+          org_key: t.org_key || null,
+          claude_session_id: t.claude_session_id || null,
+          head_seq: t.eventStream ? t.eventStream.headSeq : 0,
+        });
+      }
+      json(res, list);
+    }],
+
     // Kill all terminals (must be before :id route)
     [/^\/api\/terminal\/all$/, 'DELETE', async (_m, req, res) => {
       const workerId = req.headers['x-test-worker-id'];
