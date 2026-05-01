@@ -50,7 +50,7 @@ export default function terminalRoutes(deps) {
       let epicContext = null;
       if (epic_id) {
         try {
-          const epicFull = db.getEpicFull(epic_id);
+          const epicFull = await db.getEpicFull(epic_id);
           if (epicFull) {
             const planSnippet = await loadEpicPlanSnippet(epic_id);
             epicContext = {
@@ -266,7 +266,7 @@ export default function terminalRoutes(deps) {
       }
 
       terminals.set(id, terminal);
-      saveTerminalToDb(terminal);
+      await saveTerminalToDb(terminal);
       json(res, { terminal_id: id, status: 'running' });
     }],
 
@@ -366,24 +366,23 @@ export default function terminalRoutes(deps) {
 
       wireTerminalHandlers(terminal);
       terminals.set(id, terminal);
-      saveTerminalToDb(terminal);
+      await saveTerminalToDb(terminal);
       json(res, { terminal_id: id, status: 'running' });
     }],
 
     // List active terminals
     [/^\/api\/terminal\/active$/, 'GET', async (_m, req, res) => {
       const workerId = req.headers['x-test-worker-id'];
-      const list = [];
-      for (const [id, t] of terminals) {
-        if (workerId !== undefined && t._testWorkerId !== workerId) continue;
-        list.push({
+      const list = await Promise.all([...terminals].map(async ([id, t]) => {
+        if (workerId !== undefined && t._testWorkerId !== workerId) return null;
+        return {
           id,
           type: t.type || 'claude',
           agent_type: t.agent_type || t.type || 'claude',
           work_item_id: t.work_item_id,
-          work_item_title: t.work_item_id ? db.getWorkItemTitle(t.work_item_id) : null,
+          work_item_title: t.work_item_id ? await db.getWorkItemTitle(t.work_item_id) : null,
           epic_id: t.epic_id || null,
-          epic_title: t.epic_id ? db.getEpicTitle(t.epic_id) : null,
+          epic_title: t.epic_id ? await db.getEpicTitle(t.epic_id) : null,
           project_key: t.project_key,
           project_path: t.project_path,
           title: t.title,
@@ -397,26 +396,25 @@ export default function terminalRoutes(deps) {
           prompt: t.prompt || null,
           claude_session_id: t.claude_session_id || null,
           head_seq: t.eventStream ? t.eventStream.headSeq : 0,
-        });
-      }
-      json(res, list);
+        };
+      }));
+      json(res, list.filter(Boolean));
     }],
 
     // List suspended terminals only
     [/^\/api\/terminal\/suspended$/, 'GET', async (_m, req, res) => {
       const workerId = req.headers['x-test-worker-id'];
-      const list = [];
-      for (const [id, t] of terminals) {
-        if (workerId !== undefined && t._testWorkerId !== workerId) continue;
-        if (t.status !== 'suspended') continue;
-        list.push({
+      const list = await Promise.all([...terminals].map(async ([id, t]) => {
+        if (workerId !== undefined && t._testWorkerId !== workerId) return null;
+        if (t.status !== 'suspended') return null;
+        return {
           id,
           type: t.type || 'claude',
           agent_type: t.agent_type || t.type || 'claude',
           work_item_id: t.work_item_id,
-          work_item_title: t.work_item_id ? db.getWorkItemTitle(t.work_item_id) : null,
+          work_item_title: t.work_item_id ? await db.getWorkItemTitle(t.work_item_id) : null,
           epic_id: t.epic_id || null,
-          epic_title: t.epic_id ? db.getEpicTitle(t.epic_id) : null,
+          epic_title: t.epic_id ? await db.getEpicTitle(t.epic_id) : null,
           project_key: t.project_key,
           project_path: t.project_path,
           title: t.title,
@@ -428,9 +426,9 @@ export default function terminalRoutes(deps) {
           org_key: t.org_key || null,
           claude_session_id: t.claude_session_id || null,
           head_seq: t.eventStream ? t.eventStream.headSeq : 0,
-        });
-      }
-      json(res, list);
+        };
+      }));
+      json(res, list.filter(Boolean));
     }],
 
     // Kill all terminals (must be before :id route)
@@ -456,8 +454,8 @@ export default function terminalRoutes(deps) {
           }
           terminal.eventStream.subscribers.clear();
         }
-        archiveSession(terminal, 'terminal');
-        saveTerminalToDb(terminal);
+        archiveSession(terminal, 'terminal').catch(e => console.error('[kill all terminals] archiveSession:', e.message));
+        saveTerminalToDb(terminal).catch(e => console.error('[kill all terminals] saveTerminalToDb:', e.message));
         unlinkFile(termEventLogPath(terminal.id)).catch(() => {});
         killed++;
       }
@@ -484,10 +482,10 @@ export default function terminalRoutes(deps) {
         }
         terminal.eventStream.subscribers.clear();
       }
-      archiveSession(terminal, 'terminal');
+      archiveSession(terminal, 'terminal').catch(e => console.error('[kill terminal] archiveSession:', e.message));
       if (terminal.agents_file) unlinkFile(terminal.agents_file).catch(() => {});
       terminals.delete(m[1]);
-      db.deleteTerminal(m[1]);
+      await db.deleteTerminal(m[1]);
       unlinkFile(termEventLogPath(m[1])).catch(() => {});
       json(res, { status: 'killed', id: m[1] });
     }],
@@ -516,8 +514,8 @@ export default function terminalRoutes(deps) {
         terminal.eventStream.subscribers.clear();
       }
       terminal.ptyProcess = null;
-      archiveSession(terminal, 'terminal');
-      saveTerminalToDb(terminal);
+      archiveSession(terminal, 'terminal').catch(e => console.error('[suspend terminal] archiveSession:', e.message));
+      await saveTerminalToDb(terminal);
       json(res, { status: 'suspended', id: m[1], claude_session_id: terminal.claude_session_id });
     }],
 
@@ -535,7 +533,7 @@ export default function terminalRoutes(deps) {
       // Remove old suspended record
       if (old.agents_file) unlinkFile(old.agents_file).catch(() => {});
       terminals.delete(m[1]);
-      db.deleteTerminal(m[1]);
+      await db.deleteTerminal(m[1]);
 
       // Create new terminal with --resume flag
       const id = `T-${Date.now()}`;
@@ -623,7 +621,7 @@ export default function terminalRoutes(deps) {
 
       wireTerminalHandlers(terminal);
       terminals.set(id, terminal);
-      saveTerminalToDb(terminal);
+      await saveTerminalToDb(terminal);
       json(res, { terminal_id: id, status: 'running', resumed_from: m[1] });
     }],
 

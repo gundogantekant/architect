@@ -10,7 +10,7 @@ import { getAdapter } from './adapters/index.mjs';
 import pty from 'node-pty';
 
 // --- Project sync from portfolio registry ---
-export function syncProjectsFromRegistry() {
+export async function syncProjectsFromRegistry() {
   const registryPath = join(PORTFOLIO, 'registry.json');
   if (!existsSync(registryPath)) return 0;
   const registry = JSON.parse(readFileSync(registryPath, 'utf8'));
@@ -22,7 +22,7 @@ export function syncProjectsFromRegistry() {
       const comp = JSON.parse(readFileSync(join(PORTFOLIO, entry.org, entry.project, `${entry.component}.json`), 'utf8'));
       role = comp.role || '';
     } catch {}
-    db.upsertProject({ key, org: entry.org, project: entry.project, component: entry.component, path, role });
+    await db.upsertProject({ key, org: entry.org, project: entry.project, component: entry.component, path, role });
     count++;
   }
   if (count) console.log(`Synced ${count} projects from portfolio registry`);
@@ -84,8 +84,8 @@ export function tailLogFile(dispatch) {
       dispatch.status = 'interrupted';
       dispatch.completed_at = new Date().toISOString();
       if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
-      saveDispatchToDb(dispatch);
-      archiveSession(dispatch, 'dispatch');
+      saveDispatchToDb(dispatch).catch(e => console.error('[tail] saveDispatchToDb:', e.message));
+      archiveSession(dispatch, 'dispatch').catch(e => console.error('[tail] archiveSession:', e.message));
       broadcastDispatchDone(dispatch);
       return;
     }
@@ -109,7 +109,7 @@ export function tailLogFile(dispatch) {
           }
           if (evt.type === 'result' && evt.total_cost_usd != null) {
             dispatch.cost_usd = evt.total_cost_usd;
-            saveDispatchToDb(dispatch);
+            saveDispatchToDb(dispatch).catch(e => console.error('[tail] saveDispatchToDb (cost):', e.message));
           }
         } catch {}
         broadcastDispatchLine(dispatch, line);
@@ -119,10 +119,10 @@ export function tailLogFile(dispatch) {
   dispatch._tailInterval = interval;
 }
 
-// Restore persisted sessions from SQLite with PID liveness checks
+// Restore persisted sessions from PostgreSQL with PID liveness checks
 export async function restoreSessions(wireTerminalHandlers, deps) {
   // Mark legacy rows (no PID) as interrupted
-  db.markRunningAsInterrupted();
+  await db.markRunningAsInterrupted();
 
   const now = new Date().toISOString();
   let reconnectedDispatches = 0;
@@ -130,7 +130,7 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
   let reconnectedTerminals = 0;
   let interruptedTerminals = 0;
 
-  for (const d of db.getPersistedDispatches()) {
+  for (const d of await db.getPersistedDispatches()) {
     if (d.status === 'merge_pending') {
       const logPath = join(LOGS_DIR, `${d.id}.jsonl`);
       let output = [];
@@ -144,7 +144,7 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
         _mergeHandled: true,
       };
       dispatches.set(d.id, dispatch);
-      const mergeGate = db.getPreference('merge_gate') ?? 'confirm';
+      const mergeGate = (await db.getPreference('merge_gate')) ?? 'confirm';
       if (mergeGate === 'auto') {
         setImmediate(() => triggerMerge(dispatch, deps));
       }
@@ -180,8 +180,8 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
         interruptedDispatches++;
         d.status = 'interrupted';
         d.completed_at = now;
-        db.updateDispatchStatus(d.id, 'interrupted', now);
-        archiveSession(d, 'dispatch');
+        await db.updateDispatchStatus(d.id, 'interrupted', now);
+        archiveSession(d, 'dispatch').catch(e => console.error('[restore] archiveSession dispatch:', e.message));
         const logPath = join(LOGS_DIR, `${d.id}.jsonl`);
         let output = [];
         try { output = readFileSync(logPath, 'utf8').split('\n').filter(l => l.trim()); } catch {}
@@ -200,7 +200,7 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
     }
   }
 
-  const persistedTerminals = db.getPersistedTerminals();
+  const persistedTerminals = await db.getPersistedTerminals();
   const BATCH_SIZE = 5;
   const BATCH_DELAY_MS = 100;
 
@@ -251,8 +251,8 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
             interruptedTerminals++;
             t.status = 'interrupted';
             t.exited_at = now;
-            db.updateTerminalStatus(t.id, 'interrupted', now);
-            archiveSession(t, 'terminal');
+            await db.updateTerminalStatus(t.id, 'interrupted', now);
+            archiveSession(t, 'terminal').catch(err => console.error('[restore] archiveSession terminal:', err.message));
             terminals.set(t.id, {
               ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
               cols: t.cols || 80, rows: t.rows || 24,
@@ -269,8 +269,8 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
           interruptedTerminals++;
           t.status = 'interrupted';
           t.exited_at = now;
-          db.updateTerminalStatus(t.id, 'interrupted', now);
-          archiveSession(t, 'terminal');
+          await db.updateTerminalStatus(t.id, 'interrupted', now);
+          archiveSession(t, 'terminal').catch(err => console.error('[restore] archiveSession terminal:', err.message));
           terminals.set(t.id, {
             ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
             cols: t.cols || 80, rows: t.rows || 24,
@@ -285,14 +285,14 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
     }
   }
 
-  for (const c of db.getPersistedCliSessions()) {
+  for (const c of await db.getPersistedCliSessions()) {
     if (c.status === 'running' && isPidAlive(c.pid)) {
       cliSessions.set(c.id, { ...c });
     } else {
       // Dead or exited CLI session — archive then clean up
       if (!c.exited_at) c.exited_at = now;
-      archiveSession(c, 'cli');
-      db.deleteCliSession(c.id);
+      archiveSession(c, 'cli').catch(e => console.error('[restore] archiveSession cli:', e.message));
+      await db.deleteCliSession(c.id);
     }
   }
 
@@ -359,11 +359,11 @@ export function wireDispatchHandlers(dispatch, proc) {
         const evt = JSON.parse(line);
         if (evt.session_id && !dispatch.claude_session_id) {
           dispatch.claude_session_id = evt.session_id;
-          saveDispatchToDb(dispatch);
+          saveDispatchToDb(dispatch).catch(e => console.error('[dispatch] saveDispatchToDb (session_id):', e.message));
         }
         if (evt.type === 'result' && evt.total_cost_usd != null) {
           dispatch.cost_usd = evt.total_cost_usd;
-          saveDispatchToDb(dispatch);
+          saveDispatchToDb(dispatch).catch(e => console.error('[dispatch] saveDispatchToDb (cost):', e.message));
         }
         const newPhase = derivePhase(dispatch.agent_phase, evt);
         if (newPhase !== dispatch.agent_phase) {
@@ -395,7 +395,7 @@ export function wireDispatchHandlers(dispatch, proc) {
       dispatch.process = null;
       if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
       if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
-      saveDispatchToDb(dispatch);
+      saveDispatchToDb(dispatch).catch(e => console.error('[dispatch close] saveDispatchToDb (merge_pending):', e.message));
       return;
     }
     dispatch.status = code === 0 ? 'completed' : 'failed';
@@ -407,8 +407,8 @@ export function wireDispatchHandlers(dispatch, proc) {
     if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
     if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
     broadcastDispatchDone(dispatch);
-    archiveSession(dispatch, 'dispatch');
-    saveDispatchToDb(dispatch);
+    archiveSession(dispatch, 'dispatch').catch(e => console.error('[dispatch close] archiveSession:', e.message));
+    saveDispatchToDb(dispatch).catch(e => console.error('[dispatch close] saveDispatchToDb:', e.message));
     // Keep dispatch in memory for frontend display; auto-cleanup timer handles removal after 30min
   });
 }
@@ -436,26 +436,26 @@ export async function triggerMerge(dispatch, deps) {
     dispatch.status = 'completed';
     dispatch.merge_result = 'success';
     dispatch.completed_at = now;
-    depsDb.updateDispatchMergeResult(dispatch.id, {
+    await depsDb.updateDispatchMergeResult(dispatch.id, {
       status: 'completed',
       completed_at: now,
       merge_result: 'success',
     });
     if (dispatch.work_item_id) {
-      depsDb.updateWorkItem(dispatch.work_item_id, { status: 'done' });
+      await depsDb.updateWorkItem(dispatch.work_item_id, { status: 'done' });
     }
-    saveDispatchToDb(dispatch);
+    await saveDispatchToDb(dispatch);
     broadcastDispatchDone(dispatch);
   } else {
     dispatch.status = 'merge_conflict';
     dispatch.merge_result = 'conflict';
     dispatch.completed_at = now;
-    depsDb.updateDispatchMergeResult(dispatch.id, {
+    await depsDb.updateDispatchMergeResult(dispatch.id, {
       status: 'merge_conflict',
       completed_at: now,
       merge_result: 'conflict',
     });
-    saveDispatchToDb(dispatch);
+    await saveDispatchToDb(dispatch);
     broadcastDispatchDone(dispatch);
   }
 }

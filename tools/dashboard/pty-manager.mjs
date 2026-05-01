@@ -36,7 +36,7 @@ export function wireTerminalHandlers(terminal) {
       if (sessionId) {
         terminal.claude_session_id = sessionId;
         terminal._accumulated = '';
-        db.updateTerminalClaudeSessionId(terminal.id, sessionId);
+        db.updateTerminalClaudeSessionId(terminal.id, sessionId).catch(e => console.error('[pty] updateTerminalClaudeSessionId:', e.message));
         // Emit meta event
         const metaEvent = terminal.eventStream.append('meta', { key: 'claude_session_id', value: sessionId });
         try { appendFileSync(termEventLogPath(terminal.id), JSON.stringify(metaEvent) + '\n'); } catch {}
