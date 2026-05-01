@@ -79,7 +79,7 @@ export default function testEndpointRoutes(deps) {
       };
 
       dispatches.set(id, dispatch);
-      saveDispatchToDb(dispatch);
+      await saveDispatchToDb(dispatch);
       json(res, { dispatch_id: id, status: dispatch.status });
     }],
 
@@ -87,7 +87,7 @@ export default function testEndpointRoutes(deps) {
     [/^\/api\/test\/reset-sessions$/, 'POST', async (_m, _req, res) => {
       dispatches.clear();
       terminals.clear();
-      restoreSessions(wireTerminalHandlers);
+      await restoreSessions(wireTerminalHandlers);
       json(res, { dispatches: dispatches.size, terminals: terminals.size });
     }],
 
@@ -291,7 +291,7 @@ export default function testEndpointRoutes(deps) {
       const dur = duration_seconds || 300;
       const start = started_at || new Date(new Date(end).getTime() - dur * 1000).toISOString();
       const id = seedId || `SH-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      db.recordSessionHistory({
+      await db.recordSessionHistory({
         id,
         type: 'test',
         project_key,

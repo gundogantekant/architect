@@ -10,6 +10,23 @@ import { mkdirSync } from 'node:fs';
 pg.types.setTypeParser(1114, (val) => val);
 pg.types.setTypeParser(1184, (val) => val);
 
+// Return INT8/BIGSERIAL (OID 20) as JavaScript numbers. These are auto-increment IDs
+// that will never exceed Number.MAX_SAFE_INTEGER in this system.
+pg.types.setTypeParser(20, (val) => (val === null ? null : parseInt(val, 10)));
+
+// Return NUMERIC (OID 1700) as JavaScript numbers. SUM(bigint) returns NUMERIC in PG.
+// All numeric aggregates in this system (session counts, durations, costs) fit safely in float64.
+pg.types.setTypeParser(1700, (val) => (val === null ? null : parseFloat(val)));
+
+// Serialize JS arrays/objects to JSON strings for JSONB columns.
+// pg sends JS arrays as PostgreSQL array literals ({}) which PG parses as empty objects,
+// not empty arrays. Passing a JSON string bypasses that coercion.
+function jsonb(val, fallback = null) {
+  if (val === null || val === undefined) return fallback !== null ? JSON.stringify(fallback) : null;
+  if (typeof val === 'string') return val;
+  return JSON.stringify(val);
+}
+
 let pool = null;
 
 function buildPoolConfig() {
@@ -419,7 +436,7 @@ export async function createWorkItem({ project_key, title, status, priority, des
   await pool.query(`
     INSERT INTO work_items (id, project_key, title, status, priority, description, epic_id, tags, depends_on, created_at, updated_at)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-  `, [id, project_key, title, status || 'draft', priority || 'medium', description || '', epic_id || null, tags || [], [], now, now]);
+  `, [id, project_key, title, status || 'draft', priority || 'medium', description || '', epic_id || null, jsonb(tags, []), jsonb([]), now, now]);
 
   await addWorkItemLog(id, 'Created');
 
@@ -437,10 +454,11 @@ export async function updateWorkItem(id, fields) {
   const values = [];
   let paramIdx = 1;
 
+  const WORK_ITEM_JSONB = new Set(['tags', 'depends_on']);
   for (const key of allowed) {
     if (key in fields) {
       sets.push(`${key} = $${paramIdx++}`);
-      values.push(fields[key]);
+      values.push(WORK_ITEM_JSONB.has(key) ? jsonb(fields[key], []) : fields[key]);
     }
   }
 
@@ -658,7 +676,7 @@ export async function createEpic({ title, priority, description, acceptance_crit
   await pool.query(`
     INSERT INTO epics (id, title, status, priority, description, acceptance_criteria, target_date, tags, created_at, updated_at)
     VALUES ($1, $2, 'draft', $3, $4, $5, $6, $7, $8, $9)
-  `, [id, title, priority || 'medium', description || '', acceptance_criteria || '', target_date || null, tags || [], now, now]);
+  `, [id, title, priority || 'medium', description || '', acceptance_criteria || '', target_date || null, jsonb(tags, []), now, now]);
 
   await addEpicLog(id, 'Created');
   return getEpic(id);
@@ -673,7 +691,7 @@ export async function updateEpic(id, fields) {
   for (const key of allowed) {
     if (key in fields) {
       sets.push(`${key} = $${paramIdx++}`);
-      values.push(fields[key]);
+      values.push(key === 'tags' ? jsonb(fields[key], []) : fields[key]);
     }
   }
 
@@ -1336,7 +1354,7 @@ export async function updateKnowledgeSyncStatus(id, fields) {
   let paramIdx = 1;
   for (const key of fieldKeys) {
     sets.push(`${key} = $${paramIdx++}`);
-    values.push(fields[key]);
+    values.push(key === 'summary_json' ? jsonb(fields[key], []) : fields[key]);
   }
   values.push(id);
   await pool.query(`UPDATE knowledge_syncs SET ${sets.join(', ')} WHERE id = $${paramIdx}`, values);
@@ -1384,7 +1402,7 @@ export async function addChangeLogEntries(entries) {
         ON CONFLICT DO NOTHING
       `, [
         e.project_key, e.commit_hash, e.commit_message, e.author || '',
-        e.committed_at, e.affected_files || [],
+        e.committed_at, jsonb(e.affected_files, []),
         e.classification, e.ai_summary || null, now,
       ]);
       inserted += result.rowCount;
@@ -1409,8 +1427,17 @@ export async function pruneChangeLogEntries(projectKey) {
 // --- Test-support query (for test-endpoints.mjs explain-query route) ---
 
 export async function explainApproverPendingQuery(identity) {
-  return pool.query(
-    `EXPLAIN SELECT * FROM work_item_approvals WHERE identity = $1 AND status = 'pending'`,
-    [identity]
-  ).then(r => r.rows);
+  // Disable seq scan so the planner is forced to consider the index even on tiny tables.
+  // This is a test-only function; the hint is session-scoped and cleared on client release.
+  const client = await pool.connect();
+  try {
+    await client.query('SET enable_seqscan = off');
+    const result = await client.query(
+      `EXPLAIN SELECT * FROM work_item_approvals WHERE identity = $1 AND status = 'pending'`,
+      [identity]
+    );
+    return result.rows.map(r => ({ detail: r['QUERY PLAN'] }));
+  } finally {
+    client.release();
+  }
 }
