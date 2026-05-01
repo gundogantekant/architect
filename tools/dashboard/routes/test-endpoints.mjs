@@ -25,9 +25,7 @@ export default function testEndpointRoutes(deps) {
       const query = url.searchParams.get('query');
       if (query === 'approver_pending') {
         const identity = url.searchParams.get('identity') || 'probe';
-        const plan = db.getDb().prepare(
-          `EXPLAIN QUERY PLAN SELECT * FROM work_item_approvals WHERE identity = ? AND status = 'pending'`
-        ).all(identity);
+        const plan = await db.explainApproverPendingQuery(identity);
         return json(res, { plan });
       }
       return err(res, `unknown query '${query}'`, 400);
