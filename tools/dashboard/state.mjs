@@ -5,10 +5,10 @@ export const dispatches = new Map();
 export const terminals = new Map();
 export const cliSessions = new Map();
 
-// --- Session persistence helpers — write to SQLite per mutation ---
+// --- Session persistence helpers — write to PostgreSQL per mutation ---
 
-export function saveDispatchToDb(d) {
-  db.saveDispatch({
+export async function saveDispatchToDb(d) {
+  await db.saveDispatch({
     id: d.id, work_item_id: d.work_item_id, epic_id: d.epic_id,
     project_key: d.project_key, project_path: d.project_path,
     title: d.title || d.work_item_id, permission_mode: d.permission_mode || 'acceptEdits',
@@ -24,8 +24,8 @@ export function saveDispatchToDb(d) {
   });
 }
 
-export function saveTerminalToDb(t) {
-  db.saveTerminal({
+export async function saveTerminalToDb(t) {
+  await db.saveTerminal({
     id: t.id, type: t.type || 'claude', work_item_id: t.work_item_id, epic_id: t.epic_id,
     project_key: t.project_key, project_path: t.project_path, org_key: t.org_key || null,
     title: t.title, permission_mode: t.permission_mode || 'acceptEdits',
@@ -38,8 +38,8 @@ export function saveTerminalToDb(t) {
   });
 }
 
-export function saveCliSessionToDb(c) {
-  db.saveCliSession({
+export async function saveCliSessionToDb(c) {
+  await db.saveCliSession({
     id: c.id, project_key: c.project_key, work_item_id: c.work_item_id,
     epic_id: c.epic_id, title: c.title, pid: c.pid,
     status: c.status, registered_at: c.registered_at, exited_at: c.exited_at,
@@ -47,7 +47,7 @@ export function saveCliSessionToDb(c) {
 }
 
 // --- Archive session to permanent history ---
-export function archiveSession(session, type) {
+export async function archiveSession(session, type) {
   const endedAt = type === 'cli' ? session.exited_at : (type === 'dispatch' ? session.completed_at : session.exited_at);
   const startedAt = type === 'cli' ? session.registered_at : session.started_at;
   if (!endedAt || !startedAt || !session.project_key) {
@@ -56,7 +56,7 @@ export function archiveSession(session, type) {
     return;
   }
   try {
-    db.recordSessionHistory({
+    await db.recordSessionHistory({
       id: session.id, type, project_key: session.project_key,
       work_item_id: session.work_item_id, epic_id: session.epic_id,
       title: session.title || '', status: session.status,
@@ -69,12 +69,12 @@ export function archiveSession(session, type) {
 }
 
 // --- Centralized session finalization: set terminal timestamp + archive ---
-export function finalizeSession(session, type) {
+export async function finalizeSession(session, type) {
   const now = new Date().toISOString();
   if (type === 'dispatch') {
     if (!session.completed_at) session.completed_at = now;
   } else {
     if (!session.exited_at) session.exited_at = now;
   }
-  archiveSession(session, type);
+  await archiveSession(session, type);
 }

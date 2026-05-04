@@ -10,7 +10,21 @@
  */
 
 import { test, expect } from './fixtures.mjs';
-import { seedWorkItem, seedEpic } from './helpers.mjs';
+import { seedWorkItem, seedEpic, api } from './helpers.mjs';
+import { ROOT } from './server-utils.mjs';
+
+const _MODAL_PROJECT_KEY = 'ticari/architect/main';
+const _MODAL_PORTFOLIO_ENTRY = { worktree_mode: 'auto', worktree_setup: { branch: 'main' } };
+
+// beforeEach: modal submit tests (M-1-3, M-3-3) call POST /api/terminal which invokes
+// resolveProjectPath() server-side. That lookup needs the registry entry to exist at the
+// moment of submission — beforeEach ensures it survives any setup ordering.
+test.beforeEach(async () => {
+  await api('test/seed-portfolio-entry', {
+    method: 'POST',
+    body: JSON.stringify({ project_key: _MODAL_PROJECT_KEY, project_path: ROOT, entry: _MODAL_PORTFOLIO_ENTRY }),
+  });
+});
 
 // ============================================================
 // Modal 1: showDiscussModal

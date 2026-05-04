@@ -10,7 +10,8 @@ import * as db from './db.mjs';
 import { EventStream } from './event-stream.mjs';
 import { getAdapter } from './adapters/index.mjs';
 
-import { CLAUDE_BIN, ROOT, PORTFOLIO, WORK, LOGS_DIR, ARCHITECT_KEY, port, VALID_WORK_ITEM_STATUSES, VALID_EPIC_STATUSES, VALID_PRIORITIES, SERVER_START_TIME, DASHCTL_PATH, PID_FILE, LOG_FILE, MIGRATIONS_DIR, TMUX_AVAILABLE, BACKUP_DIR } from './constants.mjs';
+import { CLAUDE_BIN, ROOT, PORTFOLIO, LEGACY_PORTFOLIO, WORK, LOGS_DIR, ARCHITECT_KEY, port, VALID_WORK_ITEM_STATUSES, VALID_EPIC_STATUSES, VALID_PRIORITIES, SERVER_START_TIME, DASHCTL_PATH, PID_FILE, LOG_FILE, MIGRATIONS_DIR, TMUX_AVAILABLE, BACKUP_DIR } from './constants.mjs';
+import { migrateLegacyPortfolio } from './portfolio-migration.mjs';
 import { json, text, err, safe, readJson, listDirs, listFiles, parseBody, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture, termEventLogPath, generateSeedContent, sleep } from './utils.mjs';
 
 import { dispatches, terminals, cliSessions, saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession } from './state.mjs';
@@ -29,7 +30,11 @@ import sessionRoutes from './routes/sessions.mjs';
 import dispatchRoutes from './routes/dispatch.mjs';
 import terminalRoutes from './routes/terminal.mjs';
 import serverMgmtRoutes from './routes/server-mgmt.mjs';
+import syncRoutes from './routes/sync.mjs';
+import reposRoutes from './routes/repos.mjs';
+import adrsRoutes from './routes/adrs.mjs';
 import testEndpointRoutes from './routes/test-endpoints.mjs';
+import { attemptMerge, isMergeLocked } from './merge.mjs';
 
 const deps = {
   db, json, text, err, safe, parseBody, readJson, listDirs, listFiles,
@@ -43,6 +48,7 @@ const deps = {
   restoreSessions,
   termEventLogPath, generateSeedContent, sleep, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture,
   CLAUDE_BIN, TMUX_AVAILABLE, SERVER_START_TIME, DASHCTL_PATH, PID_FILE, LOG_FILE, MIGRATIONS_DIR,
+  attemptMerge, isMergeLocked,
   EventStream, getAdapter, pty,
   spawn, execFileSync, readFile, writeFile, readFileSync, writeFileSync, appendFileSync, existsSync, createWriteStream,
   mkdir, stat, join, extname, dirname, homedir, rename, unlinkFile, renameSync, readdir,
@@ -59,6 +65,9 @@ const routes = [
   ...dispatchRoutes(deps),
   ...terminalRoutes(deps),
   ...serverMgmtRoutes(deps),
+  ...syncRoutes(deps),
+  ...reposRoutes(deps),
+  ...adrsRoutes(deps),
   ...(process.env.WORK_DIR ? testEndpointRoutes(deps) : []),
 ];
 
@@ -83,9 +92,7 @@ const server = createServer(async (req, res) => {
 setupWebSocket(server);
 
 // --- Auto-cleanup stale sessions ---
-setInterval(() => {
-  const now = Date.now();
-
+setInterval(async () => {
   // Terminals: check PID/tmux liveness for running without ptyProcess
   for (const [, terminal] of terminals) {
     if (terminal.status === 'running' && !terminal.ptyProcess && !terminal._skipAutoCleanup) {
@@ -94,8 +101,8 @@ setInterval(() => {
       if (!tmuxAlive && !pidAlive) {
         terminal.status = 'interrupted';
         terminal.exited_at = new Date().toISOString();
-        saveTerminalToDb(terminal);
-        archiveSession(terminal, 'terminal');
+        saveTerminalToDb(terminal).catch(e => console.error('[cleanup] saveTerminalToDb:', e.message));
+        archiveSession(terminal, 'terminal').catch(e => console.error('[cleanup] archiveSession:', e.message));
         const intMsg = JSON.stringify({ type: 'exit', code: -1 });
         if (terminal.eventStream) {
           for (const [, sub] of terminal.eventStream.subscribers) {
@@ -115,8 +122,8 @@ setInterval(() => {
         dispatch.completed_at = new Date().toISOString();
         if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
         if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
-        saveDispatchToDb(dispatch);
-        archiveSession(dispatch, 'dispatch');
+        saveDispatchToDb(dispatch).catch(e => console.error('[cleanup] saveDispatchToDb:', e.message));
+        archiveSession(dispatch, 'dispatch').catch(e => console.error('[cleanup] archiveSession:', e.message));
         broadcastDispatchDone(dispatch);
       }
     }
@@ -127,15 +134,15 @@ setInterval(() => {
     if (cli.status === 'running' && !isPidAlive(cli.pid)) {
       cli.status = 'exited';
       cli.exited_at = new Date().toISOString();
-      saveCliSessionToDb(cli);
-      archiveSession(cli, 'cli');
+      saveCliSessionToDb(cli).catch(e => console.error('[cleanup] saveCliSessionToDb:', e.message));
+      archiveSession(cli, 'cli').catch(e => console.error('[cleanup] archiveSession:', e.message));
     }
   }
 
   // Sessions persist until explicitly dismissed by the user — no auto-cleanup
 }, 60 * 1000);
 
-function shutdownFlush() {
+async function shutdownFlush() {
   const now = new Date().toISOString();
 
   // Dispatches: leave alive processes as running, mark dead ones as interrupted
@@ -148,8 +155,8 @@ function shutdownFlush() {
     } else {
       d.status = 'interrupted';
       d.completed_at = now;
-      saveDispatchToDb(d);
-      archiveSession(d, 'dispatch');
+      saveDispatchToDb(d).catch(e => console.error('[shutdown] saveDispatchToDb failed:', e.message));
+      archiveSession(d, 'dispatch').catch(e => console.error('[shutdown] archiveSession failed:', e.message));
     }
   }
 
@@ -163,26 +170,30 @@ function shutdownFlush() {
     } else {
       t.status = 'interrupted';
       t.exited_at = now;
-      saveTerminalToDb(t);
-      archiveSession(t, 'terminal');
+      saveTerminalToDb(t).catch(e => console.error('[shutdown] saveTerminalToDb failed:', e.message));
+      archiveSession(t, 'terminal').catch(e => console.error('[shutdown] archiveSession failed:', e.message));
     }
   }
 
-  db.closeDatabase();
+  await Promise.race([
+    db.closeDatabase(),
+    new Promise(resolve => setTimeout(resolve, 5000)),
+  ]);
 }
-process.on('SIGTERM', () => { shutdownFlush(); process.exit(0); });
-process.on('SIGINT', () => { shutdownFlush(); process.exit(0); });
+process.on('SIGTERM', () => { server.close(); shutdownFlush().finally(() => process.exit(0)); });
+process.on('SIGINT', () => { server.close(); shutdownFlush().finally(() => process.exit(0)); });
 
 async function main() {
-  // Phase 0: Backup database
-  db.backupDatabase(WORK, BACKUP_DIR);
+  // Phase 0: Backup database (best-effort — do not block startup on failure)
+  db.backupDatabase(WORK, BACKUP_DIR).catch(e => console.warn('[backup] pg_dump skipped:', e.message));
 
-  // Phase 1: Database
+  // Phase 1: Database — PostgreSQL health gate + migrations
   try {
     await db.initDatabaseAsync(WORK, MIGRATIONS_DIR);
-    console.log('Database ready:', join(WORK, 'architect.db'));
+    console.log('PostgreSQL database ready');
   } catch (e) {
-    console.error('Database initialization failed:', e.message);
+    console.error('PostgreSQL unreachable. Ensure Docker is running: docker compose up -d');
+    console.error('Details:', e.message);
     process.exit(1);
   }
 
@@ -190,22 +201,21 @@ async function main() {
   await mkdir(LOGS_DIR, { recursive: true });
 
   // Phase 2.5: Sync projects from portfolio registry
-  syncProjectsFromRegistry();
+  migrateLegacyPortfolio({ legacyPath: LEGACY_PORTFOLIO, targetPath: PORTFOLIO });
+  await syncProjectsFromRegistry();
 
   // Phase 3: Restore sessions
-  restoreSessions(wireTerminalHandlers);
+  restoreSessions(wireTerminalHandlers, deps);
 
   // Phase 3.5: Warn about orphaned worktrees
   try {
-    const orphans = db.getDb().prepare(
-      "SELECT COUNT(*) as cnt FROM dispatches WHERE worktree_path IS NOT NULL AND status != 'running'"
-    ).get();
-    if (orphans?.cnt > 10) {
-      console.warn(`[worktree] ${orphans.cnt} orphaned dispatch worktrees detected — consider running /worktree cleanup`);
+    const cnt = await db.countOrphanedWorktrees();
+    if (cnt > 10) {
+      console.warn(`[worktree] ${cnt} orphaned dispatch worktrees detected — consider running /worktree cleanup`);
     }
   } catch {}
 
-  // Phase 4: Start server
+  // Phase 4: Start server (PG is healthy — ordering enforced by initDatabaseAsync above)
   server.listen(port, '127.0.0.1', () => {
     console.log(`Dashboard: http://127.0.0.1:${port}`);
   });

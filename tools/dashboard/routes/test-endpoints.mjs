@@ -1,4 +1,4 @@
-import { shouldCreateWorktree } from '../worktree.mjs';
+import { shouldCreateWorktree, checkWorktreeReadiness, isGitRepository } from '../worktree.mjs';
 
 export default function testEndpointRoutes(deps) {
   const {
@@ -16,6 +16,7 @@ export default function testEndpointRoutes(deps) {
     appendFileSync, readFileSync, writeFileSync, mkdir, unlinkFile, join,
     execFileSync,
   } = deps;
+
   return [
     // --- Test endpoints (for E2E test seeding) ---
 
@@ -24,9 +25,7 @@ export default function testEndpointRoutes(deps) {
       const query = url.searchParams.get('query');
       if (query === 'approver_pending') {
         const identity = url.searchParams.get('identity') || 'probe';
-        const plan = db.getDb().prepare(
-          `EXPLAIN QUERY PLAN SELECT * FROM work_item_approvals WHERE identity = ? AND status = 'pending'`
-        ).all(identity);
+        const plan = await db.explainApproverPendingQuery(identity);
         return json(res, { plan });
       }
       return err(res, `unknown query '${query}'`, 400);
@@ -80,7 +79,7 @@ export default function testEndpointRoutes(deps) {
       };
 
       dispatches.set(id, dispatch);
-      saveDispatchToDb(dispatch);
+      await saveDispatchToDb(dispatch);
       json(res, { dispatch_id: id, status: dispatch.status });
     }],
 
@@ -88,7 +87,7 @@ export default function testEndpointRoutes(deps) {
     [/^\/api\/test\/reset-sessions$/, 'POST', async (_m, _req, res) => {
       dispatches.clear();
       terminals.clear();
-      restoreSessions(wireTerminalHandlers);
+      await restoreSessions(wireTerminalHandlers);
       json(res, { dispatches: dispatches.size, terminals: terminals.size });
     }],
 
@@ -139,6 +138,66 @@ export default function testEndpointRoutes(deps) {
       await mkdir(PORTFOLIO, { recursive: true });
       writeFileSync(registryPath, JSON.stringify(registry, null, 2));
       json(res, { seeded: true });
+    }],
+
+    // Seed a portfolio entry (for worktree-readiness tests)
+    [/^\/api\/test\/seed-portfolio-entry$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { project_key, project_path, entry, org_entry } = body;
+      if (!project_key || !entry) return err(res, 'project_key and entry required', 400);
+      const [org, project, component] = project_key.split('/');
+      const entryPath = join(PORTFOLIO, org, project, `${component}.json`);
+      await mkdir(join(PORTFOLIO, org, project), { recursive: true });
+      writeFileSync(entryPath, JSON.stringify(entry, null, 2));
+      // Write organization.json: use org_entry if provided, otherwise create minimal stub if missing
+      const orgJsonPath = join(PORTFOLIO, org, 'organization.json');
+      if (org_entry) {
+        writeFileSync(orgJsonPath, JSON.stringify(org_entry, null, 2));
+      } else {
+        try { readFileSync(orgJsonPath); } catch { writeFileSync(orgJsonPath, JSON.stringify({ name: org }, null, 2)); }
+      }
+      if (project_path) {
+        const registryPath = join(PORTFOLIO, 'registry.json');
+        let registry = { entries: {} };
+        try { registry = JSON.parse(readFileSync(registryPath, 'utf8')); } catch {}
+        registry.entries[project_path] = { org, project, component };
+        writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+      }
+      json(res, { seeded: true, entry_path: entryPath });
+    }],
+
+    // Remove a seeded portfolio entry (cleanup)
+    [/^\/api\/test\/seed-portfolio-entry$/, 'DELETE', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { project_key, project_path, remove_org } = body;
+      if (!project_key) return err(res, 'project_key required', 400);
+      const [org, project, component] = project_key.split('/');
+      const entryPath = join(PORTFOLIO, org, project, `${component}.json`);
+      try { await unlinkFile(entryPath); } catch {}
+      // Optionally remove the org-level organization.json (when this was the only entry for the org)
+      if (remove_org) {
+        try { await unlinkFile(join(PORTFOLIO, org, 'organization.json')); } catch {}
+      }
+      if (project_path) {
+        const registryPath = join(PORTFOLIO, 'registry.json');
+        try {
+          const registry = JSON.parse(readFileSync(registryPath, 'utf8'));
+          delete registry.entries[project_path];
+          writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+        } catch {}
+      }
+      json(res, { removed: true });
+    }],
+
+    // Test worktree readiness check logic (W-948)
+    [/^\/api\/test\/worktree-readiness-check$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { portfolio_entry, project_key } = body;
+      const result = checkWorktreeReadiness({
+        portfolioEntry: portfolio_entry || null,
+        projectKey: project_key || 'test/proj/main',
+      });
+      json(res, { warning_result: result });
     }],
 
     // Build dispatch prompt without spawning (for contract/prompt tests)
@@ -219,7 +278,7 @@ export default function testEndpointRoutes(deps) {
         tmux_session: null,
       };
       terminals.set(id, terminal);
-      saveTerminalToDb(terminal);
+      await saveTerminalToDb(terminal);
       json(res, { terminal_id: id, status: terminal.status, project_path: projectPath, prompt });
     }],
 
@@ -232,7 +291,7 @@ export default function testEndpointRoutes(deps) {
       const dur = duration_seconds || 300;
       const start = started_at || new Date(new Date(end).getTime() - dur * 1000).toISOString();
       const id = seedId || `SH-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      db.recordSessionHistory({
+      await db.recordSessionHistory({
         id,
         type: 'test',
         project_key,
@@ -254,14 +313,16 @@ export default function testEndpointRoutes(deps) {
 
       if (workerId === undefined) {
         // Global purge — no worker header means global-setup.mjs or manual call; clear everything.
+        const deleteDispatchPromises = [];
         for (const [id, d] of dispatches) {
           if (d.process) try { d.process.kill('SIGKILL'); } catch {}
           if (d._tailInterval) clearInterval(d._tailInterval);
           if (d.logStream) try { d.logStream.end(); } catch {}
           broadcastDispatchDone(d);
-          db.deleteDispatch(id);
+          deleteDispatchPromises.push(db.deleteDispatch(id));
         }
         const ptyExitPromises = [];
+        const deleteTerminalPromises = [];
         for (const [id, t] of terminals) {
           if (t.ptyProcess) {
             ptyExitPromises.push(new Promise(r => { t.ptyProcess.onExit(() => r()); setTimeout(r, 2000); }));
@@ -272,18 +333,22 @@ export default function testEndpointRoutes(deps) {
             for (const [, sub] of t.eventStream.subscribers) { try { sub.ws.close(); } catch {} }
             t.eventStream.subscribers.clear();
           }
-          db.deleteTerminal(id);
+          deleteTerminalPromises.push(db.deleteTerminal(id));
         }
-        // Wait for PTY processes to fully exit (max 2s) before responding
+        // Wait for PTY processes to fully exit (max 2s) and DB deletes before responding
         if (ptyExitPromises.length > 0) await Promise.all(ptyExitPromises);
+        await Promise.all([...deleteDispatchPromises, ...deleteTerminalPromises]);
         dispatches.clear();
         terminals.clear();
         // Hard-delete all epics and work items created during tests
-        db.hardDeleteAllTestData();
+        await db.hardDeleteAllTestData();
+        // Note: registry.json is NOT restored here — it is shared across parallel test servers
+        // and parallel purge-all calls would race and wipe entries seeded by other servers.
       } else {
         // Worker-scoped purge — delete terminals and dispatches belonging to this worker.
         const toDeleteTerminals = [];
         const workerPtyExits = [];
+        const workerDeleteTerminalPromises = [];
         for (const [id, t] of terminals) {
           if (t._testWorkerId !== workerId) continue;
           if (t.ptyProcess) {
@@ -295,23 +360,26 @@ export default function testEndpointRoutes(deps) {
             for (const [, sub] of t.eventStream.subscribers) { try { sub.ws.close(); } catch {} }
             t.eventStream.subscribers.clear();
           }
-          db.deleteTerminal(id);
+          workerDeleteTerminalPromises.push(db.deleteTerminal(id));
           toDeleteTerminals.push(id);
         }
         if (workerPtyExits.length > 0) await Promise.all(workerPtyExits);
+        await Promise.all(workerDeleteTerminalPromises);
         for (const id of toDeleteTerminals) terminals.delete(id);
 
         // Worker-scoped dispatch purge — only delete dispatches belonging to this worker.
         const toDeleteDispatches = [];
+        const workerDeleteDispatchPromises = [];
         for (const [id, d] of dispatches) {
           if (d._testWorkerId !== workerId) continue;
           if (d.process) try { d.process.kill('SIGKILL'); } catch {}
           if (d._tailInterval) clearInterval(d._tailInterval);
           if (d.logStream) try { d.logStream.end(); } catch {}
           broadcastDispatchDone(d);
-          db.deleteDispatch(id);
+          workerDeleteDispatchPromises.push(db.deleteDispatch(id));
           toDeleteDispatches.push(id);
         }
+        await Promise.all(workerDeleteDispatchPromises);
         for (const id of toDeleteDispatches) dispatches.delete(id);
       }
 
@@ -403,7 +471,7 @@ export default function testEndpointRoutes(deps) {
       };
 
       terminals.set(id, terminal);
-      saveTerminalToDb(terminal);
+      await saveTerminalToDb(terminal);
       json(res, { terminal_id: id, status: terminal.status });
     }],
 
@@ -489,7 +557,7 @@ export default function testEndpointRoutes(deps) {
 
       wireTerminalHandlers(terminal);
       terminals.set(id, terminal);
-      saveTerminalToDb(terminal);
+      await saveTerminalToDb(terminal);
 
       // Write prompt using same chunked method — this runs ASYNC while client connects
       const CHUNK_SIZE = 1024;
@@ -612,18 +680,43 @@ export default function testEndpointRoutes(deps) {
       });
     }],
 
-    // Test worktree decision logic (W-927)
+    // Test worktree decision logic (W-927, updated W-958)
+    // Accepts project_path (new) or is_git boolean (backward compat: true→ROOT, false→/tmp).
+    // NOTE: ROOT must be a git repository for backward-compat mapping of is_git: true to work.
     [/^\/api\/test\/worktree-decision$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { permission_mode, work_item_id, worktree_mode, feature_flag, is_git } = body;
-      const result = shouldCreateWorktree({
+      const { permission_mode, work_item_id, worktree_mode, feature_flag, project_path, is_git } = body;
+      const effectivePath = project_path !== undefined ? project_path
+        : is_git === true ? ROOT
+        : is_git === false ? '/tmp'
+        : null;
+      const result = await shouldCreateWorktree({
         permissionMode: permission_mode,
         workItemId: work_item_id,
         portfolioEntry: worktree_mode ? { worktree_mode } : null,
         featureFlag: feature_flag !== false,
-        isGit: is_git,
+        projectPath: effectivePath,
       });
       json(res, { should_create: result });
+    }],
+
+    // Test isGitRepository error path resilience (W-954)
+    [/^\/api\/test\/is-git-repository$/, 'POST', async (_m, req, res) => {
+      const { path: testPath } = await parseBody(req);
+      if (!testPath) return err(res, 'path is required', 400);
+      const result = await isGitRepository(testPath);
+      json(res, { is_git: result });
+    }],
+
+    // Test utility: return server ROOT path (a known git repository) for integration tests
+    [/^\/api\/test\/root-path$/, 'GET', (_m, _req, res) => {
+      json(res, { root: ROOT });
+    }],
+
+    // Diagnostic: return current PORTFOLIO path (for PP-1 test)
+    [/^\/api\/_diag\/portfolio-path$/, 'GET', async (_m, _req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ path: deps.PORTFOLIO }));
     }],
 
     // Test prompt builder with worktree context (W-927)

@@ -32,6 +32,18 @@ export const SPEC_FILES = [
   'suspend-resume',
   'state-transitions',
   'auto-implement',
+  'worktree-readiness',
+  'approvals',
+  'work-item-flags',
+  'build-tree',
+  'autonomous-pipeline',
+  'sidebar-fold',
+  'notes-sidebar',
+  'copy-fix',
+  'terminal-grid',
+  'modal-layout',
+  'portfolio-persistence',
+  'dispatch-mandate',
 ];
 
 function getLiveDashboardPorts() {

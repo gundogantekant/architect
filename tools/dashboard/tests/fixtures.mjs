@@ -18,31 +18,35 @@ import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { SPEC_FILES } from './global-setup.mjs';
 import { purgeAll } from './helpers.mjs';
-import { ROOT, BASE_PORT, killAnyOnPort, waitPortFree, waitReadyAndVerify, gracefulKill, spawnTestServer } from './server-utils.mjs';
+import { ROOT, BASE_PORT, killAnyOnPort, waitPortFree, waitReadyAndVerify, gracefulKill, spawnTestServer, createTestDb, dropTestDb, testDbName } from './server-utils.mjs';
 
 export const test = base.extend({
-  // Worker fixture: spawns a dedicated test server for this spec file.
-  // Server starts lazily when the worker needs it, not upfront for all 15 specs.
+  // Worker fixture: spawns a dedicated test server backed by an isolated
+  // PostgreSQL database. The DB is created before the server starts and
+  // dropped (WITH FORCE) after teardown.
   _workerPort: [async ({}, use, workerInfo) => {
     const specName = workerInfo.project.name.replace(/\/(chromium|firefox)$/, '');
     const idx = SPEC_FILES.indexOf(specName);
     if (idx < 0) throw new Error(`Unknown spec "${specName}" — add it to SPEC_FILES in global-setup.mjs`);
     const port = BASE_PORT + idx;
     const workDir = join(ROOT, 'tmp', `pw-s${idx}`);
+    const dbName = testDbName(port);
 
-    // Ensure port is free, then spawn server
+    // Create isolated test DB, ensure port is free, then spawn server.
+    await createTestDb(dbName);
     killAnyOnPort(port);
     await waitPortFree(port);
-    const proc = spawnTestServer(port, workDir);
+    const proc = spawnTestServer(port, workDir, dbName);
 
-    // Wait for server to be fully ready
+    // Wait for server to be fully ready.
     await waitReadyAndVerify(port, proc.pid);
 
     process.env.TEST_SERVER_PORT = String(port);
     await use(port);
 
-    // Teardown: gracefully kill server and clean up work dir
+    // Teardown: kill server, drop test DB, clean up work dir.
     await gracefulKill(proc.pid);
+    await dropTestDb(dbName).catch(() => {});
     try { rmSync(workDir, { recursive: true, force: true }); } catch {}
   }, { scope: 'worker', auto: true }],
 

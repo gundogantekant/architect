@@ -415,8 +415,8 @@ The pre-dispatch check does NOT run when:
 
 | Check | Method | Flags |
 |-------|--------|-------|
-| Already Done | `git log --oneline -20 --grep=<term> -i` + `GET /api/work-items?project_key=<key>` filtered by status `done` | Commit messages or done work items whose titles match extracted keywords |
-| In-Progress Conflict | `GET /api/work-items?project_key=<key>` filtered by status `in-progress` or `open` + `GET /api/dispatch/active` | Open/in-progress items or active dispatches whose titles overlap the request |
+| Already Done | `git log --oneline -20 --grep=<term> -i` + `GET /api/work-items/search?q=<terms>&project_key=<key>` filtered locally to `status=done` | Commit messages or done work items matching keywords |
+| Open Items Overlap | `GET /api/work-items/search?q=<terms>&project_key=<key>` (returns non-terminal items only) + `GET /api/dispatch/active` | Items in any non-terminal status (draft, planned, in-progress, blocked, in-review, testing, preview) that overlap the request |
 | Recent Changes Staleness | `git log --oneline -5 -- <path>` (when the request mentions specific files or modules) | Recent commits touching the same area the request targets |
 
 ### Keyword Extraction
@@ -432,9 +432,11 @@ Example: "add dark mode toggle to settings" → terms: `dark-mode`, `toggle`, `s
 
 | Condition | Severity |
 |-----------|----------|
-| 1 keyword match in git log or backlog title | `minor` |
-| 2+ keyword matches across git log and/or backlog | `major` |
-| Exact title match on a done work item | `critical` |
+| 1 keyword match in git log or done item title | `minor` |
+| 1+ keyword match on a draft or planned item | `major` |
+| 2+ keyword matches across git log and/or open backlog | `major` |
+| Exact title match on any open (non-terminal) item | `critical` |
+| Active dispatch whose item title matches 2+ keywords | `critical` |
 
 ### Orchestrator Behavior on Findings
 
@@ -442,8 +444,17 @@ Example: "add dark mode toggle to settings" → terms: `dark-mode`, `toggle`, `s
 |--------|----------|
 | `clear` | Proceed silently. Do not mention the check to the user. |
 | `warning` (all minor) | Mention findings briefly, proceed without blocking. |
-| `warning` (any major) | Present findings with evidence, ask user for confirmation before proceeding. |
+| `warning` (any major on open item) | Present the matching item: "I found an existing tracked item: **W-XXX — [title]** (status: planned). Should I dispatch on that item instead?" Block until user confirms yes or no. |
 | `conflict` (any critical) | Present findings, strongly recommend reviewing evidence before proceeding. User can override. |
+
+### Haiku Semantic Disambiguation
+
+When keyword search returns exactly 1 candidate with a score of 1 (single weak hit) AND the request is abstract or generic (no specific file or component names mentioned), the orchestrator may present the candidate for user confirmation before deciding to proceed or reuse the existing item.
+
+- **Condition**: 1 result, score = 1, request contains no file or module names
+- **Action**: Present the candidate title and ask: "This may relate to **W-XXX — [title]**. Are these the same topic?"
+- **Fallback**: If user says no or does not respond — proceed with original flow
+- **Skip when**: 0 candidates; exact title match (score ≥ 2 or title overlap is unambiguous); request is specific (file or component names present)
 
 ### Presentation Format
 
@@ -578,12 +589,12 @@ Every dispatch step for medium+ complexity work must carry a DispatchContract (s
 
 ### Complexity-Scaled Contract Detail
 
-| Complexity | Core Fields (4) | scope_boundary | stop_conditions |
-|------------|-----------------|----------------|-----------------|
-| trivial | None | None | None |
-| small | None | None | None |
-| medium | Required, 1-2 sentences each | Optional | Optional |
-| large | Required, 2-3 sentences with measurable criteria | Required | Required (3+) |
+| Complexity | Core Fields (4) | scope_boundary | stop_conditions | success_criteria | e2e_test_criteria |
+|------------|-----------------|----------------|-----------------|-----------------|-------------------|
+| trivial | None | None | None | None | None |
+| small | None | None | None | None | None |
+| medium | Required, 1-2 sentences each | Optional | Optional | Required | Required |
+| large | Required, 2-3 sentences with measurable criteria | Required | Required (3+) | Required | Required (3+) |
 
 ### Who Produces
 
@@ -637,6 +648,19 @@ Checked before creating an auto-implement dispatch. All conditions must pass; an
 
 Depth is communicated via `X-Architect-Session-Depth` request header. When absent, depth is assumed to be 0 (preserves CLI and browser flows). When present and ≥ 1, reject with 403.
 
+### Auto-Implement Eligible Statuses
+
+Canonical list of statuses eligible for the auto-implement endpoint. `constants.mjs` mirrors this table via `AUTO_IMPLEMENTABLE_STATUSES`. A contract test enforces consistency.
+
+| Status |
+|--------|
+| `planned` |
+| `in-progress` |
+
+### Agent Completion Signal Obligation
+
+- After step 12 (commit) completes, the agent MUST call `POST /api/dispatch/:id/complete` and then halt. Steps 13–16 of implement-work-item.md are handled server-side by the autonomous pipeline.
+
 ## Auto-Implement Failure Protocol
 
 When the autonomous agent encounters a blocking failure (no user present to decide):
@@ -650,6 +674,60 @@ When the autonomous agent encounters a blocking failure (no user present to deci
 
 In all failure cases: dispatch status = 'failed', work item status remains 'in-progress'. User reviews via dashboard and decides next step (retry, fix manually, or discard worktree).
 
+## Autonomous Pipeline Rules
+
+These rules govern the completion signal, pre-merge gate, server-side merge, and cleanup for `auto_implement` dispatches.
+
+### Completion Signal
+
+- The agent MUST call `POST /api/dispatch/:id/complete` (with `X-Architect-Session-Depth: 1` header) after committing. This is the authoritative completion signal.
+- Process exit code 0 WITHOUT a prior POST /complete → dispatch transitions to `completed` (not `merge_pending`) with a UI badge "agent exited without completion signal". No merge is triggered.
+- The endpoint is agent-only (depth ≥ 1). The pre-merge trigger `/merge` is UI/human-only (depth === 0).
+
+### New Dispatch Statuses
+
+- `merge_pending` — agent signalled completion, pre-merge gate is active; WorkItem remains `in-progress`
+- `merge_conflict` — merge was attempted but produced a git conflict; worktree is preserved intact
+- Both statuses are set on `DispatchRequest`, NOT on `WorkItem`. WorkItem is only set to `done` after a successful merge.
+
+### Pre-Merge Gate
+
+Controlled by `DashboardPreferences.merge_gate`:
+- `confirm` (default) — human approves merge in dashboard UI by clicking "Merge Now"
+- `auto` — server merges after a 10-second delay on initial signal; on server restart recovery, merge triggers immediately (no delay)
+
+### Merge Lock
+
+- Server holds an in-memory `Map<dispatch_id, boolean>` lock for concurrent-merge protection
+- Lock acquired synchronously before any `await` in the merge code path
+- Lock released in a `finally` block unconditionally
+
+### Mid-Merge Crash Recovery
+
+- `attemptMerge` checks for `.git/MERGE_HEAD` at the project path at the start of every invocation
+- If found: runs `git merge --abort` to reset the partial merge, then re-attempts
+- This makes `attemptMerge` idempotent on restart
+
+### Cancel
+
+- `POST /api/dispatch/:id/merge/cancel` clears any pending auto-merge timer
+- Dispatch remains in `merge_pending` — user can still trigger merge manually via `POST /api/dispatch/:id/merge`
+- This is a distinct endpoint — never reuse `DELETE /api/dispatch/:id` for cancel
+
+### Session Depth Guards
+
+- `POST /api/dispatch/:id/complete` — requires `X-Architect-Session-Depth >= 1` (agent-only)
+- `POST /api/dispatch/:id/merge` — requires depth `=== 0` (UI/human-only)
+
+### Worktree Cleanup
+
+- On successful merge: worktree directory removed (`git worktree remove --force`), branch deleted (`git branch -d`), dispatch transitions to `completed`, work item to `done`
+- On conflict (`merge_conflict`): worktree is preserved intact for manual resolution. User may run `/pr` to push the branch and open a PR instead.
+
+### No Automatic Retry
+
+On merge failure, dispatch enters `merge_conflict`. No automatic retry. User decides next action.
+
 ### Contract Derivation from Work Item Description
 
 When no explicit contract is provided and the work item description contains structured sections, the prompt-builder extracts contract fields automatically. Recognized section headers (markdown bold format):
@@ -660,6 +738,8 @@ When no explicit contract is provided and the work item description contains str
 - `**Failure Conditions**:` → failure_conditions
 - `**Scope Boundary**:` → scope_boundary
 - `**Stop Conditions**:` → stop_conditions (newline-separated items become array entries)
+- `**Success Criteria**:` → success_criteria
+- `**E2E Test Criteria**:` → e2e_test_criteria (newline-separated items become array entries)
 
 Only fields with matching headers are populated. Free-form descriptions without these sections produce no derived contract. Explicitly provided contracts (via dispatch modal or coordinator) take precedence over derived contracts.
 
@@ -946,7 +1026,8 @@ At the start of every conversation, the orchestrator runs a lightweight backgrou
 2. Check for active terminals
 3. Check for in-progress work items across all projects
 4. **Surface a summary only if findings are non-empty**: blocked items, stale dispatches, items needing attention, or cost anomalies
-5. If no findings, proceed silently — do not report "all clear"
+5. **Portfolio sync gate**: For each project with an in-progress or recently-active work item, query `knowledge_syncs` for the last completed sync. If `synced_at` is older than 6 hours or null (never synced), queue a background sync for that project. The sync runs async and non-blocking — it must not delay the first response to the user. If the sync detects commits classified as `architectural` or `dependency`, include a brief drift summary in the session-start surface alongside work item findings.
+6. If no findings, proceed silently — do not report "all clear"
 
 ### Progress Reporting
 
@@ -984,6 +1065,7 @@ The orchestrator proactively detects and flags conditions using `EscalationLogEn
 | `epic-stall` | An active epic has had no linked item status change across the last 3 dispatches | Flag to user; suggest reviewing epic scope or priority |
 | `cost-anomaly` | A single dispatch `cost_usd` exceeds 2x the project's average dispatch cost | Flag to user; suggest reviewing the dispatch for inefficiency |
 | `dispatch-loop` | A work item has been dispatched 3+ times (counted via session log entries) without reaching `done` status | Flag to user; suggest manual investigation or scope reduction |
+| `portfolio-drift` | A portfolio project's `change_log_entries` contain unreviewed `architectural` or `dependency` commits AND `knowledge_syncs.synced_at` is older than 24 hours | Surface in session-start block; suggest running `/sync` before dispatching agents on the affected project |
 
 Escalation entries are recorded as session log entries on the affected work item using the `EscalationLogEntry` schema. The orchestrator presents escalations to the user — it does not take autonomous corrective action.
 
@@ -1009,6 +1091,67 @@ No automatic re-dispatch on failure. The orchestrator receives failure informati
 ### Contrast with Current Error Recovery
 
 The existing Error Recovery table (above) defines what agents do when they encounter problems. This policy governs the orchestrator's response to agent-level failures. Both apply: agents follow Error Recovery; the orchestrator follows this policy.
+
+## ADR Creation Rules
+
+An ArchitecturalDecisionRecord is created when a decision affects one or more of: technology stack, data storage strategy, agent dispatch model, Clean Architecture layer boundaries, external dependencies, or performance/security trade-offs.
+
+### Who May Author ADRs
+
+- **orchestrator** — when the user explicitly requests an ADR, or when a self-referential architectural decision is made about the architect system
+- **strategist** — when its assessment warrants a recorded decision; the strategist writes to `portfolio/<org>/<project>/adrs/ADR-NNN.json` (not `docs/decisions/`) and updates the component entry's `adrs` array
+- **tech-reviewer-arch** — when a review uncovers an architectural constraint that should be recorded
+
+### Lifecycle
+
+1. A draft ADR starts with `status: proposed`. It is presented to the user before being written.
+2. On user confirmation, the ADR is written to the portfolio and its ID added to the component entry's `adrs` array.
+3. `status: proposed` ADRs are never injected into agent context.
+4. Only `status: accepted` ADRs are included in the `# Architectural Decisions` section of dispatch prompts (standard and full tiers).
+5. When a decision supersedes an existing ADR: set the old ADR's `status` to `superseded` and `superseded_by` to the new ADR's ID.
+
+### ADR Suggestions from Sync
+
+When the sync process flags a commit as `adr_candidate: true`, the orchestrator surfaces a suggestion to the user: "This commit looks like an architectural decision. Run `/sync adr <project> <sha>` to draft an ADR." This is advisory — no ADR is created without user confirmation.
+
+## Sync Rules
+
+Portfolio sync is the process of scanning a managed project's git history since the last sync anchor (`commit_from`) and recording new commits as `ChangeLogEntry` rows and a `SyncRecord` row.
+
+### Staleness Windows
+
+- **6 hours** (soft threshold): session-start gate triggers a background sync
+- **24 hours** (hard limit): triggers a `portfolio-drift` escalation entry; agents dispatched to the project receive a staleness warning in their `# Project Context` section
+
+### Sync Triggers
+
+1. **Session start** (async, non-blocking): runs when `knowledge_syncs.synced_at` is older than 6 hours for any active project
+2. **Scheduled** (CronCreate, `0 8 * * *`): daily 8 AM scan of all portfolio projects; exits early (skipped) if a project was synced within 4 hours
+3. **Manual** (`/sync` skill): explicit user request, always runs regardless of staleness
+
+### Sync Process
+
+1. Read `knowledge_syncs` for the last `commit_to` SHA per project (the anchor)
+2. Run: `git -C <path> log <commit_from>..HEAD --format="%H %ai %s" --no-merges --name-only 2>/dev/null`
+3. Parse commits and classify each via `sync-classifier.mjs` (heuristic-only, no agent dispatch)
+4. Flag commits with `adr_candidate: true` when message contains architectural-decision language AND affected files include architecture-layer paths
+5. Insert `ChangeLogEntry` rows (unique on `project_key + commit_hash`)
+6. Upsert `SyncRecord` with final counts and `summary_json`
+7. Prune `change_log_entries` to last 90 days and max 100 entries per project
+
+### Agent Context Injection
+
+- Injected at **standard and full tiers only** (not minimal or none)
+- Only `architectural` and `dependency` classified entries are included
+- Capped at 10 entries and 3000 characters total per dispatch
+- Section omitted entirely if no ADRs exist and no significant changes are present
+- When `synced_at` is older than 24 hours, dispatch prompts include a staleness warning in `# Project Context`
+
+### Graceful Degradation
+
+- Repo path not found: log `status=skipped`, continue session silently
+- `git` command fails (network, auth): log `status=failed` with error, preserve previous `commit_to` for retry
+- Sync blocked by a concurrent run (same `project_key` already `running`): log `status=skipped`
 
 ## Skill Execution Policy
 
@@ -1132,6 +1275,33 @@ open → [Plan Gate] → ready → in-progress → [Code Gate] → done
 4. `usecases/create-pr.md` — Code Gate runs before PR creation. Block verdicts warn the user.
 5. `plan-then-execute` workflow — Plan Gate runs after planner produces task decomposition.
 6. Any coordinator dispatch that includes a planner step — Plan Gate runs after planner completes.
+
+## Isolated Work Mandate
+
+These rules apply to all medium+ complexity dispatches without exception. They are enforced at the API boundary, injected into every dispatch prompt, and required in every coordinator DispatchPlan.
+
+### Core Rules
+1. **Worktree required**: Every medium+ dispatch must execute in an isolated git worktree. The worktree branches off the currently checked-out branch at dispatch time (source_branch). Never branch off main by default.
+2. **Complete contract required**: Every medium+ dispatch must have a complete DispatchContract with all four core fields (goal, constraints, expected_output, failure_conditions) plus e2e_test_criteria (minimum 1 entry; 3+ for large complexity).
+3. **Plan Gate required**: Every medium+ DispatchPlan must include a plan-gate review step (Review Board) before any implementation agent runs. Board: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx.
+4. **Code Gate required**: Every medium+ DispatchPlan must include a code-gate review step as the final pre-merge step. The code gate must verify contract satisfaction (each e2e_test_criteria item is implemented and passing). Board: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod, plus tech-reviewer-dba if DB changes present, tech-reviewer-security if auth/secrets present.
+5. **Base branch merge**: Merge always targets source_branch (the originating branch captured at worktree creation time). Never hardcode main as merge target.
+
+### Ticket Gate (Orchestrator Behavior Extension)
+For medium+ complexity, after the coordinator produces a DispatchPlan:
+1. Surface the plan to the user immediately (visibility is non-blocking).
+2. Simultaneously dispatch a Ticket Gate board review (same board as Plan Gate Board) as an async parallel step.
+3. Incorporate board feedback before proceeding to dispatch any implementation agent.
+4. If board blocks, revise the plan (max 2 revision cycles) before dispatching.
+5. Override note: This extends the existing rule that surfaces coordinator output for user approval — plan is visible immediately but implementation dispatch is gated on board clearance.
+
+### Recursion Guard
+Gate reviews (Ticket Gate, Plan Gate, Code Gate) are read-only, depth-1 dispatches. They do NOT trigger further gate reviews. Maximum gate recursion depth: 1.
+
+### Named Board Compositions
+- **Ticket Gate Board** (identical to Plan Gate Board): tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx
+- **Plan Gate Board**: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx
+- **Code Gate Board**: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod; add tech-reviewer-dba if DB schema changes present; add tech-reviewer-security if authentication, secrets, or external data involved
 
 ## External Action Rules
 

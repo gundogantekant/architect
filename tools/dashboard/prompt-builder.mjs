@@ -1,8 +1,10 @@
 import { readFile, readdir } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, PORTFOLIO, WORK, ARCHITECT_KEY, port } from './constants.mjs';
 import * as db from './db.mjs';
 import { readJson } from './utils.mjs';
+import { isMediumOrAbove } from './utils/complexity.mjs';
 
 export async function resolveProjectPath(projectKey) {
   if (projectKey === ARCHITECT_KEY) return ROOT;
@@ -120,7 +122,6 @@ export async function loadPortfolioContext(projectKey, tier = 'full') {
 
   const entry = filterByTier(rawEntry, tier);
 
-  // Load portfolio guide markdown files (standard+ tiers only)
   let guides = null;
   if (tier !== 'minimal' && rawEntry?.portfolio_guides?.length) {
     const guideDir = join(PORTFOLIO, org, project);
@@ -135,7 +136,33 @@ export async function loadPortfolioContext(projectKey, tier = 'full') {
     if (!guides.length) guides = null;
   }
 
-  return { entry, org: orgData, guides };
+  let syncContext = null;
+  if (tier === 'standard' || tier === 'full') {
+    syncContext = await loadSyncContext(projectKey, rawEntry, org, project);
+  }
+
+  return { entry, org: orgData, guides, syncContext };
+}
+
+async function loadSyncContext(projectKey, rawEntry, org, project) {
+  const adrIds = rawEntry?.adrs || [];
+  const adrDir = join(PORTFOLIO, org, project, 'adrs');
+
+  const [adrs, recentChanges, lastSyncedAt] = await Promise.all([
+    Promise.all(
+      adrIds.map(id => readJson(join(adrDir, `${id}.json`)).catch(() => null))
+    ).then(results => results.filter(a => a && a.status === 'accepted')),
+    fetch(`http://127.0.0.1:${port}/api/sync/significant?project_key=${encodeURIComponent(projectKey)}`)
+      .then(r => r.ok ? r.json() : [])
+      .then(entries => entries.filter(e => e.project_key === projectKey))
+      .catch(() => []),
+    fetch(`http://127.0.0.1:${port}/api/sync/${encodeURIComponent(projectKey)}/history`)
+      .then(r => r.ok ? r.json() : [])
+      .then(rows => rows[0]?.synced_at || null)
+      .catch(() => null),
+  ]);
+
+  return { adrs, recentChanges, lastSyncedAt };
 }
 
 export function loadWorkItem(workItemId) {
@@ -313,7 +340,84 @@ function deriveContractFromDescription(description) {
     }
   }
 
+  // Success Criteria: single-line
+  const successPattern = /\*\*Success Criteria\*\*:\s*(.+)/i;
+  const successMatch = description.match(successPattern);
+  if (successMatch) {
+    contract.success_criteria = successMatch[1].trim();
+    foundAny = true;
+  }
+
+  // E2E Test Criteria: multi-line — header line followed by newline-separated items
+  const e2ePattern = /\*\*E2E Test Criteria\*\*:\s*\n([\s\S]*?)(?=\n\*\*[A-Z]|\n##|\s*$)/i;
+  const e2eMatch = description.match(e2ePattern);
+  if (e2eMatch) {
+    const items = e2eMatch[1].split('\n').map(l => l.replace(/^[-*]\s*/, '').trim()).filter(Boolean);
+    if (items.length) {
+      contract.e2e_test_criteria = items;
+      foundAny = true;
+    }
+  }
+
   return foundAny ? contract : null;
+}
+
+function buildAdrSection(syncContext) {
+  if (!syncContext) return null;
+  const { adrs = [], recentChanges = [], lastSyncedAt } = syncContext;
+  if (!adrs.length && !recentChanges.length) return null;
+
+  const lines = ['# Architectural Decisions', ''];
+
+  if (adrs.length) {
+    lines.push('Active decisions governing this project. Follow these when planning or implementing.', '');
+    for (const adr of adrs) {
+      lines.push(`## ${adr.id}: ${adr.title}`);
+      lines.push(`- Status: ${adr.status} (${adr.date})`);
+      lines.push(`- Decision: ${adr.decision}`);
+      lines.push(`- Consequences: ${adr.consequences}`, '');
+    }
+  }
+
+  if (recentChanges.length) {
+    lines.push('## Recent External Changes (since last sync)', '');
+    let charCount = 0;
+    const MAX_CHARS = 3000;
+    for (const c of recentChanges.slice(0, 10)) {
+      const summary = c.ai_summary || c.commit_message.slice(0, 80);
+      const files = (c.affected_files || []).slice(0, 3).join(', ');
+      const shortSha = c.commit_hash.slice(0, 8);
+      const date = c.committed_at.slice(0, 10);
+      const line = `- ${shortSha} [${c.classification}] (${date}): ${summary}${files ? `\n  Files: ${files}` : ''}`;
+      if (charCount + line.length > MAX_CHARS) break;
+      lines.push(line);
+      charCount += line.length;
+    }
+    lines.push('');
+  }
+
+  const syncAge = lastSyncedAt
+    ? `last synced ${Math.round((Date.now() - new Date(lastSyncedAt).getTime()) / 3600000)}h ago`
+    : 'never synced';
+  lines.push(`*Knowledge base: ${syncAge}*`);
+
+  return lines.join('\n');
+}
+
+function buildMandateSection(complexity) {
+  if (!['medium', 'large'].includes(complexity)) {
+    return '> This dispatch follows the Isolated Work Mandate defined in `domain/rules.md` → Isolated Work Mandate.';
+  }
+  try {
+    const rulesPath = join(ROOT, 'domain', 'rules.md');
+    const content = readFileSync(rulesPath, 'utf8');
+    const start = content.indexOf('## Isolated Work Mandate');
+    if (start === -1) return '';
+    const nextSection = content.indexOf('\n## ', start + 1);
+    return nextSection === -1 ? content.slice(start) : content.slice(start, nextSection);
+  } catch {
+    return '';
+  }
 }
 
 export function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInstructions, portfolio, epicContext, relatedProjects, orgContext, worktreeContext, contract }) {
@@ -430,9 +534,9 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     awareLines.push('');
     const [pOrg, pProject, pComponent] = (projectKey || '').split('/');
     if (pOrg && pProject && pComponent) {
-      awareLines.push(`- **Portfolio entry**: \`$ARCHITECT_ROOT/portfolio/${pOrg}/${pProject}/${pComponent}.json\``);
+      awareLines.push(`- **Portfolio entry**: \`$ARCHITECT_PORTFOLIO_DIR/${pOrg}/${pProject}/${pComponent}.json\``);
       if (portfolio?.guides?.length) {
-        awareLines.push(`- **Portfolio guides**: ${portfolio.guides.map(g => g.filename).join(', ')} (in \`$ARCHITECT_ROOT/portfolio/${pOrg}/${pProject}/\`)`);
+        awareLines.push(`- **Portfolio guides**: ${portfolio.guides.map(g => g.filename).join(', ')} (in \`$ARCHITECT_PORTFOLIO_DIR/${pOrg}/${pProject}/\`)`);
       }
     }
     awareLines.push(`- **Domain rules**: \`$ARCHITECT_ROOT/domain/rules.md\` — business rules and constraints`);
@@ -508,7 +612,7 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     lines.push('', '**Navigation**:');
     lines.push(`- Your working directory is the organization root: \`${projectPath || orgContext.org?.path_root || '(unknown)'}\``);
     lines.push('- To work on a specific project, cd into its subdirectory');
-    lines.push(`- For detailed project context, read \`$ARCHITECT_ROOT/portfolio/<org>/<project>/main.json\` or query \`GET http://127.0.0.1:${port}/api/component/<org>/<project>/main\` on the dashboard API`);
+    lines.push(`- For detailed project context, read \`$ARCHITECT_PORTFOLIO_DIR/<org>/<project>/main.json\` or query \`GET http://127.0.0.1:${port}/api/component/<org>/<project>/main\` on the dashboard API`);
     lines.push('- You have cross-project awareness — use it to answer questions about the organization as a whole');
     sections.push(lines.join('\n'));
   }
@@ -617,7 +721,7 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     for (const g of portfolio.guides) {
       if (totalLen + g.content.length > MAX_GUIDE_CHARS) {
         guideLines.push(`## ${g.filename}`, '',
-          `(truncated — read full file at \`$ARCHITECT_ROOT/portfolio/${pOrg}/${pProject}/${g.filename}\`)`, '',
+          `(truncated — read full file at \`$ARCHITECT_PORTFOLIO_DIR/${pOrg}/${pProject}/${g.filename}\`)`, '',
           g.content.slice(0, MAX_GUIDE_CHARS - totalLen), '');
         break;
       }
@@ -625,6 +729,12 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
       totalLen += g.content.length;
     }
     sections.push(guideLines.join('\n'));
+  }
+
+  // --- Architectural Decisions (ADRs + recent significant changes) ---
+  {
+    const adrSection = buildAdrSection(portfolio?.syncContext);
+    if (adrSection) sections.push(adrSection);
   }
 
   // --- Layer 2: Task Context (second — work item details, description, session log) ---
@@ -670,6 +780,13 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
         lines.push('', '**Stop Conditions** (halt and report if any occur):');
         for (const c of effectiveContract.stop_conditions) lines.push(`- ${c}`);
       }
+      if (typeof effectiveContract.success_criteria === 'string' && effectiveContract.success_criteria.trim()) {
+        lines.push(`**Success Criteria**: ${effectiveContract.success_criteria}`);
+      }
+      if (Array.isArray(effectiveContract.e2e_test_criteria) && effectiveContract.e2e_test_criteria.length) {
+        lines.push('', '**E2E Test Criteria** (implement one test case per entry):');
+        for (const c of effectiveContract.e2e_test_criteria) lines.push(`- ${c}`);
+      }
       sections.push(lines.join('\n'));
     }
   }
@@ -696,6 +813,13 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
   // --- Dispatch Instructions (supplementary guidance beyond the contract) ---
   if (workItem && additionalInstructions) {
     sections.push(`# Dispatch Instructions\n\n${additionalInstructions}`);
+  }
+
+  // --- Isolated Work Mandate (always present; full section for medium+, one-liner for trivial/small) ---
+  {
+    const complexity = isMediumOrAbove(workItem) ? 'medium' : 'small';
+    const mandateContent = buildMandateSection(complexity);
+    sections.push(`# Isolated Work Mandate\n\n${mandateContent}`);
   }
 
   // --- Coding Standards (inline brief — self-contained, no file read required) ---
@@ -743,7 +867,7 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     const envLines = ['# Environment', ''];
     envLines.push(`You are running in the target project directory: ${projectPath || '(unknown)'}`);
     envLines.push(`The architect project (portfolio, backlog, domain rules) is at: ${ROOT}`);
-    envLines.push(`- Backlog: SQLite at ${ROOT}/work/architect.db (use dashboard API)`);
+    envLines.push(`- Backlog: PostgreSQL via dashboard API at http://127.0.0.1:${port}`);
     envLines.push(`- Dashboard API: http://127.0.0.1:${port}`);
     envLines.push('');
     envLines.push('Use the architect project to look up cross-project context, related tasks, domain rules, or use-case workflows when needed. Your primary work should happen in the current directory (the target project).');
@@ -800,14 +924,42 @@ function buildAutoImplementSection(workItem) {
 
 You are running in autonomous self-organizing mode for work item ${id}.
 
-Follow the workflow at \`$ARCHITECT_ROOT/usecases/implement-work-item.md\` exactly, executing all 15 steps without waiting for user confirmation at intermediate steps.
+Follow the workflow at \`$ARCHITECT_ROOT/usecases/implement-work-item.md\` exactly, executing all steps without waiting for user confirmation at intermediate steps.
 
 **EXCEPTION**: If the Technical Review Board blocks after 2 revision cycles at any gate, do NOT proceed. Log the block reason to the work item session log and halt — the dispatch will be marked as failed.
 
 Your session depth is 1. You MUST NOT trigger further dashboard dispatches (POST /api/dispatch or /api/dispatch/auto-implement). All sub-agent work runs in-process via the Agent tool.
 
-When making any API call to the dashboard (curl http://127.0.0.1:3777/...), include the header:
-\`--header "X-Architect-Session-Depth: 1"\``;
+When making any API call to the dashboard (curl http://127.0.0.1:${port}/...), include the header:
+\`--header "X-Architect-Session-Depth: 1"\`
+
+## Blocking Questions Protocol
+
+If at any point you encounter a decision that cannot be resolved from context, portfolio knowledge, or the work item description, do NOT guess. Take these actions immediately:
+1. Set the input_needed flag: \`curl -s -X PATCH http://127.0.0.1:${port}/api/work-items/${id} -H 'Content-Type: application/json' -H 'X-Architect-Session-Depth: 1' -d '{"input_needed": true, "input_needed_reason": "<specific question>", "input_needed_from": "user"}'\`
+2. Log the halt: \`curl -s -X POST http://127.0.0.1:${port}/api/work-items/${id}/log -H 'Content-Type: application/json' -H 'X-Architect-Session-Depth: 1' -d '{"summary": "Halted: input needed — <question>"}'\`
+3. Halt immediately. The user will re-dispatch with the answer in Additional Instructions.
+On re-dispatch: read the session log to find the prior question, read additional_instructions for the answer, then clear the flag and resume.
+
+## Pipeline Stage Reporting
+
+Report your current stage at each major step using:
+\`curl -s -X PUT http://127.0.0.1:${port}/api/dispatch/\${DISPATCH_ID}/stage -H 'Content-Type: application/json' -H 'X-Architect-Session-Depth: 1' -d '{"stage": "<stage>"}'\`
+
+Report these stages: investigating (step 4), implementing (step 9), testing (step 10), code_review (step 11), committing (step 12).
+
+## Completion Signal
+
+After step 12 (commit) succeeds in Auto-Implement Mode, retrieve the commit SHA and signal completion to the dashboard before halting:
+
+  COMMIT_SHA=$(git rev-parse HEAD)
+  curl -s -X POST http://127.0.0.1:${port}/api/dispatch/\${DISPATCH_ID}/complete \\
+    -H 'Content-Type: application/json' \\
+    -H 'X-Architect-Session-Depth: 1' \\
+    -d "{\\"sha\\": \\"\${COMMIT_SHA}\\", \\"summary\\": \\"<one-line summary of what was implemented>\\"}"
+
+The DISPATCH_ID is found in the \`# Tracking\` section of your prompt (the work item dispatch ID, starts with D-).
+After calling this endpoint, halt. Do not proceed to steps 13–16 — the dashboard handles merge-back automatically.`;
 }
 
 /**

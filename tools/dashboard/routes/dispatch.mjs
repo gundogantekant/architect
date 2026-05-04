@@ -1,6 +1,24 @@
 import { existsSync } from 'node:fs';
-import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository } from '../worktree.mjs';
-import { AUTO_IMPLEMENTABLE_STATUSES } from '../constants.mjs';
+import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository, checkWorktreeReadiness } from '../worktree.mjs';
+import { AUTO_IMPLEMENTABLE_STATUSES, PIPELINE_STAGES, PORTFOLIO } from '../constants.mjs';
+import { triggerMerge } from '../dispatch-manager.mjs';
+import { isMediumOrAbove } from '../utils/complexity.mjs';
+
+function validateContractForComplexity(workItem, contract) {
+  if (!isMediumOrAbove(workItem)) return null;
+  const violations = [];
+  const coreFields = ['goal', 'constraints', 'expected_output', 'failure_conditions'];
+  for (const field of coreFields) {
+    if (!contract?.[field]?.trim()) {
+      violations.push({ field, message: `required for medium+ complexity` });
+    }
+  }
+  const criteria = contract?.e2e_test_criteria;
+  if (!criteria || criteria.length === 0) {
+    violations.push({ field: 'e2e_test_criteria', message: 'must have >= 1 entry for medium+ complexity' });
+  }
+  return violations.length > 0 ? violations : null;
+}
 
 /**
  * Find an active (running) dispatch for a given work item ID.
@@ -17,26 +35,13 @@ function findActiveDispatchForWorkItem(dispatches, workItemId) {
  * Resolve which dependency IDs are not yet in 'done' status.
  * Returns array of unmet dependency IDs.
  */
-function resolveUnmetDependencies(db, dependsOn) {
+async function resolveUnmetDependencies(db, dependsOn) {
   if (!dependsOn || !dependsOn.length) return [];
-  return dependsOn.filter(depId => {
-    const dep = db.getWorkItemFull(depId);
-    return !dep || dep.status !== 'done';
-  });
-}
-
-/**
- * Create a worktree for an auto-implement dispatch (always creates, ignores worktree_mode).
- * Returns worktree context. Throws on failure — callers must handle with 500.
- */
-async function createWorktreeForAutoImplement({ projectPath, workItem }) {
-  return await createWorktreeForDispatch({
-    projectPath,
-    portfolioEntry: null,
-    workItemId: workItem.id,
-    workItemTitle: workItem.title || workItem.id,
-    orgConventions: null,
-  });
+  const results = await Promise.all(dependsOn.map(async depId => {
+    const dep = await db.getWorkItemFull(depId);
+    return (!dep || dep.status !== 'done') ? depId : null;
+  }));
+  return results.filter(Boolean);
 }
 
 export default function dispatchRoutes(deps) {
@@ -84,7 +89,7 @@ export default function dispatchRoutes(deps) {
         proc = spawn(CLAUDE_BIN, ['-p', '--output-format', 'stream-json', '--verbose'], {
           cwd: ROOT,
           stdio: ['pipe', 'pipe', 'pipe'],
-          env: { ...process.env, ARCHITECT_ROOT: ROOT },
+          env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
         });
       } catch (err) {
         return json(res, { error: `Failed to spawn claude: ${err.message}` }, 500);
@@ -104,7 +109,7 @@ export default function dispatchRoutes(deps) {
       wireDispatchHandlers(dispatch, proc);
 
       dispatches.set(id, dispatch);
-      saveDispatchToDb(dispatch);
+      await saveDispatchToDb(dispatch);
       json(res, { dispatch_id: id, status: 'running' });
     }],
 
@@ -119,8 +124,9 @@ export default function dispatchRoutes(deps) {
       let contract = null;
       if (rawContract && typeof rawContract === 'object') {
         const cleaned = {};
+        const ARRAY_FIELDS = new Set(['stop_conditions', 'e2e_test_criteria']);
         for (const [k, v] of Object.entries(rawContract)) {
-          if (k === 'stop_conditions') {
+          if (ARRAY_FIELDS.has(k)) {
             if (Array.isArray(v) && v.filter(s => typeof s === 'string' && s.trim()).length) {
               cleaned[k] = v.filter(s => typeof s === 'string' && s.trim());
             }
@@ -153,7 +159,7 @@ export default function dispatchRoutes(deps) {
       let epicContext = null;
       if (epic_id) {
         try {
-          const epicFull = db.getEpicFull(epic_id);
+          const epicFull = await db.getEpicFull(epic_id);
           if (epicFull) {
             const planSnippet = await loadEpicPlanSnippet(epic_id);
             epicContext = {
@@ -185,18 +191,38 @@ export default function dispatchRoutes(deps) {
 
       const effectiveWorkItem = workItem || (work_item_id ? { id: work_item_id, title: title || '', description: description || '', status: 'draft', priority: 'medium', tags: [], session_log: [] } : null);
 
+      // Validate contract completeness for medium+ complexity before proceeding.
+      // Runs on rawContract (pre-strip) so empty-string fields are caught as missing.
+      const contractViolations = validateContractForComplexity(effectiveWorkItem, rawContract);
+      if (contractViolations) {
+        return json(res, { error: 'Contract incomplete', violations: contractViolations }, 422);
+      }
+
       // Resolve permission mode and skip_permissions independently
       const resolvedPermMode = permission_mode || 'acceptEdits';
       const resolvedSkipPerms = skip_permissions === true || skip_permissions === 'true';
 
       // --- Dispatch-level worktree creation (W-927) ---
-      const featureFlag = (db.getPreference('worktree_at_dispatch') ?? 'true') === 'true';
+      const featureFlag = ((await db.getPreference('worktree_at_dispatch')) ?? 'true') === 'true';
       const rawEntry = portfolio?.entry || null;
-      const isGit = await isGitRepository(projectPath);
       let worktreeContext = null;
       let effectiveCwd = projectPath;
 
-      if (shouldCreateWorktree({ permissionMode: resolvedPermMode, workItemId: work_item_id, portfolioEntry: rawEntry, featureFlag, isGit })) {
+      const willCreateWorktree = await shouldCreateWorktree({
+        permissionMode: resolvedPermMode,
+        workItemId: work_item_id,
+        portfolioEntry: rawEntry,
+        featureFlag,
+        projectPath,
+      });
+      const readinessWarning = willCreateWorktree && !body.confirm_worktree_warning
+        ? checkWorktreeReadiness({ portfolioEntry: rawEntry, projectKey: project_key })
+        : null;
+      if (readinessWarning) {
+        return json(res, readinessWarning);
+      }
+
+      if (willCreateWorktree) {
         try {
           worktreeContext = await createWorktreeForDispatch({
             projectPath,
@@ -264,7 +290,7 @@ export default function dispatchRoutes(deps) {
         proc = spawn(CLAUDE_BIN, args, {
           cwd: effectiveCwd,
           stdio: ['pipe', 'pipe', 'pipe'],
-          env: { ...process.env, ARCHITECT_ROOT: ROOT },
+          env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
         });
       } catch (spawnErr) {
         return json(res, { error: `Failed to spawn claude: ${spawnErr.message}` }, 500);
@@ -284,7 +310,7 @@ export default function dispatchRoutes(deps) {
       wireDispatchHandlers(dispatch, proc);
 
       dispatches.set(id, dispatch);
-      saveDispatchToDb(dispatch);
+      await saveDispatchToDb(dispatch);
       json(res, { dispatch_id: id, status: 'running' });
     }],
 
@@ -308,7 +334,7 @@ export default function dispatchRoutes(deps) {
         return err(res, `Work item status '${workItem.status}' cannot be auto-implemented. Must be ${AUTO_IMPLEMENTABLE_STATUSES.join(', ')}.`, 400);
       }
 
-      const unmetDeps = resolveUnmetDependencies(db, workItem.depends_on || []);
+      const unmetDeps = await resolveUnmetDependencies(db, workItem.depends_on || []);
       if (unmetDeps.length) {
         return err(res, `Unmet dependencies: ${unmetDeps.join(', ')}. Resolve these before auto-implementing.`, 400);
       }
@@ -323,15 +349,31 @@ export default function dispatchRoutes(deps) {
 
       const id = `D-${Date.now()}`;
 
-      const isGit = await isGitRepository(projectPath);
-      let portfolio, worktreeContext;
-      try {
-        [portfolio, worktreeContext] = await Promise.all([
-          loadPortfolioContext(project_key),
-          isGit ? createWorktreeForAutoImplement({ projectPath, workItem }) : Promise.resolve(null),
-        ]);
-      } catch (worktreeErr) {
-        return err(res, `Failed to create worktree: ${worktreeErr.message}`, 500);
+      const featureFlag = ((await db.getPreference('worktree_at_dispatch')) ?? 'true') === 'true';
+      const portfolio = await loadPortfolioContext(project_key);
+      const rawEntry = portfolio?.entry || null;
+      let worktreeContext = null;
+
+      const willCreateWorktree = await shouldCreateWorktree({
+        permissionMode: 'acceptEdits',  // auto-implement always runs in acceptEdits mode
+        workItemId: work_item_id,
+        portfolioEntry: rawEntry,
+        featureFlag,
+        projectPath,
+      });
+
+      if (willCreateWorktree) {
+        try {
+          worktreeContext = await createWorktreeForDispatch({
+            projectPath,
+            portfolioEntry: rawEntry,
+            workItemId: work_item_id,
+            workItemTitle: workItem.title || work_item_id,
+            orgConventions: portfolio?.org,
+          });
+        } catch (worktreeErr) {
+          return err(res, `Failed to create worktree: ${worktreeErr.message}`, 500);
+        }
       }
 
       const effectiveWorkItem = { ...workItem, additional_instructions: additional_instructions || null };
@@ -385,7 +427,7 @@ export default function dispatchRoutes(deps) {
         proc = spawn(CLAUDE_BIN, args, {
           cwd: effectiveCwd,
           stdio: ['pipe', 'pipe', 'pipe'],
-          env: { ...process.env, ARCHITECT_ROOT: ROOT },
+          env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
         });
       } catch (spawnErr) {
         return json(res, { error: `Failed to spawn claude: ${spawnErr.message}` }, 500);
@@ -404,7 +446,7 @@ export default function dispatchRoutes(deps) {
       wireDispatchHandlers(dispatch, proc);
 
       dispatches.set(id, dispatch);
-      saveDispatchToDb(dispatch);
+      await saveDispatchToDb(dispatch);
       json(res, { id, dispatch_id: id, status: 'running', worktree_path: dispatch.worktree_path });
     }],
 
@@ -473,16 +515,15 @@ export default function dispatchRoutes(deps) {
     // List dispatches (returns all including completed/failed/interrupted)
     [/^\/api\/dispatch\/active$/, 'GET', async (_m, req, res) => {
       const workerId = req.headers['x-test-worker-id'];
-      const list = [];
-      for (const [id, d] of dispatches) {
-        if (workerId !== undefined && d._testWorkerId !== workerId) continue;
-        list.push({
+      const list = await Promise.all([...dispatches].map(async ([id, d]) => {
+        if (workerId !== undefined && d._testWorkerId !== workerId) return null;
+        return {
           id,
           title: d.title || null,
           work_item_id: d.work_item_id,
-          work_item_title: d.work_item_id ? db.getWorkItemTitle(d.work_item_id) : null,
+          work_item_title: d.work_item_id ? await db.getWorkItemTitle(d.work_item_id) : null,
           epic_id: d.epic_id || null,
-          epic_title: d.epic_id ? db.getEpicTitle(d.epic_id) : null,
+          epic_title: d.epic_id ? await db.getEpicTitle(d.epic_id) : null,
           project_key: d.project_key,
           project_path: d.project_path,
           status: d.status,
@@ -499,9 +540,98 @@ export default function dispatchRoutes(deps) {
           worktree_branch: d.worktree_branch || null,
           source_branch: d.source_branch || null,
           dispatch_mode: d.dispatch_mode || 'standard',
-        });
+          completion_sha: d.completion_sha || null,
+          completion_summary: d.completion_summary || null,
+          merge_result: d.merge_result || null,
+          pipeline_stage: d.pipeline_stage || null,
+          _exitedWithoutSignal: d._exitedWithoutSignal || false,
+        };
+      }));
+      json(res, list.filter(Boolean));
+    }],
+
+    // List autonomous (auto-implement) dispatches only
+    [/^\/api\/dispatch\/autonomous$/, 'GET', async (_m, req, res) => {
+      const workerId = req.headers['x-test-worker-id'];
+      const list = await Promise.all([...dispatches].map(async ([id, d]) => {
+        if (workerId !== undefined && d._testWorkerId !== workerId) return null;
+        if (d.dispatch_mode !== 'auto_implement') return null;
+        return {
+          id,
+          title: d.title || null,
+          work_item_id: d.work_item_id,
+          work_item_title: d.work_item_id ? await db.getWorkItemTitle(d.work_item_id) : null,
+          epic_id: d.epic_id || null,
+          epic_title: d.epic_id ? await db.getEpicTitle(d.epic_id) : null,
+          project_key: d.project_key,
+          project_path: d.project_path,
+          status: d.status,
+          cost_usd: d.cost_usd || null,
+          started_at: d.started_at,
+          completed_at: d.completed_at,
+          last_output: d.lastLines || [],
+          agent_phase: d.agent_phase || null,
+          needs_input: d.agent_phase === 'waiting_for_input',
+          permission_mode: d.permission_mode || 'acceptEdits',
+          skip_permissions: d.skip_permissions || false,
+          claude_session_id: d.claude_session_id || null,
+          worktree_path: d.worktree_path || null,
+          worktree_branch: d.worktree_branch || null,
+          source_branch: d.source_branch || null,
+          dispatch_mode: 'auto_implement',
+          completion_sha: d.completion_sha || null,
+          completion_summary: d.completion_summary || null,
+          merge_result: d.merge_result || null,
+          pipeline_stage: d.pipeline_stage || null,
+        };
+      }));
+      json(res, list.filter(Boolean));
+    }],
+
+    // Update pipeline stage for an autonomous dispatch (agent-only: depth >= 1)
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/stage$/, 'PUT', async (m, req, res) => {
+      const depth = parseInt(req.headers['x-architect-session-depth'] ?? '0', 10);
+      if (depth < 1) return err(res, 'pipeline stage updates are agent-only (depth >= 1)', 403);
+      const dispatch = dispatches.get(m[1]);
+      if (!dispatch) return err(res, 'dispatch not found', 404);
+      const body = await parseBody(req);
+      const { stage } = body;
+      if (!stage || !PIPELINE_STAGES.includes(stage)) {
+        return err(res, `invalid stage: must be one of ${PIPELINE_STAGES.join(', ')}`, 400);
       }
-      json(res, list);
+      dispatch.pipeline_stage = stage;
+      await db.updatePipelineStage(m[1], stage);
+      json(res, { id: m[1], pipeline_stage: stage });
+    }],
+
+    // List suspended dispatches only
+    [/^\/api\/dispatch\/suspended$/, 'GET', async (_m, req, res) => {
+      const workerId = req.headers['x-test-worker-id'];
+      const list = await Promise.all([...dispatches].map(async ([id, d]) => {
+        if (workerId !== undefined && d._testWorkerId !== workerId) return null;
+        if (d.status !== 'suspended') return null;
+        return {
+          id,
+          title: d.title || null,
+          work_item_id: d.work_item_id,
+          work_item_title: d.work_item_id ? await db.getWorkItemTitle(d.work_item_id) : null,
+          epic_id: d.epic_id || null,
+          epic_title: d.epic_id ? await db.getEpicTitle(d.epic_id) : null,
+          project_key: d.project_key,
+          project_path: d.project_path,
+          status: d.status,
+          started_at: d.started_at,
+          completed_at: d.completed_at,
+          permission_mode: d.permission_mode || 'acceptEdits',
+          skip_permissions: d.skip_permissions || false,
+          claude_session_id: d.claude_session_id || null,
+          worktree_path: d.worktree_path || null,
+          worktree_branch: d.worktree_branch || null,
+          source_branch: d.source_branch || null,
+          dispatch_mode: d.dispatch_mode || 'standard',
+        };
+      }));
+      json(res, list.filter(Boolean));
     }],
 
     // Kill all dispatches (must be before :id route)
@@ -520,8 +650,8 @@ export default function dispatchRoutes(deps) {
         if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
         if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
         broadcastDispatchDone(dispatch);
-        archiveSession(dispatch, 'dispatch');
-        saveDispatchToDb(dispatch);
+        archiveSession(dispatch, 'dispatch').catch(e => console.error('[kill all] archiveSession:', e.message));
+        saveDispatchToDb(dispatch).catch(e => console.error('[kill all] saveDispatchToDb:', e.message));
         killed++;
       }
       json(res, { killed });
@@ -541,12 +671,74 @@ export default function dispatchRoutes(deps) {
       dispatch.completed_at = new Date().toISOString();
       if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
       if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
-      archiveSession(dispatch, 'dispatch');
+      archiveSession(dispatch, 'dispatch').catch(e => console.error('[kill dispatch] archiveSession:', e.message));
       broadcastDispatchDone(dispatch);
       dispatches.delete(m[1]);
-      db.deleteDispatch(m[1]);
+      await db.deleteDispatch(m[1]);
       unlinkFile(join(LOGS_DIR, `${m[1]}.jsonl`)).catch(() => {});
       json(res, { status: 'killed', id: m[1] });
+    }],
+
+    // Cancel a pending merge (clears timer, keeps status as merge_pending)
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/merge\/cancel$/, 'POST', async (m, _req, res) => {
+      const dispatch = dispatches.get(m[1]);
+      if (!dispatch) return err(res, 'dispatch not found', 404);
+      if (dispatch.status !== 'merge_pending') return err(res, 'dispatch is not in merge_pending status', 400);
+      if (dispatch._mergeTimer) {
+        clearTimeout(dispatch._mergeTimer);
+        dispatch._mergeTimer = null;
+      }
+      json(res, { status: 'merge_pending', dispatch_id: m[1], cancelled: true });
+    }],
+
+    // Trigger merge (UI/human-only — depth 0 required)
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/merge$/, 'POST', async (m, req, res) => {
+      const depth = parseInt(req.headers['x-architect-session-depth'] || '0', 10);
+      if (depth !== 0) return err(res, 'POST /merge is UI/human-only (X-Architect-Session-Depth must be 0)', 403);
+      const dispatch = dispatches.get(m[1]);
+      if (!dispatch) return err(res, 'dispatch not found', 404);
+      if (dispatch.status !== 'merge_pending') return err(res, 'dispatch is not in merge_pending status', 400);
+      if (dispatch._mergeTimer) {
+        clearTimeout(dispatch._mergeTimer);
+        dispatch._mergeTimer = null;
+      }
+      triggerMerge(dispatch, deps).catch(e => console.error(`[merge] triggerMerge error for ${m[1]}:`, e));
+      json(res, { status: 'merging', dispatch_id: m[1] });
+    }],
+
+    // Signal completion and request merge (agent-only — depth >= 1 required)
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/complete$/, 'POST', async (m, req, res) => {
+      const depth = parseInt(req.headers['x-architect-session-depth'] || '0', 10);
+      if (depth < 1) return err(res, 'POST /complete is agent-only (X-Architect-Session-Depth >= 1 required)', 403);
+      const dispatch = dispatches.get(m[1]);
+      if (!dispatch) return err(res, 'dispatch not found', 404);
+      if (dispatch.status !== 'running') return err(res, `dispatch is not running (status: ${dispatch.status})`, 400);
+
+      // Set _mergeHandled BEFORE any await — prevents close handler from overwriting status
+      dispatch._mergeHandled = true;
+
+      const body = await parseBody(req);
+      const { sha, summary } = body || {};
+
+      dispatch.status = 'merge_pending';
+      dispatch.completion_sha = sha || null;
+      dispatch.completion_summary = summary || null;
+
+      await db.updateDispatchMergeResult(m[1], {
+        status: 'merge_pending',
+        completion_sha: sha || null,
+        completion_summary: summary || null,
+      });
+      await saveDispatchToDb(dispatch);
+
+      const mergeGate = (await db.getPreference('merge_gate')) ?? 'confirm';
+      if (mergeGate === 'auto') {
+        dispatch._mergeTimer = setTimeout(() => {
+          triggerMerge(dispatch, deps).catch(e => console.error(`[auto-merge] error for ${m[1]}:`, e));
+        }, 10000);
+      }
+
+      json(res, { status: 'merge_pending', dispatch_id: m[1] });
     }],
 
     // Suspend a dispatch (kill process but keep record for resume)
@@ -565,9 +757,9 @@ export default function dispatchRoutes(deps) {
       dispatch.completed_at = new Date().toISOString();
       if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
       if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
-      archiveSession(dispatch, 'dispatch');
+      archiveSession(dispatch, 'dispatch').catch(e => console.error('[suspend dispatch] archiveSession:', e.message));
       broadcastDispatchDone(dispatch);
-      saveDispatchToDb(dispatch);
+      await saveDispatchToDb(dispatch);
       json(res, { status: 'suspended', id: m[1], claude_session_id: dispatch.claude_session_id });
     }],
 
@@ -591,7 +783,7 @@ export default function dispatchRoutes(deps) {
 
       // Remove old suspended record
       dispatches.delete(m[1]);
-      db.deleteDispatch(m[1]);
+      await db.deleteDispatch(m[1]);
 
       // Create new dispatch with --resume flag
       const id = `D-${Date.now()}`;
@@ -633,7 +825,7 @@ export default function dispatchRoutes(deps) {
 
       let proc;
       try {
-        proc = spawn(CLAUDE_BIN, args, { cwd: resumeCwd, env: { ...process.env, ARCHITECT_ROOT: ROOT }, stdio: ['pipe', 'pipe', 'pipe'] });
+        proc = spawn(CLAUDE_BIN, args, { cwd: resumeCwd, env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO }, stdio: ['pipe', 'pipe', 'pipe'] });
       } catch (e) {
         return err(res, `Failed to spawn resumed dispatch: ${e.message}`, 500);
       }
@@ -654,7 +846,7 @@ export default function dispatchRoutes(deps) {
       proc.stdin.end();
 
       dispatches.set(id, dispatch);
-      saveDispatchToDb(dispatch);
+      await saveDispatchToDb(dispatch);
       json(res, { dispatch_id: id, status: 'running', resumed_from: m[1] });
     }],
   ];

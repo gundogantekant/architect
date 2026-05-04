@@ -8,8 +8,8 @@
     "test:dashctl": "bash tests/dashctl.test.sh"
   },
   "dependencies": {
-    "better-sqlite3": "^11.0.0",
     "node-pty": "1.2.0-beta.12",
+    "pg": "^8.20.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {

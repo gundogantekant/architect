@@ -35,9 +35,11 @@ Organization conventions (`organization.json`) are always loaded regardless of t
    - If inside a worktree: resolve the main repository root as the parent of git-common-dir
      (strip `/.git`) and use that for the registry lookup in Step 2
    - Carry the branch name and worktree flag forward for target label formatting
-2. Read `portfolio/registry.json` and look up the path → get `{org, project, component}`
+2. > Note: Portfolio root is `$ARCHITECT_PORTFOLIO_DIR` (injected by dashboard dispatch). When running as direct orchestrator CLI, default is `~/.architect/portfolio/`.
+
+   Read `$ARCHITECT_PORTFOLIO_DIR/registry.json` and look up the path → get `{org, project, component}`
 3. If found:
-   - Read `portfolio/<org>/<project>/<component>.json` (see `domain/entities.md` → PortfolioEntry)
+   - Read `$ARCHITECT_PORTFOLIO_DIR/<org>/<project>/<component>.json` (see `domain/entities.md` → PortfolioEntry)
    - Filter fields based on the requested depth tier
    - If `portfolio_guides` is present and the tier includes it (standard or full): read each listed file from `portfolio/<org>/<project>/` and include the contents in the context passed to agents
    - If `portfolio_guides` is absent or empty AND the tier is standard or full: check if `portfolio/<org>/<project>/local-dev-setup.md` exists. If it does, load it as a guide and surface to the orchestrator (not only agent context): "Note: `local-dev-setup.md` found for [project] but not registered in `portfolio_guides`. Run `/onboard <path> rescan` to register it." The orchestrator must relay this note to the user once per session at context-load time.
@@ -45,6 +47,19 @@ Organization conventions (`organization.json`) are always loaded regardless of t
    - Return combined context at requested depth
 4. If not found:
    - Return fallback indicator — caller decides the fallback strategy (see Fallback Strategies below)
+
+### Load Sync Context (standard and full tiers)
+
+After loading portfolio guides, if the tier is `standard` or `full`:
+
+1. Read the component entry's `adrs` array field (list of accepted ADR IDs like `["ADR-001", "ADR-002"]`)
+2. For each ADR ID, read `portfolio/<org>/<project>/adrs/<id>.json`
+3. Query `GET /api/sync/significant?project_key=<encoded-key>` for recent architectural/dependency commits
+4. Query `GET /api/sync/:project_key/history` (first result) for `synced_at` timestamp
+5. Assemble into a `syncContext` object: `{ adrs, recentChanges, lastSyncedAt }`
+6. Include `syncContext` in the returned portfolio object passed to `buildDispatchPrompt()`
+
+If the ADR directory doesn't exist or the sync API returns an empty result, return an empty `syncContext` (no ADRs, no recent changes). Never fail context loading because of missing sync data.
 
 ## Fallback Strategies
 

@@ -167,11 +167,13 @@ Defines the success criteria for a single dispatch step. Immutable, compared by 
   "expected_output": "string — the specific artifact or structure the agent must produce (1-3 sentences)",
   "failure_conditions": "string — what makes the output unacceptable (1-3 sentences)",
   "scope_boundary": "string | null — files/directories the agent must NOT modify; null for trivial/small",
-  "stop_conditions": "string[] | null — conditions requiring the agent to halt and report; null for trivial/small"
+  "stop_conditions": "string[] | null — conditions requiring the agent to halt and report; null for trivial/small",
+  "success_criteria": "string | null — user-visible conditions defining done (1–3 sentences); required for medium+, null for trivial/small",
+  "e2e_test_criteria": "string[] | null — specific E2E test scenarios the agent must implement; required for medium+ (3+ for large), null for trivial/small"
 }
 ```
 
-**Rules**: All four core fields (goal, constraints, expected_output, failure_conditions) are required when the contract is present. `scope_boundary` is required for large complexity, optional for medium, absent for trivial/small. `stop_conditions` is required for large complexity (3+ conditions), optional for medium, absent for trivial/small. Each string field should be 1–3 sentences. Empty strings are treated as absent (see `domain/rules.md` → Dispatch Contract Rules). The coordinator produces contracts as part of the DispatchPlan; the prompt-builder renders them in the dispatch prompt.
+**Rules**: All four core fields (goal, constraints, expected_output, failure_conditions) are required when the contract is present. `scope_boundary` is required for large complexity, optional for medium, absent for trivial/small. `stop_conditions` is required for large complexity (3+ conditions), optional for medium, absent for trivial/small. `success_criteria` is required for medium+, null for trivial/small. `e2e_test_criteria` is required for medium+ (3+ entries for large), null for trivial/small. Each string field should be 1–3 sentences. Empty strings are treated as absent (see `domain/rules.md` → Dispatch Contract Rules). The coordinator produces contracts as part of the DispatchPlan; the prompt-builder renders them in the dispatch prompt.
 
 ## ScoutReport
 
@@ -322,7 +324,7 @@ Stored at `portfolio/<org>/organization.json`.
 
 ## WorkItem
 
-Stored in SQLite (`work_items` table). The project key (`org/project/component`) provides the project context, so items do not carry a redundant `project` field.
+Stored in PostgreSQL (`work_items` table). The project key (`org/project/component`) provides the project context, so items do not carry a redundant `project` field.
 
 ```json
 {
@@ -381,7 +383,7 @@ Directories are created lazily on first write. The `notes` field on WorkItem is 
 
 ## WorkItemApproval
 
-Stored in SQLite (`work_item_approvals` table). Normalized approver records supporting sequential ordering and cross-project blocking dependencies.
+Stored in PostgreSQL (`work_item_approvals` table). Normalized approver records supporting sequential ordering and cross-project blocking dependencies.
 
 ```json
 {
@@ -403,6 +405,27 @@ Resolution semantics (per parent WorkItem's `approval.mode`):
 - `sequential` — only the lowest `sort_order` pending approver is active at a time; next approver is activated on approval
 
 Maximum 20 approvers per work item (enforced at API layer).
+
+## WorkItemLite
+
+Lightweight projection of WorkItem used in search results. Excludes approval sub-query fields and state-machine flags. Returned by `GET /api/work-items/search`.
+
+Fields: `id`, `title`, `status`, `priority`, `description`, `project_key`, `epic_id`, `tags`, `depends_on`, `created_at`, `updated_at`.
+
+## WorkItemSearchResult
+
+Response type for `GET /api/work-items/search`.
+
+```json
+{
+  "items": [{ "$ref": "WorkItemLite" }],
+  "query": {
+    "keywords": ["string"],
+    "total": "number — total matching items before 20-item cap",
+    "has_more": "boolean — true when total > 20"
+  }
+}
+```
 
 ## Epic
 
@@ -437,7 +460,7 @@ Status semantics:
 
 ## WorkBacklog
 
-Backed by SQLite at `work/architect.db`. Migrations handle versioning. The API still returns this shape for backward compatibility.
+Backed by PostgreSQL (Docker, `tools/dashboard/docker-compose.yml`). Migrations run automatically on startup. The API returns this shape:
 
 ```json
 {
@@ -468,7 +491,7 @@ Tracks an active worktree created for implementation isolation.
 
 ## AgentPhase
 
-Ephemeral (in-memory only, not persisted to SQLite) state derived from stream-json events during a dispatch session's lifetime. Tracks what the dispatched agent is currently doing. Reset to null when the dispatch reaches a terminal status.
+Ephemeral (in-memory only, not persisted to PostgreSQL) state derived from stream-json events during a dispatch session's lifetime. Tracks what the dispatched agent is currently doing. Reset to null when the dispatch reaches a terminal status.
 
 Values:
 - `worktree_setup` — dispatch infrastructure is creating and provisioning the worktree before agent spawn
@@ -479,7 +502,7 @@ Values:
 
 ## DispatchRequest
 
-Record created when the dashboard dispatches a Claude agent for a work item. Persisted to SQLite `dispatches` table (excluding process handles and listeners). Output streamed to `work/logs/D-xxx.jsonl`. On restart, sessions with live PIDs are reconnected via log file tailing; others are marked `interrupted`.
+Record created when the dashboard dispatches a Claude agent for a work item. Persisted to PostgreSQL `dispatches` table (excluding process handles and listeners). Output streamed to `work/logs/D-xxx.jsonl`. On restart, sessions with live PIDs are reconnected via log file tailing; others are marked `interrupted`.
 
 ```json
 {
@@ -491,24 +514,51 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "additional_instructions": "string (optional)",
   "permission_mode": "string (plan|acceptEdits)",
   "skip_permissions": "boolean (default false, adds --dangerously-skip-permissions flag)",
-  "status": "running|completed|failed|killed|interrupted|suspended",
+  "status": "running|completed|failed|killed|interrupted|suspended|merge_pending|merge_conflict",
   "started_at": "string (ISO 8601)",
   "completed_at": "string (ISO 8601, optional)",
   "session_id": "string (Claude session ID, optional — legacy field)",
   "claude_session_id": "string (Claude CLI session UUID, optional — captured from stream-json init event, used for resume)",
   "cost_usd": "number (total cost, optional)",
   "pid": "number (OS process ID, optional — stored for restart survival)",
-  "agent_phase": "AgentPhase (ephemeral, in-memory only — not persisted to SQLite, derived from live stream-json event parsing or log replay)",
-  "worktree_path": "string (absolute path to worktree, null if no worktree — persisted to SQLite)",
-  "worktree_branch": "string (worktree branch name, null if no worktree — persisted to SQLite)",
-  "source_branch": "string (originating branch the worktree was created from, null if no worktree — persisted to SQLite)",
-  "dispatch_mode": "string ('standard' | 'auto_implement', default 'standard')"
+  "agent_phase": "AgentPhase (ephemeral, in-memory only — not persisted to PostgreSQL, derived from live stream-json event parsing or log replay)",
+  "worktree_path": "string (absolute path to worktree, null if no worktree — persisted to PostgreSQL)",
+  "worktree_branch": "string (worktree branch name, null if no worktree — persisted to PostgreSQL)",
+  "source_branch": "string (originating branch the worktree was created from, null if no worktree — persisted to PostgreSQL)",
+  "dispatch_mode": "string ('standard' | 'auto_implement', default 'standard')",
+  "completion_sha": "string (SHA of the final implementation commit, optional)",
+  "completion_summary": "string (agent-provided summary, max 500 chars, optional)",
+  "merge_result": "'success'|'conflict'|'aborted' — outcome of the merge attempt, optional",
+  "plan_gate_passed": "boolean | null     // null until plan gate runs; true if approved, false if blocked",
+  "plan_gate_passed_at": "string | null   // ISO 8601 timestamp when plan gate resolved; null until then",
+  "code_gate_passed": "boolean | null     // null until code gate runs; true if approved, false if blocked",
+  "code_gate_passed_at": "string | null   // ISO 8601 timestamp when code gate resolved; null until then",
+  "contract_satisfied": "boolean | null   // null until code gate; set true when all e2e_test_criteria confirmed passing",
+  "contract_satisfied_at": "string | null // ISO 8601 timestamp when contract satisfaction was confirmed"
 }
 ```
 
+CompleteDispatchRequest validation:
+- For medium+ complexity dispatches: reject completion if code_gate_passed !== true
+- For trivial/small dispatches: gate fields may be null (backward compatible; no rejection)
+- Complexity is determined by getComplexityLevel(workItem) — see Isolated Work Mandate
+
+## AutonomousCompletionPayload (Value Object)
+
+Request body sent by the agent to POST /api/dispatch/:id/complete to signal that autonomous pipeline execution has completed. Immutable, no identity or lifecycle.
+
+```json
+{
+  "sha": "string — git commit SHA of the final implementation commit",
+  "summary": "string — brief one-line agent-provided summary (max 500 chars)"
+}
+```
+
+Rules: Both fields are required. sha must be a valid git SHA string. summary is informational only. This endpoint is agent-only — callers must supply X-Architect-Session-Depth: 1 header. See domain/rules.md → Autonomous Pipeline Rules.
+
 ## TerminalSession
 
-Record for an interactive PTY terminal session spawned from the dashboard. Persisted to SQLite `terminals` table (excluding ptyProcess, scrollback, wsClients). When tmux is available, terminals are wrapped in tmux sessions for restart survival. On restart, tmux sessions are re-attached; PID-only sessions are marked as detached; dead sessions are marked `interrupted`.
+Record for an interactive PTY terminal session spawned from the dashboard. Persisted to PostgreSQL `terminals` table (excluding ptyProcess, scrollback, wsClients). When tmux is available, terminals are wrapped in tmux sessions for restart survival. On restart, tmux sessions are re-attached; PID-only sessions are marked as detached; dead sessions are marked `interrupted`.
 
 ```json
 {
@@ -525,7 +575,7 @@ Record for an interactive PTY terminal session spawned from the dashboard. Persi
   "exited_at": "string (ISO 8601, null while running)",
   "pid": "number (OS process ID, optional — stored for restart survival)",
   "tmux_session": "string (tmux session name, optional — e.g. architect-T-xxx)",
-  "claude_session_id": "string (Claude CLI session UUID, optional — pre-assigned via --session-id at spawn, used for resume)"
+  "claude_session_id": "string (Claude CLI session UUID — required for suspend/resume; only present when agent_type === 'claude'. Suspend is rejected if absent or if agent_type !== 'claude')"
 }
 ```
 
@@ -549,7 +599,7 @@ Record for a CLI session registered externally via the dashboard API. Read-only 
 
 ## SessionsFile
 
-Sessions are persisted in SQLite tables (`dispatches`, `terminals`, `cli_sessions`) in `work/architect.db`. Dispatch output is logged to `work/logs/D-xxx.jsonl` files. On startup, sessions with live PIDs (or tmux sessions) are reconnected; legacy sessions without PIDs are marked `interrupted`. The API returns this shape for backward compatibility:
+Sessions are persisted in PostgreSQL tables (`dispatches`, `terminals`, `cli_sessions`). Dispatch output is logged to `work/logs/D-xxx.jsonl` files. On startup, sessions with live PIDs (or tmux sessions) are reconnected; legacy sessions without PIDs are marked `interrupted`. The API returns this shape:
 
 ```json
 {
@@ -572,7 +622,7 @@ Structured log entry recorded when the orchestrator detects a condition requirin
 ```json
 {
   "type": "escalation",
-  "trigger": "stale|blocked-chain|epic-stall|cost-anomaly|dispatch-loop",
+  "trigger": "stale|blocked-chain|epic-stall|cost-anomaly|dispatch-loop|portfolio-drift",
   "summary": "string — human-readable description of the escalation",
   "related_items": ["string (W-XXX or E-XXX IDs)"]
 }
@@ -587,14 +637,167 @@ Trigger semantics:
 
 See `domain/rules.md` → Project Manager Behavior Rules → Escalation Triggers for detection criteria.
 
+## ArchitecturalDecisionRecord
+
+A typed record of a single architectural decision. Covers decisions made by the human, by the AI architect, or by a dispatched agent (strategist, tech-reviewer-arch). Stored as `portfolio/<org>/<project>/adrs/ADR-NNN.json`, scoped per component.
+
+```json
+{
+  "id": "string — ADR-NNN format, zero-padded, scoped per component (e.g. ADR-001)",
+  "title": "string — concise decision title",
+  "status": "proposed | accepted | deprecated | superseded",
+  "context": "string — what problem or situation prompted this decision (1-4 sentences)",
+  "decision": "string — what was decided and why (1-4 sentences)",
+  "consequences": "string — what changes as a result; trade-offs accepted (1-4 sentences)",
+  "date": "YYYY-MM-DD — date the decision was made or recorded",
+  "tags": ["string — topic tags for filtering (e.g. 'storage', 'agents', 'dispatch')"],
+  "project_key": "string — org/project/component — the component this decision governs",
+  "author": "string — 'architect' | 'human' | 'agent:<agent-name>' — who produced the decision",
+  "source_work_item": "string (W-XXX, optional) — work item that triggered this decision",
+  "superseded_by": "string (ADR-NNN, optional) — ID of the ADR that replaces this one; null unless status=superseded"
+}
+```
+
+Status semantics:
+- `proposed` — drafted but not yet confirmed; NOT injected into agent context
+- `accepted` — confirmed and active; injected into standard/full tier agent context
+- `deprecated` — still applies but discouraged
+- `superseded` — replaced by another ADR (set `superseded_by` to the new ID)
+
+ADRs are indexed in the portfolio component entry via a new optional `adrs` field (array of accepted ADR-NNN IDs). The `adrs/` directory lives alongside the component JSON: `portfolio/<org>/<project>/adrs/`.
+
+## SyncRecord
+
+One row per completed sync run per project in the `knowledge_syncs` PostgreSQL table. Records when a portfolio project's git history was last scanned for external changes.
+
+```json
+{
+  "id": "number (autoincrement)",
+  "project_key": "string (org/project/component)",
+  "trigger": "session_start | scheduled | manual",
+  "sync_source": "'local' | 'remote' — 'local' for /sync skill runs, 'remote' for scheduled pulls",
+  "status": "pending | running | completed | failed | skipped",
+  "started_at": "string (ISO 8601)",
+  "synced_at": "string (ISO 8601) | null — null until completed",
+  "commit_from": "string (git SHA) | null — HEAD at previous sync (the 'since' anchor)",
+  "commit_to": "string (git SHA) | null — HEAD at this sync completion",
+  "commits_scanned": "number",
+  "significant_count": "number — count of architectural + dependency classified commits",
+  "summary_json": "string (JSON) — array of SyncCommitEntry",
+  "error": "string | null — failure reason when status=failed"
+}
+```
+
+### SyncCommitEntry (embedded in summary_json)
+
+```json
+{
+  "sha": "string — short git hash (8 chars)",
+  "message": "string — first line of commit message",
+  "author": "string",
+  "timestamp": "string (ISO 8601)",
+  "significance": "high | medium | low",
+  "files_touched": ["string — relative file paths"],
+  "adr_candidate": "boolean — true when commit looks like an architectural decision",
+  "adr_candidate_reason": "string | null"
+}
+```
+
+Freshness is computed at read time, not stored:
+- `fresh` — `synced_at` within 6 hours
+- `aging` — `synced_at` 6–24 hours ago
+- `stale` — `synced_at` older than 24 hours, or never synced
+
+## ChangeLogEntry
+
+One row per significant commit detected during portfolio sync, stored in the `change_log_entries` PostgreSQL table. Forms the observable change history for a managed project between sync cycles.
+
+```json
+{
+  "id": "number (autoincrement)",
+  "project_key": "string (org/project/component)",
+  "commit_hash": "string — full SHA-1 git commit hash",
+  "commit_message": "string — first line of commit message",
+  "author": "string — git author name",
+  "committed_at": "string (ISO 8601)",
+  "affected_files": "string (JSON array) — relative file paths changed in this commit",
+  "classification": "architectural | dependency | feature | fix | docs | test | chore",
+  "ai_summary": "string | null — one-sentence plain-English summary; populated for architectural/dependency commits",
+  "detected_at": "string (ISO 8601) — when this entry was inserted by the sync process"
+}
+```
+
+Classification semantics:
+- `architectural` — touches domain layer, schema files, API definitions, root config manifests
+- `dependency` — package manifest changes that add/remove/upgrade dependencies
+- `feature` — new functionality (feat: prefix or additive keywords)
+- `fix` — bug fixes (fix: prefix or fix/patch/resolve keywords)
+- `docs` — documentation-only changes
+- `test` — test file changes only
+- `chore` — build, CI, formatting, everything else
+
+Retention: entries older than 90 days are pruned on each sync run. If a project accumulates more than 100 entries after pruning, the oldest beyond 100 are also removed.
+
+See `domain/rules.md` → Sync Rules for classification heuristics and injection limits.
+
+## RepoSyncConfig
+
+One row per GitHub repository participating in scheduled remote syncs. Stored in the `repo_sync_configs` PostgreSQL table.
+
+```json
+{
+  "github_repo_name": "string (PK) — GitHub repository name (without org prefix)",
+  "github_org": "string — GitHub organisation; defaults to 'NeuronicPBM'",
+  "default_branch": "string — branch to fetch and mirror; defaults to 'main'",
+  "local_path": "string | null — absolute path to work/mirrors/<name>; null until first clone",
+  "portfolio_key": "string | null — org/project/component if registered in portfolio; null otherwise",
+  "sync_enabled": "boolean — whether this repo participates in scheduled syncs",
+  "last_github_updated_at": "string (TIMESTAMPTZ) | null — last push time from GitHub API",
+  "created_at": "string (TIMESTAMPTZ)",
+  "updated_at": "string (TIMESTAMPTZ)"
+}
+```
+
+## OrgActivitySummary
+
+Not persisted to the database — written as a file artifact to `~/.architect/portfolio/neuronic/sync-log.md` (appended) after each scheduled sync pass that produced new commits.
+
+```json
+{
+  "generated_at": "string (ISO 8601) — timestamp of summary generation",
+  "sync_run_id": "string — identifies the triggering sync pass",
+  "repos_synced": ["string — github_repo_name values for repos that had new commits"],
+  "technical_changelog": "string (Markdown) — org-wide narrative of changes",
+  "developer_activity": "string (Markdown table) — columns: Developer | Repos | Summary",
+  "repository_summaries": "string (Markdown) — one subsection per repo with commit highlights",
+  "adr_candidates": [{ "$ref": "AdrCandidate" }]
+}
+```
+
+### AdrCandidate (embedded in OrgActivitySummary)
+
+```json
+{
+  "id": "string — ADR-YYYYMMDD-NNN format",
+  "org_key": "string — organisation identifier",
+  "title": "string",
+  "type": "'architectural' | 'dependency' | 'feature' | 'api-contract'",
+  "repos": ["string — github_repo_name values for repos that surfaced this candidate"],
+  "sync_run_id": "string | null",
+  "detail_path": "string — absolute path to portfolio/neuronic/adrs/<id>.md",
+  "created_at": "string (TIMESTAMPTZ)"
+}
+```
+
 ## DashboardPreferences
 
-Key-value pairs stored in the `preferences` table in SQLite. Used for dashboard-wide settings.
+Key-value pairs stored in the `preferences` table in PostgreSQL. Used for dashboard-wide settings.
 
 ```json
 {
   "default_permission_mode": "plan|acceptEdits",
-  "default_skip_permissions": "true|false"
+  "default_skip_permissions": "true|false",
+  "merge_gate": "'confirm'|'auto' (default: 'confirm') — pre-merge gate mode for auto-implement dispatches; confirm=human approves in UI, auto=merge after 10s delay"
 }
 ```
 

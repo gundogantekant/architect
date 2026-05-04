@@ -56,6 +56,7 @@ test.describe('Worktree dispatch contracts @fast', () => {
         work_item_id: 'W-999',
         worktree_mode: 'explicit',
         feature_flag: true,
+        is_git: true,  // ensure the mode check is actually reached
       }),
     });
     expect(resp.should_create).toBe(false);
@@ -101,10 +102,9 @@ test.describe('Worktree dispatch contracts @fast', () => {
     expect(resp.should_create).toBe(false);
   });
 
-  test('WD-14: shouldCreateWorktree backward compat — omitting isGit uses existing logic', async () => {
-    // When isGit is omitted (undefined), the falsy guard fires → returns false.
-    // This is intentional: all updated callers explicitly pass isGit, so undefined
-    // means an untouched caller — conservatively block.
+  test('WD-14: shouldCreateWorktree returns false when project_path and is_git are both omitted', async () => {
+    // No project_path and no is_git provided → effectivePath = null in test endpoint
+    // → shouldCreateWorktree receives projectPath: null → !projectPath guard fires → returns false.
     const resp = await api('test/worktree-decision', {
       method: 'POST',
       body: JSON.stringify({
@@ -114,7 +114,6 @@ test.describe('Worktree dispatch contracts @fast', () => {
         feature_flag: true,
       }),
     });
-    // isGit not passed → undefined → !undefined = true → returns false
     expect(resp.should_create).toBe(false);
   });
 
@@ -230,6 +229,63 @@ test.describe('Worktree dispatch contracts @fast', () => {
     expect(found.source_branch).toBeNull();
     // Work item still present
     expect(found.work_item_id).toBe('W-555');
+  });
+
+  // --- Standard dispatch non-git integration (W-954) ---
+
+  test('WD-15: standard /api/dispatch with non-git project path produces worktree_path: null', async ({ request }) => {
+    const base = getBase();
+    const fakeKey = 'test/fake-project-wd15/main';
+    // Use /var/tmp (distinct from AI-10's /tmp) to avoid a shared-registry key collision
+    // between parallel test servers. Both paths are non-git and exist on POSIX systems.
+    await request.post(`${base}/api/test/seed-registry-entry`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: { project_key: fakeKey, project_path: '/var/tmp' },
+    });
+    const wi = await seedWorkItem({ title: 'WD-15 test', status: 'planned' });
+    const resp = await request.post(`${base}/api/dispatch`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        project_key: fakeKey,
+        work_item_id: wi.id,
+        permission_mode: 'acceptEdits',
+      },
+    });
+    // Non-git path: isGitRepository('/var/tmp') = false → shouldCreateWorktree = false → no worktree
+    expect(resp.status()).toBe(200);
+    const body = await resp.json();
+    expect(body.dispatch_id).toBeTruthy();
+
+    // Fetch active list without x-test-worker-id header so real dispatches (untagged) are visible
+    const activeResp = await request.get(`${base}/api/dispatch/active`);
+    expect(activeResp.ok()).toBe(true);
+    const active = await activeResp.json();
+    const dispatch = active.find(d => d.id === body.dispatch_id);
+    expect(dispatch).toBeDefined();
+    expect(dispatch.worktree_path).toBeNull();
+    expect(dispatch.worktree_branch).toBeNull();
+  });
+
+  // --- isGitRepository error path resilience (W-954) ---
+
+  test('WD-16: isGitRepository returns false for non-git, nonexistent, and file paths without throwing', async () => {
+    const nonGitResult = await api('test/is-git-repository', {
+      method: 'POST',
+      body: JSON.stringify({ path: '/tmp' }),
+    });
+    expect(nonGitResult.is_git).toBe(false);
+
+    const missingResult = await api('test/is-git-repository', {
+      method: 'POST',
+      body: JSON.stringify({ path: '/nonexistent-path-wd16-test-99999' }),
+    });
+    expect(missingResult.is_git).toBe(false);
+
+    const fileResult = await api('test/is-git-repository', {
+      method: 'POST',
+      body: JSON.stringify({ path: '/etc/hosts' }),
+    });
+    expect(fileResult.is_git).toBe(false);
   });
 
 });

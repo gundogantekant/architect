@@ -11,7 +11,18 @@
 import { test, expect } from './fixtures.mjs';
 import { seedWorkItem, seedEpic, api } from './helpers.mjs';
 
+const _MD_PROJECT_KEY = 'ticari/architect/main';
+const _MD_PORTFOLIO_ENTRY = { worktree_mode: 'auto', worktree_setup: { branch: 'main' } };
+
 test.describe('Markdown description rendering @behavioral', () => {
+
+  test.beforeAll(async () => {
+    await api('test/seed-portfolio-entry', {
+      method: 'POST',
+      body: JSON.stringify({ project_key: _MD_PROJECT_KEY, entry: _MD_PORTFOLIO_ENTRY }),
+    });
+  });
+
 
   test('MD-1: work item description renders markdown in project board detail row', async ({ page }) => {
     await seedWorkItem({
@@ -40,6 +51,7 @@ test.describe('Markdown description rendering @behavioral', () => {
       title: 'MD-2 item',
       description: '# Heading\n\n- list item one',
       project_key: 'ticari/architect/main',
+      status: 'planned',
     });
     await page.goto('/#component/ticari/architect/main');
     await page.waitForSelector('.dispatch-btn[data-wi-idx]', { timeout: 15_000 });
@@ -60,7 +72,7 @@ test.describe('Markdown description rendering @behavioral', () => {
       description: '**epic bold** and `code snippet`',
     });
     await page.goto(`/#epic/${epic.id}`);
-    await expect(page.getByText('MD-3 epic')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('heading', { name: /MD-3 epic/ })).toBeVisible({ timeout: 15_000 });
 
     // Description is in the "Details" tab (tab index 3)
     await page.locator('.tab[data-tab="3"]').click();

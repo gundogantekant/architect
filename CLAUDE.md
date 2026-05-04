@@ -150,7 +150,7 @@ All skills follow `usecases/load-portfolio-context.md` as their first step. See 
 
 ## Work Tracking
 
-Persistent backlog in SQLite at `work/architect.db` using a project-keyed structure: items are nested under `projects["org/project/component"].items` instead of a flat array. IDs are globally unique (`W-XXX`). Use `/work` to view open items at session start. The dashboard API (`/api/backlog`, `/api/work-items/...`) provides the primary interface; the tracker agent uses these API endpoints instead of direct file access.
+Persistent backlog in PostgreSQL (via Docker, `tools/dashboard/docker-compose.yml`) using a project-keyed structure: items are nested under `projects["org/project/component"].items` instead of a flat array. IDs are globally unique (`W-XXX`). Use `/work` to view open items at session start. The dashboard API (`/api/backlog`, `/api/work-items/...`) provides the primary interface; the tracker agent uses these API endpoints instead of direct file access.
 
 **Terminology**: task = ticket = work item. The dashboard UI uses "task" for brevity.
 
@@ -195,7 +195,7 @@ The dashboard supports dispatching Claude Code agents directly from work items:
 - Add optional instructions, then dispatch — spawns `claude -p --output-format stream-json` as a child process
 - Live output streams to the browser via SSE; multiple dispatches run concurrently
 - Each dispatch panel shows a terminal guidance command for taking over from CLI
-- Session state persisted to SQLite (`dispatches`, `terminals`, `cli_sessions` tables). See `domain/entities.md` → DispatchRequest, TerminalSession, SessionsFile for schemas.
+- Session state persisted to PostgreSQL (`dispatches`, `terminals`, `cli_sessions` tables). See `domain/entities.md` → DispatchRequest, TerminalSession, SessionsFile for schemas.
 - **Session restart survival**: Dispatch sessions store PID and stream output to `work/logs/D-xxx.jsonl`; on restart, live PIDs are reconnected with log replay via SSE. Terminal sessions use tmux (when available) for full PTY re-attachment; otherwise PID liveness is tracked. Log files are cleaned up when dispatches are deleted or auto-expire.
 - Interactive terminals use xterm.js + WebSocket for bidirectional PTY I/O (node-pty). See `domain/entities.md` → TerminalSession for schema.
 - Kill buttons on dispatch/terminal panels; "Kill All Sessions" button for bulk cleanup.
@@ -230,6 +230,7 @@ Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/log` (plain text 
 | /explain [path] [--focus area] | Codebase walkthrough |
 | /release [version] [--publish github] | Version bump, changelog, git tag |
 | /refactor [scope] | Systematic refactoring |
+| /sync [status|adr] | Sync portfolio knowledge base with external git changes; manage ADRs |
 | /browse [task] | Perform a web automation task via browser agent |
 | /worktree [list\|cleanup] | Manage git worktrees for implementation isolation |
 | /review-board [gate] [scope] | Manually trigger the Technical Review Board on a plan or code diff |

@@ -9,7 +9,7 @@
  */
 
 import { test as baseTest, expect } from './fixtures.mjs';
-import { getBase, seedDispatch } from './helpers.mjs';
+import { getBase, seedDispatch, api } from './helpers.mjs';
 
 // Default test object uses expanded panels (from fixtures.mjs _defaultExpanded)
 const test = baseTest;
@@ -19,11 +19,19 @@ const testCollapsed = baseTest.extend({
   _defaultExpanded: [async ({}, use) => { await use(); }, { scope: 'test', auto: true }],
 });
 
+const _PL_PROJECT_KEY = 'ticari/architect/main';
+const _PL_PORTFOLIO_ENTRY = { worktree_mode: 'auto', worktree_setup: { branch: 'main' } };
+
 // Global purge before the suite: clears real claude processes left by prior test files
 // (worker-scoped purgeAll cannot kill dispatches that have live process handles)
 test.beforeAll(async () => {
   await fetch(`${getBase()}/api/test/purge-all`, { method: 'POST' });
+  await api('test/seed-portfolio-entry', {
+    method: 'POST',
+    body: JSON.stringify({ project_key: _PL_PROJECT_KEY, entry: _PL_PORTFOLIO_ENTRY }),
+  });
 });
+
 
 // ============================================================
 // Suite A: Dispatch Panels (DP-1 to DP-10)

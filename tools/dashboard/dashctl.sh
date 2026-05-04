@@ -23,6 +23,11 @@ PORT="${DASHCTL_PORT:-3777}"
 PID_FILE="${DASHCTL_PID_FILE:-$ROOT/tmp/dashboard.pid}"
 LOG_FILE="${DASHCTL_LOG_FILE:-$ROOT/tmp/dashboard.log}"
 SESSIONS_FILE="$ROOT/work/sessions.json"
+COMPOSE_FILE="$DASHBOARD_DIR/docker-compose.yml"
+PG_USER="${ARCHITECT_PG_USER:-architect}"
+PG_DB="${ARCHITECT_PG_DB:-architect}"
+PG_HOST="${ARCHITECT_PG_HOST:-127.0.0.1}"
+PG_PORT="${ARCHITECT_PG_PORT:-3778}"
 
 # Service identifiers
 LAUNCHD_LABEL="com.architect.dashboard"
@@ -117,8 +122,45 @@ detect_service() {
 
 # --- Commands ---
 
+ensure_postgres() {
+  if ! docker info > /dev/null 2>&1; then
+    echo "Error: Docker is not running. Start Docker Desktop and retry."
+    exit 1
+  fi
+
+  docker compose -f "$COMPOSE_FILE" up -d postgres
+
+  echo "Waiting for PostgreSQL..."
+  local i=1
+  while [ "$i" -le 30 ]; do
+    if docker compose -f "$COMPOSE_FILE" exec -T postgres \
+        pg_isready -U "$PG_USER" -d "$PG_DB" > /dev/null 2>&1; then
+      echo "PostgreSQL ready."
+      return 0
+    fi
+    if [ "$i" -eq 30 ]; then
+      echo "Error: PostgreSQL did not become ready within 30 seconds."
+      exit 1
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+}
+
 cmd_start() {
   ensure_tmp
+
+  if docker info >/dev/null 2>&1 && [ "$PG_PORT" != "5432" ]; then
+    local existing_host_port
+    existing_host_port="$(docker inspect --format '{{range $p,$conf := .NetworkSettings.Ports}}{{if eq $p "5432/tcp"}}{{(index $conf 0).HostPort}}{{end}}{{end}}' architect-postgres 2>/dev/null || echo '')"
+    if [ "$existing_host_port" = "5432" ]; then
+      echo "Warning: PostgreSQL container found on port 5432 (old default)."
+      echo "  Set ARCHITECT_PG_PORT=5432 in your environment to keep using it,"
+      echo "  or run 'dashctl.sh db:down' first to let docker compose recreate it on port $PG_PORT."
+    fi
+  fi
+
+  ensure_postgres
 
   if is_running; then
     echo "Dashboard already running (PID $(get_pid))"
@@ -139,6 +181,19 @@ cmd_start() {
 
   local NODE_BIN
   NODE_BIN="$(find_node)"
+
+  # Auto-install production dependencies if pg is absent
+  local NPM_BIN
+  NPM_BIN="$(command -v npm 2>/dev/null || echo "$(dirname "$NODE_BIN")/npm")"
+  if [ ! -d "$DASHBOARD_DIR/node_modules/pg" ]; then
+    echo "Installing dashboard dependencies (first run or after migration)..."
+    if ! "$NPM_BIN" ci --omit=dev --prefer-offline --prefix "$DASHBOARD_DIR" >> "$LOG_FILE" 2>&1; then
+      echo "Error: Failed to install dashboard dependencies. Check logs:"
+      echo "  $LOG_FILE"
+      return 1
+    fi
+    echo "Dependencies installed."
+  fi
 
   echo "Starting dashboard server..."
   nohup "$NODE_BIN" "$SERVER_SCRIPT" --port "$PORT" >> "$LOG_FILE" 2>&1 &
@@ -168,7 +223,16 @@ cmd_start() {
   echo "  Log: $LOG_FILE"
 }
 
+_stop_postgres() {
+  if docker info >/dev/null 2>&1; then
+    docker compose -f "$COMPOSE_FILE" stop postgres 2>/dev/null || true
+    echo "PostgreSQL stopped."
+  fi
+}
+
 cmd_stop() {
+  local exit_code=0
+
   if is_running; then
     local pid
     pid="$(get_pid)"
@@ -176,82 +240,90 @@ cmd_stop() {
 
     kill "$pid" 2>/dev/null || true
 
-    # Wait up to 10 seconds for graceful shutdown
     local tries=0
     while [ $tries -lt 20 ]; do
       if ! kill -0 "$pid" 2>/dev/null; then
         rm -f "$PID_FILE"
         echo "Dashboard stopped"
-        return 0
+        break
       fi
       sleep 0.5
       tries=$((tries + 1))
     done
 
-    # Force kill
-    echo "Graceful shutdown timed out, sending SIGKILL..."
-    kill -9 "$pid" 2>/dev/null || true
-    rm -f "$PID_FILE"
-    echo "Dashboard killed"
-    return 0
-  fi
-
-  # Not managed via PID file — check if a service owns the port
-  local service
-  service="$(detect_service)"
-
-  if [ "$service" = "launchd" ] && port_in_use; then
-    echo "Stopping launchd service ($LAUNCHD_LABEL)..."
-    launchctl stop "$LAUNCHD_LABEL" 2>/dev/null || true
-    local tries=0
-    while [ $tries -lt 20 ]; do
-      if ! port_in_use; then
-        echo "Dashboard stopped"
-        return 0
-      fi
-      sleep 0.5
-      tries=$((tries + 1))
-    done
-    echo "Warning: port $PORT still in use after service stop"
-    return 1
-
-  elif [ "$service" = "systemd" ] && port_in_use; then
-    echo "Stopping systemd service ($SYSTEMD_SERVICE)..."
-    systemctl --user stop "$SYSTEMD_SERVICE" 2>/dev/null || true
-    echo "Dashboard stopped"
-    return 0
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "Graceful shutdown timed out, sending SIGKILL..."
+      kill -9 "$pid" 2>/dev/null || true
+      rm -f "$PID_FILE"
+      echo "Dashboard killed"
+    fi
 
   else
-    if port_in_use; then
-      local orphan_pid
-      orphan_pid="$(get_port_pid)"
-      if [ -n "$orphan_pid" ]; then
-        echo "Stopping orphaned dashboard process (PID $orphan_pid)..."
-        kill "$orphan_pid" 2>/dev/null || true
-        local tries=0
-        while [ $tries -lt 20 ]; do
-          if ! port_in_use; then
-            echo "Dashboard stopped"
-            return 0
-          fi
-          sleep 0.5
-          tries=$((tries + 1))
-        done
-        kill -9 "$orphan_pid" 2>/dev/null || true
-        echo "Dashboard killed"
-      else
-        echo "Port $PORT is in use but could not identify the process"
+    local service
+    service="$(detect_service)"
+
+    if [ "$service" = "launchd" ] && port_in_use; then
+      echo "Stopping launchd service ($LAUNCHD_LABEL)..."
+      launchctl stop "$LAUNCHD_LABEL" 2>/dev/null || true
+      local tries=0
+      while [ $tries -lt 20 ]; do
+        if ! port_in_use; then
+          echo "Dashboard stopped"
+          break
+        fi
+        sleep 0.5
+        tries=$((tries + 1))
+      done
+      if port_in_use; then
+        echo "Warning: port $PORT still in use after service stop"
+        exit_code=1
       fi
+
+    elif [ "$service" = "systemd" ] && port_in_use; then
+      echo "Stopping systemd service ($SYSTEMD_SERVICE)..."
+      systemctl --user stop "$SYSTEMD_SERVICE" 2>/dev/null || true
+      echo "Dashboard stopped"
+
     else
-      echo "Dashboard is not running"
+      if port_in_use; then
+        local orphan_pid
+        orphan_pid="$(get_port_pid)"
+        if [ -n "$orphan_pid" ]; then
+          echo "Stopping orphaned dashboard process (PID $orphan_pid)..."
+          kill "$orphan_pid" 2>/dev/null || true
+          local tries=0
+          while [ $tries -lt 20 ]; do
+            if ! port_in_use; then
+              echo "Dashboard stopped"
+              break
+            fi
+            sleep 0.5
+            tries=$((tries + 1))
+          done
+          if port_in_use; then
+            kill -9 "$orphan_pid" 2>/dev/null || true
+            echo "Dashboard killed"
+          fi
+        else
+          echo "Port $PORT is in use but could not identify the process"
+        fi
+      else
+        echo "Dashboard is not running"
+      fi
     fi
-    return 0
   fi
+
+  _stop_postgres
+  return $exit_code
 }
 
 cmd_restart() {
   cmd_stop
-  sleep 1
+  local tries=0
+  while port_in_use && [ $tries -lt 10 ]; do
+    sleep 0.5
+    tries=$((tries + 1))
+  done
   cmd_start
 }
 
@@ -311,6 +383,30 @@ cmd_status() {
   fi
   echo "  Log:     $LOG_FILE"
   echo "  PID file: $PID_FILE"
+
+  echo ""
+  echo "  Database:"
+  echo "  PG Port:   127.0.0.1:${PG_PORT}"
+  echo "  PG DB:     ${PG_DB}"
+  echo "  Data vol:  architect_pgdata"
+  if docker info >/dev/null 2>&1; then
+    local pg_running
+    pg_running="$(docker compose -f "$COMPOSE_FILE" ps --status running postgres 2>/dev/null | grep -c postgres || echo 0)"
+    if [ "${pg_running:-0}" -gt 0 ] 2>/dev/null; then
+      echo "  PG Status: Running"
+    else
+      echo "  PG Status: Stopped"
+    fi
+    local vol_path
+    vol_path="$(docker volume inspect architect_pgdata --format '{{.Mountpoint}}' 2>/dev/null || echo 'volume not found')"
+    local os_note=""
+    if [ "$(uname -s)" = "Darwin" ]; then
+      os_note=" (Docker Desktop VM path)"
+    fi
+    echo "  Data path: $vol_path$os_note"
+  else
+    echo "  PG Status: Docker not running"
+  fi
 }
 
 cmd_logs() {
@@ -420,6 +516,17 @@ install_launchd() {
 </plist>
 PLIST
 
+  if [ -n "${PORTFOLIO_DIR:-}" ]; then
+    # Inject PORTFOLIO_DIR into the plist EnvironmentVariables dict before closing </dict>
+    sed -i '' 's|    <key>PATH</key>|    <key>PATH</key>|' "$LAUNCHD_PLIST"
+    python3 -c "
+import plistlib, sys
+with open('$LAUNCHD_PLIST', 'rb') as f: p = plistlib.load(f)
+p.setdefault('EnvironmentVariables', {})['PORTFOLIO_DIR'] = '${PORTFOLIO_DIR}'
+with open('$LAUNCHD_PLIST', 'wb') as f: plistlib.dump(p, f)
+" 2>/dev/null || true
+  fi
+
   # Load the service
   launchctl load -w "$LAUNCHD_PLIST" 2>/dev/null || true
 
@@ -448,6 +555,13 @@ Restart=on-failure
 RestartSec=10
 StandardOutput=append:${LOG_FILE}
 StandardError=append:${LOG_FILE}
+UNIT
+
+  if [ -n "${PORTFOLIO_DIR:-}" ]; then
+    echo "Environment=PORTFOLIO_DIR=${PORTFOLIO_DIR}" >> "$SYSTEMD_UNIT"
+  fi
+
+  cat >> "$SYSTEMD_UNIT" <<UNIT
 
 [Install]
 WantedBy=default.target
@@ -485,6 +599,40 @@ cmd_uninstall() {
   esac
 }
 
+cmd_sync_install() {
+  local plist_name="com.architect.repo-sync"
+  local plist_src="$DASHBOARD_DIR/../repo-sync/com.architect.repo-sync.plist"
+  local plist_dst="$HOME/Library/LaunchAgents/${plist_name}.plist"
+  local node_bin
+  node_bin=$(find_node)
+
+  if [ -z "$node_bin" ]; then
+    echo "node not found; install Node.js first" >&2
+    exit 1
+  fi
+
+  # Substitute placeholders
+  sed -e "s|NODE_BINARY_PLACEHOLDER|${node_bin}|g" \
+      -e "s|ARCHITECT_ROOT_PLACEHOLDER|${ROOT}|g" \
+      "$plist_src" > "$plist_dst"
+
+  launchctl bootstrap "gui/$(id -u)" "$plist_dst"
+  echo "Installed and loaded ${plist_name}"
+}
+
+cmd_sync_uninstall() {
+  local plist_name="com.architect.repo-sync"
+  local plist_dst="$HOME/Library/LaunchAgents/${plist_name}.plist"
+
+  if [ -f "$plist_dst" ]; then
+    launchctl bootout "gui/$(id -u)" "$plist_dst" 2>/dev/null || true
+    rm "$plist_dst"
+    echo "Unloaded and removed ${plist_name}"
+  else
+    echo "${plist_name} is not installed"
+  fi
+}
+
 cmd_reset() {
   local confirm=false
 
@@ -496,26 +644,106 @@ cmd_reset() {
     shift
   done
 
-  local DB_FILE="$ROOT/work/architect.db"
-
-  echo "WARNING: This will permanently delete the dashboard database."
+  echo "WARNING: This will DESTROY ALL DATA in the PostgreSQL volume (architect_pgdata)."
+  echo "         Take a backup first: dashctl.sh db:dump"
 
   if [ "$confirm" = false ]; then
-    printf "Type 'yes' to confirm: "
-    read -r user_input
-    if [ "$user_input" != "yes" ]; then
-      echo "Aborted."
-      exit 1
-    fi
+    echo "Pass --confirm to proceed. Aborted."
+    exit 1
   fi
 
   cmd_stop
+  cmd_db_reset_confirmed
+  echo "Database wiped. Run './dashctl.sh start' to restart with a fresh database."
+}
 
-  if [ -f "$DB_FILE" ]; then
-    rm -f "$DB_FILE"
+cmd_db_up() {
+  if ! docker info > /dev/null 2>&1; then
+    echo "Error: Docker is not running. Start Docker Desktop and retry."
+    exit 1
+  fi
+  docker compose -f "$COMPOSE_FILE" up -d postgres
+  echo "PostgreSQL started."
+}
+
+cmd_db_down() {
+  docker compose -f "$COMPOSE_FILE" down
+  echo "PostgreSQL stopped. Data volume preserved."
+}
+
+cmd_db_logs() {
+  docker compose -f "$COMPOSE_FILE" logs -f postgres
+}
+
+cmd_db_psql() {
+  docker compose -f "$COMPOSE_FILE" exec postgres psql -U "$PG_USER" "$PG_DB"
+}
+
+cmd_db_dump() {
+  local BACKUP_DIR="$ROOT/assets/backups"
+  mkdir -p "$BACKUP_DIR"
+  local TIMESTAMP
+  TIMESTAMP="$(date -u +%Y-%m-%dT%H-%M-%S)"
+  local DEST="$BACKUP_DIR/architect-${TIMESTAMP}.dump"
+
+  local PG_PASSWORD="${ARCHITECT_PG_PASSWORD:-}"
+  local args=(-h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -Fc -f "$DEST" "$PG_DB")
+
+  echo "Dumping $PG_DB to $DEST..."
+  if [ -n "$PG_PASSWORD" ]; then
+    PGPASSWORD="$PG_PASSWORD" pg_dump "${args[@]}"
+  else
+    pg_dump "${args[@]}"
+  fi
+  echo "Backup complete: $DEST"
+}
+
+cmd_db_restore() {
+  local FILE="${1:-}"
+  if [ -z "$FILE" ]; then
+    echo "Usage: dashctl.sh db:restore <file>"
+    exit 1
+  fi
+  if [ ! -f "$FILE" ]; then
+    echo "Error: file not found: $FILE"
+    exit 1
   fi
 
-  echo "Database wiped. Run './dashctl.sh start' to restart with a fresh database."
+  local PG_PASSWORD="${ARCHITECT_PG_PASSWORD:-}"
+  local args=(-h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DB" "$FILE")
+
+  echo "Restoring $FILE into $PG_DB..."
+  if [ -n "$PG_PASSWORD" ]; then
+    PGPASSWORD="$PG_PASSWORD" pg_restore "${args[@]}"
+  else
+    pg_restore "${args[@]}"
+  fi
+  echo "Restore complete."
+}
+
+cmd_db_reset_confirmed() {
+  if ! docker info > /dev/null 2>&1; then
+    echo "Error: Docker is not running. Start Docker Desktop and retry."
+    exit 1
+  fi
+  docker compose -f "$COMPOSE_FILE" down -v
+  docker compose -f "$COMPOSE_FILE" up -d postgres
+
+  echo "Waiting for fresh PostgreSQL..."
+  local i=1
+  while [ "$i" -le 30 ]; do
+    if docker compose -f "$COMPOSE_FILE" exec -T postgres \
+        pg_isready -U "$PG_USER" -d "$PG_DB" > /dev/null 2>&1; then
+      echo "PostgreSQL ready."
+      return 0
+    fi
+    if [ "$i" -eq 30 ]; then
+      echo "Error: PostgreSQL did not become ready within 30 seconds."
+      exit 1
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
 }
 
 cmd_help() {
@@ -525,16 +753,27 @@ dashctl.sh — Architect Dashboard lifecycle manager
 Usage: dashctl.sh <command> [options]
 
 Commands:
-  start                Start the dashboard server in background
-  stop                 Stop the dashboard server gracefully
-  restart              Restart the server (service-aware: uses launchctl/systemctl when installed)
+  start                Start PostgreSQL (if not running) then the dashboard server
+  stop                 Stop the dashboard server and PostgreSQL container gracefully
+  restart              Restart dashboard and PostgreSQL (full cycle, adds ~5–30s for postgres startup)
   status               Show server status, PID, port, uptime
   logs [-n N] [-f]     Tail the log file (default: last 50 lines)
   fresh [--clear-sessions]  Stop, optionally clear sessions, start
-  reset [--confirm]    Wipe the dashboard database (keeps logs and work files)
+  reset [--confirm]    DESTROY ALL DATA: wipe PostgreSQL volume and restart with empty DB
   install              Install auto-start service (launchd/systemd)
   uninstall            Remove auto-start service
+  sync-install         Install repo-sync launchd agent (runs at 08:00 and 20:00)
+  sync-uninstall       Remove repo-sync launchd agent
   help                 Show this help
+
+Database commands:
+  db:up                Start PostgreSQL container only
+  db:down              Stop PostgreSQL container only, keeping dashboard server running (data volume preserved)
+  db:logs              Follow PostgreSQL container logs
+  db:psql              Open psql shell in the running PostgreSQL container
+  db:dump              Dump the database to assets/backups/ with a timestamp
+  db:restore <file>    Restore a dump file into the current database
+  db:reset             Alias for 'reset' (requires --confirm)
 
 Environment:
   Root:     $ROOT
@@ -542,20 +781,34 @@ Environment:
   PID file: $PID_FILE
   Log file: $LOG_FILE
   Port:     $PORT
+  PG host:  $PG_HOST
+  PG port:  $PG_PORT
+  PG user:  $PG_USER
+  PG DB:    $PG_DB
+  Data vol: architect_pgdata
 HELP
 }
 
 # --- Main dispatch ---
 case "${1:-help}" in
-  start)     cmd_start ;;
-  stop)      cmd_stop ;;
-  restart)   cmd_restart ;;
-  status)    cmd_status ;;
-  logs)      shift; cmd_logs "$@" ;;
-  fresh)     shift; cmd_fresh "$@" ;;
-  reset)     shift; cmd_reset "$@" ;;
-  install)   cmd_install ;;
-  uninstall) cmd_uninstall ;;
+  start)       cmd_start ;;
+  stop)        cmd_stop ;;
+  restart)     cmd_restart ;;
+  status)      cmd_status ;;
+  logs)        shift; cmd_logs "$@" ;;
+  fresh)       shift; cmd_fresh "$@" ;;
+  reset)       shift; cmd_reset "$@" ;;
+  install)          cmd_install ;;
+  uninstall)        cmd_uninstall ;;
+  sync-install)     cmd_sync_install ;;
+  sync-uninstall)   cmd_sync_uninstall ;;
+  db:up)       cmd_db_up ;;
+  db:down)     cmd_db_down ;;
+  db:logs)     cmd_db_logs ;;
+  db:psql)     cmd_db_psql ;;
+  db:dump)     cmd_db_dump ;;
+  db:restore)  shift; cmd_db_restore "$@" ;;
+  db:reset)    shift; cmd_reset "$@" ;;
   help|--help|-h) cmd_help ;;
   *)
     echo "Unknown command: $1"

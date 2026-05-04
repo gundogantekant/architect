@@ -1,16 +1,67 @@
 /**
  * Shared server lifecycle utilities for test infrastructure.
  * Used by both global-setup.mjs (cleanup) and fixtures.mjs (lazy startup).
+ *
+ * Each test worker gets a dedicated PostgreSQL database named
+ * architect_test_<port>_<timestamp>. The database is created before the
+ * server spawns and dropped (WITH FORCE) after teardown.
  */
 
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import pg from 'pg';
 
 export const ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..', '..');
 export const SERVER = join(ROOT, 'tools', 'dashboard', 'server.mjs');
 export const BASE_PORT = 3800;
+
+// Production DB name we must never touch during tests.
+const PRODUCTION_DB = process.env.ARCHITECT_PG_DB ?? 'architect';
+
+function buildAdminConfig() {
+  return {
+    host: process.env.ARCHITECT_PG_HOST ?? '127.0.0.1',
+    port: parseInt(process.env.ARCHITECT_PG_PORT ?? '3778', 10),
+    // Connect to postgres maintenance DB to create/drop test databases.
+    database: 'postgres',
+    user: process.env.ARCHITECT_PG_USER ?? 'architect',
+    password: process.env.ARCHITECT_PG_PASSWORD ?? 'architect',
+    connectionTimeoutMillis: 5000,
+  };
+}
+
+function assertNotProduction(dbName) {
+  if (dbName === PRODUCTION_DB) {
+    throw new Error(
+      `Refusing to operate on production database "${PRODUCTION_DB}". ` +
+      `Test databases must have names matching architect_test_*.`
+    );
+  }
+}
+
+export async function createTestDb(dbName) {
+  assertNotProduction(dbName);
+  const client = new pg.Client(buildAdminConfig());
+  await client.connect();
+  try {
+    await client.query(`CREATE DATABASE "${dbName}"`);
+  } finally {
+    await client.end();
+  }
+}
+
+export async function dropTestDb(dbName) {
+  assertNotProduction(dbName);
+  const client = new pg.Client(buildAdminConfig());
+  await client.connect();
+  try {
+    await client.query(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
+  } finally {
+    await client.end();
+  }
+}
 
 export function killAnyOnPort(port) {
   try {
@@ -85,17 +136,45 @@ export async function gracefulKill(pid, timeoutMs = 3000) {
   try { process.kill(pid, 'SIGKILL'); } catch {}
 }
 
-export function spawnTestServer(port, workDir) {
+/**
+ * Spawn a test server against an isolated PostgreSQL database.
+ *
+ * The database is named architect_test_<port>_<timestamp> and must be created
+ * by the caller via createTestDb() before spawning. The caller is responsible
+ * for dropping the database after teardown via dropTestDb().
+ *
+ * workDir is still created for any filesystem artifacts (logs, portfolio), but
+ * no SQLite file is used.
+ */
+export function spawnTestServer(port, workDir, dbName) {
   mkdirSync(workDir, { recursive: true });
-  try { rmSync(join(workDir, 'architect.db')); } catch {}
-  try { rmSync(join(workDir, 'architect.db-shm')); } catch {}
-  try { rmSync(join(workDir, 'architect.db-wal')); } catch {}
+
+  const env = {
+    ...process.env,
+    PORT: String(port),
+    WORK_DIR: workDir,
+    PORTFOLIO_DIR: join(workDir, 'portfolio'),
+    // Override the database name — host/port/user/password come from the
+    // ambient environment, matching the real PostgreSQL instance.
+    ARCHITECT_PG_DB: dbName,
+    // Ensure password default is always propagated to the child process even
+    // when the ambient env does not have ARCHITECT_PG_PASSWORD set.
+    ARCHITECT_PG_PASSWORD: process.env.ARCHITECT_PG_PASSWORD ?? 'architect',
+  };
 
   const proc = spawn(process.execPath, [SERVER], {
-    env: { ...process.env, PORT: String(port), WORK_DIR: workDir },
+    env,
     stdio: 'ignore',
     detached: true,
   });
   proc.unref();
   return proc;
+}
+
+/**
+ * Generate a unique test database name for the given port.
+ * Format: architect_test_<port>_<epoch_ms>
+ */
+export function testDbName(port) {
+  return `architect_test_${port}_${Date.now()}`;
 }

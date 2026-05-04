@@ -13,6 +13,35 @@
 import { test, expect } from './fixtures.mjs';
 import { getBase, api } from './helpers.mjs';
 
+const _OD_PROJECT_KEY = 'ticari/architect/main';
+const _OD_ROOT = '/Users/tekantgundogan/Documents/architect';
+const _OD_ORG_ENTRY = {
+  name: 'Ticari',
+  path_root: _OD_ROOT,
+  conventions: { branch_naming: 'feature/description', commit_style: 'conventional' },
+  rules: ['Use feature branches for all changes', 'Run tests before merging'],
+};
+const _OD_PORTFOLIO_ENTRY = {
+  name: 'architect',
+  role: 'SDLC orchestrator',
+  brief: { purpose: 'Manages software development lifecycle' },
+  guidance: { stack_summary: 'Node.js, PostgreSQL, Playwright' },
+  worktree_mode: 'auto',
+  worktree_setup: { branch: 'main' },
+};
+
+test.beforeEach(async () => {
+  await api('test/seed-portfolio-entry', {
+    method: 'POST',
+    body: JSON.stringify({
+      project_key: _OD_PROJECT_KEY,
+      entry: _OD_PORTFOLIO_ENTRY,
+      org_entry: _OD_ORG_ENTRY,
+    }),
+  });
+});
+
+
 // Helper: seed an org-level terminal via the test endpoint (no real PTY)
 async function seedOrgTerminal(orgKey, instructions = 'Test', status = 'running') {
   return api('test/seed-org-terminal', {
