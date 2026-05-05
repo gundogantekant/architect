@@ -33,7 +33,7 @@ export default function testEndpointRoutes(deps) {
 
     [/^\/api\/test\/seed-dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { id, status, project_key, title, work_item_id, epic_id: seedEpicId, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch, pid: seedPid, dispatch_mode } = body;
+      const { id, status, project_key, title, work_item_id, epic_id: seedEpicId, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch, pid: seedPid, dispatch_mode, agent_phase: seedAgentPhase, agent_phase_history: seedHistory } = body;
       if (!id) return err(res, 'id is required', 400);
       const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
 
@@ -51,6 +51,9 @@ export default function testEndpointRoutes(deps) {
         output = content.split('\n').filter(l => l.trim());
       } catch {}
 
+      const resolvedStatus = status || 'completed';
+      const resolvedPhase = 'agent_phase' in body ? seedAgentPhase : (resolvedStatus === 'running' ? 'generating' : null);
+
       const dispatch = {
         id,
         work_item_id: work_item_id || null,
@@ -60,8 +63,9 @@ export default function testEndpointRoutes(deps) {
         title: title || id,
         permission_mode: 'plan',
         skip_permissions: false,
-        status: status || 'completed',
-        agent_phase: (status || 'completed') === 'running' ? 'generating' : null,
+        status: resolvedStatus,
+        agent_phase: resolvedPhase,
+        agent_phase_history: seedHistory || [],
         claude_session_id: claude_session_id || null,
         worktree_path: worktree_path || null,
         worktree_branch: worktree_branch || null,
@@ -71,7 +75,7 @@ export default function testEndpointRoutes(deps) {
         lastLines: [],
         wsClients: new Set(),
         started_at: new Date().toISOString(),
-        completed_at: status !== 'running' ? new Date().toISOString() : null,
+        completed_at: resolvedStatus !== 'running' ? new Date().toISOString() : null,
         process: null,
         pid: seedPid || null,
         logPath,
@@ -80,7 +84,7 @@ export default function testEndpointRoutes(deps) {
 
       dispatches.set(id, dispatch);
       await saveDispatchToDb(dispatch);
-      json(res, { dispatch_id: id, status: dispatch.status });
+      json(res, { id, dispatch_id: id, status: dispatch.status });
     }],
 
     // Simulate server restart: clear memory, re-load from DB + log files
