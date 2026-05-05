@@ -1651,6 +1651,7 @@ export async function archiveWorkItemsByProjectKey(projectKey) {
 }
 
 export async function deleteProjectRow(projectKey) {
+  await pool.query('DELETE FROM session_history WHERE project_key = $1', [projectKey]);
   await pool.query('DELETE FROM projects WHERE key = $1', [projectKey]);
 }
 

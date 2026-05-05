@@ -137,9 +137,14 @@ export default function detachRoutes(deps) {
         const regPath = join(PORTFOLIO, 'registry.json');
         let registry = {};
         try { registry = JSON.parse(await readFile(regPath, 'utf8')); } catch {}
-        const pathKey = Object.keys(registry).find(k => registry[k] === portfolioKey);
+        const entries = registry.entries ?? registry;
+        const pathKey = Object.keys(entries).find(k => {
+          const e = entries[k];
+          const key = typeof e === 'string' ? e : `${e.org}/${e.project}/${e.component}`;
+          return key === portfolioKey;
+        });
         if (pathKey) {
-          delete registry[pathKey];
+          delete entries[pathKey];
           const tmpPath = regPath + '.tmp';
           await writeFile(tmpPath, JSON.stringify(registry, null, 2));
           await rename(tmpPath, regPath);
