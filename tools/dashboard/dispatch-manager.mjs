@@ -419,22 +419,23 @@ export function wireDispatchHandlers(dispatch, proc) {
     if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
     if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
 
-    // Cost anomaly detection: flag dispatches that cost >2x the 30-day project average.
-    // Requires at least 3 prior samples to avoid false positives on sparse data.
-    try {
-      const { avg_cost, count } = await db.getProjectAvgDispatchCost(dispatch.project_key);
-      if (count >= 3 && avg_cost > 0 && dispatch.cost_usd > avg_cost * 2) {
-        dispatch.session_log = dispatch.session_log || [];
-        dispatch.session_log.push({
-          trigger: 'cost-anomaly',
-          summary: `Cost $${dispatch.cost_usd?.toFixed(4)} is ${(dispatch.cost_usd / avg_cost).toFixed(1)}x the 30-day average ($${avg_cost.toFixed(4)}) for this project`,
-          related_items: [dispatch.id],
-          detected_at: new Date().toISOString(),
-        });
+    // Cost anomaly and scope violation detection run after close; both are best-effort.
+    (async () => {
+      try {
+        const { avg_cost, count } = await db.getProjectAvgDispatchCost(dispatch.project_key);
+        if (count >= 3 && avg_cost > 0 && dispatch.cost_usd > avg_cost * 2) {
+          dispatch.session_log = dispatch.session_log || [];
+          dispatch.session_log.push({
+            trigger: 'cost-anomaly',
+            summary: `Cost $${dispatch.cost_usd?.toFixed(4)} is ${(dispatch.cost_usd / avg_cost).toFixed(1)}x the 30-day average ($${avg_cost.toFixed(4)}) for this project`,
+            related_items: [dispatch.id],
+            detected_at: new Date().toISOString(),
+          });
+        }
+      } catch (err) {
+        console.error('[cost-anomaly] detection failed:', err.message);
       }
-    } catch (err) {
-      console.error('[cost-anomaly] detection failed:', err.message);
-    }
+    })();
 
     // Scope boundary violation detection: flag dispatches that modified files outside
     // their contract's declared scope_boundary. Best-effort — skipped on any error.
