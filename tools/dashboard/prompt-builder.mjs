@@ -1002,6 +1002,26 @@ The DISPATCH_ID is found in the \`# Tracking\` section of your prompt (the work 
 After calling this endpoint, halt. Do not proceed to steps 13–16 — the dashboard handles merge-back automatically.`;
 }
 
+export function buildProjectRefinementPrompt({ projectKey, projectPath, template, items, epics, instructions, dryRun, port }) {
+  const workingList = items.length === 0
+    ? '(no items in scope)'
+    : items.map((it, i) => `${i + 1}. ${it.id} [${it.status}] [${it.priority}] ${it.title}${it.depends_on?.length ? ` (depends: ${it.depends_on.join(', ')})` : ''}`).join('\n');
+
+  const epicsList = epics.length === 0
+    ? '(no epics in scope)'
+    : epics.map(e => `- ${e.id} [${e.status}] ${e.title}`).join('\n');
+
+  const filledTemplate = template
+    .replaceAll('{{PROJECT_KEY}}', projectKey)
+    .replaceAll('{{DASHBOARD_URL}}', `http://127.0.0.1:${port}`)
+    .replaceAll('{{WORKING_LIST}}', workingList)
+    .replaceAll('{{EPICS_LIST}}', epicsList)
+    .replaceAll('{{INSTRUCTIONS}}', instructions || '(none)')
+    .replaceAll('{{DRY_RUN}}', dryRun ? 'true' : 'false');
+
+  return filledTemplate;
+}
+
 /**
  * Build an autonomous auto-implement dispatch prompt.
  * Delegates to buildDispatchPrompt for all standard sections, then replaces

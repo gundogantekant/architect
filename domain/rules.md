@@ -1326,6 +1326,16 @@ Gate reviews (Ticket Gate, Plan Gate, Code Gate) are read-only, depth-1 dispatch
 - The contract block must use the exact sentinel: `# DispatchContract\n\`\`\`json\n{...}\n\`\`\`` — the close handler extracts this pattern via regex.
 - Extraction is best-effort: if the pattern is absent or the JSON is malformed, no patch is applied and the error is logged.
 
+## Project Refinement Dispatch Rules
+
+1. `dispatch_mode='project_refinement'` dispatches operate on all items with status in `{draft, planned, blocked}` for the target project key.
+2. The dispatched agent runs at session depth 1 and MUST NOT call `POST /api/work-items/:id/refine` or any dispatch endpoint (Session Scope Rules apply).
+3. Snapshot semantics: template body, working-list, and epic IDs are frozen at dispatch start. Per-item current contract and status are read live.
+4. Re-running on a fully-`planned` project must complete cleanly with a no-op `# RefinementSummary`.
+5. The `project_refinement` mode is excluded from the cost-anomaly heuristic (expected high-cost mode).
+6. On completion, the agent emits a `# RefinementSummary` JSON block; the close handler parses and persists it to `dispatches.completion_summary`.
+7. Concurrency 409 is returned only when a live `project_refinement` dispatch exists (`status='running'` AND `pid_alive(pid)`). Stale running rows (dead PID) do NOT block a new dispatch.
+
 ## Task Creation Gate Rules
 
 - Task creation is agent-gated by default. The coordinator dispatch (`dispatch_mode='task_creation'`) receives the user's `initial_input` and creates a draft work item via `POST /api/work-items`.
