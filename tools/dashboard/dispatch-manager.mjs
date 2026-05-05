@@ -488,6 +488,33 @@ export function wireDispatchHandlers(dispatch, proc) {
       }
     }
 
+    if (dispatch.dispatch_mode === 'refinement' && dispatch.status === 'completed') {
+      (async () => {
+        try {
+          const fullText = (dispatch.output || []).map(line => {
+            try { return extractStreamText(JSON.parse(line)) || ''; } catch { return ''; }
+          }).join('');
+          const match = fullText.match(/# DispatchContract\s*```json\s*([\s\S]*?)```/);
+          if (match) {
+            const contract = JSON.parse(match[1]);
+            const contractBlock = [
+              contract.goal ? `**Goal:** ${contract.goal}` : '',
+              contract.expected_output ? `**Expected Output:** ${contract.expected_output}` : '',
+              contract.constraints?.length ? `**Constraints:**\n${contract.constraints.map(c => `- ${c}`).join('\n')}` : '',
+              contract.failure_conditions?.length ? `**Failure Conditions:**\n${contract.failure_conditions.map(c => `- ${c}`).join('\n')}` : '',
+            ].filter(Boolean).join('\n\n');
+
+            await db.updateWorkItemRefinement(dispatch.work_item_id, {
+              description: contractBlock,
+              status: 'planned'
+            });
+          }
+        } catch (err) {
+          console.error('Refinement extraction failed:', err.message);
+        }
+      })();
+    }
+
     broadcastDispatchDone(dispatch);
     archiveSession(dispatch, 'dispatch').catch(e => console.error('[dispatch close] archiveSession:', e.message));
     saveDispatchToDb(dispatch).catch(e => console.error('[dispatch close] saveDispatchToDb:', e.message));

@@ -43,6 +43,8 @@ export const DISPATCHABLE_STATUSES = Object.freeze(
   ['draft', 'planned', 'in-progress', 'blocked']
 );
 
+export const DISPATCH_MODES = Object.freeze(['standard', 'auto_implement', 'refinement']);
+
 // Subset for auto-implement (excludes `draft` — require human plan-gate first).
 // Excludes `blocked` — humans block, humans unblock; automation must not bypass that contract.
 export const AUTO_IMPLEMENTABLE_STATUSES = Object.freeze(

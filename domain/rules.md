@@ -1316,6 +1316,16 @@ Gate reviews (Ticket Gate, Plan Gate, Code Gate) are read-only, depth-1 dispatch
 
 - **Never post comments, reviews, or any content to GitHub pull requests unless the user explicitly requests it.** This applies to all agents, skills, and orchestrator actions. Read-only operations (fetching PR diffs, viewing comments, reading PR metadata) are always allowed. The restriction covers `gh pr comment`, `gh pr review`, and any GitHub API call that writes to a PR.
 
+## Refinement Rules
+
+- Draft work items may be refined via a coordinator dispatch with `dispatch_mode='refinement'`.
+- The coordinator produces a DispatchContract as a fenced JSON block under a `# DispatchContract` heading in its output.
+- On completion, the dashboard patches the work item description with contract fields and transitions status from `draft` to `planned` in a single DB operation.
+- Only items with status `draft` may be refined; attempting to refine any other status returns 409.
+- If an active dispatch already exists for the item, the refine endpoint returns 409.
+- The contract block must use the exact sentinel: `# DispatchContract\n\`\`\`json\n{...}\n\`\`\`` — the close handler extracts this pattern via regex.
+- Extraction is best-effort: if the pattern is absent or the JSON is malformed, no patch is applied and the error is logged.
+
 ## Token & Credential Management Rules
 
 - **Before creating any token, API key, credential, or named resource on a third-party service, always ask the user for the token name.** Never create tokens silently.
