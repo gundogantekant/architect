@@ -2,6 +2,22 @@
 
 Scan a project, profile its purpose and architecture, and register it in the architect portfolio.
 
+## Onboard from Remote
+
+When invoked with a GitHub repo name (from the dashboard "Onboard" button):
+
+**Step 0 — Resolve local path:**
+1. Check `GET /api/repos` — find row where `github_repo_name` matches
+2. If row has `local_path` set and path exists on disk: use it as the onboard target
+3. If `local_path` is null or missing:
+   - Default: ask user to confirm target path (pre-filled as `<organization.path_root>/<repo_name>`)
+   - Clone: `git clone git@github.com:<github_org>/<repo_name>.git <target_path>`
+   - On clone failure: abort and report error
+4. Continue with standard onboard workflow (steps 1–end) using the resolved path
+
+**Step after onboard completes:**
+Call `PATCH /api/repos/<github_repo_name>/portfolio-key` with `{ portfolio_key: "<org>/<project>/<component>" }` to link the entry. This ensures the dashboard repo section shows the repo as onboarded immediately on next refresh.
+
 ## Input
 - Target project path
 - Organization name (optional, auto-detected from path)

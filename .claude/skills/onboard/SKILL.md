@@ -13,6 +13,9 @@ arguments:
   - name: rescan
     description: "Set to 'rescan' to refresh an existing profile's scout report"
     required: false
+  - name: from_remote
+    description: "GitHub repo name (e.g. 'my-org/my-repo'). When set, step 0 from the usecase resolves the local path via GET /api/repos before proceeding with standard onboarding."
+    required: false
 ---
 
 # /onboard
@@ -29,6 +32,7 @@ Follow `usecases/onboard-project.md` with:
 - path from `$ARGUMENTS.path`
 - organization from `$ARGUMENTS.organization` (optional)
 - rescan from `$ARGUMENTS.rescan` (optional)
+- When `$ARGUMENTS.from_remote` is set: prepend step 0 from the usecase's "Onboard from Remote" section to resolve the local path before proceeding
 
 See `domain/entities.md` → ScoutReport, ProjectBrief, PortfolioEntry, Organization for output schemas.
 
