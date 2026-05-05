@@ -1,24 +1,32 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures.mjs';
+import { getBase } from './helpers.mjs';
 
-const BASE = process.env.BASE_URL;
+test.describe('Org Repos API contracts @fast', () => {
 
-test('org repos 200: returns expected shape', async ({ request }) => {
-  const res = await request.get(`${BASE}/api/org/neuronic/repos`);
-  expect(res.status()).toBeOneOf([200, 404]); // 404 OK if org not seeded in test env
-  if (res.ok()) {
-    const body = await res.json();
-    expect(body).toMatchObject({
-      org: expect.any(String),
-      onboarded: expect.any(Array),
-      unregistered: expect.any(Array),
-      seeded: expect.any(Boolean),
-    });
-  }
-});
-
-test('repos portfolio-key PATCH 400: missing body field', async ({ request }) => {
-  const res = await request.patch(`${BASE}/api/repos/some-repo/portfolio-key`, {
-    data: {}
+  test('OR-1: GET /api/org/:org/repos returns expected shape', async () => {
+    const base = getBase();
+    const res = await fetch(`${base}/api/org/neuronic/repos`);
+    // 404 is acceptable when org has no repo_sync_config rows in test DB
+    expect([200, 404]).toContain(res.status);
+    if (res.ok) {
+      const body = await res.json();
+      expect(body).toMatchObject({
+        org: expect.any(String),
+        onboarded: expect.any(Array),
+        unregistered: expect.any(Array),
+        seeded: expect.any(Boolean),
+      });
+    }
   });
-  expect(res.status()).toBe(400);
+
+  test('OR-2: PATCH /api/repos/:name/portfolio-key 400 when portfolio_key key absent', async () => {
+    const base = getBase();
+    const res = await fetch(`${base}/api/repos/some-repo/portfolio-key`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+  });
+
 });

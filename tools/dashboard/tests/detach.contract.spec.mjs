@@ -1,47 +1,59 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures.mjs';
+import { getBase } from './helpers.mjs';
 
-const BASE = process.env.BASE_URL;
+test.describe('Detach API contracts @fast', () => {
 
-test('detach 200: returns DetachReport shape', async ({ request }) => {
-  // Seed a minimal portfolio entry via test endpoint
-  const seed = await request.post(`${BASE}/_test/seed-portfolio`, {
-    data: { org: 'test-org', project: 'test-proj', component: 'main', path: '/tmp/test-proj' }
+  test('DC-1: detach 200 returns DetachReport shape', async () => {
+    const base = getBase();
+    const seed = await fetch(`${base}/_test/seed-portfolio`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ org: 'test-org', project: 'test-proj', component: 'main', path: '/tmp/test-proj' }),
+    });
+    expect(seed.ok).toBeTruthy();
+
+    const res = await fetch(`${base}/api/portfolio/test-org/test-proj/main`, { method: 'DELETE' });
+    expect(res.ok).toBeTruthy();
+    const body = await res.json();
+    expect(body).toMatchObject({
+      portfolio_key: 'test-org/test-proj/main',
+      steps: expect.objectContaining({
+        portfolio_json_removed: expect.any(Boolean),
+        registry_entry_removed: expect.any(Boolean),
+        work_items_cancelled: expect.objectContaining({ count: expect.any(Number) }),
+      }),
+      errors: expect.any(Array),
+    });
   });
-  expect(seed.ok()).toBeTruthy();
 
-  const res = await request.delete(`${BASE}/api/portfolio/test-org/test-proj/main`);
-  expect(res.ok()).toBeTruthy();
-  const body = await res.json();
-  expect(body).toMatchObject({
-    portfolio_key: 'test-org/test-proj/main',
-    steps: expect.objectContaining({
-      portfolio_json_removed: expect.any(Boolean),
-      registry_entry_removed: expect.any(Boolean),
-      work_items_cancelled: expect.objectContaining({ count: expect.any(Number) }),
-    }),
-    errors: expect.any(Array),
+  test('DC-2: detach 404 for unknown component', async () => {
+    const base = getBase();
+    const res = await fetch(`${base}/api/portfolio/no-org/no-proj/no-comp`, { method: 'DELETE' });
+    expect(res.status).toBe(404);
   });
-});
 
-test('detach 404: unknown component returns 404', async ({ request }) => {
-  const res = await request.delete(`${BASE}/api/portfolio/no-org/no-proj/no-comp`);
-  expect(res.status()).toBe(404);
-});
+  test('DC-3: detach 409 when active dispatch and kill_active_dispatches: false', async () => {
+    const base = getBase();
+    const seed = await fetch(`${base}/_test/seed-portfolio`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ org: 'test-org3', project: 'test-proj3', component: 'main', path: '/tmp/test-proj3' }),
+    });
+    expect(seed.ok).toBeTruthy();
 
-test('detach 409: active dispatch blocks detach when kill_active_dispatches: false', async ({ request }) => {
-  const seed = await request.post(`${BASE}/_test/seed-portfolio`, {
-    data: { org: 'test-org2', project: 'test-proj2', component: 'main', path: '/tmp/test-proj2' }
+    const dispSeed = await fetch(`${base}/_test/seed-dispatch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'running', project_key: 'test-org3/test-proj3/main' }),
+    });
+    expect(dispSeed.ok).toBeTruthy();
+
+    const res = await fetch(`${base}/api/portfolio/test-org3/test-proj3/main`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kill_active_dispatches: false }),
+    });
+    expect(res.status).toBe(409);
   });
-  expect(seed.ok()).toBeTruthy();
 
-  // Seed an active dispatch for this project
-  const dispSeed = await request.post(`${BASE}/_test/seed-dispatch`, {
-    data: { status: 'running', project_key: 'test-org2/test-proj2/main' }
-  });
-  expect(dispSeed.ok()).toBeTruthy();
-
-  const res = await request.delete(`${BASE}/api/portfolio/test-org2/test-proj2/main`, {
-    data: { kill_active_dispatches: false }
-  });
-  expect(res.status()).toBe(409);
 });
