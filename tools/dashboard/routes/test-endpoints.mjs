@@ -776,6 +776,7 @@ export default function testEndpointRoutes(deps) {
         status: resolvedStatus,
         agent_phase: resolvedStatus === 'running' ? 'generating' : null,
         agent_phase_history: [],
+        contract: body.contract || null,
         claude_session_id: null,
         worktree_path: null,
         worktree_branch: null,

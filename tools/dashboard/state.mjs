@@ -24,6 +24,7 @@ export async function saveDispatchToDb(d) {
     agent_phase: d.agent_phase ?? null,
     agent_phase_history: d.agent_phase_history || [],
     timeout_at: d.timeout_at || null,
+    contract: d.contract || null,
   });
 }
 
