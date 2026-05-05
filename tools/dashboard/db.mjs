@@ -961,6 +961,13 @@ export async function updateDispatchMergeResult(id, { status, completed_at, comp
   await pool.query(`UPDATE dispatches SET ${fields.join(', ')} WHERE id = $${paramIdx}`, values);
 }
 
+export async function linkDispatchToWorkItem(dispatchId, workItemId) {
+  await pool.query(
+    `UPDATE dispatches SET work_item_id = $1 WHERE id = $2`,
+    [workItemId, dispatchId]
+  );
+}
+
 export async function updateTerminalStatus(id, status, exited_at) {
   await pool.query('UPDATE terminals SET status = $1, exited_at = $2 WHERE id = $3', [status, exited_at || null, id]);
 }

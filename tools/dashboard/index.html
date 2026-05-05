@@ -3279,9 +3279,9 @@ function bindTabs() {
     });
   });
 
-  // Add work item button
+  // Add work item button — agent-gated by default (Shift+N for direct form)
   const addBtn = document.getElementById('add-work-item');
-  if (addBtn) addBtn.onclick = () => showWorkItemModal(null);
+  if (addBtn) addBtn.onclick = () => startAgentTaskCreation(currentProjectKey);
 
   // Edit buttons
   document.querySelectorAll('.edit-btn').forEach(btn => {
@@ -3759,6 +3759,40 @@ function bindFilterBar() {
     });
   }
 }
+
+// --- Agent-Gated Task Creation ---
+async function startAgentTaskCreation(projectKey) {
+  const input = prompt('Describe the task you want to create (the coordinator will turn this into a work item):');
+  if (!input || !input.trim()) return;
+
+  try {
+    const res = await fetch('/api/dispatch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        work_item_id: null,
+        project_key: projectKey,
+        dispatch_mode: 'task_creation',
+        additional_instructions: input.trim(),
+        permission_mode: 'acceptEdits'
+      })
+    });
+    if (!res.ok) {
+      const e = await res.json();
+      alert(e.error || 'Failed to start task creation');
+      return;
+    }
+    refreshSessionsSidebar();
+  } catch (e) {
+    alert('Task creation request failed');
+  }
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.shiftKey && e.key === 'N') {
+    showWorkItemModal(null);
+  }
+});
 
 // --- Work Item Modal ---
 function showWorkItemModal(existingItem = null) {
