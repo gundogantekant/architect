@@ -1588,6 +1588,23 @@ export async function setRepoPortfolioKey(repoName, portfolioKey) {
   );
 }
 
+export async function getProjectAvgDispatchCost(projectKey) {
+  const r = await pool.query(
+    `SELECT AVG(cost_usd) AS avg_cost, COUNT(*) AS count
+     FROM session_history
+     WHERE project_key = $1
+       AND type = 'dispatch'
+       AND cost_usd IS NOT NULL
+       AND ended_at > NOW() - INTERVAL '30 days'`,
+    [projectKey]
+  );
+  const row = r.rows[0];
+  return {
+    avg_cost: row.avg_cost ? parseFloat(row.avg_cost) : 0,
+    count: parseInt(row.count, 10),
+  };
+}
+
 export async function getDispatchesByProjectKey(projectKey) {
   const r = await pool.query(
     'SELECT * FROM dispatches WHERE project_key = $1',

@@ -48,6 +48,7 @@ export const SPEC_FILES = [
   'detach.contract',
   'org-repos.contract',
   'sessions-page',
+  'cost-anomaly',
 ];
 
 function getLiveDashboardPorts() {
