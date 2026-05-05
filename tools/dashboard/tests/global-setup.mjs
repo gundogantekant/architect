@@ -52,6 +52,7 @@ export const SPEC_FILES = [
   'auto-timeout',
   'refinement',
   'task-creation',
+  'project-refinement',
 ];
 
 function getLiveDashboardPorts() {

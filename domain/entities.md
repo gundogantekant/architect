@@ -527,8 +527,9 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "worktree_path": "string (absolute path to worktree, null if no worktree — persisted to PostgreSQL)",
   "worktree_branch": "string (worktree branch name, null if no worktree — persisted to PostgreSQL)",
   "source_branch": "string (originating branch the worktree was created from, null if no worktree — persisted to PostgreSQL)",
-  "dispatch_mode": "string ('standard' | 'auto_implement' | 'refinement' | 'task_creation', default 'standard')",
+  "dispatch_mode": "string ('standard' | 'auto_implement' | 'refinement' | 'task_creation' | 'project_refinement', default 'standard')",
   // task_creation dispatches have work_item_id: null at creation and never enter merge_pending.
+  // project_refinement dispatches also have work_item_id: null — they operate on all non-terminal items for a project.
   "completion_sha": "string (SHA of the final implementation commit, optional)",
   "completion_summary": "string (agent-provided summary, max 500 chars, optional)",
   "merge_result": "'success'|'conflict'|'aborted' — outcome of the merge attempt, optional",
@@ -545,6 +546,18 @@ CompleteDispatchRequest validation:
 - For medium+ complexity dispatches: reject completion if code_gate_passed !== true
 - For trivial/small dispatches: gate fields may be null (backward compatible; no rejection)
 - Complexity is determined by getComplexityLevel(workItem) — see Isolated Work Mandate
+
+## RefinementSummary
+
+Emitted by the agent at end of a `project_refinement` dispatch as a fenced JSON block under `# RefinementSummary` heading. Persisted to `dispatches.completion_summary`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| status | `"completed"` \| `"halted"` | Overall outcome |
+| halt_reason | `null` \| string | Reason if halted |
+| counts | object | `{visited, refined, skipped_already_planned, marked_input_needed, errored, created, cancelled, archived}` |
+| items | array | Per-item `{id, before_status, after_status, outcome, note}` |
+| epics | array | Per-epic `{id, outcome, note}` |
 
 ## AutonomousCompletionPayload (Value Object)
 

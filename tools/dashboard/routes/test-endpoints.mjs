@@ -756,6 +756,8 @@ export default function testEndpointRoutes(deps) {
       try { registry = JSON.parse(await fs.readFile(regPath, 'utf8')); } catch {}
       if (projectPath) registry[projectPath] = portfolioKey;
       await fs.writeFile(regPath, JSON.stringify(registry, null, 2));
+      // Insert into projects table so db.getProject() can find it
+      await db.upsertProject({ key: portfolioKey, org, project, component, path: projectPath || `/tmp/${project}`, role: 'app' });
       json(res, { ok: true, portfolio_key: portfolioKey });
     }],
 

@@ -448,7 +448,7 @@ export function wireDispatchHandlers(dispatch, proc) {
     (async () => {
       try {
         const { avg_cost, count } = await db.getProjectAvgDispatchCost(dispatch.project_key);
-        if (count >= 3 && avg_cost > 0 && dispatch.cost_usd > avg_cost * 2) {
+        if (count >= 3 && avg_cost > 0 && dispatch.cost_usd > avg_cost * 2 && dispatch.dispatch_mode !== 'project_refinement') {
           dispatch.session_log = dispatch.session_log || [];
           dispatch.session_log.push({
             trigger: 'cost-anomaly',
@@ -503,6 +503,22 @@ export function wireDispatchHandlers(dispatch, proc) {
           }
         } catch (err) {
           console.error('Task creation link failed:', err.message);
+        }
+      })();
+    }
+
+    if (dispatch.dispatch_mode === 'project_refinement' && dispatch.status === 'completed') {
+      (async () => {
+        try {
+          const fullText = (dispatch.output || []).map(line => {
+            try { return extractStreamText(JSON.parse(line)) || ''; } catch { return ''; }
+          }).join('');
+          const match = fullText.match(/# RefinementSummary\s*```json\s*([\s\S]*?)```/);
+          if (match) {
+            await db.updateDispatchMergeResult(dispatch.id, { completion_summary: match[1].trim() });
+          }
+        } catch (err) {
+          console.error('Project refinement summary extraction failed:', err.message);
         }
       })();
     }

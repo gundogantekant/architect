@@ -3065,6 +3065,11 @@ function renderComponentView(org, proj, comp, data, workItems, files, projectEpi
   const tabs = ['Board', 'Overview', 'Docs'];
   let html = `<div class="card"><h2>${esc(data.name || `${proj}/${comp}`)}</h2>`;
   html += `<span class="badge badge-role">${esc(data.role || 'unknown')}</span>`;
+  const _projKey = `${org}/${proj}/${comp}`;
+  const _refinementDispatch = (window._activeDispatches || []).find(d => d.dispatch_mode === 'project_refinement' && d.project_key === _projKey && d.status === 'running');
+  if (_refinementDispatch) {
+    html += `<span class="badge" style="background:var(--orange);cursor:pointer;margin-left:8px" onclick="focusRefinementDispatch('${esc(_refinementDispatch.id)}')">&#8635; Refinement in progress</span>`;
+  }
   html += `<div id="sync-freshness-${esc(`${org}/${proj}/${comp}`)}" style="font-size:12px;color:var(--text-light);margin:6px 0 2px"></div>`;
   html += `<div class="tabs" id="comp-tabs">`;
   tabs.forEach((t, i) => {
@@ -3083,6 +3088,7 @@ function renderComponentView(org, proj, comp, data, workItems, files, projectEpi
   html += `<button class="btn-add-wi" id="add-work-item">+ Add Task</button>`;
   html += `<button class="btn-add-wi" id="discuss-agent" style="background:var(--teal);margin-left:8px">Discuss with Agent</button>`;
   html += `<button class="btn-add-wi" id="review-prs" style="background:var(--blue);margin-left:8px">Review PRs</button>`;
+  html += `<button class="btn-add-wi" id="refine-project" style="background:var(--purple);margin-left:8px">Refine Project</button>`;
   html += `<a href="#agents?project=${esc(currentProjectKey)}" style="margin-left:8px;font-size:12px;color:var(--accent)">View agents</a>`;
 
   // Board toggle bar (only if project has epic-linked items or epics exist)
@@ -3183,6 +3189,7 @@ function renderComponentView(org, proj, comp, data, workItems, files, projectEpi
     }
     html += `</dl>`;
   }
+  html += `<div style="margin-top:12px"><a href="#settings" onclick="navigateToRefinementTemplate('${esc(org)}','${esc(proj)}','${esc(comp)}')" style="color:var(--teal);font-size:13px">&#9998; Edit refinement template</a></div>`;
   // Guidance
   html += `<hr style="margin:16px 0">`;
   html += `<h3>Guidance</h3>`;
@@ -3410,6 +3417,8 @@ function bindTabs() {
   if (discussBtn) discussBtn.onclick = () => showDiscussModal();
   const reviewBtn = document.getElementById('review-prs');
   if (reviewBtn) reviewBtn.onclick = () => showReviewModal(currentProjectKey);
+  const refineProjectBtn = document.getElementById('refine-project');
+  if (refineProjectBtn) refineProjectBtn.onclick = () => showRefineProjectModal(org, proj, comp);
 
   // Filter bar
   bindFilterBar();
@@ -4043,6 +4052,84 @@ function showOrgDiscussModal(orgName) {
       createTerminalPanel(terminalInfo);
       placeSessionPanels();
       await initSession(terminalInfo);
+    },
+  });
+}
+
+function focusRefinementDispatch(dispatchId) {
+  const panel = document.getElementById(`dispatch-${dispatchId}`);
+  if (panel) {
+    panel.scrollIntoView({ behavior: 'smooth' });
+    panel.classList.remove('collapsed');
+  }
+}
+
+function navigateToRefinementTemplate(org, proj, comp) {
+  navigate('#settings');
+  setTimeout(() => {
+    const el = document.getElementById(`refine-tmpl-${org}-${proj}-${comp}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth' });
+  }, 200);
+}
+
+async function showRefineProjectModal(org, proj, comp) {
+  const projectKey = `${org}/${proj}/${comp}`;
+  let inScopeItems = [];
+  try {
+    const res = await fetch(`/api/backlog?org=${encodeURIComponent(org)}`);
+    const data = await res.json();
+    const group = (data.projects || {})[projectKey] || { items: [] };
+    const nonTerminal = new Set(['draft', 'planned', 'blocked']);
+    inScopeItems = (group.items || []).filter(it => nonTerminal.has(it.status));
+  } catch {}
+
+  const byStatus = {};
+  for (const item of inScopeItems) {
+    if (!byStatus[item.status]) byStatus[item.status] = [];
+    byStatus[item.status].push(item);
+  }
+
+  let itemListHtml = '';
+  for (const [status, items] of Object.entries(byStatus)) {
+    itemListHtml += `<div style="margin-top:8px"><strong style="font-size:12px;text-transform:uppercase;color:var(--text-light)">${esc(status)}</strong><ul style="margin:4px 0 0 16px;padding:0;font-size:13px">`;
+    for (const item of items) itemListHtml += `<li>${esc(item.id)}: ${esc(item.title)}</li>`;
+    itemListHtml += `</ul></div>`;
+  }
+  if (!itemListHtml) itemListHtml = '<p style="font-size:13px;color:var(--text-light)">No non-terminal items in scope.</p>';
+
+  const { overlay } = createDispatchOverlay({
+    title: `Refine Project: ${org}/${proj}/${comp}`,
+    submitLabel: 'Confirm',
+    cancelId: 'refine-project-cancel',
+    submitId: 'refine-project-submit',
+    buildFields: () => `
+      <div class="field">
+        <label>In-scope items (${inScopeItems.length})</label>
+        <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:8px">${itemListHtml}</div>
+      </div>
+      <div class="field">
+        <label for="refine-project-instructions">Additional instructions (optional)</label>
+        <textarea id="refine-project-instructions" placeholder="e.g. Focus on API contracts; skip infrastructure items..." style="height:80px"></textarea>
+      </div>
+      <div class="field" style="flex-direction:row;align-items:center;gap:8px">
+        <input type="checkbox" id="refine-project-dry-run" />
+        <label for="refine-project-dry-run" style="font-size:13px">Dry run (no changes — preview only)</label>
+      </div>
+    `,
+    onSubmit: async (ov) => {
+      const instructions = ov.querySelector('#refine-project-instructions')?.value || '';
+      const dryRun = ov.querySelector('#refine-project-dry-run')?.checked || false;
+      const res = await fetch(`/api/projects/${encodeURIComponent(org)}/${encodeURIComponent(proj)}/${encodeURIComponent(comp)}/refine`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instructions: instructions || undefined, dry_run: dryRun || undefined }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Dispatch failed');
+      setTimeout(() => {
+        const panel = document.getElementById(`dispatch-${result.dispatch_id}`);
+        if (panel) panel.scrollIntoView({ behavior: 'smooth' });
+      }, 300);
     },
   });
 }
@@ -6821,7 +6908,13 @@ function renderSettingsView(status, config) {
   html += '</select></div>';
   html += '</div></div>';
 
-  // Card 5: Recent Logs
+  // Card 5: Refinement Templates
+  html += '<div class="settings-card">';
+  html += '<h3>Refinement Templates</h3>';
+  html += '<div id="refinement-templates-list">Loading...</div>';
+  html += '</div>';
+
+  // Card 6: Recent Logs
   html += '<div class="settings-card">';
   html += '<h3>Recent Logs <button class="settings-btn" id="settings-refresh-logs" style="float:right;padding:4px 12px;font-size:12px">Refresh</button></h3>';
   html += '<div class="settings-log-box" id="settings-log-box">(loading...)</div>';
@@ -6834,6 +6927,7 @@ function renderSettingsView(status, config) {
 
 function bindSettingsEvents(status, config) {
   loadSettingsLogs();
+  loadRefinementTemplates();
   document.getElementById('settings-log-box')?.classList.toggle('log-light', resolveTermTheme() === 'light');
 
   if (settingsRefreshTimer) clearInterval(settingsRefreshTimer);
@@ -6979,6 +7073,84 @@ async function loadSettingsLogs() {
   } catch {
     const box = document.getElementById('settings-log-box');
     if (box) box.textContent = '(could not load logs)';
+  }
+}
+
+async function loadRefinementTemplates() {
+  const container = document.getElementById('refinement-templates-list');
+  if (!container) return;
+  try {
+    const res = await fetch('/api/projects');
+    if (!res.ok) { container.textContent = '(could not load projects)'; return; }
+    const projects = await res.json();
+    if (projects.length === 0) { container.innerHTML = '<p style="font-size:13px;color:var(--text-light)">No projects onboarded.</p>'; return; }
+
+    let html = '';
+    for (const p of projects) {
+      const { org, project, component } = p;
+      const id = `refine-tmpl-${org}-${project}-${component}`;
+      html += `<div id="${id}" style="margin-bottom:20px;border-top:1px solid var(--border);padding-top:12px">`;
+      html += `<div style="font-size:13px;font-weight:600;margin-bottom:8px">${esc(org)}/${esc(project)}/${esc(component)}</div>`;
+      html += `<textarea id="${id}-body" style="width:100%;height:200px;font-family:monospace;font-size:12px;border:1px solid var(--border);border-radius:4px;padding:8px;box-sizing:border-box" placeholder="Loading...">(loading...)</textarea>`;
+      html += `<div style="margin-top:6px;display:flex;gap:8px">`;
+      html += `<button class="settings-btn primary" onclick="saveRefinementTemplate('${esc(org)}','${esc(project)}','${esc(component)}')">Save</button>`;
+      html += `<button class="settings-btn danger" onclick="resetRefinementTemplate('${esc(org)}','${esc(project)}','${esc(component)}')">Reset to default</button>`;
+      html += `</div></div>`;
+    }
+    container.innerHTML = html;
+
+    // Load each template
+    for (const p of projects) {
+      const { org, project, component } = p;
+      const id = `refine-tmpl-${org}-${project}-${component}`;
+      const textarea = document.getElementById(`${id}-body`);
+      if (!textarea) continue;
+      try {
+        const r = await fetch(`/api/projects/${encodeURIComponent(org)}/${encodeURIComponent(project)}/${encodeURIComponent(component)}/artifacts/refinement-template`);
+        if (r.ok) {
+          const t = await r.json();
+          textarea.value = t.body;
+        } else {
+          textarea.value = '(failed to load)';
+        }
+      } catch {
+        textarea.value = '(error loading template)';
+      }
+    }
+  } catch {
+    container.textContent = '(could not load refinement templates)';
+  }
+}
+
+async function saveRefinementTemplate(org, proj, comp) {
+  const id = `refine-tmpl-${org}-${proj}-${comp}`;
+  const textarea = document.getElementById(`${id}-body`);
+  if (!textarea) return;
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(org)}/${encodeURIComponent(proj)}/${encodeURIComponent(comp)}/artifacts/refinement-template`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: textarea.value }),
+    });
+    if (!res.ok) throw new Error('Save failed');
+  } catch (e) {
+    alert('Failed to save: ' + e.message);
+  }
+}
+
+async function resetRefinementTemplate(org, proj, comp) {
+  if (!confirm(`Reset the refinement template for ${org}/${proj}/${comp} to the default? This cannot be undone.`)) return;
+  const id = `refine-tmpl-${org}-${proj}-${comp}`;
+  const textarea = document.getElementById(`${id}-body`);
+  try {
+    await fetch(`/api/projects/${encodeURIComponent(org)}/${encodeURIComponent(proj)}/${encodeURIComponent(comp)}/artifacts/refinement-template`, { method: 'DELETE' });
+    const res = await fetch(`/api/projects/${encodeURIComponent(org)}/${encodeURIComponent(proj)}/${encodeURIComponent(comp)}/artifacts/refinement-template`);
+    if (res.ok) {
+      const t = await res.json();
+      if (textarea) textarea.value = t.body;
+    }
+  } catch (e) {
+    alert('Failed to reset: ' + e.message);
   }
 }
 
