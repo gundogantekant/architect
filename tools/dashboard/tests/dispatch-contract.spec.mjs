@@ -264,4 +264,63 @@ test.describe('Dispatch Contract @fast', () => {
     expect(contractSection).not.toContain('Goal from description');
   });
 
+  test('DC-13: dispatch seeded with contract is returned in active list with contract.goal', async () => {
+    const base = getBase();
+    const contract = { goal: 'Test goal', constraints: [], expected_output: 'x', failure_conditions: [] };
+
+    const seedResp = await fetch(`${base}/_test/seed-dispatch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'running', contract }),
+    });
+    expect(seedResp.ok).toBe(true);
+    const { id } = await seedResp.json();
+
+    const activeResp = await fetch(`${base}/api/dispatch/active`);
+    expect(activeResp.ok).toBe(true);
+    const list = await activeResp.json();
+    const found = list.find(d => d.id === id);
+    expect(found).toBeTruthy();
+    expect(found.contract).toBeTruthy();
+    expect(found.contract.goal).toBe('Test goal');
+  });
+
+  test('DC-14: dispatch seeded without contract returns contract: null in active list', async () => {
+    const base = getBase();
+
+    const seedResp = await fetch(`${base}/_test/seed-dispatch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'running' }),
+    });
+    expect(seedResp.ok).toBe(true);
+    const { id } = await seedResp.json();
+
+    const activeResp = await fetch(`${base}/api/dispatch/active`);
+    expect(activeResp.ok).toBe(true);
+    const list = await activeResp.json();
+    const found = list.find(d => d.id === id);
+    expect(found).toBeTruthy();
+    expect(found.contract).toBeNull();
+  });
+
+  test('DC-15: active dispatch list includes pipeline_stage field', async () => {
+    const base = getBase();
+
+    const seedResp = await fetch(`${base}/_test/seed-dispatch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'running' }),
+    });
+    expect(seedResp.ok).toBe(true);
+    const { id } = await seedResp.json();
+
+    const activeResp = await fetch(`${base}/api/dispatch/active`);
+    expect(activeResp.ok).toBe(true);
+    const list = await activeResp.json();
+    const found = list.find(d => d.id === id);
+    expect(found).toBeTruthy();
+    expect('pipeline_stage' in found).toBe(true);
+  });
+
 });
