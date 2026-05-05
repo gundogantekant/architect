@@ -418,6 +418,51 @@ export function wireDispatchHandlers(dispatch, proc) {
     dispatch.process = null;
     if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
     if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
+
+    // Cost anomaly and scope violation detection run after close; both are best-effort.
+    (async () => {
+      try {
+        const { avg_cost, count } = await db.getProjectAvgDispatchCost(dispatch.project_key);
+        if (count >= 3 && avg_cost > 0 && dispatch.cost_usd > avg_cost * 2) {
+          dispatch.session_log = dispatch.session_log || [];
+          dispatch.session_log.push({
+            trigger: 'cost-anomaly',
+            summary: `Cost $${dispatch.cost_usd?.toFixed(4)} is ${(dispatch.cost_usd / avg_cost).toFixed(1)}x the 30-day average ($${avg_cost.toFixed(4)}) for this project`,
+            related_items: [dispatch.id],
+            detected_at: new Date().toISOString(),
+          });
+        }
+      } catch (err) {
+        console.error('[cost-anomaly] detection failed:', err.message);
+      }
+    })();
+
+    // Scope boundary violation detection: flag dispatches that modified files outside
+    // their contract's declared scope_boundary. Best-effort — skipped on any error.
+    if (dispatch.worktree_path && dispatch.contract?.scope_boundary) {
+      try {
+        const sourceBranch = dispatch.source_branch || 'HEAD~1';
+        const diffOutput = execFileSync(
+          'git', ['diff', '--name-only', sourceBranch],
+          { cwd: dispatch.worktree_path, encoding: 'utf8', timeout: 5000 }
+        );
+        const changedFiles = diffOutput.split('\n').filter(Boolean);
+        const boundary = dispatch.contract.scope_boundary.replace(/\/$/, '');
+        const violating = changedFiles.filter(f => !f.startsWith(boundary + '/') && f !== boundary);
+        if (violating.length > 0) {
+          dispatch.session_log = dispatch.session_log || [];
+          dispatch.session_log.push({
+            trigger: 'scope-violation',
+            summary: `${violating.length} file(s) modified outside scope boundary '${boundary}': ${violating.slice(0, 3).join(', ')}${violating.length > 3 ? ` +${violating.length - 3} more` : ''}`,
+            related_items: [dispatch.id],
+            detected_at: new Date().toISOString(),
+          });
+        }
+      } catch {
+        // worktree may be gone or git failed — skip silently
+      }
+    }
+
     broadcastDispatchDone(dispatch);
     archiveSession(dispatch, 'dispatch').catch(e => console.error('[dispatch close] archiveSession:', e.message));
     saveDispatchToDb(dispatch).catch(e => console.error('[dispatch close] saveDispatchToDb:', e.message));

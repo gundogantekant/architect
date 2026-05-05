@@ -14,6 +14,9 @@
 .phase-dot { width: 8px; height: 8px; border-radius: 50%; cursor: default; flex-shrink: 0; }
 .org-repos-section { margin-top: 8px; }
 .org-repos-section h4 { font-size: 12px; color: var(--text-light); margin: 12px 0 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+.alert-badge { font-size: 11px; padding: 1px 6px; border-radius: 3px; font-weight: 600; cursor: default; }
+.alert-cost  { background: #FEF3C7; color: #92400E; border: 1px solid #F59E0B; }
+.alert-scope { background: #FEE2E2; color: #991B1B; border: 1px solid #EF4444; }
 </style>
 </head>
 <body>
@@ -1467,6 +1470,20 @@ function renderPhaseTimeline(history) {
   return `<div class="phase-timeline">${dots}</div>`;
 }
 
+function renderDispatchAlerts(dispatch) {
+  const log = dispatch.session_log || [];
+  const badges = [];
+  const costAlert = log.find(e => e.trigger === 'cost-anomaly');
+  const scopeAlert = log.find(e => e.trigger === 'scope-violation');
+  if (costAlert) {
+    badges.push(`<span class="alert-badge alert-cost" title="${esc(costAlert.summary)}">⚠ Cost</span>`);
+  }
+  if (scopeAlert) {
+    badges.push(`<span class="alert-badge alert-scope" title="${esc(scopeAlert.summary)}">⚠ Scope</span>`);
+  }
+  return badges.join('');
+}
+
 function createCliSessionPanel(session) {
   return createSessionPanel('cli', session);
 }
@@ -1485,6 +1502,7 @@ function createSessionPanel(type, info) {
     const planBadge = dispatch.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
     const suspendedBadge = isSuspended ? '<span class="suspended-badge">[suspended]</span>' : '';
     const autoImplementBadge = dispatch.dispatch_mode === 'auto_implement' ? '<span class="status-badge badge-open badge-auto">[auto]</span>' : '';
+    const alertBadges = renderDispatchAlerts(dispatch);
     const dKeyParts = (dispatch.project_key || '').split('/').filter(p => p && p !== '*');
     const dBreadcrumb = [];
     if (dKeyParts.length >= 2) dBreadcrumb.push(`${esc(dKeyParts[0])} / ${esc(dKeyParts[1])}`);
@@ -1503,7 +1521,7 @@ function createSessionPanel(type, info) {
     panel.innerHTML = `
       <div class="dispatch-header">
         <span class="status-dot ${isRunning ? (dispatch.agent_phase === 'waiting_for_input' ? 'needs-input' : dispatch.agent_phase === 'tool_running' ? 'tool-running' : 'generating') : dispatch.status}" title="${isRunning ? ({generating:'Thinking',tool_running:'Running tool',waiting_for_input:'Needs input'}[dispatch.agent_phase]||'') : ''}"></span>
-        <span class="dispatch-title">${dispatchPathStr}${planBadge}${skipBadge}${suspendedBadge}${autoImplementBadge}</span>
+        <span class="dispatch-title">${dispatchPathStr}${planBadge}${skipBadge}${suspendedBadge}${autoImplementBadge}${alertBadges}</span>
         <span class="dispatch-meta">${new Date(dispatch.started_at).toLocaleTimeString()}</span>
         <button class="focus-btn" data-focus-dispatch="${esc(id)}">Focus</button>
         <button class="minimize-btn" data-minimize-dispatch="${esc(id)}">▼</button>

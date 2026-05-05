@@ -646,7 +646,7 @@ Structured log entry recorded when the orchestrator detects a condition requirin
 ```json
 {
   "type": "escalation",
-  "trigger": "stale|blocked-chain|epic-stall|cost-anomaly|dispatch-loop|portfolio-drift",
+  "trigger": "stale|blocked-chain|epic-stall|cost-anomaly|dispatch-loop|portfolio-drift|scope-violation",
   "summary": "string — human-readable description of the escalation",
   "related_items": ["string (W-XXX or E-XXX IDs)"]
 }
@@ -658,6 +658,7 @@ Trigger semantics:
 - `epic-stall` — no linked item status change in the last 3 dispatches for an active epic
 - `cost-anomaly` — a single dispatch cost exceeds 2x the project's average dispatch cost
 - `dispatch-loop` — a work item has been dispatched 3+ times without reaching done
+- `scope-violation` — a dispatch modified files outside its contract's scope_boundary
 
 See `domain/rules.md` → Project Manager Behavior Rules → Escalation Triggers for detection criteria.
 

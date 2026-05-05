@@ -549,6 +549,7 @@ export default function dispatchRoutes(deps) {
           merge_result: d.merge_result || null,
           pipeline_stage: d.pipeline_stage || null,
           _exitedWithoutSignal: d._exitedWithoutSignal || false,
+          session_log: Array.isArray(d.session_log) ? d.session_log : [],
         };
       }));
       json(res, list.filter(Boolean));
