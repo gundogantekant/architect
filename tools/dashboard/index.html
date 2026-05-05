@@ -24,6 +24,7 @@
   <div id="sessions-sidebar" class="sessions-section"></div>
   <div id="tree"></div>
   <div class="sidebar-settings" onclick="navigate('repos')"><span class="nav-icon">&#128193;</span> <span>Repos</span></div>
+  <div class="sidebar-settings" data-nav="all-sessions" onclick="location.hash='#all-sessions'"><span class="nav-icon">&#9635;</span> <span>Sessions</span></div>
   <div class="sidebar-settings" onclick="location.hash='#time-report'"><span class="nav-icon">&#9202;</span> <span>Time Report</span></div>
   <div class="sidebar-settings" onclick="location.hash='#settings'"><span class="nav-icon">&#9881;</span> <span>Settings</span></div>
   <a href="#" class="notes-toggle-btn sidebar-settings" data-notes-toggle title="Toggle notes panel" aria-label="Toggle notes panel">
@@ -709,7 +710,9 @@ function _placeSessionPanelsNow() {
     loadDispatchContent(dispatch);
   }
 
-  // 5. Context-aware expand/collapse: expand relevant panels, collapse others
+  // 5. Context-aware expand/collapse: expand relevant panels, collapse others.
+  // Guards on previousProjectKey to prevent cross-project navigation from folding
+  // sessions that belong to a project the user is navigating away from.
   const hash = location.hash || '';
   let viewProjectKey = '';
   let viewEpicId = '';
@@ -718,7 +721,10 @@ function _placeSessionPanelsNow() {
   const epicMatch = hash.match(/^#epic\/(.+)$/);
   if (epicMatch) viewEpicId = epicMatch[1];
 
-  if (viewProjectKey || viewEpicId) {
+  // Skip auto-fold when navigating to a different project than was previously shown.
+  const isCrossProjectNav = viewProjectKey && previousProjectKey && viewProjectKey !== previousProjectKey;
+
+  if (!isCrossProjectNav && (viewProjectKey || viewEpicId)) {
     for (const session of allSessions) {
       let isRelevant = true;
       if (viewProjectKey) {
@@ -2843,6 +2849,9 @@ function showOnboardFromRepoModal(org, repoName) {
 // Store current work items context for dispatch
 let currentWorkItems = [];
 let currentProjectKey = '';
+// Tracks the project key visible to the user before the current navigation began.
+// Used by placeSessionPanels to distinguish same-project panel updates from cross-project navigations.
+let previousProjectKey = '';
 const ARCHITECT_KEY = '\u2013/architect/\u2013';
 
 // Render a work items table — reusable for both flat and epic-grouped modes.
@@ -2973,6 +2982,7 @@ function renderEpicGroupedBoard(workItems, epics, projectKey) {
 
 function renderComponentView(org, proj, comp, data, workItems, files, projectEpics) {
   currentWorkItems = workItems;
+  previousProjectKey = currentProjectKey;
   currentProjectKey = `${org}/${proj}/${comp}`;
 
   const tabs = ['Board', 'Overview', 'Docs'];
@@ -6908,6 +6918,52 @@ function timeAgo(isoString) {
   return d + 'd ago';
 }
 
+// --- All-Sessions view ---
+function renderAllSessionsView(dispatches, terminals, cliSessions, history) {
+  const TYPE_LABEL = { dispatch: 'Dispatch', terminal: 'Terminal', cli: 'CLI' };
+
+  function sessionRow(type, id, title, project, status, startedAt, cost) {
+    const costStr = cost != null ? `$${Number(cost).toFixed(2)}` : '—';
+    return `<tr>
+      <td><span class="badge badge-role">${esc(TYPE_LABEL[type] || type)}</span></td>
+      <td><code>${esc(id)}</code></td>
+      <td>${esc(title || '—')}</td>
+      <td>${esc(project || '—')}</td>
+      <td><span class="badge badge-${esc(status || 'unknown')}">${esc(status || '—')}</span></td>
+      <td>${fmtDate(startedAt)}</td>
+      <td>${costStr}</td>
+    </tr>`;
+  }
+
+  function tableHead() {
+    return `<thead><tr><th>Type</th><th>ID</th><th>Title</th><th>Project</th><th>Status</th><th>Started</th><th>Cost</th></tr></thead>`;
+  }
+
+  let active = '';
+  for (const d of (dispatches || [])) {
+    active += sessionRow('dispatch', d.id, d.work_item_id || d.title || d.id, d.project_key, d.status, d.started_at, null);
+  }
+  for (const t of (terminals || [])) {
+    active += sessionRow('terminal', t.id, t.title || t.id, t.project_key, t.status, t.started_at, null);
+  }
+  for (const c of (cliSessions || [])) {
+    active += sessionRow('cli', c.id, c.title || c.id, c.project_key, c.status, c.registered_at, null);
+  }
+
+  let hist = '';
+  for (const h of (history || [])) {
+    hist += sessionRow(h.type || 'dispatch', h.id, h.title || h.id, h.project_key, h.status, h.started_at, h.cost_usd);
+  }
+
+  return `<div class="card">
+    <h2>Sessions</h2>
+    <h3 style="font-size:14px;margin:16px 0 6px">Active</h3>
+    ${active ? `<table class="wi-table">${tableHead()}<tbody>${active}</tbody></table>` : '<p style="color:var(--text-light);font-size:13px">No active sessions.</p>'}
+    <h3 style="font-size:14px;margin:20px 0 6px">History</h3>
+    ${hist ? `<table class="wi-table">${tableHead()}<tbody>${hist}</tbody></table>` : '<p style="color:var(--text-light);font-size:13px">No session history.</p>'}
+  </div>`;
+}
+
 // --- Repos view ---
 function renderReposView(repos) {
   const main = $('#main');
@@ -7281,6 +7337,23 @@ async function route() {
     } catch (e) {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
     }
+    placeSessionPanels();
+    return;
+  }
+
+  if (parts[0] === 'all-sessions') {
+    try {
+      const [dispatches, terminals, cliSessions, history] = await Promise.all([
+        api('dispatch/active'),
+        api('terminal/active'),
+        api('sessions/active'),
+        api('sessions/all'),
+      ]);
+      main.innerHTML = renderAllSessionsView(dispatches, terminals, cliSessions, history);
+    } catch (e) {
+      main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading sessions: ${esc(String(e))}</p></div>`;
+    }
+    setActive('');
     placeSessionPanels();
     return;
   }
