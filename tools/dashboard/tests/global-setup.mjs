@@ -51,6 +51,7 @@ export const SPEC_FILES = [
   'cost-anomaly',
   'auto-timeout',
   'refinement',
+  'task-creation',
 ];
 
 function getLiveDashboardPorts() {

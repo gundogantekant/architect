@@ -1326,6 +1326,15 @@ Gate reviews (Ticket Gate, Plan Gate, Code Gate) are read-only, depth-1 dispatch
 - The contract block must use the exact sentinel: `# DispatchContract\n\`\`\`json\n{...}\n\`\`\`` — the close handler extracts this pattern via regex.
 - Extraction is best-effort: if the pattern is absent or the JSON is malformed, no patch is applied and the error is logged.
 
+## Task Creation Gate Rules
+
+- Task creation is agent-gated by default. The coordinator dispatch (`dispatch_mode='task_creation'`) receives the user's `initial_input` and creates a draft work item via `POST /api/work-items`.
+- It echoes `CREATED_WORK_ITEM: <id>` in its output so the close handler can link the dispatch to the new item.
+- Direct work item creation is available only via keyboard shortcut (Shift+N) or via the Settings page preference `allow_direct_task_creation`.
+- Dispatches with `dispatch_mode='task_creation'` have `work_item_id: null` at creation time. They never enter `merge_pending`.
+- On completion, the close handler scans dispatch output for `CREATED_WORK_ITEM: W-XXX` and links the dispatch to the created item via `linkDispatchToWorkItem`.
+- If no `CREATED_WORK_ITEM:` line is found after completion, a fallback message is appended to the dispatch output so the frontend can surface a link to the direct form.
+
 ## Token & Credential Management Rules
 
 - **Before creating any token, API key, credential, or named resource on a third-party service, always ask the user for the token name.** Never create tokens silently.

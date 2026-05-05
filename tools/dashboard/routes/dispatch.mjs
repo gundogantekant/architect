@@ -72,7 +72,7 @@ export default function dispatchRoutes(deps) {
     ROOT, LOGS_DIR, CLAUDE_BIN,
     dispatches,
     wireDispatchHandlers,
-    buildDispatchPrompt, buildResumePrompt, buildAutoImplementPrompt, resolveProjectPath, loadPortfolioContext, loadWorkItem, loadResumeContext, selectAgentsForDispatch, loadEpicPlanSnippet,
+    buildDispatchPrompt, buildResumePrompt, buildAutoImplementPrompt, buildTaskCreationPrompt, resolveProjectPath, loadPortfolioContext, loadWorkItem, loadResumeContext, selectAgentsForDispatch, loadEpicPlanSnippet,
     broadcastDispatchLine, broadcastDispatchDone, killProcessGraceful,
     saveDispatchToDb, archiveSession,
     isPidAlive,
@@ -142,7 +142,8 @@ export default function dispatchRoutes(deps) {
     // Create dispatch
     [/^\/api\/dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode, contract: rawContract } = body;
+      const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode, contract: rawContract, dispatch_mode: rawDispatchMode } = body;
+      const dispatch_mode = rawDispatchMode || 'standard';
 
       // Strip empty-string contract fields per domain/rules.md → Dispatch Contract Rules
       let contract = null;
@@ -164,11 +165,12 @@ export default function dispatchRoutes(deps) {
       if (!project_key) {
         return err(res, 'project_key is required', 400);
       }
-      if (!work_item_id && !additional_instructions) {
+      if (!work_item_id && !additional_instructions && dispatch_mode !== 'task_creation') {
         return err(res, 'work_item_id or additional_instructions is required', 400);
       }
 
-      const projectPath = await resolveProjectPath(project_key);
+      const resolvedPath = await resolveProjectPath(project_key);
+      const projectPath = resolvedPath || (dispatch_mode === 'task_creation' ? ROOT : null);
       if (!projectPath) {
         return err(res, `Could not resolve path for project: ${project_key}`, 400);
       }
@@ -261,17 +263,19 @@ export default function dispatchRoutes(deps) {
         }
       }
 
-      const prompt = buildDispatchPrompt({
-        workItem: effectiveWorkItem,
-        projectKey: project_key,
-        projectPath,
-        additionalInstructions: additional_instructions,
-        portfolio,
-        epicContext,
-        relatedProjects,
-        worktreeContext,
-        contract: contract && Object.keys(contract).length ? contract : null,
-      });
+      const prompt = dispatch_mode === 'task_creation'
+        ? buildTaskCreationPrompt(project_key, additional_instructions || '')
+        : buildDispatchPrompt({
+            workItem: effectiveWorkItem,
+            projectKey: project_key,
+            projectPath,
+            additionalInstructions: additional_instructions,
+            portfolio,
+            epicContext,
+            relatedProjects,
+            worktreeContext,
+            contract: contract && Object.keys(contract).length ? contract : null,
+          });
 
       // Select sub-agents based on work item and portfolio context
       const agentDefs = await selectAgentsForDispatch({ workItem: effectiveWorkItem, portfolio });
@@ -285,6 +289,7 @@ export default function dispatchRoutes(deps) {
         title: title || work_item_id || '',
         permission_mode: resolvedPermMode,
         skip_permissions: resolvedSkipPerms,
+        dispatch_mode,
         status: 'running',
         agent_phase: 'generating',
         agent_phase_history: [],

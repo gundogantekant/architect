@@ -914,6 +914,23 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
   return sections.join('\n\n');
 }
 
+export function buildTaskCreationPrompt(projectKey, initialInput) {
+  return `You are a coordinator agent creating a new work item for project ${projectKey}.
+
+## User Request
+${initialInput}
+
+## Task
+Create a draft work item for this request:
+1. Call POST /api/work-items with the dashboard API (base URL from DASHBOARD_URL env var or http://127.0.0.1:3777)
+   Body: { "title": "<concise title>", "description": "<goal, constraints, expected output as markdown>", "status": "draft", "project_key": "${projectKey}", "priority": "medium" }
+2. After creating the work item, output the following line exactly:
+   CREATED_WORK_ITEM: <id from API response>
+3. Signal completion.
+
+Keep the title under 80 characters. The description should include **Goal:**, **Constraints:**, and **Expected Output:** sections.`;
+}
+
 export function buildRefinementPrompt(workItem) {
   return `You are a coordinator agent refining a draft work item into an actionable implementation contract.
 

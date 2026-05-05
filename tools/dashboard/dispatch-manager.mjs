@@ -488,6 +488,25 @@ export function wireDispatchHandlers(dispatch, proc) {
       }
     }
 
+    if (dispatch.dispatch_mode === 'task_creation' && dispatch.status === 'completed') {
+      (async () => {
+        try {
+          const output = (dispatch.output || []).map(line => {
+            try { return extractStreamText(JSON.parse(line)) || ''; } catch { return ''; }
+          }).join('');
+          const match = output.match(/CREATED_WORK_ITEM:\s*(W-\d+)/);
+          if (match) {
+            const workItemId = match[1];
+            await db.linkDispatchToWorkItem(dispatch.id, workItemId);
+          } else {
+            dispatch.output = [...(dispatch.output || []), JSON.stringify({ type: 'stderr', content: '\n\n[No work item was created. Open the direct form to create manually.]' })];
+          }
+        } catch (err) {
+          console.error('Task creation link failed:', err.message);
+        }
+      })();
+    }
+
     if (dispatch.dispatch_mode === 'refinement' && dispatch.status === 'completed') {
       (async () => {
         try {

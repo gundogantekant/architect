@@ -527,7 +527,8 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "worktree_path": "string (absolute path to worktree, null if no worktree — persisted to PostgreSQL)",
   "worktree_branch": "string (worktree branch name, null if no worktree — persisted to PostgreSQL)",
   "source_branch": "string (originating branch the worktree was created from, null if no worktree — persisted to PostgreSQL)",
-  "dispatch_mode": "string ('standard' | 'auto_implement' | 'refinement', default 'standard')",
+  "dispatch_mode": "string ('standard' | 'auto_implement' | 'refinement' | 'task_creation', default 'standard')",
+  // task_creation dispatches have work_item_id: null at creation and never enter merge_pending.
   "completion_sha": "string (SHA of the final implementation commit, optional)",
   "completion_summary": "string (agent-provided summary, max 500 chars, optional)",
   "merge_result": "'success'|'conflict'|'aborted' — outcome of the merge attempt, optional",
