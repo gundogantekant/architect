@@ -100,7 +100,13 @@ export function tailLogFile(dispatch) {
           const evt = JSON.parse(line);
           const newPhase = derivePhase(dispatch.agent_phase, evt);
           if (newPhase !== dispatch.agent_phase) {
+            const historyEntry = { phase: newPhase, at: new Date().toISOString() };
+            dispatch.agent_phase_history = dispatch.agent_phase_history || [];
+            dispatch.agent_phase_history = [...dispatch.agent_phase_history, historyEntry].slice(-50);
             dispatch.agent_phase = newPhase;
+            db.updateAgentPhase(dispatch.id, newPhase, historyEntry).catch(err =>
+              console.error(`[agent_phase] failed to persist phase ${newPhase} for ${dispatch.id}:`, err)
+            );
           }
           const text = extractStreamText(evt);
           if (text) {
@@ -367,7 +373,13 @@ export function wireDispatchHandlers(dispatch, proc) {
         }
         const newPhase = derivePhase(dispatch.agent_phase, evt);
         if (newPhase !== dispatch.agent_phase) {
+          const historyEntry = { phase: newPhase, at: new Date().toISOString() };
+          dispatch.agent_phase_history = dispatch.agent_phase_history || [];
+          dispatch.agent_phase_history = [...dispatch.agent_phase_history, historyEntry].slice(-50);
           dispatch.agent_phase = newPhase;
+          db.updateAgentPhase(dispatch.id, newPhase, historyEntry).catch(err =>
+            console.error(`[agent_phase] failed to persist phase ${newPhase} for ${dispatch.id}:`, err)
+          );
         }
         const text = extractStreamText(evt);
         if (text) {

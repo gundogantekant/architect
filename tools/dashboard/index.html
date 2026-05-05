@@ -9,6 +9,10 @@
 <link rel="modulepreload" href="/vendor/xterm-addon-web-links.mjs">
 <link rel="stylesheet" href="/styles/dashboard.css">
 <link rel="stylesheet" href="/vendor/xterm.css">
+<style>
+.phase-timeline { display: flex; align-items: center; gap: 3px; padding: 4px 16px 2px; min-height: 20px; }
+.phase-dot { width: 8px; height: 8px; border-radius: 50%; cursor: default; flex-shrink: 0; }
+</style>
 </head>
 <body>
 
@@ -1443,6 +1447,18 @@ async function restoreTerminals() {
   } catch {}
 }
 
+function renderPhaseTimeline(history) {
+  if (!history || history.length < 2) return '';
+  const phaseColors = { generating: '#4A9EFF', tool_running: '#F59E0B', waiting_for_input: '#8B5CF6' };
+  const dots = history.map(entry => {
+    const color = phaseColors[entry.phase] || '#6B7280';
+    const time = entry.at ? new Date(entry.at).toLocaleTimeString() : '';
+    const label = entry.phase ? entry.phase.replace(/_/g, ' ') : 'idle';
+    return `<div class="phase-dot" style="background:${color}" title="${label} at ${time}"></div>`;
+  }).join('');
+  return `<div class="phase-timeline">${dots}</div>`;
+}
+
 function createCliSessionPanel(session) {
   return createSessionPanel('cli', session);
 }
@@ -1488,6 +1504,7 @@ function createSessionPanel(type, info) {
         <button class="kill-btn" data-kill-dispatch="${esc(id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
         <button class="dismiss-btn" data-dismiss-dispatch="${esc(id)}" ${isRunning ? 'style="display:none"' : ''}>✕</button>
       </div>
+      ${renderPhaseTimeline(dispatch.agent_phase_history)}
       <div class="dispatch-log${resolveTermTheme() === 'light' ? ' log-light' : ''}" id="log-${id}"></div>
       <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
         <button class="focus-btn" data-focus-dispatch-bottom="${esc(id)}">Focus</button>
@@ -2253,7 +2270,24 @@ async function restoreDispatches() {
       const existing = activeDispatches.find(a => a.id === d.id);
       if (existing) {
         existing.agent_phase = d.agent_phase || null;
+        existing.agent_phase_history = d.agent_phase_history || existing.agent_phase_history || [];
         existing.status = d.status;
+        const panelEl = document.getElementById(`dispatch-${existing.id}`);
+        if (panelEl) {
+          const prev = panelEl.querySelector('.phase-timeline');
+          const next = renderPhaseTimeline(existing.agent_phase_history);
+          if (next) {
+            const tmp = document.createElement('div');
+            tmp.innerHTML = next;
+            if (prev) prev.replaceWith(tmp.firstChild);
+            else {
+              const logEl = panelEl.querySelector(`#log-${existing.id}`);
+              if (logEl) logEl.before(tmp.firstChild);
+            }
+          } else if (prev) {
+            prev.remove();
+          }
+        }
         continue;
       }
       if (d.status === 'suspended') {

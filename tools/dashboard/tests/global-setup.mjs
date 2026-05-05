@@ -44,6 +44,7 @@ export const SPEC_FILES = [
   'modal-layout',
   'portfolio-persistence',
   'dispatch-mandate',
+  'agent-phase-persist',
 ];
 
 function getLiveDashboardPorts() {

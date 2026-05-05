@@ -183,7 +183,7 @@ export async function assertSchema() {
     work_item_logs: ['id', 'work_item_id', 'logged_at', 'summary'],
     epics: ['id', 'title', 'status', 'priority', 'description', 'acceptance_criteria', 'target_date', 'tags', 'created_at', 'updated_at'],
     epic_logs: ['id', 'epic_id', 'logged_at', 'summary'],
-    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at'],
+    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at', 'agent_phase', 'agent_phase_history'],
     terminals: ['id', 'type', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'exited_at', 'pid', 'tmux_session', 'claude_session_id', 'agent_type', 'head_seq'],
     cli_sessions: ['id', 'project_key', 'work_item_id', 'epic_id', 'title', 'pid', 'status', 'registered_at', 'exited_at'],
     preferences: ['key', 'value'],
@@ -784,8 +784,8 @@ export async function getEpicProjectKeys(epicId) {
 
 export async function saveDispatch(d) {
   await pool.query(`
-    INSERT INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode, pipeline_stage)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+    INSERT INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode, pipeline_stage, agent_phase, agent_phase_history)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
     ON CONFLICT (id) DO UPDATE SET
       work_item_id = EXCLUDED.work_item_id,
       epic_id = EXCLUDED.epic_id,
@@ -804,14 +804,35 @@ export async function saveDispatch(d) {
       worktree_branch = EXCLUDED.worktree_branch,
       source_branch = EXCLUDED.source_branch,
       dispatch_mode = EXCLUDED.dispatch_mode,
-      pipeline_stage = EXCLUDED.pipeline_stage
+      pipeline_stage = EXCLUDED.pipeline_stage,
+      agent_phase = EXCLUDED.agent_phase,
+      agent_phase_history = EXCLUDED.agent_phase_history
   `, [
     d.id, d.work_item_id || null, d.epic_id || null, d.project_key, d.project_path || '',
     d.title || '', d.permission_mode || 'acceptEdits', d.skip_permissions ?? false,
     d.status, d.started_at, d.completed_at || null, d.cost_usd || null, d.pid || null,
     d.claude_session_id || null, d.worktree_path || null, d.worktree_branch || null,
     d.source_branch || null, d.dispatch_mode || 'standard', d.pipeline_stage || null,
+    d.agent_phase ?? null, jsonb(d.agent_phase_history, []),
   ]);
+}
+
+export async function updateAgentPhase(id, phase, historyEntry) {
+  const res = await pool.query(
+    'SELECT agent_phase_history FROM dispatches WHERE id = $1',
+    [id]
+  );
+  if (!res.rows.length) return;
+
+  const existing = res.rows[0].agent_phase_history || [];
+  const updated = [...existing, historyEntry].slice(-50);
+
+  await pool.query(
+    `UPDATE dispatches
+     SET agent_phase = $2, agent_phase_history = $3
+     WHERE id = $1`,
+    [id, phase, JSON.stringify(updated)]
+  );
 }
 
 export async function updatePipelineStage(id, stage) {
