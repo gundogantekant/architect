@@ -119,6 +119,13 @@ export const PIPELINE_STAGES = Object.freeze([
   'merge_pending', 'done',
 ]);
 
+export const DISPATCH_TIMEOUT_MS = {
+  trivial: 5 * 60 * 1000,
+  small:   15 * 60 * 1000,
+  medium:  60 * 60 * 1000,
+  large:   2 * 60 * 60 * 1000,
+};
+
 export const MIGRATIONS_DIR = join(import.meta.dirname, 'migrations');
 export const BACKUP_DIR = join(ROOT, 'assets', 'backups');
 

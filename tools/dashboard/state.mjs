@@ -23,6 +23,7 @@ export async function saveDispatchToDb(d) {
     dispatch_mode: d.dispatch_mode || 'standard',
     agent_phase: d.agent_phase ?? null,
     agent_phase_history: d.agent_phase_history || [],
+    timeout_at: d.timeout_at || null,
   });
 }
 

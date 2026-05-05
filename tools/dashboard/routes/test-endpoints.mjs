@@ -781,6 +781,7 @@ export default function testEndpointRoutes(deps) {
         worktree_branch: null,
         source_branch: null,
         dispatch_mode: 'standard',
+        timeout_at: body.timeout_at || null,
         output: [],
         lastLines: [],
         wsClients: new Set(),

@@ -125,6 +125,26 @@ export function tailLogFile(dispatch) {
   dispatch._tailInterval = interval;
 }
 
+// Re-arm the auto-timeout for a reconnected running dispatch after server restart.
+// If timeout_at is already past, marks the dispatch as failed immediately.
+function rearmDispatchTimeout(dispatch) {
+  if (!dispatch.timeout_at) return;
+  const remainingMs = new Date(dispatch.timeout_at).getTime() - Date.now();
+  if (remainingMs <= 0) {
+    dispatch.status = 'failed';
+    dispatch.completed_at = new Date().toISOString();
+    saveDispatchToDb(dispatch).catch(() => {});
+    return;
+  }
+  dispatch._timeoutHandle = setTimeout(() => {
+    if (dispatch.status !== 'running') return;
+    dispatch.status = 'failed';
+    dispatch.completed_at = new Date().toISOString();
+    if (dispatch.process) { try { dispatch.process.kill('SIGTERM'); } catch {} }
+    saveDispatchToDb(dispatch).catch(() => {});
+  }, remainingMs);
+}
+
 // Restore persisted sessions from PostgreSQL with PID liveness checks
 export async function restoreSessions(wireTerminalHandlers, deps) {
   // Mark legacy rows (no PID) as interrupted
@@ -180,6 +200,7 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
         };
         dispatches.set(d.id, dispatch);
         tailLogFile(dispatch);
+        rearmDispatchTimeout(dispatch);
         console.log(`Dispatch ${d.id}: PID ${d.pid} still alive, reconnecting via log tail`);
       } else {
         // PID dead — mark interrupted, archive to session_history, load log content for display
@@ -401,6 +422,10 @@ export function wireDispatchHandlers(dispatch, proc) {
   });
 
   proc.on('close', (code) => {
+    if (dispatch._timeoutHandle) {
+      clearTimeout(dispatch._timeoutHandle);
+      dispatch._timeoutHandle = null;
+    }
     if (dispatch._mergeHandled) {
       // Agent called POST /complete before exiting — status already set to merge_pending.
       // Do not overwrite status. Just clean up streams and persist.
