@@ -49,6 +49,7 @@ export const SPEC_FILES = [
   'org-repos.contract',
   'sessions-page',
   'cost-anomaly',
+  'auto-timeout',
 ];
 
 function getLiveDashboardPorts() {

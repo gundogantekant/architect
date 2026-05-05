@@ -1,8 +1,30 @@
 import { existsSync } from 'node:fs';
 import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository, checkWorktreeReadiness } from '../worktree.mjs';
-import { AUTO_IMPLEMENTABLE_STATUSES, PIPELINE_STAGES, PORTFOLIO } from '../constants.mjs';
+import { AUTO_IMPLEMENTABLE_STATUSES, DISPATCH_TIMEOUT_MS, PIPELINE_STAGES, PORTFOLIO } from '../constants.mjs';
 import { triggerMerge } from '../dispatch-manager.mjs';
 import { isMediumOrAbove } from '../utils/complexity.mjs';
+
+function complexityTierFromPriority(priority) {
+  if (priority === 'critical' || priority === 'high') return 'large';
+  if (priority === 'medium') return 'medium';
+  return 'small';
+}
+
+function armDispatchTimeout(dispatch, timeoutMs, saveDispatchToDb) {
+  dispatch.timeout_at = new Date(Date.now() + timeoutMs).toISOString();
+  dispatch._timeoutHandle = setTimeout(() => {
+    if (dispatch.status !== 'running') return;
+    console.log(`[timeout] dispatch ${dispatch.id} timed out after ${timeoutMs}ms`);
+    dispatch.status = 'failed';
+    dispatch.completed_at = new Date().toISOString();
+    if (dispatch.process) {
+      try { dispatch.process.kill('SIGTERM'); } catch {}
+      setTimeout(() => { try { dispatch.process?.kill('SIGKILL'); } catch {} }, 6000);
+    }
+    if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
+    saveDispatchToDb(dispatch).catch(e => console.error('[timeout] saveDispatchToDb:', e.message));
+  }, timeoutMs);
+}
 
 function validateContractForComplexity(workItem, contract) {
   if (!isMediumOrAbove(workItem)) return null;
@@ -311,6 +333,9 @@ export default function dispatchRoutes(deps) {
 
       wireDispatchHandlers(dispatch, proc);
 
+      const tier = complexityTierFromPriority(effectiveWorkItem?.priority);
+      armDispatchTimeout(dispatch, DISPATCH_TIMEOUT_MS[tier] ?? DISPATCH_TIMEOUT_MS.medium, saveDispatchToDb);
+
       dispatches.set(id, dispatch);
       await saveDispatchToDb(dispatch);
       json(res, { dispatch_id: id, status: 'running' });
@@ -448,6 +473,9 @@ export default function dispatchRoutes(deps) {
 
       wireDispatchHandlers(dispatch, proc);
 
+      const autoTier = complexityTierFromPriority(effectiveWorkItem?.priority);
+      armDispatchTimeout(dispatch, DISPATCH_TIMEOUT_MS[autoTier] ?? DISPATCH_TIMEOUT_MS.medium, saveDispatchToDb);
+
       dispatches.set(id, dispatch);
       await saveDispatchToDb(dispatch);
       json(res, { id, dispatch_id: id, status: 'running', worktree_path: dispatch.worktree_path });
@@ -550,6 +578,7 @@ export default function dispatchRoutes(deps) {
           pipeline_stage: d.pipeline_stage || null,
           _exitedWithoutSignal: d._exitedWithoutSignal || false,
           session_log: Array.isArray(d.session_log) ? d.session_log : [],
+          timeout_at: d.timeout_at || null,
         };
       }));
       json(res, list.filter(Boolean));
@@ -842,6 +871,9 @@ export default function dispatchRoutes(deps) {
       dispatch.logPath = logPath;
       dispatch.logStream = createWriteStream(logPath, { flags: 'a' });
       wireDispatchHandlers(dispatch, proc);
+
+      const resumeTier = complexityTierFromPriority(freshWorkItem?.priority);
+      armDispatchTimeout(dispatch, DISPATCH_TIMEOUT_MS[resumeTier] ?? DISPATCH_TIMEOUT_MS.medium, saveDispatchToDb);
 
       const prompt = buildResumePrompt({
         workItem: freshWorkItem,
