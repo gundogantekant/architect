@@ -22,6 +22,7 @@ import { syncProjectsFromRegistry, broadcastDispatchLine, broadcastDispatchDone,
 import { setupWebSocket } from './ws-router.mjs';
 
 import staticRoutes from './routes/static.mjs';
+import detachRoutes from './routes/detach.mjs';
 import portfolioRoutes from './routes/portfolio.mjs';
 import workItemRoutes from './routes/work-items.mjs';
 import approvalRoutes from './routes/approvals.mjs';
@@ -57,6 +58,7 @@ const deps = {
 
 const routes = [
   ...staticRoutes(deps),
+  ...detachRoutes(deps),
   ...portfolioRoutes(deps),
   ...approvalRoutes(deps),
   ...workItemRoutes(deps),
