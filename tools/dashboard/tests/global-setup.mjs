@@ -47,6 +47,7 @@ export const SPEC_FILES = [
   'agent-phase-persist',
   'detach.contract',
   'org-repos.contract',
+  'sessions-page',
 ];
 
 function getLiveDashboardPorts() {
