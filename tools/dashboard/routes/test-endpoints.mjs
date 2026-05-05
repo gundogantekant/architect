@@ -1,4 +1,5 @@
 import { shouldCreateWorktree, checkWorktreeReadiness, isGitRepository } from '../worktree.mjs';
+import { promises as fs } from 'node:fs';
 
 export default function testEndpointRoutes(deps) {
   const {
@@ -736,6 +737,63 @@ export default function testEndpointRoutes(deps) {
         worktreeContext: worktree_context || null,
       });
       json(res, { prompt });
+    }],
+
+    // POST /_test/seed-portfolio — create a minimal portfolio entry and registry row for detach contract tests
+    [/^\/_test\/seed-portfolio$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { org, project, component, path: projectPath } = body;
+      if (!org || !project || !component) return err(res, 'org, project, and component are required', 400);
+      const portfolioKey = `${org}/${project}/${component}`;
+      const portDir = join(PORTFOLIO, org, project);
+      await fs.mkdir(portDir, { recursive: true });
+      await fs.writeFile(
+        join(portDir, component + '.json'),
+        JSON.stringify({ name: project, role: 'app', path: projectPath || `/tmp/${project}`, org_key: org, project_key: portfolioKey })
+      );
+      const regPath = join(PORTFOLIO, 'registry.json');
+      let registry = {};
+      try { registry = JSON.parse(await fs.readFile(regPath, 'utf8')); } catch {}
+      if (projectPath) registry[projectPath] = portfolioKey;
+      await fs.writeFile(regPath, JSON.stringify(registry, null, 2));
+      json(res, { ok: true, portfolio_key: portfolioKey });
+    }],
+
+    // POST /_test/seed-dispatch — create a minimal dispatch for detach conflict tests (auto-generates ID)
+    [/^\/_test\/seed-dispatch$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const id = `D-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const resolvedStatus = body.status || 'running';
+      const dispatch = {
+        id,
+        work_item_id: null,
+        epic_id: null,
+        project_key: body.project_key || 'test/test/main',
+        project_path: ROOT,
+        title: id,
+        permission_mode: 'plan',
+        skip_permissions: false,
+        status: resolvedStatus,
+        agent_phase: resolvedStatus === 'running' ? 'generating' : null,
+        agent_phase_history: [],
+        claude_session_id: null,
+        worktree_path: null,
+        worktree_branch: null,
+        source_branch: null,
+        dispatch_mode: 'standard',
+        output: [],
+        lastLines: [],
+        wsClients: new Set(),
+        started_at: new Date().toISOString(),
+        completed_at: resolvedStatus !== 'running' ? new Date().toISOString() : null,
+        process: null,
+        pid: null,
+        logPath: join(LOGS_DIR, `${id}.jsonl`),
+        _testWorkerId: req.headers['x-test-worker-id'] ?? null,
+      };
+      dispatches.set(id, dispatch);
+      await saveDispatchToDb(dispatch);
+      json(res, { id, dispatch_id: id, status: dispatch.status });
     }],
   ];
 }

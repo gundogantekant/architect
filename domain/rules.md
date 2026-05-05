@@ -816,6 +816,15 @@ Before dispatching any implementation agent to a `worktree_mode: "auto"` project
 4. **Scope**: This check runs only when `worktree_mode: "auto"` + work_item_id present. Skipped for plan-mode dispatches, ad-hoc dispatches (no work item), `worktree_mode: "explicit"` projects, and `worktree_mode: "none"` projects (no worktree is attempted).
 5. **Dashboard path**: The same check runs server-side in the dashboard dispatch endpoint (`POST /api/dispatch`) using the already-loaded `portfolio?.entry`. A warning response `{ warning: "...", require_confirm: true }` is returned to the browser before the dispatch proceeds. The dispatch UI must surface this and require user confirmation before spawning the agent.
 
+## Project Detach Rules
+
+- **409 precondition**: If `kill_active_dispatches: false` and running dispatches exist for the project_key, return 409 before any mutation occurs.
+- **Work item cleanup order**: Cancel non-terminal items first, then archive done/cancelled items. Both steps run inside a DB transaction; failure rolls back both.
+- **Worktrees default off**: `remove_worktrees` defaults to `false` to prevent accidental loss of unmerged branches. Set explicitly to `true` only when the caller has confirmed no in-flight work remains.
+- **CLAUDE.md removal non-blocking**: ENOENT on CLAUDE.md is silently ignored — the file may have been manually removed.
+- **session_history preserved**: Detach does NOT delete session_history records. Historical cost and time data is preserved for analytics.
+- **Registry update is atomic**: registry.json is written to a temp file and renamed to prevent partial reads during the operation.
+
 ## Error Recovery
 
 | Scenario | Action |
