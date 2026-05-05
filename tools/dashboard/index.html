@@ -24,6 +24,8 @@
 .contract-fields { padding: 4px 0; display: flex; flex-direction: column; gap: 3px; }
 .contract-fields div { color: var(--fg); }
 .pipeline-stage-bar { padding: 2px 16px; }
+.btn-refine { font-size: 11px; padding: 2px 7px; border-radius: 3px; border: 1px solid var(--accent, #7c3aed); color: var(--accent, #7c3aed); background: transparent; cursor: pointer; margin-left: 4px; }
+.btn-refine:hover { background: var(--accent, #7c3aed); color: #fff; }
 </style>
 </head>
 <body>
@@ -463,6 +465,10 @@ function finalizeDispatchPanel(dispatch) {
   }
   if (dispatch.dispatch_mode === 'auto_implement') {
     showAutoImplementToast(dispatch);
+  }
+  if (dispatch.dispatch_mode === 'refinement' && dispatch.status === 'completed') {
+    setBacklog(null);
+    buildTree().then(() => route()).catch(() => {});
   }
   syncSessionState();
   if (dispatch.status !== 'running' && dispatch.status !== 'suspended') {
@@ -1864,6 +1870,20 @@ async function restoreCliSessions() {
   } catch {}
 }
 
+async function refineWorkItem(id) {
+  try {
+    const res = await fetch(`/api/work-items/${id}/refine`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    if (!res.ok) {
+      const e = await res.json();
+      alert(e.error || 'Refinement failed');
+      return;
+    }
+    setTimeout(() => location.reload(), 500);
+  } catch (e) {
+    alert('Refinement request failed');
+  }
+}
+
 async function dispatchWorkItem(workItem, projectKey) {
   return new Promise((resolve) => {
     let resolvedTerminal = null;
@@ -2937,6 +2957,9 @@ function renderWorkItemsTable(items, allWorkItems, tableId) {
     html += `<td>${(w.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
     html += `<td><button class="expand-btn" data-wi="${idx}">details</button>`;
     html += `<button class="edit-btn" data-wi-edit="${idx}">edit</button>`;
+    if (w.status === 'draft') {
+      html += `<button class="btn-refine" onclick="refineWorkItem('${esc(w.id)}')" title="Ask coordinator to generate an implementation contract">Refine</button>`;
+    }
     if (canDispatch) {
       const hasActiveDispatch = (window._activeDispatches || []).some(d => d.work_item_id === w.id && d.status === 'running');
       // Keep in sync with constants.mjs AUTO_IMPLEMENTABLE_STATUSES (frontend has no module loader).

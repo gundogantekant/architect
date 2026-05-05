@@ -914,6 +914,29 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
   return sections.join('\n\n');
 }
 
+export function buildRefinementPrompt(workItem) {
+  return `You are a coordinator agent refining a draft work item into an actionable implementation contract.
+
+## Work Item
+Title: ${workItem.title}
+Description: ${workItem.description || '(none)'}
+
+## Task
+Analyze this work item and produce a structured DispatchContract. Output the contract as a fenced JSON block under the exact heading below — nothing else after the heading:
+
+# DispatchContract
+\`\`\`json
+{
+  "goal": "...",
+  "constraints": ["..."],
+  "expected_output": "...",
+  "failure_conditions": ["..."]
+}
+\`\`\`
+
+Be concise and specific. The contract must be implementable by a coding agent.`;
+}
+
 /**
  * Build the `# Auto-Implement Mode` section injected into the autonomous dispatch prompt.
  * References the workflow path rather than embedding its content.

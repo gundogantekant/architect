@@ -482,6 +482,13 @@ export async function updateWorkItem(id, fields) {
   return getWorkItem(id);
 }
 
+export async function updateWorkItemRefinement(id, { description, status }) {
+  await pool.query(
+    `UPDATE work_items SET description = $1, status = $2, updated_at = NOW() WHERE id = $3`,
+    [description, status, id]
+  );
+}
+
 // --- Work Item Approvals ---
 
 export async function getWorkItemApprovals(workItemId) {

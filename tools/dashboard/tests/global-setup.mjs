@@ -50,6 +50,7 @@ export const SPEC_FILES = [
   'sessions-page',
   'cost-anomaly',
   'auto-timeout',
+  'refinement',
 ];
 
 function getLiveDashboardPorts() {

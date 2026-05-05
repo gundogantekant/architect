@@ -759,6 +759,15 @@ export default function testEndpointRoutes(deps) {
       json(res, { ok: true, portfolio_key: portfolioKey });
     }],
 
+    // POST /_test/seed-work-item — create a work item with given status (for refinement contract tests)
+    [/^\/_test\/seed-work-item$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { status = 'draft', title = 'Test item', project_key = 'test/test/main' } = body;
+      const item = await db.createWorkItem({ title, status, project_key, description: '' });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ id: item.id }));
+    }],
+
     // POST /_test/seed-dispatch — create a minimal dispatch for detach conflict tests (auto-generates ID)
     [/^\/_test\/seed-dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
