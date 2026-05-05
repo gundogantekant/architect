@@ -12,6 +12,8 @@
 <style>
 .phase-timeline { display: flex; align-items: center; gap: 3px; padding: 4px 16px 2px; min-height: 20px; }
 .phase-dot { width: 8px; height: 8px; border-radius: 50%; cursor: default; flex-shrink: 0; }
+.org-repos-section { margin-top: 8px; }
+.org-repos-section h4 { font-size: 12px; color: var(--text-light); margin: 12px 0 4px; text-transform: uppercase; letter-spacing: 0.5px; }
 </style>
 </head>
 <body>
@@ -2575,11 +2577,267 @@ function renderOrgView(org, data, orgSessions) {
     }
   }
 
+  // Async repos section — populated after render
+  html += `<div id="org-repos-${esc(org)}" style="margin-top:16px">`;
+  html += `<h3 style="font-size:14px;margin:0 0 8px">Repositories <span id="org-repos-loading-${esc(org)}" style="font-size:11px;color:var(--text-light)">(loading…)</span></h3>`;
+  html += `</div>`;
+
   // Org-level session slot for terminal panels
   html += `<div data-session-slot-org="${esc(org)}" style="margin-top:16px"></div>`;
 
   html += `</div>`;
   return html;
+}
+
+function renderOrgReposSection(org, data) {
+  let html = `<div class="org-repos-section">`;
+
+  if (data.seeded === false) {
+    html += `<p style="font-size:13px;color:var(--text-light);margin:4px 0 8px">No repositories seeded.</p>`;
+    html += `<button class="btn-add-wi" id="org-repos-seed-${esc(org)}" style="background:var(--accent)">Seed from GitHub</button>`;
+    html += `</div>`;
+    return html;
+  }
+
+  if (data.onboarded && data.onboarded.length > 0) {
+    html += `<h4>Onboarded (${data.onboarded.length})</h4>`;
+    html += `<table class="org-agents-table"><thead><tr><th>Repo</th><th>Path</th><th>Last Updated</th><th></th></tr></thead><tbody>`;
+    for (const repo of data.onboarded) {
+      const parts = (repo.portfolio_key || '').split('/');
+      const project = parts[1] || '';
+      const component = parts[2] || '';
+      const updated = repo.updated_at ? fmtDate(repo.updated_at) : '\u2014';
+      html += `<tr>`;
+      html += `<td><code>${esc(repo.name || repo.portfolio_key || '')}</code></td>`;
+      html += `<td style="font-size:11px;color:var(--text-light)">${esc(repo.path || '\u2014')}</td>`;
+      html += `<td style="font-size:11px">${esc(updated)}</td>`;
+      html += `<td>`;
+      if (repo.portfolio_key) {
+        html += `<a href="#component/${esc(repo.portfolio_key.replace(/\//g, '/'))}" style="font-size:11px;color:var(--accent);margin-right:8px">View</a>`;
+      }
+      html += `<button class="focus-btn" data-detach-org="${esc(org)}" data-detach-project="${esc(project)}" data-detach-component="${esc(component)}" style="font-size:11px;color:var(--danger,#e74c3c);border-color:var(--danger,#e74c3c)">Detach</button>`;
+      html += `</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+
+  if (data.unregistered && data.unregistered.length > 0) {
+    html += `<h4>Unregistered (${data.unregistered.length})</h4>`;
+    html += `<table class="org-agents-table"><thead><tr><th>Repo</th><th>Last Updated</th><th></th></tr></thead><tbody>`;
+    for (const repo of data.unregistered) {
+      const updated = repo.updated_at ? fmtDate(repo.updated_at) : '\u2014';
+      html += `<tr>`;
+      html += `<td><code>${esc(repo.name || '')}</code></td>`;
+      html += `<td style="font-size:11px">${esc(updated)}</td>`;
+      html += `<td><button class="focus-btn" data-onboard-repo="${esc(repo.name || '')}" style="font-size:11px">Onboard</button></td>`;
+      html += `</tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+
+  if ((!data.onboarded || !data.onboarded.length) && (!data.unregistered || !data.unregistered.length)) {
+    html += `<p style="font-size:13px;color:var(--text-light);margin:4px 0">No repositories found.</p>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+function bindOrgReposEvents(org, data) {
+  // Seed from GitHub button
+  const seedBtn = document.getElementById(`org-repos-seed-${org}`);
+  if (seedBtn) {
+    seedBtn.onclick = async () => {
+      seedBtn.disabled = true;
+      seedBtn.textContent = 'Seeding\u2026';
+      try {
+        const resp = await fetch(`/api/repos/seed?org=${encodeURIComponent(org)}`, { method: 'POST' });
+        if (!resp.ok) throw new Error('Seed failed');
+        refreshOrgReposSection(org);
+      } catch (e) {
+        seedBtn.disabled = false;
+        seedBtn.textContent = 'Seed from GitHub';
+        alert('Seed failed: ' + e.message);
+      }
+    };
+  }
+
+  // Detach buttons
+  document.querySelectorAll(`[data-detach-org="${CSS.escape(org)}"]`).forEach(btn => {
+    btn.onclick = () => {
+      const project = btn.dataset.detachProject;
+      const component = btn.dataset.detachComponent;
+      showDetachModal(org, project, component);
+    };
+  });
+
+  // Onboard buttons
+  document.querySelectorAll('[data-onboard-repo]').forEach(btn => {
+    btn.onclick = () => showOnboardFromRepoModal(org, btn.dataset.onboardRepo);
+  });
+}
+
+async function refreshOrgReposSection(org) {
+  const el = document.getElementById(`org-repos-${org}`);
+  if (!el) return;
+  el.innerHTML = `<h3 style="font-size:14px;margin:0 0 8px">Repositories <span style="font-size:11px;color:var(--text-light)">(loading\u2026)</span></h3>`;
+  fetch(`/api/org/${encodeURIComponent(org)}/repos`)
+    .then(r => r.ok ? r.json() : null)
+    .then(data => {
+      if (!el) return;
+      if (!data) {
+        el.innerHTML = `<h3 style="font-size:14px;margin:0 0 8px">Repositories</h3>`;
+        return;
+      }
+      el.innerHTML = `<h3 style="font-size:14px;margin:0 0 8px">Repositories</h3>` + renderOrgReposSection(org, data);
+      bindOrgReposEvents(org, data);
+    })
+    .catch(() => {
+      if (el) el.innerHTML = `<h3 style="font-size:14px;margin:0 0 8px">Repositories</h3><p style="color:var(--danger,#e74c3c);font-size:12px">Failed to load repositories</p>`;
+    });
+}
+
+function showDetachModal(org, project, component) {
+  const portfolioKey = `${org}/${project}/${component}`;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Detach Repository</h3>
+      <p style="font-size:13px;margin:0 0 12px">Detach <code>${esc(portfolioKey)}</code> from the portfolio.</p>
+      <div style="font-size:13px;margin-bottom:12px">
+        <div style="font-weight:600;margin-bottom:6px">Cleanup options:</div>
+        <label style="display:block;margin-bottom:4px"><input type="checkbox" name="cancel_open" checked style="margin-right:6px">Cancel open work items</label>
+        <label style="display:block;margin-bottom:4px"><input type="checkbox" name="archive_done" checked style="margin-right:6px">Archive done work items</label>
+        <label style="display:block;margin-bottom:4px"><input type="checkbox" name="remove_claude_md" checked style="margin-right:6px">Remove CLAUDE.md <span style="font-size:11px;color:var(--text-light)">(recoverable from git)</span></label>
+        <label style="display:block;margin-bottom:4px"><input type="checkbox" name="unlink_repo_sync" checked style="margin-right:6px">Unlink repo sync</label>
+        <label style="display:block;margin-bottom:4px"><input type="checkbox" name="kill_dispatches" checked style="margin-right:6px">Kill active dispatches</label>
+        <label style="display:block;margin-bottom:4px"><input type="checkbox" name="remove_worktrees" style="margin-right:6px">Remove worktrees <span style="font-size:11px;color:var(--text-light)">&#9888; Destructive \u2014 unmerged work will be lost</span></label>
+      </div>
+      <div id="detach-report-${esc(portfolioKey.replace(/\//g, '-'))}" style="margin-bottom:8px"></div>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" id="detach-cancel">Cancel</button>
+        <button class="btn btn-dispatch" id="detach-confirm" style="background:var(--danger,#e74c3c)">Detach</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#detach-cancel').onclick = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  const reportEl = overlay.querySelector(`#detach-report-${portfolioKey.replace(/\//g, '-')}`);
+
+  overlay.querySelector('#detach-confirm').onclick = async () => {
+    const confirmBtn = overlay.querySelector('#detach-confirm');
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Detaching\u2026';
+
+    const opts = {};
+    overlay.querySelectorAll('input[type=checkbox]').forEach(cb => {
+      opts[cb.name] = cb.checked;
+    });
+
+    try {
+      const resp = await fetch(`/api/portfolio/${encodeURIComponent(org)}/${encodeURIComponent(project)}/${encodeURIComponent(component)}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(opts),
+      });
+      const result = await resp.json();
+      if (!resp.ok) {
+        const errors = result.errors || [result.error || 'Detach failed'];
+        reportEl.innerHTML = `<ul style="color:var(--danger,#e74c3c);font-size:12px;margin:0;padding-left:16px">${errors.map(e => `<li>${esc(String(e))}</li>`).join('')}</ul>`;
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Detach';
+        return;
+      }
+      // Show DetachReport steps
+      const steps = result.steps || [];
+      if (steps.length) {
+        reportEl.innerHTML = `<ul style="font-size:12px;color:var(--text-light);margin:0;padding-left:16px">${steps.map(s => `<li>${esc(String(s))}</li>`).join('')}</ul>`;
+      } else {
+        reportEl.innerHTML = `<p style="font-size:12px;color:var(--text-light)">Detached successfully.</p>`;
+      }
+      overlay.querySelector('#detach-cancel').textContent = 'Close';
+      overlay.querySelector('#detach-cancel').style.display = '';
+      confirmBtn.style.display = 'none';
+      setTimeout(() => {
+        overlay.remove();
+        location.hash = `#org/${org}`;
+      }, 2000);
+    } catch (e) {
+      reportEl.innerHTML = `<p style="color:var(--danger,#e74c3c);font-size:12px">${esc(e.message || 'Detach failed')}</p>`;
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = 'Detach';
+    }
+  };
+}
+
+function showOnboardFromRepoModal(org, repoName) {
+  const defaultPath = `/Users/tekantgundogan/Documents/${repoName}`;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Onboard Repository</h3>
+      <div class="field">
+        <label>Repository</label>
+        <div style="font-size:13px"><code>${esc(repoName)}</code></div>
+      </div>
+      <div class="field">
+        <label>Local Path *</label>
+        <input type="text" id="onboard-repo-path" value="${esc(defaultPath)}" placeholder="/absolute/path/to/repo" />
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" id="onboard-repo-cancel">Cancel</button>
+        <button class="btn btn-dispatch" id="onboard-repo-go">Open terminal to onboard</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#onboard-repo-cancel').onclick = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  overlay.querySelector('#onboard-repo-go').onclick = async () => {
+    const localPath = overlay.querySelector('#onboard-repo-path').value.trim();
+    if (!localPath) { alert('Local path is required'); return; }
+
+    const btn = overlay.querySelector('#onboard-repo-go');
+    btn.disabled = true;
+    btn.textContent = 'Opening terminal\u2026';
+
+    try {
+      const resp = await fetch('/api/terminal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: `/onboard ${localPath}`, title: `Onboard ${repoName}` }),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error || 'Failed to open terminal');
+
+      const terminalInfo = {
+        id: result.terminal_id,
+        agent_type: 'claude',
+        work_item_id: null,
+        project_key: null,
+        org_key: org,
+        title: `Onboard ${repoName}`,
+        status: 'running',
+        started_at: new Date().toISOString(),
+      };
+      activeTerminals.push(terminalInfo);
+      syncSessionState();
+      createTerminalPanel(terminalInfo);
+      placeSessionPanels();
+      await initSession(terminalInfo);
+      overlay.remove();
+      location.hash = `#terminal/${result.terminal_id}`;
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = 'Open terminal to onboard';
+      alert('Failed: ' + e.message);
+    }
+  };
 }
 
 // Store current work items context for dispatch
@@ -6943,6 +7201,23 @@ async function route() {
       // Bind org discuss button
       const orgDiscussBtn = document.getElementById('discuss-org-agent');
       if (orgDiscussBtn) orgDiscussBtn.onclick = () => showOrgDiscussModal(org);
+      // Async repos section fetch
+      fetch(`/api/org/${encodeURIComponent(org)}/repos`)
+        .then(r => r.ok ? r.json() : null)
+        .then(repoData => {
+          const el = document.getElementById(`org-repos-${org}`);
+          if (!el) return;
+          if (!repoData) {
+            el.querySelector(`#org-repos-loading-${org}`)?.remove();
+            return;
+          }
+          el.innerHTML = `<h3 style="font-size:14px;margin:0 0 8px">Repositories</h3>` + renderOrgReposSection(org, repoData);
+          bindOrgReposEvents(org, repoData);
+        })
+        .catch(() => {
+          const el = document.getElementById(`org-repos-${org}`);
+          if (el) el.innerHTML = `<h3 style="font-size:14px;margin:0 0 8px">Repositories</h3><p style="color:var(--danger,#e74c3c);font-size:12px">Failed to load repositories</p>`;
+        });
     } catch (e) {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
     }
