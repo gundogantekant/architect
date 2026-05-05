@@ -54,7 +54,15 @@ import {
 } from '/js/state.mjs';
 
 async function loadPreferences() {
-  try { setPrefs(await api('settings/preferences')); } catch {}
+  try {
+    setPrefs(await api('settings/preferences'));
+    applyTermThemeToAll();
+    // Also update panels held in sessionPanels but not yet placed in the DOM
+    const isLight = resolveTermTheme() === 'light';
+    for (const panel of sessionPanels.values()) {
+      panel.querySelectorAll('.dispatch-log').forEach(el => el.classList.toggle('log-light', isLight));
+    }
+  } catch {}
 }
 loadPreferences();
 
@@ -576,6 +584,7 @@ async function dismissAllCompleted() {
 }
 
 let _placeTimer = null;
+let _suspendedContainer = null;
 function placeSessionPanels() {
   if (_placeTimer) return;
   _placeTimer = requestAnimationFrame(() => { _placeTimer = null; _placeSessionPanelsNow(); });
@@ -684,9 +693,8 @@ function _placeSessionPanelsNow() {
   }
 
   // Re-anchor suspended-sessions panel after route changes clear main.innerHTML
-  const suspendedContainer = document.getElementById('suspended-sessions');
-  if (suspendedContainer && suspendedContainer.parentElement !== main) {
-    main.insertBefore(suspendedContainer, main.firstChild);
+  if (_suspendedContainer && _suspendedContainer.parentElement !== main) {
+    main.insertBefore(_suspendedContainer, main.firstChild);
   }
 
   // All containers are now in the document — safe to call loadDispatchContent
@@ -2103,9 +2111,10 @@ async function refreshSuspendedPanel() {
       ...suspTerminals.map(t => ({ ...t, _stype: 'terminal', _suspendedAt: t.exited_at || t.started_at })),
     ];
 
-    let container = document.getElementById('suspended-sessions');
+    let container = _suspendedContainer || document.getElementById('suspended-sessions');
     if (all.length === 0) {
       if (container) container.remove();
+      _suspendedContainer = null;
       return;
     }
 
@@ -2115,6 +2124,7 @@ async function refreshSuspendedPanel() {
       container.className = 'card';
       container.style.marginBottom = '20px';
     }
+    _suspendedContainer = container;
 
     let html = `<h3 style="margin:0 0 12px 0;font-size:15px;font-weight:600">Suspended Sessions <span style="font-size:12px;font-weight:400;background:#fef3c7;color:#b45309;padding:2px 8px;border-radius:3px;margin-left:6px">${all.length}</span></h3>`;
     html += '<div style="display:flex;flex-direction:column;gap:8px">';
@@ -2348,91 +2358,107 @@ async function buildTree() {
   const tree = $('#tree');
   tree.innerHTML = '';
   for (const org of orgs) {
-    const projects = await api(`org/${org}/projects`);
-    const orgData = await api(`org/${org}`);
-    setOrgCache(org, orgData);
+    try {
+      const projects = await api(`org/${org}/projects`);
+      const orgData = await api(`org/${org}`);
+      setOrgCache(org, orgData);
 
-    const group = document.createElement('div');
-    group.className = 'org-group';
+      const group = document.createElement('div');
+      group.className = 'org-group';
 
-    const orgPrefKey = `org_visible_${org}`;
-    const orgVisible = window._prefs[orgPrefKey] !== 'false';
+      const orgPrefKey = `org_visible_${org}`;
+      const orgVisible = window._prefs[orgPrefKey] !== 'false';
 
-    const header = document.createElement('div');
-    header.className = 'org-name';
-    header.style.display = 'flex';
-    header.style.alignItems = 'center';
-    const orgInitial = (orgData.name || org || '?')[0].toUpperCase();
-    const orgAvatar = document.createElement('span');
-    orgAvatar.className = 'nav-avatar';
-    orgAvatar.title = orgData.name || org;
-    orgAvatar.textContent = orgInitial;
-    orgAvatar.onclick = (e) => { e.stopPropagation(); location.hash = `#org/${org}`; };
-    header.appendChild(orgAvatar);
-    const headerLabel = document.createElement('span');
-    headerLabel.style.flex = '1';
-    headerLabel.style.cursor = 'pointer';
-    headerLabel.innerHTML = `<span class="arrow${orgVisible ? ' open' : ''}">&#9654;</span> ${esc(orgData.name || org)} <span style="font-size:11px;color:#888">(${projects.length})</span>`;
-    headerLabel.onclick = () => {
-      location.hash = `#org/${org}`;
-      const arrow = headerLabel.querySelector('.arrow');
-      const list = group.querySelector('.project-list');
-      const open = arrow.classList.toggle('open');
-      list.style.display = open ? '' : 'none';
-    };
-    header.appendChild(headerLabel);
-    const orgToggle = document.createElement('span');
-    orgToggle.className = 'epic-global-toggle';
-    orgToggle.textContent = orgVisible ? '[on]' : '[off]';
-    orgToggle.title = 'Toggle org visibility in sidebar';
-    orgToggle.onclick = (e) => {
-      e.stopPropagation();
-      const next = !orgVisible;
-      window._prefs[orgPrefKey] = String(next);
-      fetch('/api/settings/preferences', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [orgPrefKey]: String(next) }),
-      }).catch(() => {});
-      buildTree();
-    };
-    header.appendChild(orgToggle);
-
-    const list = document.createElement('div');
-    list.className = 'project-list';
-    if (!orgVisible) list.style.display = 'none';
-
-    // Collect components, then sort by open work item count
-    const componentEntries = [];
-    for (const proj of projects) {
-      try {
-        const files = await api(`project/${org}/${proj}`);
-        const components = files.filter(f => f.endsWith('.json'));
-        for (const file of components) {
-          const comp = file.replace(/\.json$/, '');
-          const key = `${org}/${proj}/${comp}`;
-          componentEntries.push({ org, proj, comp, key });
-        }
-      } catch { /* skip projects whose files cannot be listed */ }
-    }
-    componentEntries.sort((a, b) => countOpenItems(bl, b.key) - countOpenItems(bl, a.key));
-
-    for (const { org: o, proj, comp, key } of componentEntries) {
-      const sig = signalColor(bl, key, sessionsByProject);
-      const item = document.createElement('div');
-      item.className = 'project-item';
-      item.dataset.key = key;
-      const projInitial = (proj || '?')[0].toUpperCase();
-      item.innerHTML = `<span class="nav-avatar" title="${esc(proj + '/' + comp)}">${esc(projInitial)}</span><span class="signal-dot ${sig.color}" title="${esc(sig.title || '')}"></span>${esc(proj)} / ${esc(comp)}`;
-      item.onclick = (e) => {
-        e.stopPropagation();
-        location.hash = `#component/${o}/${proj}/${comp}`;
+      const header = document.createElement('div');
+      header.className = 'org-name';
+      header.style.display = 'flex';
+      header.style.alignItems = 'center';
+      const orgInitial = (orgData.name || org || '?')[0].toUpperCase();
+      const orgAvatar = document.createElement('span');
+      orgAvatar.className = 'nav-avatar';
+      orgAvatar.title = orgData.name || org;
+      orgAvatar.textContent = orgInitial;
+      orgAvatar.onclick = (e) => { e.stopPropagation(); location.hash = `#org/${org}`; };
+      header.appendChild(orgAvatar);
+      const headerLabel = document.createElement('span');
+      headerLabel.style.flex = '1';
+      headerLabel.style.cursor = 'pointer';
+      headerLabel.innerHTML = `<span class="arrow${orgVisible ? ' open' : ''}">&#9654;</span> ${esc(orgData.name || org)} <span style="font-size:11px;color:#888">(${projects.length})</span>`;
+      headerLabel.onclick = () => {
+        location.hash = `#org/${org}`;
+        const arrow = headerLabel.querySelector('.arrow');
+        const list = group.querySelector('.project-list');
+        const open = arrow.classList.toggle('open');
+        list.style.display = open ? '' : 'none';
       };
-      list.appendChild(item);
-    }
+      header.appendChild(headerLabel);
+      const orgToggle = document.createElement('span');
+      orgToggle.className = 'epic-global-toggle';
+      orgToggle.textContent = orgVisible ? '[on]' : '[off]';
+      orgToggle.title = 'Toggle org visibility in sidebar';
+      orgToggle.onclick = (e) => {
+        e.stopPropagation();
+        const next = !orgVisible;
+        window._prefs[orgPrefKey] = String(next);
+        fetch('/api/settings/preferences', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [orgPrefKey]: String(next) }),
+        }).catch(() => {});
+        buildTree();
+      };
+      header.appendChild(orgToggle);
 
-    group.appendChild(header);
-    group.appendChild(list);
-    tree.appendChild(group);
+      const list = document.createElement('div');
+      list.className = 'project-list';
+      if (!orgVisible) list.style.display = 'none';
+
+      // Collect components, then sort by open work item count
+      const componentEntries = [];
+      for (const proj of projects) {
+        try {
+          const files = await api(`project/${org}/${proj}`);
+          const components = files.filter(f => f.endsWith('.json'));
+          for (const file of components) {
+            const comp = file.replace(/\.json$/, '');
+            const key = `${org}/${proj}/${comp}`;
+            componentEntries.push({ org, proj, comp, key });
+          }
+        } catch { /* skip projects whose files cannot be listed */ }
+      }
+      componentEntries.sort((a, b) => countOpenItems(bl, b.key) - countOpenItems(bl, a.key));
+
+      for (const { org: o, proj, comp, key } of componentEntries) {
+        const sig = signalColor(bl, key, sessionsByProject);
+        const item = document.createElement('div');
+        item.className = 'project-item';
+        item.dataset.key = key;
+        const projInitial = (proj || '?')[0].toUpperCase();
+        item.innerHTML = `<span class="nav-avatar" title="${esc(proj + '/' + comp)}">${esc(projInitial)}</span><span class="signal-dot ${sig.color}" title="${esc(sig.title || '')}"></span>${esc(proj)} / ${esc(comp)}`;
+        item.onclick = (e) => {
+          e.stopPropagation();
+          location.hash = `#component/${o}/${proj}/${comp}`;
+        };
+        list.appendChild(item);
+      }
+
+      group.appendChild(header);
+      group.appendChild(list);
+      tree.appendChild(group);
+    } catch (err) {
+      console.error('[buildTree] org render failed', { org, err });
+      const group = document.createElement('div');
+      group.className = 'org-group org-degraded';
+      const header = document.createElement('div');
+      header.className = 'org-name';
+      header.setAttribute('role', 'alert');
+      header.textContent = `⚠ ${org} — failed to load`;
+      const detail = document.createElement('span');
+      detail.className = 'org-error-detail';
+      detail.textContent = `(${err?.message || 'error'})`;
+      header.appendChild(detail);
+      group.appendChild(header);
+      tree.appendChild(group);
+    }
   }
 }
 
@@ -7071,7 +7097,7 @@ const _restorePromise = Promise.all([
   restoreCliSessions(),
   refreshSuspendedPanel(),
 ]);
-Promise.all([buildTree(), buildEpicTree()]).then(async () => {
+Promise.all([buildTree(), buildEpicTree()]).catch(err => { console.error('[startup] tree build failed:', err); }).then(async () => {
   startSessionsSidebarRefresh();
   // Wait for session restore before routing so panels exist when route() places them.
   // All restore functions have try/catch — they always resolve, never hang.

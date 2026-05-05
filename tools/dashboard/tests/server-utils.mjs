@@ -8,7 +8,7 @@
  */
 
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdirSync, rmSync, readFileSync } from 'node:fs';
+import { mkdirSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -146,8 +146,17 @@ export async function gracefulKill(pid, timeoutMs = 3000) {
  * workDir is still created for any filesystem artifacts (logs, portfolio), but
  * no SQLite file is used.
  */
+function seedTestPortfolio(portfolioDir) {
+  const orgDir = join(portfolioDir, 'test-org', 'test-proj.dotted');
+  mkdirSync(orgDir, { recursive: true });
+  writeFileSync(join(portfolioDir, 'test-org', 'organization.json'), JSON.stringify({ name: 'test-org' }));
+  writeFileSync(join(orgDir, 'main.json'), JSON.stringify({ org: 'test-org', project: 'test-proj.dotted', component: 'main' }));
+  writeFileSync(join(portfolioDir, 'registry.json'), JSON.stringify({ entries: {} }));
+}
+
 export function spawnTestServer(port, workDir, dbName) {
   mkdirSync(workDir, { recursive: true });
+  seedTestPortfolio(join(workDir, 'portfolio'));
 
   const env = {
     ...process.env,
