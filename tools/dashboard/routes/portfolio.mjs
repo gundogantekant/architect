@@ -3,12 +3,20 @@ export default function portfolioRoutes(deps) {
   return [
     // Registry
     [/^\/api\/registry$/, 'GET', async (_m, _req, res) => {
-      json(res, await readJson(join(PORTFOLIO, 'registry.json')));
+      const data = await readJson(join(PORTFOLIO, 'registry.json')).catch(e => {
+        if (e.code === 'ENOENT') { console.warn('[portfolio] registry.json not found, returning empty'); return { entries: {} }; }
+        throw e;
+      });
+      json(res, data);
     }],
 
     // List orgs
     [/^\/api\/orgs$/, 'GET', async (_m, _req, res) => {
-      json(res, await listDirs(PORTFOLIO));
+      const orgs = await listDirs(PORTFOLIO).catch(e => {
+        if (e.code === 'ENOENT') { console.warn('[portfolio] portfolio dir not found, returning empty orgs'); return []; }
+        throw e;
+      });
+      json(res, orgs);
     }],
 
     // Org detail
