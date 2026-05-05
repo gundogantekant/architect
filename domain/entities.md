@@ -251,6 +251,7 @@ Stored at `portfolio/<org>/<project>/<component>.json`.
     "ci_cd": ["string"],
     "testing": ["string"]
   },
+  "github_repo_name": "string | null — GitHub repository name for linking to repo_sync_config",
   "custom_rules": ["string"],
   "portfolio_guides": ["string — filenames of markdown guides in the same portfolio directory to auto-load"],
   // portfolio_guides: must include at minimum "local-dev-setup.md" for any project where setup complexity
@@ -556,6 +557,28 @@ Request body sent by the agent to POST /api/dispatch/:id/complete to signal that
 ```
 
 Rules: Both fields are required. sha must be a valid git SHA string. summary is informational only. This endpoint is agent-only — callers must supply X-Architect-Session-Depth: 1 header. See domain/rules.md → Autonomous Pipeline Rules.
+
+## DetachReport (Value Object)
+
+Output of `DELETE /api/portfolio/:org/:project/:component`. Immutable, no identity or lifecycle. Reports the outcome of each cleanup step so the caller can surface partial failures without aborting the whole operation.
+
+```json
+{
+  "portfolio_key": "string — org/project/component",
+  "steps": {
+    "portfolio_json_removed": "boolean",
+    "registry_entry_removed": "boolean",
+    "project_row_deleted": "boolean",
+    "work_items_cancelled": { "count": "number", "ids": ["string"] },
+    "work_items_archived":  { "count": "number" },
+    "claude_md_removed": "boolean | null — null when remove_claude_md: false",
+    "repo_sync_unlinked": { "repo": "string" } "| null",
+    "dispatches_killed":  { "count": "number", "ids": ["string"] },
+    "worktrees_removed":  { "count": "number", "paths": ["string"] }
+  },
+  "errors": ["string — 'stepName: errorMessage' for failed steps"]
+}
+```
 
 ## TerminalSession
 

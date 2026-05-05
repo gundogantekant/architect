@@ -45,6 +45,8 @@ export const SPEC_FILES = [
   'portfolio-persistence',
   'dispatch-mandate',
   'agent-phase-persist',
+  'detach.contract',
+  'org-repos.contract',
 ];
 
 function getLiveDashboardPorts() {

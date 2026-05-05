@@ -1570,3 +1570,59 @@ export async function explainApproverPendingQuery(identity) {
     client.release();
   }
 }
+
+// --- Org Repo Management ---
+
+export async function getRepoSyncConfigsByGithubOrg(githubOrg) {
+  const r = await pool.query(
+    'SELECT * FROM repo_sync_config WHERE github_org = $1 ORDER BY github_repo_name',
+    [githubOrg]
+  );
+  return r.rows;
+}
+
+export async function setRepoPortfolioKey(repoName, portfolioKey) {
+  await pool.query(
+    'UPDATE repo_sync_config SET portfolio_key = $2, updated_at = now() WHERE github_repo_name = $1',
+    [repoName, portfolioKey]
+  );
+}
+
+export async function getDispatchesByProjectKey(projectKey) {
+  const r = await pool.query(
+    'SELECT * FROM dispatches WHERE project_key = $1',
+    [projectKey]
+  );
+  return r.rows;
+}
+
+export async function cancelWorkItemsByProjectKey(projectKey) {
+  const r = await pool.query(
+    `UPDATE work_items SET status = 'cancelled', updated_at = now()
+     WHERE project_key = $1 AND status NOT IN ('done','cancelled','archived')
+     RETURNING id`,
+    [projectKey]
+  );
+  return r.rows.map(row => row.id);
+}
+
+export async function archiveWorkItemsByProjectKey(projectKey) {
+  const r = await pool.query(
+    `UPDATE work_items SET status = 'archived', updated_at = now()
+     WHERE project_key = $1 AND status IN ('done','cancelled')
+     RETURNING id`,
+    [projectKey]
+  );
+  return r.rows;
+}
+
+export async function deleteProjectRow(projectKey) {
+  await pool.query('DELETE FROM projects WHERE key = $1', [projectKey]);
+}
+
+export async function unlinkRepoByPortfolioKey(portfolioKey) {
+  await pool.query(
+    'UPDATE repo_sync_config SET portfolio_key = NULL WHERE portfolio_key = $1',
+    [portfolioKey]
+  );
+}
