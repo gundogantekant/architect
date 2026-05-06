@@ -2549,7 +2549,7 @@ async function buildTree() {
         item.className = 'project-item';
         item.dataset.key = key;
         const projInitial = (proj || '?')[0].toUpperCase();
-        item.innerHTML = `<span class="nav-avatar" title="${esc(proj + '/' + comp)}">${esc(projInitial)}</span><span class="signal-dot ${sig.color}" title="${esc(sig.title || '')}"></span>${esc(proj)} / ${esc(comp)}`;
+        item.innerHTML = `<span class="nav-avatar" title="${esc(proj + '/' + comp)}">${esc(projInitial)}</span><span class="signal-dot ${sig.color}" title="${esc(sig.title || '')}"></span>${comp === 'main' ? esc(proj) : `${esc(proj)} / ${esc(comp)}`}`;
         item.onclick = (e) => {
           e.stopPropagation();
           location.hash = `#component/${o}/${proj}/${comp}`;
@@ -3063,7 +3063,7 @@ function renderComponentView(org, proj, comp, data, workItems, files, projectEpi
   currentProjectKey = `${org}/${proj}/${comp}`;
 
   const tabs = ['Board', 'Overview', 'Docs'];
-  let html = `<div class="card"><h2>${esc(data.name || `${proj}/${comp}`)}</h2>`;
+  let html = `<div class="card"><h2>${esc(data.name || (comp === 'main' ? proj : `${proj}/${comp}`))}</h2>`;
   html += `<span class="badge badge-role">${esc(data.role || 'unknown')}</span>`;
   const _projKey = `${org}/${proj}/${comp}`;
   const _refinementDispatch = (window._activeDispatches || []).find(d => d.dispatch_mode === 'project_refinement' && d.project_key === _projKey && d.status === 'running');
@@ -5641,7 +5641,7 @@ function refreshSessionsSidebar() {
   for (const [pk, pg] of projectGroups) {
     // Show project label (drop org prefix for brevity)
     const parts = pk.split('/');
-    const shortLabel = parts.length >= 3 ? `${parts[1]}/${parts[2]}` : pk;
+    const shortLabel = parts.length >= 3 ? (parts[2] === 'main' ? parts[1] : `${parts[1]}/${parts[2]}`) : pk;
     const projLabel = document.createElement('div');
     projLabel.className = 'sidebar-project-label';
     projLabel.textContent = shortLabel;
