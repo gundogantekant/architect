@@ -53,6 +53,7 @@ export const SPEC_FILES = [
   'refinement',
   'task-creation',
   'project-refinement',
+  'waiting-state',
 ];
 
 function getLiveDashboardPorts() {

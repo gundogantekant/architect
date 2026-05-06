@@ -305,6 +305,7 @@ export async function seedDispatch(opts = {}) {
       log_lines: logLines,
       claude_session_id: opts.claude_session_id || null,
       dispatch_mode: opts.dispatch_mode || 'standard',
+      ...(opts.agent_phase !== undefined && { agent_phase: opts.agent_phase }),
     }),
   });
   return { dispatch_id: id, ...res };

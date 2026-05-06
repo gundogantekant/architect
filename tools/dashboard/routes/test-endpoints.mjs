@@ -808,5 +808,25 @@ export default function testEndpointRoutes(deps) {
       await saveDispatchToDb(dispatch);
       json(res, { id, dispatch_id: id, status: dispatch.status });
     }],
+
+    [/^\/api\/dispatch\/([^/]+)\/agent-phase$/, 'PATCH', async (m, req, res) => {
+      const id = m[1];
+      const body = await parseBody(req);
+      const { phase } = body;
+      const dispatch = dispatches.get(id);
+      if (!dispatch) return err(res, 'dispatch not found', 404);
+      const historyEntry = { phase, at: new Date().toISOString() };
+      dispatch.agent_phase = phase;
+      dispatch.agent_phase_history = [...(dispatch.agent_phase_history || []), historyEntry].slice(-50);
+      await db.updateAgentPhase(id, phase, historyEntry).catch(() => {});
+      if (dispatch.work_item_id) {
+        if (phase === 'waiting_for_input') {
+          await db.setInputNeeded(dispatch.work_item_id, true, 'agent_phase_bridge').catch(() => {});
+        } else {
+          await db.setInputNeeded(dispatch.work_item_id, false, 'agent_phase_bridge').catch(() => {});
+        }
+      }
+      json(res, { ok: true, phase });
+    }],
   ];
 }

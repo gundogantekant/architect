@@ -107,6 +107,17 @@ export function tailLogFile(dispatch) {
             db.updateAgentPhase(dispatch.id, newPhase, historyEntry).catch(err =>
               console.error(`[agent_phase] failed to persist phase ${newPhase} for ${dispatch.id}:`, err)
             );
+            // # DECISION: Bridge agent waiting_for_input phase to work item input_needed flag.
+            // Only set via bridge; only clear when source=bridge AND no other waiting dispatches.
+            if (newPhase === 'waiting_for_input' && dispatch.work_item_id) {
+              db.setInputNeeded(dispatch.work_item_id, true, 'agent_phase_bridge').catch(err =>
+                console.error('[bridge] setInputNeeded failed:', err.message)
+              );
+            } else if (newPhase !== 'waiting_for_input' && dispatch.work_item_id) {
+              db.setInputNeeded(dispatch.work_item_id, false, 'agent_phase_bridge').catch(err =>
+                console.error('[bridge] clearInputNeeded failed:', err.message)
+              );
+            }
           }
           const text = extractStreamText(evt);
           if (text) {
@@ -224,6 +235,14 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
       dispatches.set(d.id, {
         ...d, output, lastLines: [], wsClients: new Set(), process: null,
       });
+    }
+  }
+
+  for (const [, d] of dispatches) {
+    if (d.agent_phase === 'waiting_for_input' && d.work_item_id && d.status === 'running') {
+      db.setInputNeeded(d.work_item_id, true, 'agent_phase_bridge').catch(e =>
+        console.error('[restore-bridge]', e.message)
+      );
     }
   }
 
@@ -401,6 +420,17 @@ export function wireDispatchHandlers(dispatch, proc) {
           db.updateAgentPhase(dispatch.id, newPhase, historyEntry).catch(err =>
             console.error(`[agent_phase] failed to persist phase ${newPhase} for ${dispatch.id}:`, err)
           );
+          // # DECISION: Bridge agent waiting_for_input phase to work item input_needed flag.
+          // Only set via bridge; only clear when source=bridge AND no other waiting dispatches.
+          if (newPhase === 'waiting_for_input' && dispatch.work_item_id) {
+            db.setInputNeeded(dispatch.work_item_id, true, 'agent_phase_bridge').catch(err =>
+              console.error('[bridge] setInputNeeded failed:', err.message)
+            );
+          } else if (newPhase !== 'waiting_for_input' && dispatch.work_item_id) {
+            db.setInputNeeded(dispatch.work_item_id, false, 'agent_phase_bridge').catch(err =>
+              console.error('[bridge] clearInputNeeded failed:', err.message)
+            );
+          }
         }
         const text = extractStreamText(evt);
         if (text) {
