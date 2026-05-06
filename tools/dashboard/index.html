@@ -1473,7 +1473,7 @@ async function restoreTerminals() {
 
 function renderPhaseTimeline(history) {
   if (!history || history.length < 2) return '';
-  const phaseColors = { generating: '#4A9EFF', tool_running: '#F59E0B', waiting_for_input: '#8B5CF6' };
+  const phaseColors = { generating: '#4A9EFF', tool_running: '#F59E0B', waiting_for_input: '#F59E0B' };
   const dots = history.map(entry => {
     const color = phaseColors[entry.phase] || '#6B7280';
     const time = entry.at ? new Date(entry.at).toLocaleTimeString() : '';
@@ -1572,6 +1572,7 @@ function createSessionPanel(type, info) {
     ${dispatch.contract.failure_conditions?.length ? `<div><strong>Failure:</strong> ${(Array.isArray(dispatch.contract.failure_conditions) ? dispatch.contract.failure_conditions : [dispatch.contract.failure_conditions]).map(esc).join(', ')}</div>` : ''}
   </div>
 </details>` : ''}
+      ${dispatch.work_item_input_needed ? '<div class="input-needed-banner" style="background:#FEF3C7;color:#92400E;padding:4px 8px;font-size:11px;border-radius:3px;margin-bottom:4px;">⚠ Waiting for input</div>' : ''}
       <div class="dispatch-log${resolveTermTheme() === 'light' ? ' log-light' : ''}" id="log-${id}"></div>
       <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
         <button class="focus-btn" data-focus-dispatch-bottom="${esc(id)}">Focus</button>
@@ -2350,10 +2351,12 @@ async function restoreDispatches() {
     for (const d of list) {
       const existing = activeDispatches.find(a => a.id === d.id);
       if (existing) {
+        const prevPhase = existing.agent_phase;
         existing.agent_phase = d.agent_phase || null;
         existing.agent_phase_history = d.agent_phase_history || existing.agent_phase_history || [];
         existing.status = d.status;
         existing.timeout_at = d.timeout_at || existing.timeout_at || null;
+        existing.work_item_input_needed = d.work_item_input_needed || false;
         const panelEl = document.getElementById(`dispatch-${existing.id}`);
         if (panelEl) {
           const prev = panelEl.querySelector('.phase-timeline');
@@ -2369,6 +2372,12 @@ async function restoreDispatches() {
           } else if (prev) {
             prev.remove();
           }
+          if (!existing.work_item_input_needed) {
+            panelEl.querySelector('.input-needed-banner')?.remove();
+          }
+        }
+        if (prevPhase !== 'waiting_for_input' && existing.agent_phase === 'waiting_for_input' && existing.project_key) {
+          scheduleAwaitingActionRefresh(existing.project_key);
         }
         continue;
       }
@@ -3544,6 +3553,12 @@ function showStatusDropdown(badge, itemId, currentStatus) {
 }
 
 // --- Awaiting Action widget ---
+let _awaitingActionDebounceTimer = null;
+function scheduleAwaitingActionRefresh(projectKey) {
+  clearTimeout(_awaitingActionDebounceTimer);
+  _awaitingActionDebounceTimer = setTimeout(() => loadAwaitingAction(projectKey), 300);
+}
+
 async function loadAwaitingAction(projectKey) {
   const widget = document.getElementById('awaiting-action-widget');
   if (!widget) return;
@@ -5637,6 +5652,24 @@ function refreshSessionsSidebar() {
     return entry;
   }
 
+  const totalSuspended = activeDispatches.filter(d => d.status === 'suspended').length;
+  const sidebarLabel = document.querySelector('#sessions-sidebar .sidebar-section-label');
+  if (sidebarLabel) {
+    let globalSuspBadge = sidebarLabel.querySelector('.susp-total-badge');
+    if (totalSuspended > 0) {
+      if (!globalSuspBadge) {
+        globalSuspBadge = document.createElement('span');
+        globalSuspBadge.className = 'susp-total-badge';
+        globalSuspBadge.style.cssText = 'background:#6B7280;color:#fff;font-size:10px;padding:1px 5px;border-radius:9px;margin-left:6px;cursor:default';
+        sidebarLabel.appendChild(globalSuspBadge);
+      }
+      globalSuspBadge.textContent = totalSuspended;
+      globalSuspBadge.title = `${totalSuspended} session${totalSuspended !== 1 ? 's' : ''} suspended`;
+    } else if (globalSuspBadge) {
+      globalSuspBadge.remove();
+    }
+  }
+
   // Render project > epic > session hierarchy
   for (const [pk, pg] of projectGroups) {
     // Show project label (drop org prefix for brevity)
@@ -5644,7 +5677,31 @@ function refreshSessionsSidebar() {
     const shortLabel = parts.length >= 3 ? (parts[2] === 'main' ? parts[1] : `${parts[1]}/${parts[2]}`) : pk;
     const projLabel = document.createElement('div');
     projLabel.className = 'sidebar-project-label';
-    projLabel.textContent = shortLabel;
+    projLabel.style.display = 'flex';
+    projLabel.style.alignItems = 'center';
+    projLabel.style.justifyContent = 'space-between';
+    const projNameSpan = document.createElement('span');
+    projNameSpan.textContent = shortLabel;
+    projLabel.appendChild(projNameSpan);
+    const projSessions = [...(pg.noEpic || []), ...[...pg.epics.values()].flat()];
+    const projSuspCount = projSessions.filter(s => s.status === 'suspended').length;
+    const projInputNeeded = activeDispatches.some(d => d.project_key === pk && d.work_item_input_needed);
+    const badgeGroup = document.createElement('span');
+    badgeGroup.style.cssText = 'display:flex;align-items:center;gap:4px';
+    if (projInputNeeded) {
+      const dot = document.createElement('span');
+      dot.style.cssText = 'width:7px;height:7px;border-radius:50%;background:#F59E0B;display:inline-block;flex-shrink:0';
+      dot.title = 'Agent waiting for input';
+      badgeGroup.appendChild(dot);
+    }
+    if (projSuspCount > 0) {
+      const badge = document.createElement('span');
+      badge.style.cssText = 'background:#6B7280;color:#fff;font-size:10px;padding:1px 5px;border-radius:9px;cursor:default';
+      badge.textContent = projSuspCount;
+      badge.title = `${projSuspCount} session${projSuspCount !== 1 ? 's' : ''} suspended`;
+      badgeGroup.appendChild(badge);
+    }
+    if (badgeGroup.children.length) projLabel.appendChild(badgeGroup);
     projLabel.onclick = () => {
       const [org, proj, comp] = pk.split('/');
       if (org && proj && comp) location.hash = `#component/${org}/${proj}/${comp}`;

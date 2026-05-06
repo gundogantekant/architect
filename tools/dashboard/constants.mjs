@@ -131,6 +131,12 @@ export const DISPATCH_TIMEOUT_MS = {
 export const MIGRATIONS_DIR = join(import.meta.dirname, 'migrations');
 export const BACKUP_DIR = join(ROOT, 'assets', 'backups');
 
+export const INPUT_NEEDED_SOURCE = Object.freeze({
+  BRIDGE: 'agent_phase_bridge',
+  USER: 'user',
+  BLOCKING_QUESTIONS: 'blocking_questions',
+});
+
 export const TMUX_AVAILABLE = (() => {
   try {
     execFileSync('which', ['tmux'], { encoding: 'utf8' });

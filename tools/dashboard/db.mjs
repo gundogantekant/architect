@@ -489,6 +489,43 @@ export async function updateWorkItemRefinement(id, { description, status }) {
   );
 }
 
+export async function setInputNeeded(workItemId, active, source) {
+  if (active) {
+    // Don't overwrite if already set by a non-bridge source (e.g. 'user')
+    const current = await pool.query(
+      'SELECT input_needed, input_needed_from FROM work_items WHERE id=$1',
+      [workItemId]
+    );
+    if (current.rows[0]?.input_needed && current.rows[0]?.input_needed_from !== 'agent_phase_bridge') return;
+    const now = new Date().toISOString();
+    await pool.query(
+      `UPDATE work_items SET input_needed=$1, input_needed_from=$2, input_needed_at=$3 WHERE id=$4`,
+      [true, source, now, workItemId]
+    );
+  } else {
+    const remaining = await pool.query(
+      `SELECT COUNT(*) FROM dispatches WHERE work_item_id=$1 AND agent_phase='waiting_for_input' AND status IN ('running','pending')`,
+      [workItemId]
+    );
+    if (parseInt(remaining.rows[0].count, 10) > 0) return;
+    const current = await pool.query(
+      `SELECT input_needed_from FROM work_items WHERE id=$1`,
+      [workItemId]
+    );
+    if (!current.rows[0] || current.rows[0].input_needed_from !== 'agent_phase_bridge') return;
+    await pool.query(
+      `UPDATE work_items SET input_needed=false, input_needed_from=NULL, input_needed_reason=NULL, input_needed_at=NULL WHERE id=$1`,
+      [workItemId]
+    );
+  }
+}
+
+export async function getWorkItemInputNeeded(workItemId) {
+  if (!workItemId) return false;
+  const r = await pool.query('SELECT input_needed FROM work_items WHERE id=$1', [workItemId]);
+  return r.rows[0]?.input_needed ?? false;
+}
+
 // --- Work Item Approvals ---
 
 export async function getWorkItemApprovals(workItemId) {

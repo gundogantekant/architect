@@ -381,6 +381,7 @@ export default function terminalRoutes(deps) {
           agent_type: t.agent_type || t.type || 'claude',
           work_item_id: t.work_item_id,
           work_item_title: t.work_item_id ? await db.getWorkItemTitle(t.work_item_id) : null,
+          work_item_input_needed: t.work_item_id ? await db.getWorkItemInputNeeded(t.work_item_id).catch(() => false) : false,
           epic_id: t.epic_id || null,
           epic_title: t.epic_id ? await db.getEpicTitle(t.epic_id) : null,
           project_key: t.project_key,

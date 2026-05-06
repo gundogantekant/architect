@@ -573,6 +573,7 @@ export default function dispatchRoutes(deps) {
           agent_phase: d.agent_phase || null,
           agent_phase_history: d.agent_phase_history || [],
           needs_input: d.agent_phase === 'waiting_for_input',
+          work_item_input_needed: d.work_item_id ? await db.getWorkItemInputNeeded(d.work_item_id).catch(() => false) : false,
           permission_mode: d.permission_mode || 'acceptEdits',
           skip_permissions: d.skip_permissions || false,
           claude_session_id: d.claude_session_id || null,
