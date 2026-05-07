@@ -13,3 +13,13 @@ Triggers when "Refine Project" is clicked on a component view in the dashboard.
 8. Agent emits `# RefinementSummary` fenced JSON block at session end.
 9. On dispatch completion: close handler parses `# RefinementSummary`, persists to `dispatches.completion_summary`.
 10. Frontend refreshes component view — "Refinement in progress" badge disappears, "Refine Project" button re-enables.
+
+## Terminal Path
+
+Triggered via `POST /api/projects/:org/:proj/:comp/refine-terminal`. Returns `{ terminal_id, accepted: true }`. The session appears in the dashboard alongside other terminal sessions.
+
+**Gate-exemption rationale**: The terminal path is supervised — the user is present in an interactive PTY session and can observe and intervene at any point. The plan-gate review board is intentionally skipped here; it exists for autonomous background dispatches where no human supervises execution. In an interactive session, the user IS the review gate.
+
+**Supervised-session rule**: Agents dispatched via the terminal path always run in `plan` permission mode — never `acceptEdits`. The user must explicitly approve any code changes interactively. This prevents terminal-path refinement from making unreviewed edits.
+
+**Item filter**: The terminal path filters `draft` + `planned` items only — `blocked` items are excluded. Background `/refine` includes blocked items because surfacing them in an unsupervised context is appropriate; in an interactive session the user handles blocked items in real time, so auto-surfacing them would distract from the core refinement task.

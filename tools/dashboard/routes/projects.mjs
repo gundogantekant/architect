@@ -1,8 +1,10 @@
+import { spawnTerminalSession } from '../terminal-session.mjs';
+
 export default function projectsRoutes(deps) {
   const {
     db, json, err, parseBody, readFile, writeFile, unlinkFile, mkdir, join,
     PORTFOLIO, ROOT, LOGS_DIR, CLAUDE_BIN, port,
-    dispatches,
+    dispatches, terminals,
     buildProjectRefinementPrompt, wireDispatchHandlers, saveDispatchToDb, broadcastDispatchDone,
     spawn, createWriteStream, existsSync,
   } = deps;
@@ -172,6 +174,113 @@ export default function projectsRoutes(deps) {
         await unlinkFile(join(PORTFOLIO, org, proj, `${comp}-refinement-template.md`));
       } catch {}
       json(res, { deleted: true });
+    }],
+
+    [/^\/api\/projects\/([^/]+)\/([^/]+)\/([^/]+)\/refine-terminal$/, 'POST', async (m, req, res) => {
+      const [, org, proj, comp] = m;
+      const projectKey = `${org}/${proj}/${comp}`;
+
+      // Synchronous pre-await reservation (closes duplicate-spawn race window)
+      const reservationKey = `refine-terminal:${projectKey}`;
+      if (terminals.has(reservationKey)) return err(res, 'live terminal session already running for this project', 409);
+      terminals.set(reservationKey, { status: 'reserving', project_key: projectKey });
+
+      try {
+        // 409 if a live terminal session exists for this project_key
+        for (const t of terminals.values()) {
+          if (t.status === 'reserving') continue; // skip our own reservation
+          if (t.project_key === projectKey && t.status === 'running') {
+            const pidAlive = t.pid ? (() => { try { process.kill(t.pid, 0); return true; } catch { return false; } })() : true;
+            if (pidAlive) {
+              terminals.delete(reservationKey);
+              return err(res, 'live terminal session already running for this project', 409);
+            }
+          }
+        }
+
+        // 409 if a live project_refinement dispatch exists for this project
+        for (const d of dispatches.values()) {
+          if (d.project_key === projectKey && d.dispatch_mode === 'project_refinement' && d.status === 'running') {
+            // Treat null PID as potentially alive (dispatch in-flight) — require confirmed dead PID to pass
+            const pidConfirmedDead = d.pid && (() => { try { process.kill(d.pid, 0); return false; } catch { return true; } })();
+            if (!pidConfirmedDead) {
+              terminals.delete(reservationKey);
+              return err(res, 'live terminal session already running for this project', 409);
+            }
+          }
+        }
+
+        const project = await db.getProject(projectKey);
+        if (!project) {
+          terminals.delete(reservationKey);
+          return err(res, 'project not found', 404);
+        }
+
+        // Build the refinement prompt — same as /refine but item filter: draft + planned only (NOT blocked)
+        const body = await parseBody(req);
+        const templatePath = join(PORTFOLIO, org, proj, `${comp}-refinement-template.md`);
+        const defaultTemplatePath = join(ROOT, 'templates', 'refinement-template.md');
+
+        let template;
+        try { template = await readFile(templatePath, 'utf8'); }
+        catch { template = await readFile(defaultTemplatePath, 'utf8'); }
+
+        const backlog = await db.getBacklog(org, false);
+        const projectGroup = (backlog.projects || {})[projectKey] || { items: [] };
+        const items = (projectGroup.items || [])
+          .filter(it => ['draft', 'planned'].includes(it.status))   // intentionally excludes 'blocked'
+          .sort((a, b) => {
+            const pOrder = { high: 0, medium: 1, low: 2, critical: 0 };
+            return (pOrder[a.priority] ?? 1) - (pOrder[b.priority] ?? 1);
+          });
+
+        const epicsRows = await db.listEpics();
+
+        const prompt = buildProjectRefinementPrompt({
+          projectKey,
+          projectPath: project.path,
+          template,
+          items,
+          epics: epicsRows,
+          instructions: body.instructions || '',
+          dryRun: false,
+          port,
+        });
+
+        if (!prompt || !prompt.trim()) {
+          terminals.delete(reservationKey);
+          return err(res, 'refinement prompt is empty', 500);
+        }
+
+        const id = `T-${Date.now()}`;
+        const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
+
+        const terminal = await spawnTerminalSession(deps, {
+          id,
+          projectPath: project.path,
+          prompt,
+          agentDefs: [],
+          permissionMode: 'plan',
+          skipPermissions: false,
+          workItemId: null,
+          epicId: null,
+          projectKey,
+          orgKey: null,
+          title: `Refine: ${projectKey}`,
+          testWorkerId: _testWorkerId,
+          skip_seed: false,
+        });
+
+        // Replace reservation with real terminal
+        terminals.delete(reservationKey);
+        terminals.set(id, terminal);
+
+        json(res, { terminal_id: id, accepted: true });
+
+      } catch (spawnErr) {
+        terminals.delete(reservationKey);
+        return err(res, `Failed to spawn refine terminal: ${spawnErr.message}`, 500);
+      }
     }],
   ];
 }

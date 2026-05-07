@@ -4137,6 +4137,15 @@ async function showRefineProjectModal(org, proj, comp) {
         <label for="refine-project-instructions">Additional instructions (optional)</label>
         <textarea id="refine-project-instructions" placeholder="e.g. Focus on API contracts; skip infrastructure items..." style="height:80px"></textarea>
       </div>
+      <div style="margin-bottom:12px;">
+        <label style="font-weight:600;display:block;margin-bottom:6px;">Mode</label>
+        <label style="display:inline-flex;align-items:center;gap:6px;margin-right:16px;">
+          <input type="radio" name="refine-mode" value="background" checked> Background
+        </label>
+        <label style="display:inline-flex;align-items:center;gap:6px;">
+          <input type="radio" name="refine-mode" value="terminal"> Interactive terminal
+        </label>
+      </div>
       <div class="field" style="flex-direction:row;align-items:center;gap:8px">
         <input type="checkbox" id="refine-project-dry-run" />
         <label for="refine-project-dry-run" style="font-size:13px">Dry run (no changes — preview only)</label>
@@ -4145,13 +4154,22 @@ async function showRefineProjectModal(org, proj, comp) {
     onSubmit: async (ov) => {
       const instructions = ov.querySelector('#refine-project-instructions')?.value || '';
       const dryRun = ov.querySelector('#refine-project-dry-run')?.checked || false;
-      const res = await fetch(`/api/projects/${encodeURIComponent(org)}/${encodeURIComponent(proj)}/${encodeURIComponent(comp)}/refine`, {
+      const mode = ov.querySelector('input[name="refine-mode"]:checked')?.value ?? 'background';
+      const endpoint = mode === 'terminal'
+        ? `/api/projects/${encodeURIComponent(org)}/${encodeURIComponent(proj)}/${encodeURIComponent(comp)}/refine-terminal`
+        : `/api/projects/${encodeURIComponent(org)}/${encodeURIComponent(proj)}/${encodeURIComponent(comp)}/refine`;
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ instructions: instructions || undefined, dry_run: dryRun || undefined }),
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || 'Dispatch failed');
+      if (result.terminal_id) {
+        // Terminal mode: modal closes (handled by createDispatchOverlay after onSubmit),
+        // terminal panel will appear separately via SSE/polling.
+        return;
+      }
       setTimeout(() => {
         const panel = document.getElementById(`dispatch-${result.dispatch_id}`);
         if (panel) panel.scrollIntoView({ behavior: 'smooth' });
