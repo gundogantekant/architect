@@ -25,6 +25,10 @@ export default function projectsRoutes(deps) {
         if (d.project_key === projectKey && d.dispatch_mode === 'project_refinement' && d.status === 'running') {
           const pidAlive = d.pid ? (() => { try { process.kill(d.pid, 0); return true; } catch { return false; } })() : false;
           if (pidAlive) return err(res, 'project refinement already in progress', 409);
+          db.updateDispatchStatus(d.id, 'interrupted', new Date().toISOString()).catch(e =>
+            console.error(`[stale-cleanup] failed to mark ${d.id} interrupted:`, e.message)
+          );
+          continue;
         }
       }
 
