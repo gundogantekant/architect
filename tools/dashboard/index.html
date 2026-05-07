@@ -68,6 +68,7 @@ import {
   agentsTileInterval, setAgentsTileInterval,
   agentsFullRefreshInterval, setAgentsFullRefreshInterval,
   settingsRefreshTimer, setSettingsRefreshTimer,
+  syncPollInterval, setSyncPollInterval,
   activeFocusPopup, setActiveFocusPopup,
   setPrefs, getPrefs,
 } from '/js/state.mjs';
@@ -7374,10 +7375,26 @@ function renderReposView(repos) {
       <div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <button id="btn-seed-repos" class="btn btn-secondary">Refresh from GitHub</button>
         <button id="btn-sync-now" class="btn btn-primary">Sync Now</button>
+        <span id="sync-status-label" class="muted" style="font-size:13px"></span>
         <a href="#adrs" onclick="navigate('adrs')" class="btn btn-sm">View ADRs →</a>
       </div>
     </div>
   `;
+
+  // Populate last-synced timestamp — non-blocking
+  (async () => {
+    try {
+      const resp = await fetch('/api/sync/status');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const timestamps = (Array.isArray(data) ? data : Object.values(data))
+        .map(p => p.last_synced_at).filter(Boolean);
+      if (!timestamps.length) return;
+      const newestTs = timestamps.sort().at(-1);
+      const el = document.getElementById('sync-status-label');
+      if (el) el.textContent = `Last synced: ${new Date(newestTs).toLocaleTimeString()}`;
+    } catch {}
+  })();
 }
 
 function bindReposEvents() {
@@ -7432,12 +7449,69 @@ function bindReposEvents() {
   const syncBtn = document.getElementById('btn-sync-now');
   if (syncBtn) {
     syncBtn.addEventListener('click', async () => {
+      const button = syncBtn;
+      const statusEl = document.getElementById('sync-status-label');
+      button.disabled = true;
+      if (statusEl) statusEl.textContent = '';
+
+      let snapshotTs = null;
       try {
-        await fetch('/api/repo-sync/run-now', { method: 'POST' });
-        alert('Sync started — check tmp/repo-sync.log for progress');
+        const statusResp = await fetch('/api/sync/status');
+        if (statusResp.ok) {
+          const data = await statusResp.json();
+          const timestamps = (Array.isArray(data) ? data : Object.values(data))
+            .map(p => p.last_synced_at).filter(Boolean);
+          snapshotTs = timestamps.length ? timestamps.sort().at(-1) : null;
+        }
+      } catch {}
+
+      let syncResp;
+      try {
+        syncResp = await fetch('/api/repo-sync/run-now', { method: 'POST' });
       } catch {
-        alert('Sync request failed');
+        button.disabled = false;
+        if (statusEl) statusEl.textContent = 'Sync request failed — network error';
+        return;
       }
+
+      if (syncResp.status === 409) {
+        if (statusEl) statusEl.textContent = 'Sync in progress...';
+        // Fall through to poll
+      } else if (!syncResp.ok) {
+        button.disabled = false;
+        if (statusEl) statusEl.textContent = `Sync failed (HTTP ${syncResp.status})`;
+        return;
+      } else {
+        button.textContent = '⟳ Syncing...';
+      }
+
+      // Poll every 3s for completion (stop when newer timestamp found OR 60s elapsed)
+      const startTime = Date.now();
+      setSyncPollInterval(setInterval(async () => {
+        try {
+          const pollResp = await fetch('/api/sync/status');
+          if (!pollResp.ok) return;
+          const data = await pollResp.json();
+          const timestamps = (Array.isArray(data) ? data : Object.values(data))
+            .map(p => p.last_synced_at).filter(Boolean);
+          const newestTs = timestamps.length ? timestamps.sort().at(-1) : null;
+
+          const isNewer = newestTs && newestTs !== snapshotTs;
+          const timedOut = Date.now() - startTime > 60_000;
+
+          if (isNewer || timedOut) {
+            clearInterval(syncPollInterval);
+            setSyncPollInterval(null);
+            button.disabled = false;
+            button.textContent = 'Sync Now';
+            if (isNewer) {
+              if (statusEl) statusEl.textContent = `Synced at ${new Date(newestTs).toLocaleTimeString()}`;
+            } else {
+              if (statusEl) statusEl.textContent = 'Sync may still be running — check server logs (tmp/dashboard.log) for status';
+            }
+          }
+        } catch {}
+      }, 3000));
     });
   }
 }
@@ -7508,6 +7582,7 @@ async function route() {
   updateTitle(getRouteTitle());
   stopAgentsTileRefresh();
   if (settingsRefreshTimer) { clearInterval(settingsRefreshTimer); setSettingsRefreshTimer(null); }
+  if (syncPollInterval) { clearInterval(syncPollInterval); setSyncPollInterval(null); }
 
   if (!hash) {
     main.innerHTML = `<div class="card"><h2>Portfolio Dashboard</h2><p style="color:var(--text-light);font-size:14px">Select an organization or project from the sidebar.</p></div>`;
