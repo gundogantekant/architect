@@ -178,6 +178,7 @@ export async function assertSchema() {
       'tags', 'depends_on', 'created_at', 'updated_at', 'input_needed', 'input_needed_from',
       'input_needed_reason', 'input_needed_at', 'approval_active', 'approval_mode',
       'approval_requested_at', 'approval_resolved_at', 'released_at', 'released_version',
+      'done_at',
     ],
     work_item_approvals: ['id', 'work_item_id', 'identity', 'status', 'sort_order', 'blocking_work_item_id', 'decided_at', 'reason', 'created_at'],
     work_item_logs: ['id', 'work_item_id', 'logged_at', 'summary'],
@@ -479,6 +480,12 @@ export async function updateWorkItem(id, fields) {
   values.push(new Date().toISOString());
   values.push(id);
   await pool.query(`UPDATE work_items SET ${sets.join(', ')} WHERE id = $${paramIdx}`, values);
+  if (fields.status === 'done') {
+    await pool.query(
+      `UPDATE work_items SET done_at = NOW() WHERE id = $1 AND done_at IS NULL`,
+      [id]
+    );
+  }
   return getWorkItem(id);
 }
 
@@ -1145,6 +1152,7 @@ function hydrateWorkItem(row, approvals = []) {
     depends_on: row.depends_on ?? [],
     created_at: row.created_at,
     updated_at: row.updated_at,
+    done_at: row.done_at || null,
     input_needed: !!row.input_needed,
     input_needed_from: row.input_needed_from || '',
     input_needed_reason: row.input_needed_reason || '',

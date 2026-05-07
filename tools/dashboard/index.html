@@ -2943,7 +2943,7 @@ const ARCHITECT_KEY = '\u2013/architect/\u2013';
 // `tableId` = optional id attribute for the table element.
 function renderWorkItemsTable(items, allWorkItems, tableId) {
   if (!items.length) return '';
-  let html = `<table${tableId ? ` id="${tableId}"` : ''} class="wi-table"><thead><tr><th data-wi-sort="id" style="cursor:pointer">ID &#8645;</th><th>Title</th><th data-wi-sort="status" style="cursor:pointer">Status &#8645;</th><th data-wi-sort="priority" style="cursor:pointer">Priority &#8645;</th><th>Depends On</th><th>Epic</th><th>Tags</th><th></th></tr></thead><tbody>`;
+  let html = `<table${tableId ? ` id="${tableId}"` : ''} class="wi-table"><thead><tr><th data-wi-sort="id" style="cursor:pointer">ID &#8645;</th><th>Title</th><th data-wi-sort="status" style="cursor:pointer">Status &#8645;</th><th data-wi-sort="priority" style="cursor:pointer">Priority &#8645;</th><th>Depends On</th><th>Epic</th><th>Tags</th><th data-wi-sort="createdat" style="cursor:pointer">Created &#8645;</th><th data-wi-sort="doneat" style="cursor:pointer">Done &#8645;</th><th></th></tr></thead><tbody>`;
   for (const w of items) {
     const idx = allWorkItems.indexOf(w);
     const sc = w.status || 'draft';
@@ -2958,12 +2958,14 @@ function renderWorkItemsTable(items, allWorkItems, tableId) {
     const depTooltip = depState.blocked ? ` title="Dependencies not yet complete: ${depState.pending.join(', ')}"` : '';
     const flagHtml = (w.input_needed ? `<span class="flag-badge flag-input">input needed</span>` : '') +
                      (w.approval_active ? `<span class="flag-badge flag-approval">approval needed</span>` : '');
-    html += `<tr${rowClass}${depTooltip} data-wi-row="${idx}" data-wi-status-val="${esc(w.status)}" data-wi-priority-val="${esc(w.priority || 'medium')}" data-wi-epic-val="${esc(w.epic_id || '')}" data-wi-tags-val="${esc((w.tags||[]).join(','))}"><td><code>${esc(w.id)}</code></td><td>${esc(w.title)}</td>`;
+    html += `<tr${rowClass}${depTooltip} data-wi-row="${idx}" data-wi-status-val="${esc(w.status)}" data-wi-priority-val="${esc(w.priority || 'medium')}" data-wi-epic-val="${esc(w.epic_id || '')}" data-wi-tags-val="${esc((w.tags||[]).join(','))}" data-wi-createdat-val="${w.created_at ? new Date(w.created_at).getTime() : 0}" data-wi-doneat-val="${w.done_at ? new Date(w.done_at).getTime() : 0}"><td><code>${esc(w.id)}</code></td><td>${esc(w.title)}</td>`;
     html += `<td><span class="badge badge-${sc}" data-status-click="${esc(w.id)}" data-current-status="${esc(w.status)}" style="cursor:pointer">${esc(w.status)}</span>${flagHtml}</td>`;
     html += `<td><span class="badge badge-${w.priority || 'medium'}">${esc(w.priority || '\u2014')}</span></td>`;
     html += `<td>${depHtml}</td>`;
     html += `<td>${w.epic_id ? `<span class="badge badge-epic" data-epic-nav="${esc(w.epic_id)}">${esc(w.epic_id)}</span>` : ''}</td>`;
     html += `<td>${(w.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
+    html += `<td>${w.created_at ? new Date(w.created_at).toLocaleDateString() : '—'}</td>`;
+    html += `<td>${w.done_at ? new Date(w.done_at).toLocaleDateString() : '—'}</td>`;
     html += `<td><button class="expand-btn" data-wi="${idx}">details</button>`;
     html += `<button class="edit-btn" data-wi-edit="${idx}">edit</button>`;
     if (w.status === 'draft') {
@@ -2982,7 +2984,7 @@ function renderWorkItemsTable(items, allWorkItems, tableId) {
     }
     html += `<button class="delete-btn" data-wi-del="${idx}">delete</button>`;
     html += `</td></tr>`;
-    html += `<tr class="wi-detail" data-wi-detail="${idx}" style="display:none"><td colspan="8">`;
+    html += `<tr class="wi-detail" data-wi-detail="${idx}" style="display:none"><td colspan="10">`;
     html += `<div style="font-size:11px;color:var(--text-light);margin-bottom:8px;display:flex;flex-wrap:wrap;gap:4px 12px">`;
     html += `<span>Created: ${fmtDate(w.created_at)}</span>`;
     html += `<span>Updated: ${fmtDate(w.updated_at)}</span>`;
@@ -3009,7 +3011,7 @@ function renderWorkItemsTable(items, allWorkItems, tableId) {
     html += `</div>`;
     html += `<div class="wi-artifact-container" data-artifact-for="${esc(w.id)}" style="margin-top:8px"></div>`;
     html += `</td></tr>`;
-    html += `<tr class="wi-sessions-row" data-wi-sessions="${esc(w.id)}" style="display:none"><td colspan="8"><div class="wi-sessions-container" data-session-slot="${esc(w.id)}"></div></td></tr>`;
+    html += `<tr class="wi-sessions-row" data-wi-sessions="${esc(w.id)}" style="display:none"><td colspan="10"><div class="wi-sessions-container" data-session-slot="${esc(w.id)}"></div></td></tr>`;
   }
   html += `</tbody></table>`;
   return html;
@@ -3766,6 +3768,15 @@ function bindFilterBar() {
           } else if (col === 'priority') {
             va = priorityOrder[a.dataset.wiPriorityVal] ?? 99;
             vb = priorityOrder[b.dataset.wiPriorityVal] ?? 99;
+          } else if (col === 'createdat') {
+            va = parseInt(a.dataset.wiCreatedatVal || '0', 10);
+            vb = parseInt(b.dataset.wiCreatedatVal || '0', 10);
+          } else if (col === 'doneat') {
+            va = parseInt(a.dataset.wiDoneatVal || '0', 10);
+            vb = parseInt(b.dataset.wiDoneatVal || '0', 10);
+            if (va === 0 && vb === 0) return 0;
+            if (va === 0) return 1;
+            if (vb === 0) return -1;
           }
           return sortAsc ? va - vb : vb - va;
         });
