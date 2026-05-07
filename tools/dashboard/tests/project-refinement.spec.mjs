@@ -316,3 +316,190 @@ test.describe('Project refinement @fast', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Helper — POST /refine-terminal for a given project key
+// ---------------------------------------------------------------------------
+async function postRefineTerminal(org = 'testorg', proj = 'testproj', comp = 'main') {
+  const base = getBase();
+  const resp = await fetch(`${base}/api/projects/${org}/${proj}/${comp}/refine-terminal`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  return resp;
+}
+
+test.describe('Interactive terminal refine — /refine-terminal @fast', () => {
+  // RT-1: POST /refine-terminal on registered project returns 200 with terminal_id and accepted:true
+  test('RT-1: POST /refine-terminal on registered project returns 200 with terminal_id and accepted:true', async () => {
+    const base = getBase();
+    await seedProject(base, { path: '/tmp' });
+    const resp = await postRefineTerminal();
+    expect(resp.status).toBe(200);
+    const body = await resp.json();
+    expect(body.accepted).toBe(true);
+    expect(typeof body.terminal_id).toBe('string');
+    expect(body.terminal_id.length).toBeGreaterThan(0);
+
+    // Cleanup
+    if (body.terminal_id) {
+      const base = getBase();
+      await fetch(`${base}/api/terminal/${body.terminal_id}`, { method: 'DELETE' });
+    }
+  });
+
+  // RT-2: POST /refine-terminal while a live terminal session for the same project returns 409
+  test('RT-2: POST /refine-terminal while a live terminal session for the same project returns 409', async () => {
+    const base = getBase();
+    await seedProject(base, { path: '/tmp' });
+    const first = await postRefineTerminal();
+    expect(first.status).toBe(200);
+    const firstBody = await first.json();
+    expect(firstBody.accepted).toBe(true);
+
+    let secondBody = null;
+    try {
+      const second = await postRefineTerminal();
+      expect(second.status).toBe(409);
+      secondBody = await second.json().catch(() => null);
+    } finally {
+      // Cleanup both sessions
+      if (firstBody.terminal_id) {
+        await fetch(`${base}/api/terminal/${firstBody.terminal_id}`, { method: 'DELETE' });
+      }
+      if (secondBody?.terminal_id) {
+        await fetch(`${base}/api/terminal/${secondBody.terminal_id}`, { method: 'DELETE' });
+      }
+    }
+  });
+
+  // RT-3: POST /refine-terminal on an unknown/unregistered project key returns 404
+  test('RT-3: POST /refine-terminal on unknown/unregistered project key returns 404', async () => {
+    const resp = await postRefineTerminal('unknown', 'missing', 'component');
+    expect(resp.status).toBe(404);
+    const body = await resp.json().catch(() => null);
+    if (body !== null) {
+      expect(typeof body.error).toBe('string');
+    }
+  });
+
+  // RT-4: POST /refine-terminal while a running project_refinement dispatch exists for the same project returns 409
+  test('RT-4: POST /refine-terminal while a live project_refinement dispatch exists for the same project returns 409', async () => {
+    const base = getBase();
+    await seedProject(base, { path: '/tmp' });
+
+    // Seed a running project_refinement dispatch for the same project key
+    const seedId = `D-rt4-${Date.now()}`;
+    await fetch(`${base}/api/test/seed-dispatch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: seedId,
+        status: 'running',
+        project_key: 'testorg/testproj/main',
+        title: 'RT-4 running refinement dispatch',
+        dispatch_mode: 'project_refinement',
+      }),
+    });
+
+    let terminalId = null;
+    try {
+      const resp = await postRefineTerminal();
+      expect(resp.status).toBe(409);
+      const body = await resp.json().catch(() => null);
+      terminalId = body?.terminal_id ?? null;
+    } finally {
+      await fetch(`${base}/api/dispatch/${seedId}`, { method: 'DELETE' });
+      // Cleanup any accidentally created terminal
+      if (terminalId) {
+        await fetch(`${base}/api/terminal/${terminalId}`, { method: 'DELETE' });
+      }
+    }
+  });
+
+  // RT-5: GET /api/terminal/active includes the new refine-terminal session
+  test('RT-5: GET /api/terminal/active includes the new refine-terminal session', async () => {
+    const base = getBase();
+    await seedProject(base, { path: '/tmp' });
+    const resp = await postRefineTerminal();
+    expect(resp.status).toBe(200);
+    const body = await resp.json();
+    expect(body.accepted).toBe(true);
+    const terminalId = body.terminal_id;
+
+    try {
+      const activeRes = await fetch(`${base}/api/terminal/active`);
+      expect(activeRes.status).toBe(200);
+      const active = await activeRes.json();
+      expect(Array.isArray(active)).toBe(true);
+      const found = active.find(t => t.id === terminalId || t.terminal_id === terminalId);
+      expect(found).toBeTruthy();
+    } finally {
+      if (terminalId) {
+        await fetch(`${base}/api/terminal/${terminalId}`, { method: 'DELETE' });
+      }
+    }
+  });
+
+  // RT-6: POST /refine-terminal with no draft/planned items still returns accepted:true (not 500)
+  test('RT-6: POST /refine-terminal on project with no eligible items still returns accepted:true', async () => {
+    const base = getBase();
+    await seedProject(base, { path: '/tmp' });
+    // Regardless of whether it has refinable items, the endpoint must succeed.
+    const resp = await postRefineTerminal();
+    // The endpoint may return 200 or 409 (if a prior test left a live session);
+    // what must NOT happen is a 500 server error.
+    expect(resp.status).not.toBe(500);
+
+    if (resp.status === 200) {
+      const body = await resp.json();
+      expect(body.accepted).toBe(true);
+      if (body.terminal_id) {
+        const base = getBase();
+        await fetch(`${base}/api/terminal/${body.terminal_id}`, { method: 'DELETE' });
+      }
+    }
+  });
+
+  // RT-7: DELETE /api/terminal/:id kills the refine-terminal session
+  test('RT-7: DELETE /api/terminal/:id removes the refine-terminal session', async () => {
+    const base = getBase();
+    await seedProject(base, { path: '/tmp' });
+    const resp = await postRefineTerminal();
+    expect(resp.status).toBe(200);
+    const body = await resp.json();
+    const terminalId = body.terminal_id;
+    expect(terminalId).toBeTruthy();
+
+    // Delete the terminal
+    const delRes = await fetch(`${base}/api/terminal/${terminalId}`, { method: 'DELETE' });
+    expect([200, 204]).toContain(delRes.status);
+
+    // Verify it no longer appears in the active list
+    const activeRes = await fetch(`${base}/api/terminal/active`);
+    expect(activeRes.status).toBe(200);
+    const active = await activeRes.json();
+    const stillPresent = active.find(t => t.id === terminalId || t.terminal_id === terminalId);
+    expect(stillPresent).toBeFalsy();
+  });
+
+  // RT-8: POST /refine-terminal response shape matches expected schema
+  test('RT-8: POST /refine-terminal response shape matches expected schema', async () => {
+    const base = getBase();
+    await seedProject(base, { path: '/tmp' });
+    const resp = await postRefineTerminal();
+    expect(resp.status).toBe(200);
+    const body = await resp.json();
+
+    // Shape assertions
+    expect(body.accepted).toBe(true);
+    expect(typeof body.terminal_id).toBe('string');
+    expect(body.terminal_id.startsWith('T-')).toBe(true);
+
+    // Cleanup
+    if (body.terminal_id) {
+      await fetch(`${base}/api/terminal/${body.terminal_id}`, { method: 'DELETE' });
+    }
+  });
+});
