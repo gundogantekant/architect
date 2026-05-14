@@ -492,14 +492,15 @@ Tracks an active worktree created for implementation isolation.
 
 ## AgentPhase
 
-Ephemeral (in-memory only, not persisted to PostgreSQL) state derived from stream-json events during a dispatch session's lifetime. Tracks what the dispatched agent is currently doing. Reset to null when the dispatch reaches a terminal status.
+Derived from stream-json events during a dispatch session's lifetime and persisted to `dispatches.agent_phase` (column added by migration 019, W-987). Tracks what the dispatched agent is currently doing. Reset to null when the dispatch reaches a terminal status.
 
 Values:
-- `worktree_setup` — dispatch infrastructure is creating and provisioning the worktree before agent spawn
 - `generating` — agent is producing text (thinking, planning, responding)
 - `tool_running` — agent dispatched a tool call, execution in progress
-- `waiting_for_input` — agent finished its turn (stop_reason=end_turn), waiting for user
+- `waiting_for_input` — agent finished its turn (stop_reason=end_turn), waiting for user or next message
 - `null` — dispatch in terminal state (completed/failed/killed/interrupted) or phase unknown
+
+Note: `worktree_setup` is a PIPELINE_STAGE value (constants.mjs), not an AgentPhase. It is set pre-spawn by dispatch infrastructure and is never emitted by `derivePhase()`.
 
 ## DispatchRequest
 

@@ -1,6 +1,6 @@
 # Architecture Blueprint
 
-Five Mermaid diagrams providing a visual reference for the architect system.
+Nine Mermaid diagrams providing a visual reference for the architect system.
 
 ---
 
@@ -156,130 +156,441 @@ sequenceDiagram
 
 ---
 
-## 5. ER Diagram
+## 5. ER Diagrams
 
-Key PostgreSQL tables and their relationships.
+Key PostgreSQL tables and their relationships. Split into three focused sub-sections for readability. Schema derived from migration files 001–023.
+
+### 5a. Core Work Entities
 
 ```mermaid
 erDiagram
   projects {
-    string key PK
-    string org
-    string project
-    string component
-    string path
-    string role
+    text key PK
+    text org
+    text project
+    text component
+    text path
+    text role
+    timestamptz synced_at
   }
 
   work_items {
-    string id PK
-    string project_key FK
-    string epic_id FK
-    string title
-    string status
-    string priority
-    string description
-    json depends_on
-    json tags
+    text id PK
+    text project_key
+    text epic_id
+    text title
+    text status
+    text priority
+    text description
+    jsonb depends_on
+    jsonb tags
     boolean input_needed
-    json approval
-    string released_version
-    timestamp created_at
-    timestamp updated_at
+    boolean approval_active
+    text approval_mode
+    timestamptz done_at
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  work_item_logs {
+    bigint id PK
+    text work_item_id FK
+    timestamptz logged_at
+    text summary
+  }
+
+  work_item_approvals {
+    bigint id PK
+    text work_item_id FK
+    text identity
+    text status
+    integer sort_order
+    text blocking_work_item_id
+    timestamptz decided_at
   }
 
   epics {
-    string id PK
-    string title
-    string status
-    string priority
-    string description
-    string target_date
-    timestamp created_at
-    timestamp updated_at
+    text id PK
+    text title
+    text status
+    text priority
+    text description
+    text target_date
+    timestamptz created_at
+    timestamptz updated_at
   }
 
+  epic_logs {
+    bigint id PK
+    text epic_id FK
+    timestamptz logged_at
+    text summary
+  }
+
+  %% work_items.project_key — no physical FK constraint to projects
+  %% work_items.epic_id — logical FK only (nullable TEXT, no physical constraint)
+  projects ||--o{ work_items : "has (logical)"
+  epics ||--o{ work_items : "groups (logical)"
+  work_items ||--o{ work_item_logs : "logs"
+  work_items ||--o{ work_item_approvals : "approvals"
+  epics ||--o{ epic_logs : "logs"
+```
+
+### 5b. Session Entities
+
+```mermaid
+erDiagram
   dispatches {
-    string id PK
-    string work_item_id FK
-    string project_key FK
-    string status
-    string agent_phase
-    string pipeline_stage
-    float cost_usd
-    string worktree_path
-    string worktree_branch
-    string source_branch
-    string permission_mode
+    text id PK
+    text work_item_id
+    text epic_id
+    text project_key
+    text org_key
+    text title
+    text status
+    text agent_phase
+    text pipeline_stage
+    text dispatch_mode
+    text permission_mode
     boolean skip_permissions
-    string completion_sha
-    string merge_result
+    integer pid
+    real cost_usd
+    text worktree_path
+    text worktree_branch
+    text source_branch
     boolean plan_gate_passed
     boolean code_gate_passed
-    timestamp started_at
-    timestamp completed_at
+    boolean contract_satisfied
+    text merge_result
+    text completion_sha
+    jsonb contract
+    timestamptz timeout_at
+    timestamptz started_at
+    timestamptz completed_at
   }
 
   terminals {
-    string id PK
-    string work_item_id FK
-    string project_key FK
-    string title
-    string status
+    text id PK
+    text type
+    text work_item_id
+    text project_key
+    text org_key
+    text title
+    text status
+    text permission_mode
+    boolean skip_permissions
     integer pid
-    string tmux_session
-    string permission_mode
-    timestamp started_at
-    timestamp exited_at
+    text tmux_session
+    text agent_type
+    timestamptz started_at
+    timestamptz exited_at
   }
 
   cli_sessions {
-    string id PK
-    string project_key FK
-    string work_item_id FK
-    string title
+    text id PK
+    text project_key
+    text work_item_id
+    text title
     integer pid
-    string status
-    timestamp registered_at
-    timestamp exited_at
+    text status
+    timestamptz registered_at
+    timestamptz exited_at
   }
 
   session_history {
-    integer id PK
-    string type
-    string project_key FK
-    float cost_usd
-    timestamp ended_at
+    text id PK
+    text type
+    text project_key FK
+    text work_item_id
+    text title
+    text status
+    real cost_usd
+    timestamptz started_at
+    timestamptz ended_at
+    real duration_seconds
   }
 
-  repo_sync_configs {
-    string github_repo_name PK
-    string github_org
-    string default_branch
-    string local_path
-    string portfolio_key
+  %% dispatches.work_item_id, dispatches.epic_id — logical FKs only (no physical constraint)
+  %% terminals.project_key, cli_sessions.project_key — no physical FK constraint
+  session_history }o--|| projects : "project_key (physical FK)"
+```
+
+### 5c. Knowledge and Sync Entities
+
+```mermaid
+erDiagram
+  knowledge_syncs {
+    bigint id PK
+    text project_key
+    text trigger
+    text status
+    timestamptz started_at
+    timestamptz synced_at
+    text commit_from
+    text commit_to
+    integer commits_scanned
+    integer significant_count
+    text sync_source
+    text error
+  }
+
+  change_log_entries {
+    bigint id PK
+    text project_key
+    text commit_hash
+    text commit_message
+    text author
+    timestamptz committed_at
+    text classification
+    text ai_summary
+    timestamptz detected_at
+  }
+
+  repo_sync_config {
+    text github_repo_name PK
+    text github_org
+    text default_branch
+    text local_path
+    text portfolio_key
     boolean sync_enabled
-    timestamp last_github_updated_at
+    timestamptz last_github_updated_at
+    timestamptz created_at
+    timestamptz updated_at
   }
 
   adrs {
-    integer id PK
-    string project_key FK
-    string number
-    string title
-    string status
-    string author
-    string source_work_item
-    timestamp created_at
+    text id PK
+    text org_key
+    text title
+    text type
+    jsonb repos
+    text sync_run_id
+    text detail_path
+    timestamptz created_at
   }
 
-  projects ||--o{ work_items : "has"
-  projects ||--o{ dispatches : "has"
-  projects ||--o{ terminals : "has"
-  projects ||--o{ cli_sessions : "has"
-  projects ||--o{ session_history : "has"
-  projects ||--o{ adrs : "has"
-  epics ||--o{ work_items : "groups"
-  work_items ||--o{ dispatches : "triggers"
-  work_items ||--o{ terminals : "associated with"
+  sequences {
+    text name PK
+    bigint next_val
+  }
+
+  preferences {
+    text key PK
+    text value
+  }
+
+  %% adrs uses org_key — NOT linked to projects table (no project_key FK)
+  %% knowledge_syncs.project_key, change_log_entries.project_key — no physical FK constraint
 ```
+
+---
+
+## 6. Skills to Agents
+
+Primary dispatch relationships from skills to the agents they invoke.
+
+```mermaid
+graph LR
+  subgraph Skills
+    sk_implement["/implement"]
+    sk_review["/review"]
+    sk_refactor["/refactor"]
+    sk_secure["/secure"]
+    sk_test["/test"]
+    sk_onboard["/onboard"]
+    sk_pr["/pr"]
+    sk_deploy["/deploy"]
+    sk_diagnose["/diagnose"]
+    sk_explain["/explain"]
+    sk_release["/release"]
+    sk_migrate["/migrate"]
+    sk_browse["/browse"]
+    sk_status["/status"]
+  end
+
+  subgraph Orchestration
+    classifier
+    coordinator
+  end
+
+  subgraph Planning
+    planner
+    strategist
+  end
+
+  subgraph Implementation
+    coder
+    coder-backend["coder-backend"]
+    coder-frontend["coder-frontend"]
+    coder-infra["coder-infra"]
+    coder-mobile["coder-mobile"]
+    refactorer
+  end
+
+  subgraph Quality
+    tester
+    reviewer
+  end
+
+  subgraph Analysis
+    scout
+    debugger
+    profiler
+    security-auditor["security-auditor"]
+    dependency-manager["dependency-manager"]
+    performance
+  end
+
+  subgraph ReviewBoard["Tech Review Board"]
+    tech-reviewers["tech-reviewers\n(3-10 context-filtered)\nswe·arch·pm·dx·frontend·ux·dba·systems·iot·prod"]
+  end
+
+  subgraph Workflow
+    git-ops["git-ops"]
+    ci-cd["ci-cd"]
+    documenter
+    tracker
+    browser
+    api-designer["api-designer"]
+  end
+
+  sk_implement --> coder
+  sk_implement --> tester
+  sk_implement --> tech-reviewers
+  sk_implement --> git-ops
+  sk_implement --> tracker
+
+  sk_review --> reviewer
+  sk_review --> tech-reviewers
+
+  sk_refactor --> planner
+  sk_refactor --> refactorer
+  sk_refactor --> tester
+  sk_refactor --> reviewer
+
+  sk_secure --> security-auditor
+  sk_secure --> dependency-manager
+
+  sk_test --> tester
+  sk_test --> scout
+
+  sk_onboard --> scout
+  sk_onboard --> profiler
+
+  sk_pr --> reviewer
+  sk_pr --> git-ops
+
+  sk_deploy --> coder-infra
+  sk_deploy --> scout
+
+  sk_diagnose --> debugger
+  sk_diagnose --> coder
+  sk_diagnose --> tester
+
+  sk_explain --> scout
+  sk_explain --> documenter
+
+  sk_release --> documenter
+  sk_release --> coder
+  sk_release --> ci-cd
+
+  sk_migrate --> planner
+  sk_migrate --> coder
+  sk_migrate --> tester
+  sk_migrate --> reviewer
+
+  sk_browse --> browser
+
+  sk_status --> dependency-manager
+  sk_status --> scout
+```
+
+---
+
+## 7. Dispatch State Machines
+
+### 7a. Dispatch Session Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> running : POST /api/dispatch
+    running --> completed : process exit(0)
+    running --> failed : exit(non-0) or timeout
+    running --> killed : POST /kill
+    running --> interrupted : PID died unexpectedly
+    running --> suspended : POST /suspend
+    running --> merge_pending : POST /complete (auto_implement mode)
+    suspended --> running : POST /resume
+    merge_pending --> completed : POST /merge (success)
+    merge_pending --> merge_conflict : POST /merge (conflict)
+    completed --> [*]
+    failed --> [*]
+    killed --> [*]
+    interrupted --> [*]
+    merge_conflict --> [*]
+```
+
+### 7b. Agent Phase
+
+`agent_phase` is non-null only when `dispatch.status = 'running'`. Terminal dispatch statuses imply `agent_phase = null`. Persisted to `dispatches.agent_phase` column since W-987 (migration 019). Transitions derived from `derivePhase()` in `dispatch-manager.mjs`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> generating : first stream-json event
+    generating --> tool_running : content_block_start(tool_use)\nor stop_reason=tool_use
+    tool_running --> generating : content_block_start(text)\nor content_block_delta(text)
+    tool_running --> waiting_for_input : stop_reason=end_turn
+    waiting_for_input --> generating : new turn begins
+    generating --> [*] : evt.type=result
+    tool_running --> [*] : dispatch terminal
+    waiting_for_input --> [*] : dispatch terminal
+
+    note right of waiting_for_input
+        Bridges to work_items.input_needed=true
+        via agent_phase_bridge in dispatch-manager.mjs
+    end note
+```
+
+---
+
+## 8. Portfolio Hierarchy
+
+```mermaid
+graph TD
+    Root["~/.architect/portfolio/"]
+    Registry["registry.json\n(key to path lookup)"]
+    Root --> Registry
+
+    Root --> neuronic["neuronic/"]
+    neuronic --> neuronic_org["organization.json"]
+    neuronic --> neuronic_proj1["cloud/main.json"]
+    neuronic --> neuronic_proj2["firmware/main.json"]
+    neuronic --> neuronic_dotdotdot["... (11 projects total)"]
+
+    Root --> ticari["ticari/"]
+    ticari --> ticari_org["organization.json"]
+    ticari --> ticari_arch["architect/main.json"]
+    ticari --> ticari_other["is-arama/main.json\nlongevity/main.json\nsecond-brain/main.json"]
+
+    Root --> testorg["testorg/"]
+    testorg --> testorg_proj["testproj/main.json"]
+```
+
+Portfolio files store full project profiles (stack, structure, guides, agent context). The `registry.json` maps project keys (`org/project/component`) to absolute file paths. Organization JSON holds shared conventions. Component JSON holds the full `ProjectBrief` and scout report.
+
+---
+
+## 9. Domain Entities Cross-check Summary
+
+Confirmed drift between `entities.md` definitions and actual PostgreSQL migrations or source code. Scope limited to entities with both a domain schema and a DB representation.
+
+| Entity | Aspect | entities.md (stale) | Actual source | Status |
+|--------|--------|---------------------|---------------|--------|
+| AgentPhase | description | "Ephemeral (in-memory only, not persisted to PostgreSQL)" | Persisted to `dispatches.agent_phase` + `agent_phase_history` since W-987 (migration 019) | Fixed in entities.md |
+| AgentPhase | values | includes `worktree_setup` | `worktree_setup` is never emitted by `derivePhase()`; it is a PIPELINE_STAGES value (constants.mjs), set pre-spawn, not an agent phase | Fixed in entities.md |
+| adrs | columns | project_key FK, number, status, author, source_work_item | org_key, type (TEXT), repos (JSONB), sync_run_id, detail_path — migration 017 | Corrected in ER diagram |
+| adrs | id PK type | integer | TEXT — migration 017 | Corrected in ER diagram |
+| repo_sync_configs | table name | repo_sync_configs (plural) | repo_sync_config (singular) — migration 015 | Corrected in ER diagram |
+| work_items | approval column | approval (JSON) | No approval JSON column; approval tracked via work_item_approvals table and boolean approval_active field — migration 001 | Corrected in ER diagram |
+| dispatches | columns | missing contract, timeout_at, agent_phase_history, contract_satisfied | All added by migrations 019–022 | Corrected in ER diagram |
+| work_items | missing column | done_at absent | done_at TIMESTAMPTZ added by migration 023 | Corrected in ER diagram — flagged, not fixed in entities.md |
