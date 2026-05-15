@@ -25,42 +25,42 @@ See `docs/architecture.md` for layer boundaries and dependency rules.
 
 ### When to use which agent
 
-| Task | Agent | Default Model |
-|------|-------|---------------|
-| Fast request triage | classifier | haiku |
-| Detailed dispatch planning | coordinator | sonnet |
-| Scan a project's tech stack | scout | haiku |
-| Project analysis and CLAUDE.md generation | profiler | sonnet |
-| Strategic evaluation of a request | strategist | opus |
-| Architecture/design decisions | planner | opus |
-| General code implementation | coder | sonnet |
-| Frontend/UI work | coder-frontend | sonnet |
-| Backend/API work | coder-backend | sonnet |
-| Mobile development | coder-mobile | sonnet |
-| Infrastructure/DevOps | coder-infra | sonnet |
-| Write/run tests | tester | sonnet |
-| Code review | reviewer | sonnet |
-| Security audit | security-auditor | opus |
-| Bug investigation | debugger | sonnet |
-| Performance optimization | performance | sonnet |
-| CI/CD pipelines | ci-cd | sonnet |
-| Documentation | documenter | sonnet |
-| API design/schemas | api-designer | sonnet |
-| Dependency management | dependency-manager | haiku |
-| Work item tracking | tracker | haiku |
-| Systematic refactoring | refactorer | sonnet |
-| Browser automation (E2E, visual, web tasks) | browser | sonnet |
-| Git operations (commit, push, PR, branch, worktree) | git-ops | haiku |
-| Tech review — SWE perspective | tech-reviewer-swe | sonnet |
-| Tech review — architecture (Clean Architecture) | tech-reviewer-arch | sonnet / opus* |
-| Tech review — project management | tech-reviewer-pm | sonnet |
-| Tech review — frontend perspective | tech-reviewer-frontend | sonnet |
-| Tech review — UX perspective | tech-reviewer-ux | sonnet |
-| Tech review — DX perspective | tech-reviewer-dx | sonnet |
-| Tech review — database architecture | tech-reviewer-dba | sonnet |
-| Tech review — systems engineering | tech-reviewer-systems | sonnet / opus* |
-| Tech review — IoT engineering | tech-reviewer-iot | sonnet |
-| Tech review — production readiness | tech-reviewer-prod | sonnet |
+| Task                                                | Agent                  | Default Model  |
+| --------------------------------------------------- | ---------------------- | -------------- |
+| Fast request triage                                 | classifier             | haiku          |
+| Detailed dispatch planning                          | coordinator            | sonnet         |
+| Scan a project's tech stack                         | scout                  | haiku          |
+| Project analysis and CLAUDE.md generation           | profiler               | sonnet         |
+| Strategic evaluation of a request                   | strategist             | opus           |
+| Architecture/design decisions                       | planner                | opus           |
+| General code implementation                         | coder                  | sonnet         |
+| Frontend/UI work                                    | coder-frontend         | sonnet         |
+| Backend/API work                                    | coder-backend          | sonnet         |
+| Mobile development                                  | coder-mobile           | sonnet         |
+| Infrastructure/DevOps                               | coder-infra            | sonnet         |
+| Write/run tests                                     | tester                 | sonnet         |
+| Code review                                         | reviewer               | sonnet         |
+| Security audit                                      | security-auditor       | opus           |
+| Bug investigation                                   | debugger               | sonnet         |
+| Performance optimization                            | performance            | sonnet         |
+| CI/CD pipelines                                     | ci-cd                  | sonnet         |
+| Documentation                                       | documenter             | sonnet         |
+| API design/schemas                                  | api-designer           | sonnet         |
+| Dependency management                               | dependency-manager     | haiku          |
+| Work item tracking                                  | tracker                | haiku          |
+| Systematic refactoring                              | refactorer             | sonnet         |
+| Browser automation (E2E, visual, web tasks)         | browser                | sonnet         |
+| Git operations (commit, push, PR, branch, worktree) | git-ops                | haiku          |
+| Tech review — SWE perspective                       | tech-reviewer-swe      | sonnet         |
+| Tech review — architecture (Clean Architecture)     | tech-reviewer-arch     | sonnet / opus* |
+| Tech review — project management                    | tech-reviewer-pm       | sonnet         |
+| Tech review — frontend perspective                  | tech-reviewer-frontend | sonnet         |
+| Tech review — UX perspective                        | tech-reviewer-ux       | sonnet         |
+| Tech review — DX perspective                        | tech-reviewer-dx       | sonnet         |
+| Tech review — database architecture                 | tech-reviewer-dba      | sonnet         |
+| Tech review — systems engineering                   | tech-reviewer-systems  | sonnet / opus* |
+| Tech review — IoT engineering                       | tech-reviewer-iot      | sonnet         |
+| Tech review — production readiness                  | tech-reviewer-prod     | sonnet         |
 
 *Escalated to opus when dispatched for large or strategic artifacts.
 
@@ -240,3 +240,4 @@ Click "Refine Project" on any component view to dispatch an agent that iterates 
 | /worktree [list\|cleanup] | Manage git worktrees for implementation isolation |
 | /review-board [gate] [scope] | Manually trigger the Technical Review Board on a plan or code diff |
 | /refine-project | Trigger project-level batch refinement (dashboard only in v1) |
+| /project-auto-implement-tasks [org/project/component] | Autonomously implement all planned tickets with Roadmap Review Board gate and skip-permissions |
