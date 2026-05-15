@@ -240,4 +240,5 @@ Click "Refine Project" on any component view to dispatch an agent that iterates 
 | /worktree [list\|cleanup] | Manage git worktrees for implementation isolation |
 | /review-board [gate] [scope] | Manually trigger the Technical Review Board on a plan or code diff |
 | /refine-project | Trigger project-level batch refinement (dashboard only in v1) |
+| /project-refine-tasks [org/project/component] | Autonomously refine all non-terminal work items with three-gate board pipeline (pre-board, Contract Gate, post-board) |
 | /project-auto-implement-tasks [org/project/component] | Autonomously implement all planned tickets with Roadmap Review Board gate and skip-permissions |
