@@ -25,42 +25,43 @@ See `docs/architecture.md` for layer boundaries and dependency rules.
 
 ### When to use which agent
 
-| Task                                                | Agent                  | Default Model  |
-| --------------------------------------------------- | ---------------------- | -------------- |
-| Fast request triage                                 | classifier             | haiku          |
-| Detailed dispatch planning                          | coordinator            | sonnet         |
-| Scan a project's tech stack                         | scout                  | haiku          |
-| Project analysis and CLAUDE.md generation           | profiler               | sonnet         |
-| Strategic evaluation of a request                   | strategist             | opus           |
-| Architecture/design decisions                       | planner                | opus           |
-| General code implementation                         | coder                  | sonnet         |
-| Frontend/UI work                                    | coder-frontend         | sonnet         |
-| Backend/API work                                    | coder-backend          | sonnet         |
-| Mobile development                                  | coder-mobile           | sonnet         |
-| Infrastructure/DevOps                               | coder-infra            | sonnet         |
-| Write/run tests                                     | tester                 | sonnet         |
-| Code review                                         | reviewer               | sonnet         |
-| Security audit                                      | security-auditor       | opus           |
-| Bug investigation                                   | debugger               | sonnet         |
-| Performance optimization                            | performance            | sonnet         |
-| CI/CD pipelines                                     | ci-cd                  | sonnet         |
-| Documentation                                       | documenter             | sonnet         |
-| API design/schemas                                  | api-designer           | sonnet         |
-| Dependency management                               | dependency-manager     | haiku          |
-| Work item tracking                                  | tracker                | haiku          |
-| Systematic refactoring                              | refactorer             | sonnet         |
-| Browser automation (E2E, visual, web tasks)         | browser                | sonnet         |
-| Git operations (commit, push, PR, branch, worktree) | git-ops                | haiku          |
-| Tech review — SWE perspective                       | tech-reviewer-swe      | sonnet         |
-| Tech review — architecture (Clean Architecture)     | tech-reviewer-arch     | sonnet / opus* |
-| Tech review — project management                    | tech-reviewer-pm       | sonnet         |
-| Tech review — frontend perspective                  | tech-reviewer-frontend | sonnet         |
-| Tech review — UX perspective                        | tech-reviewer-ux       | sonnet         |
-| Tech review — DX perspective                        | tech-reviewer-dx       | sonnet         |
-| Tech review — database architecture                 | tech-reviewer-dba      | sonnet         |
-| Tech review — systems engineering                   | tech-reviewer-systems  | sonnet / opus* |
-| Tech review — IoT engineering                       | tech-reviewer-iot      | sonnet         |
-| Tech review — production readiness                  | tech-reviewer-prod     | sonnet         |
+| Task | Agent | Default Model |
+|------|-------|---------------|
+| Fast request triage | classifier | haiku |
+| Detailed dispatch planning | coordinator | sonnet |
+| Synthesize investigation findings into a DispatchPlan | findings-coordinator | sonnet |
+| Scan a project's tech stack | scout | haiku |
+| Project analysis and CLAUDE.md generation | profiler | sonnet |
+| Strategic evaluation of a request | strategist | opus |
+| Architecture/design decisions | planner | opus |
+| General code implementation | coder | sonnet |
+| Frontend/UI work | coder-frontend | sonnet |
+| Backend/API work | coder-backend | sonnet |
+| Mobile development | coder-mobile | sonnet |
+| Infrastructure/DevOps | coder-infra | sonnet |
+| Write/run tests | tester | sonnet |
+| Code review | reviewer | sonnet |
+| Security audit | security-auditor | opus |
+| Bug investigation | debugger | sonnet |
+| Performance optimization | performance | sonnet |
+| CI/CD pipelines | ci-cd | sonnet |
+| Documentation | documenter | sonnet |
+| API design/schemas | api-designer | sonnet |
+| Dependency management | dependency-manager | haiku |
+| Work item tracking | tracker | haiku |
+| Systematic refactoring | refactorer | sonnet |
+| Browser automation (E2E, visual, web tasks) | browser | sonnet |
+| Git operations (commit, push, PR, branch, worktree) | git-ops | haiku |
+| Tech review — SWE perspective | tech-reviewer-swe | sonnet |
+| Tech review — architecture (Clean Architecture) | tech-reviewer-arch | sonnet / opus* |
+| Tech review — project management | tech-reviewer-pm | sonnet |
+| Tech review — frontend perspective | tech-reviewer-frontend | sonnet |
+| Tech review — UX perspective | tech-reviewer-ux | sonnet |
+| Tech review — DX perspective | tech-reviewer-dx | sonnet |
+| Tech review — database architecture | tech-reviewer-dba | sonnet |
+| Tech review — systems engineering | tech-reviewer-systems | sonnet / opus* |
+| Tech review — IoT engineering | tech-reviewer-iot | sonnet |
+| Tech review — production readiness | tech-reviewer-prod | sonnet |
 
 *Escalated to opus when dispatched for large or strategic artifacts.
 
@@ -69,6 +70,8 @@ Default models are overridden dynamically by the orchestrator based on task comp
 ### Orchestrator Behavior
 
 The main thread is strictly an orchestrator/PM. It reads, plans, dispatches, and tracks — but does not implement code (except single-line trivial fixes like typos). Git operations are delegated to the git-ops agent. See `domain/rules.md` → Orchestrator Behavior Rules for the full dispatch decision flow.
+
+When an investigation agent completes and follow-up dispatch is needed: if a `ClassifierOutput` is already in scope, route through coordinator (triage-request workflow); if only unstructured findings exist, route through findings-coordinator (synthesize-findings workflow).
 
 ### Session Identity & Scope
 
@@ -208,12 +211,7 @@ The dashboard supports dispatching Claude Code agents directly from work items:
 - **Architect-awareness**: dispatched agents receive `ARCHITECT_ROOT` env var, a `# Architect System` section (portfolio entry path, guides, domain rules pointers), role-scoped portfolio context (filtered by agent tier per `domain/rules.md` → Role-Scoped Context Injection), a `# Context Tiers` section for sub-agent dispatches, and `# Environment` / `# Tracking` sections with dashboard API endpoints for status updates and log entries.
 - **CLI session registration**: external CLI sessions can register as read-only entries via `POST /api/sessions/register`. The dashboard shows them with a `[CLI]` badge, teal left border, and no kill/focus buttons. PID liveness is checked every 60s; exited CLI sessions are auto-cleaned after 10min. Persisted in `work/sessions.json` under `cli_sessions`. See `domain/entities.md` → CliSession for schema.
 
-Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/log` (plain text JSONL), `GET /api/dispatch/:id/stream` (SSE, supports `?after=N`), `GET /api/dispatch/active`, `DELETE /api/dispatch/:id`, `DELETE /api/dispatch/all`. Terminal endpoints: `POST /api/terminal`, `GET /api/terminal/active`, `DELETE /api/terminal/:id`, `DELETE /api/terminal/all`, `WS /api/terminal/:id/ws`. CLI session endpoints: `POST /api/sessions/register`, `GET /api/sessions/active`, `DELETE /api/sessions/:id`. Server management endpoints: `GET /api/server/status`, `GET /api/server/config`, `POST /api/server/action`, `GET /api/server/logs`. Epic endpoints: `GET/POST /api/epics`, `GET/PATCH/DELETE /api/epics/:id`, `POST /api/epics/:id/link`, `POST /api/epics/:id/unlink`, `GET/PUT /api/epics/:id/plan`, `GET/PUT /api/epics/:id/doc`. Work item artifact endpoints: `GET/PUT /api/work-items/:id/plan`, `GET/PUT /api/work-items/:id/doc`, `GET /api/work-items/:id/artifacts`, `GET/PUT/DELETE /api/work-items/:id/artifacts/:filename`. Preferences endpoints: `GET/PUT /api/settings/preferences`. Project refinement endpoints: `POST /api/projects/:org/:proj/:comp/refine` body `{ instructions?, dry_run? }`, `GET/PUT/DELETE /api/projects/:org/:proj/:comp/artifacts/refinement-template`.
-
-### Refining a Project
-Click "Refine Project" on any component view to dispatch an agent that iterates every non-terminal work item (`{draft, planned, blocked}`) and brings each to `planned` state with a complete DispatchContract (including Plan Gate Review Board per item). Requires the dashboard to be running. The refinement prompt template is editable per project via the "Refinement Templates" section in `#settings` or via the "Edit refinement template" link on the project's Overview tab.
-- Template endpoint: `GET/PUT/DELETE /api/projects/:org/:proj/:comp/artifacts/refinement-template`
-- Dispatch endpoint: `POST /api/projects/:org/:proj/:comp/refine` body `{ instructions?, dry_run? }`
+Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/log` (plain text JSONL), `GET /api/dispatch/:id/stream` (SSE, supports `?after=N`), `GET /api/dispatch/active`, `DELETE /api/dispatch/:id`, `DELETE /api/dispatch/all`. Terminal endpoints: `POST /api/terminal`, `GET /api/terminal/active`, `DELETE /api/terminal/:id`, `DELETE /api/terminal/all`, `WS /api/terminal/:id/ws`. CLI session endpoints: `POST /api/sessions/register`, `GET /api/sessions/active`, `DELETE /api/sessions/:id`. Server management endpoints: `GET /api/server/status`, `GET /api/server/config`, `POST /api/server/action`, `GET /api/server/logs`. Epic endpoints: `GET/POST /api/epics`, `GET/PATCH/DELETE /api/epics/:id`, `POST /api/epics/:id/link`, `POST /api/epics/:id/unlink`, `GET/PUT /api/epics/:id/plan`, `GET/PUT /api/epics/:id/doc`. Work item artifact endpoints: `GET/PUT /api/work-items/:id/plan`, `GET/PUT /api/work-items/:id/doc`, `GET /api/work-items/:id/artifacts`, `GET/PUT/DELETE /api/work-items/:id/artifacts/:filename`. Preferences endpoints: `GET/PUT /api/settings/preferences`.
 
 ## Available Skills
 
@@ -239,6 +237,3 @@ Click "Refine Project" on any component view to dispatch an agent that iterates 
 | /browse [task] | Perform a web automation task via browser agent |
 | /worktree [list\|cleanup] | Manage git worktrees for implementation isolation |
 | /review-board [gate] [scope] | Manually trigger the Technical Review Board on a plan or code diff |
-| /refine-project | Trigger project-level batch refinement (dashboard only in v1) |
-| /project-refine-tasks [org/project/component] | Autonomously refine all non-terminal work items with three-gate board pipeline (pre-board, Contract Gate, post-board) |
-| /project-auto-implement-tasks [org/project/component] | Autonomously implement all planned tickets with Roadmap Review Board gate and skip-permissions |

@@ -16,7 +16,7 @@ Canonical schemas for all structured data in the architect system. Agents and sk
 }
 ```
 
-**Read-only agents**: reviewer, security-auditor, performance, strategist, classifier, coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod
+**Read-only agents**: reviewer, security-auditor, performance, strategist, classifier, coordinator, findings-coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod
 **Interactive agents**: browser (interacts with web via Playwright, no code/data writes)
 **Implementation agents**: coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer, git-ops
 **Onboarding agents**: profiler (writes only CLAUDE.md to the target project)
@@ -251,7 +251,6 @@ Stored at `portfolio/<org>/<project>/<component>.json`.
     "ci_cd": ["string"],
     "testing": ["string"]
   },
-  "github_repo_name": "string | null — GitHub repository name for linking to repo_sync_config",
   "custom_rules": ["string"],
   "portfolio_guides": ["string — filenames of markdown guides in the same portfolio directory to auto-load"],
   // portfolio_guides: must include at minimum "local-dev-setup.md" for any project where setup complexity
@@ -492,15 +491,14 @@ Tracks an active worktree created for implementation isolation.
 
 ## AgentPhase
 
-Derived from stream-json events during a dispatch session's lifetime and persisted to `dispatches.agent_phase` (column added by migration 019, W-987). Tracks what the dispatched agent is currently doing. Reset to null when the dispatch reaches a terminal status.
+Ephemeral (in-memory only, not persisted to PostgreSQL) state derived from stream-json events during a dispatch session's lifetime. Tracks what the dispatched agent is currently doing. Reset to null when the dispatch reaches a terminal status.
 
 Values:
+- `worktree_setup` — dispatch infrastructure is creating and provisioning the worktree before agent spawn
 - `generating` — agent is producing text (thinking, planning, responding)
 - `tool_running` — agent dispatched a tool call, execution in progress
-- `waiting_for_input` — agent finished its turn (stop_reason=end_turn), waiting for user or next message
+- `waiting_for_input` — agent finished its turn (stop_reason=end_turn), waiting for user
 - `null` — dispatch in terminal state (completed/failed/killed/interrupted) or phase unknown
-
-Note: `worktree_setup` is a PIPELINE_STAGE value (constants.mjs), not an AgentPhase. It is set pre-spawn by dispatch infrastructure and is never emitted by `derivePhase()`.
 
 ## DispatchRequest
 
@@ -523,14 +521,11 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "claude_session_id": "string (Claude CLI session UUID, optional — captured from stream-json init event, used for resume)",
   "cost_usd": "number (total cost, optional)",
   "pid": "number (OS process ID, optional — stored for restart survival)",
-  "agent_phase": "AgentPhase (persisted to PostgreSQL as of W-987; derived from live stream-json event parsing or log replay)",
-  "agent_phase_history": "array of { phase: AgentPhase, at: ISO8601 } — last 50 transitions, persisted as JSONB",
+  "agent_phase": "AgentPhase (ephemeral, in-memory only — not persisted to PostgreSQL, derived from live stream-json event parsing or log replay)",
   "worktree_path": "string (absolute path to worktree, null if no worktree — persisted to PostgreSQL)",
   "worktree_branch": "string (worktree branch name, null if no worktree — persisted to PostgreSQL)",
   "source_branch": "string (originating branch the worktree was created from, null if no worktree — persisted to PostgreSQL)",
-  "dispatch_mode": "string ('standard' | 'auto_implement' | 'refinement' | 'task_creation' | 'project_refinement', default 'standard')",
-  // task_creation dispatches have work_item_id: null at creation and never enter merge_pending.
-  // project_refinement dispatches also have work_item_id: null — they operate on all non-terminal items for a project.
+  "dispatch_mode": "string ('standard' | 'auto_implement', default 'standard')",
   "completion_sha": "string (SHA of the final implementation commit, optional)",
   "completion_summary": "string (agent-provided summary, max 500 chars, optional)",
   "merge_result": "'success'|'conflict'|'aborted' — outcome of the merge attempt, optional",
@@ -548,18 +543,6 @@ CompleteDispatchRequest validation:
 - For trivial/small dispatches: gate fields may be null (backward compatible; no rejection)
 - Complexity is determined by getComplexityLevel(workItem) — see Isolated Work Mandate
 
-## RefinementSummary
-
-Emitted by the agent at end of a `project_refinement` dispatch as a fenced JSON block under `# RefinementSummary` heading. Persisted to `dispatches.completion_summary`.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| status | `"completed"` \| `"halted"` | Overall outcome |
-| halt_reason | `null` \| string | Reason if halted |
-| counts | object | `{visited, refined, skipped_already_planned, marked_input_needed, errored, created, cancelled, archived}` |
-| items | array | Per-item `{id, before_status, after_status, outcome, note}` |
-| epics | array | Per-epic `{id, outcome, note}` |
-
 ## AutonomousCompletionPayload (Value Object)
 
 Request body sent by the agent to POST /api/dispatch/:id/complete to signal that autonomous pipeline execution has completed. Immutable, no identity or lifecycle.
@@ -572,28 +555,6 @@ Request body sent by the agent to POST /api/dispatch/:id/complete to signal that
 ```
 
 Rules: Both fields are required. sha must be a valid git SHA string. summary is informational only. This endpoint is agent-only — callers must supply X-Architect-Session-Depth: 1 header. See domain/rules.md → Autonomous Pipeline Rules.
-
-## DetachReport (Value Object)
-
-Output of `DELETE /api/portfolio/:org/:project/:component`. Immutable, no identity or lifecycle. Reports the outcome of each cleanup step so the caller can surface partial failures without aborting the whole operation.
-
-```json
-{
-  "portfolio_key": "string — org/project/component",
-  "steps": {
-    "portfolio_json_removed": "boolean",
-    "registry_entry_removed": "boolean",
-    "project_row_deleted": "boolean",
-    "work_items_cancelled": { "count": "number", "ids": ["string"] },
-    "work_items_archived":  { "count": "number" },
-    "claude_md_removed": "boolean | null — null when remove_claude_md: false",
-    "repo_sync_unlinked": { "repo": "string" } "| null",
-    "dispatches_killed":  { "count": "number", "ids": ["string"] },
-    "worktrees_removed":  { "count": "number", "paths": ["string"] }
-  },
-  "errors": ["string — 'stepName: errorMessage' for failed steps"]
-}
-```
 
 ## TerminalSession
 
@@ -661,7 +622,7 @@ Structured log entry recorded when the orchestrator detects a condition requirin
 ```json
 {
   "type": "escalation",
-  "trigger": "stale|blocked-chain|epic-stall|cost-anomaly|dispatch-loop|portfolio-drift|scope-violation",
+  "trigger": "stale|blocked-chain|epic-stall|cost-anomaly|dispatch-loop|portfolio-drift",
   "summary": "string — human-readable description of the escalation",
   "related_items": ["string (W-XXX or E-XXX IDs)"]
 }
@@ -673,7 +634,6 @@ Trigger semantics:
 - `epic-stall` — no linked item status change in the last 3 dispatches for an active epic
 - `cost-anomaly` — a single dispatch cost exceeds 2x the project's average dispatch cost
 - `dispatch-loop` — a work item has been dispatched 3+ times without reaching done
-- `scope-violation` — a dispatch modified files outside its contract's scope_boundary
 
 See `domain/rules.md` → Project Manager Behavior Rules → Escalation Triggers for detection criteria.
 

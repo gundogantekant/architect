@@ -28,6 +28,8 @@ Comprehensive security audit of a project.
 3. Dependency-manager checks for known CVEs and outdated packages with security patches
 4. Combine into unified security report
 
+4. If security findings include actionable vulnerabilities and the user requests remediation dispatch: follow `usecases/synthesize-findings.md` — pass security audit findings as `## Findings`, the remediation goal as `## Goal`, and the resolved target_project as `## Context`.
+
 ## Post-conditions
 - Findings organized by severity (CRITICAL/HIGH/MEDIUM/LOW)
 - Each finding includes: location, description, impact, remediation
