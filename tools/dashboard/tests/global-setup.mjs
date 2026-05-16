@@ -58,6 +58,7 @@ export const SPEC_FILES = [
   'date-columns',
   'costs',
   'prompt-history',
+  'assets',
 ];
 
 function getLiveDashboardPorts() {
