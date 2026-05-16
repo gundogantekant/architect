@@ -4124,7 +4124,7 @@ async function showRefineProjectModal(org, proj, comp) {
   }
   if (!itemListHtml) itemListHtml = '<p style="font-size:13px;color:var(--text-light)">No non-terminal items in scope.</p>';
 
-  const { overlay } = createDispatchOverlay({
+  const { overlay, close } = createDispatchOverlay({
     title: `Refine Project: ${org}/${proj}/${comp}`,
     submitLabel: 'Confirm',
     cancelId: 'refine-project-cancel',
@@ -4147,11 +4147,20 @@ async function showRefineProjectModal(org, proj, comp) {
           <input type="radio" name="refine-mode" value="terminal"> Interactive terminal
         </label>
       </div>
-      <div class="field" style="flex-direction:row;align-items:center;gap:8px">
+      <div id="refine-project-dry-run-field" class="field" style="flex-direction:row;align-items:center;gap:8px">
         <input type="checkbox" id="refine-project-dry-run" />
         <label for="refine-project-dry-run" style="font-size:13px">Dry run (no changes — preview only)</label>
       </div>
     `,
+    afterMount: (ov) => {
+      const radios = ov.querySelectorAll('input[name="refine-mode"]');
+      const dryRunField = ov.querySelector('#refine-project-dry-run-field');
+      const toggleDryRun = () => {
+        const mode = ov.querySelector('input[name="refine-mode"]:checked')?.value;
+        if (dryRunField) dryRunField.style.display = mode === 'terminal' ? 'none' : '';
+      };
+      radios.forEach(r => r.addEventListener('change', toggleDryRun));
+    },
     onSubmit: async (ov) => {
       const instructions = ov.querySelector('#refine-project-instructions')?.value || '';
       const dryRun = ov.querySelector('#refine-project-dry-run')?.checked || false;
@@ -4165,10 +4174,16 @@ async function showRefineProjectModal(org, proj, comp) {
         body: JSON.stringify({ instructions: instructions || undefined, dry_run: dryRun || undefined }),
       });
       const result = await res.json();
+      if (res.status === 400) {
+        throw new Error(result.error || 'No eligible items for refinement');
+      }
+      if (res.status === 409) {
+        throw new Error('A refinement session is already running for this project');
+      }
       if (!res.ok) throw new Error(result.error || 'Dispatch failed');
       if (result.terminal_id) {
-        // Terminal mode: modal closes (handled by createDispatchOverlay after onSubmit),
-        // terminal panel will appear separately via SSE/polling.
+        showToast('Refinement terminal starting…');
+        window.location.hash = `#terminal/${result.terminal_id}`;
         return;
       }
       setTimeout(() => {
