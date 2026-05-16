@@ -106,7 +106,7 @@ These rules apply to ALL workflow patterns, not only `parallel-fan-out`:
 
 | Category | Agents | Can modify code | Can write data | Can interact with web | Uses worktree |
 |----------|--------|-----------------|----------------|-----------------------|---------------|
-| Read-only | reviewer, security-auditor, performance, strategist, classifier, coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod | No | No | No | No (main tree) |
+| Read-only | reviewer, security-auditor, performance, strategist, classifier, coordinator, findings-coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod | No | No | No | No (main tree) |
 | Interactive | browser | No | No | Yes | No |
 | Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer, git-ops | Yes | No | No | Yes (worktree) |
 | Onboarding | profiler | No (writes only CLAUDE.md to target project) | No | No | No |
@@ -816,15 +816,6 @@ Before dispatching any implementation agent to a `worktree_mode: "auto"` project
 4. **Scope**: This check runs only when `worktree_mode: "auto"` + work_item_id present. Skipped for plan-mode dispatches, ad-hoc dispatches (no work item), `worktree_mode: "explicit"` projects, and `worktree_mode: "none"` projects (no worktree is attempted).
 5. **Dashboard path**: The same check runs server-side in the dashboard dispatch endpoint (`POST /api/dispatch`) using the already-loaded `portfolio?.entry`. A warning response `{ warning: "...", require_confirm: true }` is returned to the browser before the dispatch proceeds. The dispatch UI must surface this and require user confirmation before spawning the agent.
 
-## Project Detach Rules
-
-- **409 precondition**: If `kill_active_dispatches: false` and running dispatches exist for the project_key, return 409 before any mutation occurs.
-- **Work item cleanup order**: Cancel non-terminal items first, then archive done/cancelled items. Both steps run inside a DB transaction; failure rolls back both.
-- **Worktrees default off**: `remove_worktrees` defaults to `false` to prevent accidental loss of unmerged branches. Set explicitly to `true` only when the caller has confirmed no in-flight work remains.
-- **CLAUDE.md removal non-blocking**: ENOENT on CLAUDE.md is silently ignored — the file may have been manually removed.
-- **session_history preserved**: Detach does NOT delete session_history records. Historical cost and time data is preserved for analytics.
-- **Registry update is atomic**: registry.json is written to a temp file and renamed to prevent partial reads during the operation.
-
 ## Error Recovery
 
 | Scenario | Action |
@@ -935,7 +926,7 @@ Each agent receives only the context layers relevant to its role. This reduces t
 |--------------|--------|-----------------|
 | none | git-ops | Branch name and project path only |
 | minimal | classifier, scout, tracker, dependency-manager, browser | `guidance.stack_summary`, `scout_report.language`, `scout_report.framework` |
-| standard | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, coordinator, planner, debugger, documenter, api-designer, refactorer, strategist, profiler, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod | Minimal + `guidance.structure`, `guidance.conventions`, `custom_rules`, `agents.dispatch_notes`, `brief.purpose`, `brief.domain`, `brief.users`, `doc_paths`, `portfolio_guides` |
+| standard | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, coordinator, findings-coordinator, planner, debugger, documenter, api-designer, refactorer, strategist, profiler, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod | Minimal + `guidance.structure`, `guidance.conventions`, `custom_rules`, `agents.dispatch_notes`, `brief.purpose`, `brief.domain`, `brief.users`, `doc_paths`, `portfolio_guides` |
 | full | tester, reviewer, security-auditor, ci-cd, performance | Standard + `guidance.ci_cd`, `guidance.testing`, complete `brief` (all fields), `doc_paths` |
 
 ### Application
@@ -982,6 +973,11 @@ The orchestrator dispatches sub-agents for research, analysis, and investigation
 | Task matches Trivial Exception Rule | Handle inline |
 
 The orchestrator's inline work should be limited to: decomposing tasks, constructing dispatch prompts, synthesizing agent results, answering direct questions, and running read-only git/API queries. Extended reading, analysis, and investigation belong in sub-agents.
+
+### Investigation Findings Routing
+
+When the orchestrator holds a ClassifierOutput (structured type/complexity/workflow signal from the classifier): follow the triage-request workflow.
+When the orchestrator holds UnstructuredFindings (raw output from any investigation agent) and no ClassifierOutput: follow the synthesize-findings workflow.
 
 ### Git Operations
 
@@ -1315,35 +1311,6 @@ Gate reviews (Ticket Gate, Plan Gate, Code Gate) are read-only, depth-1 dispatch
 ## External Action Rules
 
 - **Never post comments, reviews, or any content to GitHub pull requests unless the user explicitly requests it.** This applies to all agents, skills, and orchestrator actions. Read-only operations (fetching PR diffs, viewing comments, reading PR metadata) are always allowed. The restriction covers `gh pr comment`, `gh pr review`, and any GitHub API call that writes to a PR.
-
-## Refinement Rules
-
-- Draft work items may be refined via a coordinator dispatch with `dispatch_mode='refinement'`.
-- The coordinator produces a DispatchContract as a fenced JSON block under a `# DispatchContract` heading in its output.
-- On completion, the dashboard patches the work item description with contract fields and transitions status from `draft` to `planned` in a single DB operation.
-- Only items with status `draft` may be refined; attempting to refine any other status returns 409.
-- If an active dispatch already exists for the item, the refine endpoint returns 409.
-- The contract block must use the exact sentinel: `# DispatchContract\n\`\`\`json\n{...}\n\`\`\`` — the close handler extracts this pattern via regex.
-- Extraction is best-effort: if the pattern is absent or the JSON is malformed, no patch is applied and the error is logged.
-
-## Project Refinement Dispatch Rules
-
-1. `dispatch_mode='project_refinement'` dispatches operate on all items with status in `{draft, planned, blocked}` for the target project key.
-2. The dispatched agent runs at session depth 1 and MUST NOT call `POST /api/work-items/:id/refine` or any dispatch endpoint (Session Scope Rules apply).
-3. Snapshot semantics: template body, working-list, and epic IDs are frozen at dispatch start. Per-item current contract and status are read live.
-4. Re-running on a fully-`planned` project must complete cleanly with a no-op `# RefinementSummary`.
-5. The `project_refinement` mode is excluded from the cost-anomaly heuristic (expected high-cost mode).
-6. On completion, the agent emits a `# RefinementSummary` JSON block; the close handler parses and persists it to `dispatches.completion_summary`.
-7. Concurrency 409 is returned only when a live `project_refinement` dispatch exists (`status='running'` AND `pid_alive(pid)`). Stale running rows (dead PID) do NOT block a new dispatch.
-
-## Task Creation Gate Rules
-
-- Task creation is agent-gated by default. The coordinator dispatch (`dispatch_mode='task_creation'`) receives the user's `initial_input` and creates a draft work item via `POST /api/work-items`.
-- It echoes `CREATED_WORK_ITEM: <id>` in its output so the close handler can link the dispatch to the new item.
-- Direct work item creation is available only via keyboard shortcut (Shift+N) or via the Settings page preference `allow_direct_task_creation`.
-- Dispatches with `dispatch_mode='task_creation'` have `work_item_id: null` at creation time. They never enter `merge_pending`.
-- On completion, the close handler scans dispatch output for `CREATED_WORK_ITEM: W-XXX` and links the dispatch to the created item via `linkDispatchToWorkItem`.
-- If no `CREATED_WORK_ITEM:` line is found after completion, a fallback message is appended to the dispatch output so the frontend can surface a link to the direct form.
 
 ## Token & Credential Management Rules
 
