@@ -305,6 +305,7 @@ export async function seedDispatch(opts = {}) {
     dispatch_mode: opts.dispatch_mode || 'standard',
     ...(opts.agent_phase !== undefined && { agent_phase: opts.agent_phase }),
     ...(opts.cost_usd !== undefined && { cost_usd: opts.cost_usd }),
+    ...(opts.exit_type !== undefined && { exit_type: opts.exit_type }),
   };
   const res = await api('test/seed-dispatch', {
     method: 'POST',

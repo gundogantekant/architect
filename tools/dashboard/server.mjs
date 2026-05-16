@@ -189,7 +189,18 @@ async function shutdownFlush() {
     new Promise(resolve => setTimeout(resolve, 5000)),
   ]);
 }
-process.on('SIGTERM', () => { server.close(); shutdownFlush().finally(() => process.exit(0)); });
+process.on('SIGTERM', async () => {
+  server.close();
+  // Flush exit_type = 'interrupted' for all running dispatches that do not have a live PID.
+  // Dispatches with live PIDs will be marked by the close handler when they eventually exit.
+  // Budget: 3000ms via Promise.allSettled (non-blocking — partial flush is acceptable).
+  await Promise.allSettled(
+    [...dispatches.values()]
+      .filter(d => d.status === 'running' && !(d.pid && isPidAlive(d.pid)))
+      .map(d => db.updateDispatchExitType(d.id, 'interrupted').catch(() => {}))
+  );
+  shutdownFlush().finally(() => process.exit(0));
+});
 process.on('SIGINT', () => { server.close(); shutdownFlush().finally(() => process.exit(0)); });
 
 async function main() {

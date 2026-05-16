@@ -210,6 +210,14 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
       });
       continue;
     }
+    if (d.status === 'dismissed' || d.status === 'superseded') {
+      // Dismissed/superseded: user-acknowledged terminal states — load into memory
+      // with no log tail, no reconnect attempt. No recovery banner shown for these.
+      dispatches.set(d.id, {
+        ...d, output: [], lastLines: [], wsClients: new Set(), process: null,
+      });
+      continue;
+    }
     if (d.status === 'running' && d.pid) {
       if (isPidAlive(d.pid)) {
         // Process survived restart — reconnect via log file tailing
@@ -494,6 +502,21 @@ export function wireDispatchHandlers(dispatch, proc) {
       saveDispatchToDb(dispatch).catch(e => console.error('[dispatch close] saveDispatchToDb (merge_pending):', e.message));
       return;
     }
+
+    // Classify exit type before overwriting status.
+    // _killedIntentionally is set by the DELETE endpoint before sending SIGTERM.
+    if (dispatch._killedIntentionally) {
+      dispatch.exit_type = 'killed';
+    } else if (code === 0) {
+      dispatch.exit_type = 'graceful';
+    } else {
+      // Non-zero exit without intentional kill: crash, SIGKILL, OOM, or other ungraceful termination.
+      dispatch.exit_type = 'interrupted';
+    }
+    db.updateDispatchExitType(dispatch.id, dispatch.exit_type).catch(e =>
+      console.error('[dispatch close] updateDispatchExitType:', e.message)
+    );
+
     dispatch.status = code === 0 ? 'completed' : 'failed';
     if (code === 0 && dispatch.dispatch_mode === 'auto_implement') {
       dispatch._exitedWithoutSignal = true;

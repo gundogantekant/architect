@@ -1579,6 +1579,13 @@ function createSessionPanel(type, info) {
   </div>
 </details>` : ''}
       ${dispatch.work_item_input_needed ? '<div class="input-needed-banner" style="background:#FEF3C7;color:#92400E;padding:4px 8px;font-size:11px;border-radius:3px;margin-bottom:4px;">⚠ Waiting for input</div>' : ''}
+      ${dispatch.exit_type === 'interrupted' ? `
+      <div class="recovery-banner" data-recovery-dispatch="${esc(id)}" style="background:#EDE9FE;color:#5B21B6;border:1px solid #8B5CF6;border-radius:4px;padding:6px 10px;margin:4px 8px;font-size:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span style="font-weight:600;">Session interrupted — recover?</span>
+        ${dispatch.claude_session_id ? `<span style="font-family:monospace;font-size:11px;opacity:0.8;">${esc(dispatch.claude_session_id)}</span>` : ''}
+        <button class="btn-redispatch" data-redispatch="${esc(id)}" style="font-size:11px;padding:2px 8px;border-radius:3px;border:1px solid #7C3AED;color:#7C3AED;background:transparent;cursor:pointer;">Re-dispatch</button>
+        <button class="btn-dismiss-interrupted" data-dismiss-interrupted="${esc(id)}" style="font-size:11px;padding:2px 8px;border-radius:3px;border:1px solid #9CA3AF;color:#6B7280;background:transparent;cursor:pointer;">Dismiss</button>
+      </div>` : ''}
       <div class="dispatch-log${resolveTermTheme() === 'light' ? ' log-light' : ''}" id="log-${id}"></div>
       <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
         <button class="focus-btn" data-focus-dispatch-bottom="${esc(id)}">Focus</button>
@@ -1675,6 +1682,38 @@ function createSessionPanel(type, info) {
       await dismissDispatchPanel(id);
       syncSessionState();
     };
+
+    // Recovery banner: Re-dispatch button — opens dispatch modal pre-filled with same context
+    const redispatchBtn = panel.querySelector(`[data-redispatch="${id}"]`);
+    if (redispatchBtn) {
+      redispatchBtn.onclick = async () => {
+        // Open dispatch modal pre-filled with the interrupted dispatch's context
+        const modal = document.getElementById('dispatch-modal');
+        if (modal) {
+          const wiInput = modal.querySelector('[name="work_item_id"], #dispatch-work-item-id');
+          const projectInput = modal.querySelector('[name="project_key"], #dispatch-project-key');
+          if (wiInput && dispatch.work_item_id) wiInput.value = dispatch.work_item_id;
+          if (projectInput && dispatch.project_key) projectInput.value = dispatch.project_key;
+          modal.style.display = '';
+          modal.removeAttribute('hidden');
+        }
+      };
+    }
+
+    // Recovery banner: Dismiss button — marks dispatch as dismissed (no more recovery banner)
+    const dismissInterruptedBtn = panel.querySelector(`[data-dismiss-interrupted="${id}"]`);
+    if (dismissInterruptedBtn) {
+      dismissInterruptedBtn.onclick = async () => {
+        try {
+          const resp = await fetch(`/api/dispatch/${id}/dismiss`, { method: 'POST' });
+          if (resp.ok) {
+            const banner = panel.querySelector(`[data-recovery-dispatch="${id}"]`);
+            if (banner) banner.remove();
+            dispatch.exit_type = null;
+          }
+        } catch {}
+      };
+    }
 
   } else if (type === 'terminal') {
     const terminalInfo = info;

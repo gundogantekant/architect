@@ -621,6 +621,7 @@ export default function dispatchRoutes(deps) {
           _exitedWithoutSignal: d._exitedWithoutSignal || false,
           session_log: Array.isArray(d.session_log) ? d.session_log : [],
           timeout_at: d.timeout_at || null,
+          exit_type: d.exit_type || null,
         };
       }));
       json(res, list.filter(Boolean));
@@ -715,6 +716,8 @@ export default function dispatchRoutes(deps) {
       let killed = 0;
       for (const [id, dispatch] of dispatches) {
         if (dispatch.status !== 'running') continue;
+        // Set flag before killing so the close handler classifies exit_type correctly.
+        dispatch._killedIntentionally = true;
         if (dispatch.process) {
           const timer = killProcessGraceful(dispatch.process);
           dispatch.process.on('close', () => clearTimeout(timer));
@@ -737,6 +740,8 @@ export default function dispatchRoutes(deps) {
     [/^\/api\/dispatch\/([A-Za-z0-9_-]+)$/, 'DELETE', async (m, _req, res) => {
       const dispatch = dispatches.get(m[1]);
       if (!dispatch) return err(res, 'dispatch not found');
+      // Set flag before killing so the close handler classifies exit_type correctly.
+      dispatch._killedIntentionally = true;
       if (dispatch.process) {
         const timer = killProcessGraceful(dispatch.process);
         dispatch.process.on('close', () => clearTimeout(timer));
@@ -837,6 +842,18 @@ export default function dispatchRoutes(deps) {
       broadcastDispatchDone(dispatch);
       await saveDispatchToDb(dispatch);
       json(res, { status: 'suspended', id: m[1], claude_session_id: dispatch.claude_session_id });
+    }],
+
+    // Dismiss an interrupted dispatch (recovery banner → user clicks "Dismiss")
+    // Sets status to 'dismissed' so the recovery banner no longer appears.
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/dismiss$/, 'POST', async (m, _req, res) => {
+      const dispatch = dispatches.get(m[1]);
+      if (!dispatch) return err(res, 'dispatch not found', 404);
+      if (dispatch.status !== 'interrupted') return err(res, 'only interrupted dispatches can be dismissed', 400);
+      dispatch.status = 'dismissed';
+      dispatch.completed_at = dispatch.completed_at || new Date().toISOString();
+      await db.updateDispatchStatus(m[1], 'dismissed', dispatch.completed_at);
+      json(res, { status: 'dismissed', id: m[1] });
     }],
 
     // Resume a suspended dispatch
