@@ -19,6 +19,7 @@ import { resolveProjectPath, resolveOrgPath, loadPortfolioContext, loadOrgContex
 
 import { wireTerminalHandlers, injectPrompt } from './pty-manager.mjs';
 import { syncProjectsFromRegistry, broadcastDispatchLine, broadcastDispatchDone, tailLogFile, restoreSessions, extractStreamText, killProcess, killProcessGraceful, wireDispatchHandlers } from './dispatch-manager.mjs';
+import { sweepOrphanedPromptFiles } from './prompt-file.mjs';
 import { setupWebSocket } from './ws-router.mjs';
 
 import staticRoutes from './routes/static.mjs';
@@ -38,9 +39,11 @@ import projectsRoutes from './routes/projects.mjs';
 import testEndpointRoutes from './routes/test-endpoints.mjs';
 import { attemptMerge, isMergeLocked } from './merge.mjs';
 
+const TMP_DIR = join(ROOT, 'tmp');
+
 const deps = {
   db, json, text, err, safe, parseBody, readJson, listDirs, listFiles,
-  PORTFOLIO, ROOT, WORK, LOGS_DIR, ARCHITECT_KEY, port,
+  PORTFOLIO, ROOT, WORK, LOGS_DIR, TMP_DIR, ARCHITECT_KEY, port,
   VALID_WORK_ITEM_STATUSES, VALID_EPIC_STATUSES, VALID_PRIORITIES,
   dispatches, terminals, cliSessions,
   wireTerminalHandlers, wireDispatchHandlers, injectPrompt,
@@ -201,8 +204,12 @@ async function main() {
     process.exit(1);
   }
 
-  // Phase 2: Ensure logs directory
+  // Phase 2: Ensure logs directory and tmp directory
   await mkdir(LOGS_DIR, { recursive: true });
+  await mkdir(TMP_DIR, { recursive: true });
+
+  // On startup, sweep tmp/prompt-*.txt files older than 1 hour
+  sweepOrphanedPromptFiles(TMP_DIR).catch(e => console.error('[startup] prompt file sweep:', e.message));
 
   // Phase 2.5: Sync projects from portfolio registry
   migrateLegacyPortfolio({ legacyPath: LEGACY_PORTFOLIO, targetPath: PORTFOLIO });
