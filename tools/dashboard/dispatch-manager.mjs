@@ -1,4 +1,5 @@
 import { readFileSync, existsSync, createWriteStream, appendFileSync } from 'node:fs';
+import { unlink as unlinkFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { dispatches, terminals, cliSessions, saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession } from './state.mjs';
@@ -578,6 +579,11 @@ export function wireDispatchHandlers(dispatch, proc) {
           console.error('Refinement extraction failed:', err.message);
         }
       })();
+    }
+
+    if (dispatch.prompt_file) {
+      unlinkFile(dispatch.prompt_file).catch(() => {});
+      dispatch.prompt_file = null;
     }
 
     broadcastDispatchDone(dispatch);

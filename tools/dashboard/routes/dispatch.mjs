@@ -3,6 +3,7 @@ import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository, check
 import { AUTO_IMPLEMENTABLE_STATUSES, DISPATCH_TIMEOUT_MS, PIPELINE_STAGES, PORTFOLIO } from '../constants.mjs';
 import { triggerMerge } from '../dispatch-manager.mjs';
 import { isMediumOrAbove } from '../utils/complexity.mjs';
+import { writePromptFile, deletePromptFile } from '../prompt-file.mjs';
 
 function complexityTierFromPriority(priority) {
   if (priority === 'critical' || priority === 'high') return 'large';
@@ -77,6 +78,7 @@ export default function dispatchRoutes(deps) {
     saveDispatchToDb, archiveSession,
     isPidAlive,
     spawn, createWriteStream, unlinkFile, join,
+    TMP_DIR,
   } = deps;
   return [
     // --- Onboard endpoint ---
@@ -108,25 +110,36 @@ export default function dispatchRoutes(deps) {
         completed_at: null,
       };
 
+      // Verified flag: --append-system-prompt-file (claude --help → --bare description: --append-system-prompt[-file])
+      // Falls back to stdin for prompts > 512KB to avoid arg-size limits
+      const onboardPromptFile = await writePromptFile(prompt, id, TMP_DIR);
+
       let proc;
       try {
-        proc = spawn(CLAUDE_BIN, ['-p', '--output-format', 'stream-json', '--verbose'], {
+        const onboardArgs = ['-p', '--output-format', 'stream-json', '--verbose'];
+        if (onboardPromptFile) {
+          onboardArgs.push('--append-system-prompt-file', onboardPromptFile);
+        }
+        proc = spawn(CLAUDE_BIN, onboardArgs, {
           cwd: ROOT,
-          stdio: ['pipe', 'pipe', 'pipe'],
+          stdio: onboardPromptFile ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
           env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
         });
-      } catch (err) {
-        return json(res, { error: `Failed to spawn claude: ${err.message}` }, 500);
+      } catch (spawnErr) {
+        await deletePromptFile(onboardPromptFile).catch(() => {});
+        return json(res, { error: `Failed to spawn claude: ${spawnErr.message}` }, 500);
       }
 
-      // Write prompt with backpressure handling to prevent truncation on large prompts
-      if (!proc.stdin.write(prompt)) {
-        await new Promise(r => proc.stdin.once('drain', r));
+      if (!onboardPromptFile) {
+        if (!proc.stdin.write(prompt)) {
+          await new Promise(r => proc.stdin.once('drain', r));
+        }
+        proc.stdin.end();
       }
-      proc.stdin.end();
 
       dispatch.process = proc;
       dispatch.pid = proc.pid;
+      dispatch.prompt_file = onboardPromptFile || null;
       dispatch.logPath = join(LOGS_DIR, `${id}.jsonl`);
       dispatch.logStream = createWriteStream(dispatch.logPath, { flags: 'a' });
 
@@ -305,6 +318,10 @@ export default function dispatchRoutes(deps) {
         completed_at: null,
       };
 
+      // Verified flag: --append-system-prompt-file (claude --help → --bare description: --append-system-prompt[-file])
+      // Falls back to stdin for prompts > 512KB to avoid arg-size limits
+      const standardPromptFile = await writePromptFile(prompt, id, TMP_DIR);
+
       let proc;
       try {
         const args = ['-p', '--output-format', 'stream-json', '--verbose'];
@@ -312,29 +329,33 @@ export default function dispatchRoutes(deps) {
         if (resolvedSkipPerms) {
           args.push('--dangerously-skip-permissions');
         }
-        // Give the agent access to the architect project directory
         args.push('--add-dir', ROOT);
-        // Attach curated sub-agents
         if (agentDefs.length) {
           args.push('--agents', JSON.stringify(agentDefs));
         }
+        if (standardPromptFile) {
+          args.push('--append-system-prompt-file', standardPromptFile);
+        }
         proc = spawn(CLAUDE_BIN, args, {
           cwd: effectiveCwd,
-          stdio: ['pipe', 'pipe', 'pipe'],
+          stdio: standardPromptFile ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
           env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
         });
       } catch (spawnErr) {
+        await deletePromptFile(standardPromptFile).catch(() => {});
         return json(res, { error: `Failed to spawn claude: ${spawnErr.message}` }, 500);
       }
 
-      // Write prompt with backpressure handling to prevent truncation on large prompts
-      if (!proc.stdin.write(prompt)) {
-        await new Promise(r => proc.stdin.once('drain', r));
+      if (!standardPromptFile) {
+        if (!proc.stdin.write(prompt)) {
+          await new Promise(r => proc.stdin.once('drain', r));
+        }
+        proc.stdin.end();
       }
-      proc.stdin.end();
 
       dispatch.process = proc;
       dispatch.pid = proc.pid;
+      dispatch.prompt_file = standardPromptFile || null;
       dispatch.logPath = join(LOGS_DIR, `${id}.jsonl`);
       dispatch.logStream = createWriteStream(dispatch.logPath, { flags: 'a' });
 
@@ -450,6 +471,10 @@ export default function dispatchRoutes(deps) {
         completed_at: null,
       };
 
+      // Verified flag: --append-system-prompt-file (claude --help → --bare description: --append-system-prompt[-file])
+      // Falls back to stdin for prompts > 512KB to avoid arg-size limits
+      const autoPromptFile = await writePromptFile(prompt, id, TMP_DIR);
+
       let proc;
       try {
         const args = ['-p', '--output-format', 'stream-json', '--verbose',
@@ -460,22 +485,29 @@ export default function dispatchRoutes(deps) {
         if (agentDefs.length) {
           args.push('--agents', JSON.stringify(agentDefs));
         }
+        if (autoPromptFile) {
+          args.push('--append-system-prompt-file', autoPromptFile);
+        }
         proc = spawn(CLAUDE_BIN, args, {
           cwd: effectiveCwd,
-          stdio: ['pipe', 'pipe', 'pipe'],
+          stdio: autoPromptFile ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
           env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
         });
       } catch (spawnErr) {
+        await deletePromptFile(autoPromptFile).catch(() => {});
         return json(res, { error: `Failed to spawn claude: ${spawnErr.message}` }, 500);
       }
 
-      if (!proc.stdin.write(prompt)) {
-        await new Promise(r => proc.stdin.once('drain', r));
+      if (!autoPromptFile) {
+        if (!proc.stdin.write(prompt)) {
+          await new Promise(r => proc.stdin.once('drain', r));
+        }
+        proc.stdin.end();
       }
-      proc.stdin.end();
 
       dispatch.process = proc;
       dispatch.pid = proc.pid;
+      dispatch.prompt_file = autoPromptFile || null;
       dispatch.logPath = join(LOGS_DIR, `${id}.jsonl`);
       dispatch.logStream = createWriteStream(dispatch.logPath, { flags: 'a' });
 
