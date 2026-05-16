@@ -39,6 +39,7 @@
   <div id="tree"></div>
   <div class="sidebar-settings" onclick="navigate('repos')"><span class="nav-icon">&#128193;</span> <span>Repos</span></div>
   <div class="sidebar-settings" data-nav="all-sessions" onclick="location.hash='#all-sessions'"><span class="nav-icon">&#9635;</span> <span>Sessions</span></div>
+  <div class="sidebar-settings" onclick="location.hash='#assets'"><span class="nav-icon">&#128196;</span> <span>Assets</span></div>
   <div class="sidebar-settings" onclick="location.hash='#time-report'"><span class="nav-icon">&#9202;</span> <span>Time Report</span></div>
   <div class="sidebar-settings" onclick="location.hash='#settings'"><span class="nav-icon">&#9881;</span> <span>Settings</span></div>
   <a href="#" class="notes-toggle-btn sidebar-settings" data-notes-toggle title="Toggle notes panel" aria-label="Toggle notes panel">
@@ -7288,6 +7289,91 @@ function showReconnectingOverlay() {
 
 
 
+// --- Assets view ---
+function renderAssetsView(index) {
+  const CATEGORIES = [
+    { key: 'agents',    label: 'Agents' },
+    { key: 'skills',    label: 'Skills' },
+    { key: 'usecases',  label: 'Use Cases' },
+    { key: 'templates', label: 'Templates' },
+  ];
+
+  function renderCategory(cat) {
+    const items = index[cat.key] || [];
+    const rows = items.map(item => `
+      <div class="asset-entry" data-path="${esc(item.path)}" style="padding:4px 8px;cursor:pointer;border-radius:4px;font-size:13px;display:flex;justify-content:space-between;align-items:center">
+        <span class="asset-path">${esc(item.path)}</span>
+        <span style="color:var(--text-light);font-size:11px">${(item.size / 1024).toFixed(1)} KB</span>
+      </div>`).join('');
+    return `
+      <details open style="margin-bottom:16px">
+        <summary style="cursor:pointer;font-weight:600;font-size:13px;padding:6px 0;user-select:none">
+          ${esc(cat.label)} <span style="color:var(--text-light);font-weight:400">(${items.length})</span>
+        </summary>
+        <div class="asset-list" style="margin-top:4px">
+          ${rows || '<p style="color:var(--text-light);font-size:13px;padding:4px 8px">No files found.</p>'}
+        </div>
+      </details>`;
+  }
+
+  return `<div class="card">
+    <h2>Assets</h2>
+    <p style="color:var(--text-light);font-size:13px;margin-bottom:16px">Read-only browser for agent prompts, skills, use cases, and templates.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+      <div id="assets-listing">
+        ${CATEGORIES.map(renderCategory).join('')}
+      </div>
+      <div id="assets-preview" style="border-left:1px solid var(--border);padding-left:20px">
+        <p style="color:var(--text-light);font-size:13px">Select a file to preview its content.</p>
+      </div>
+    </div>
+  </div>`;
+}
+
+function bindAssetsEvents() {
+  document.querySelectorAll('.asset-entry').forEach(el => {
+    el.addEventListener('mouseenter', () => el.style.background = 'var(--hover-bg, rgba(0,0,0,0.05))');
+    el.addEventListener('mouseleave', () => el.style.background = '');
+    el.addEventListener('click', () => loadAssetContent(el.dataset.path));
+  });
+}
+
+async function loadAssetContent(path) {
+  const preview = document.getElementById('assets-preview');
+  if (!preview) return;
+  preview.innerHTML = '<p style="color:var(--text-light);font-size:13px">Loading…</p>';
+
+  // Highlight selected entry
+  document.querySelectorAll('.asset-entry').forEach(e => e.style.background = '');
+  const activeEntry = document.querySelector(`.asset-entry[data-path="${CSS.escape(path)}"]`);
+  if (activeEntry) activeEntry.style.background = 'var(--hover-bg, rgba(0,0,0,0.08))';
+
+  try {
+    const data = await api(`assets/content?path=${encodeURIComponent(path)}`);
+    if (data.binary) {
+      preview.innerHTML = `
+        <p style="font-size:13px;font-weight:600;margin-bottom:8px">${esc(path)}</p>
+        <p style="color:var(--text-light);font-size:13px">${esc(data.preview)}</p>`;
+      return;
+    }
+    const placeholderChips = data.placeholders && data.placeholders.length
+      ? `<div style="margin-bottom:10px;font-size:12px;color:var(--text-light)">
+           Placeholders: ${data.placeholders.map(p => `<code style="background:var(--hover-bg,rgba(0,0,0,0.06));padding:1px 5px;border-radius:3px">{{${esc(p)}}}</code>`).join(' ')}
+         </div>`
+      : '';
+    const truncatedNote = data.truncated
+      ? '<p style="color:var(--text-light);font-size:11px;margin-bottom:6px">Content truncated at 100 KB.</p>'
+      : '';
+    preview.innerHTML = `
+      <p style="font-size:13px;font-weight:600;margin-bottom:8px">${esc(path)}</p>
+      ${placeholderChips}
+      ${truncatedNote}
+      <pre style="overflow:auto;max-height:600px;font-size:12px;line-height:1.5;background:var(--hover-bg,rgba(0,0,0,0.04));padding:12px;border-radius:6px"><code>${esc(data.content)}</code></pre>`;
+  } catch (e) {
+    preview.innerHTML = `<p style="color:var(--red);font-size:13px">Error: ${esc(String(e))}</p>`;
+  }
+}
+
 // --- Navigate helper (used by sidebar and repo/adr views) ---
 function navigate(fragment) {
   location.hash = '#' + fragment;
@@ -7816,6 +7902,19 @@ async function route() {
       main.innerHTML = renderAllSessionsView(dispatches, terminals, cliSessions, history);
     } catch (e) {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading sessions: ${esc(String(e))}</p></div>`;
+    }
+    setActive('');
+    placeSessionPanels();
+    return;
+  }
+
+  if (parts[0] === 'assets') {
+    try {
+      const index = await api('assets');
+      main.innerHTML = renderAssetsView(index);
+      bindAssetsEvents();
+    } catch (e) {
+      main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading assets: ${esc(String(e))}</p></div>`;
     }
     setActive('');
     placeSessionPanels();
