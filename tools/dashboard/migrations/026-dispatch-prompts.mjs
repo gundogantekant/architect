@@ -1,9 +1,9 @@
-// Next available after 024-dispatch-costs.mjs
+// Next available after 025-session-resurrection.mjs (025 taken by W-1139)
 // Rollback: DROP TABLE dispatch_prompts;
-//   DELETE FROM schema_migrations WHERE version = 25;
+//   DELETE FROM schema_migrations WHERE version = 26;
 //   Remove dispatch_prompts from assertSchema in db.mjs.
 
-export const version = 25;
+export const version = 26;
 
 export async function up(pool) {
   await pool.query(`CREATE TABLE IF NOT EXISTS dispatch_prompts (
