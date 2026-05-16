@@ -896,6 +896,30 @@ Pricing table for known Claude model IDs. Updated in-place via SQL; server resta
 
 Seeded models: `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`.
 
+## PromptRecord
+
+Stored in PostgreSQL (`dispatch_prompts` table). Captures the full assembled prompt text immediately before a Claude process is spawned, enabling audit and replay.
+
+```json
+{
+  "id": "number (serial PK)",
+  "dispatch_id": "string | null (FK → DispatchRequest.id ON DELETE SET NULL — row survives dispatch deletion)",
+  "work_item_id": "string | null",
+  "project_key": "string | null",
+  "prompt_text": "string (capped at 1MB)",
+  "char_count": "number",
+  "truncated": "boolean",
+  "created_at": "string (ISO 8601)"
+}
+```
+
+Capture rules:
+- Inserted immediately before the spawn call at each of the three spawn sites (onboard, standard, auto-implement).
+- `prompt_text` is truncated to 1,048,576 characters (1MB) when the assembled prompt exceeds this limit; `truncated` is set to `true` when capping occurs.
+- Failure to insert is logged (`[prompt-capture] failed:`) but does not abort the dispatch — the spawn proceeds regardless.
+- `dispatch_id` is set to `null` when the referenced dispatch is deleted (`ON DELETE SET NULL`), making the record permanently available for audit via `work_item_id`.
+- Retrieved via `GET /api/work-items/:id/prompt-history`, sorted by `created_at DESC`.
+
 ## RegistryEntry
 
 Stored in `portfolio/registry.json`.

@@ -349,6 +349,11 @@ export default function workItemRoutes(deps) {
       }
     }],
 
+    [/^\/api\/work-items\/(W-\d+)\/prompt-history$/, 'GET', async (m, _req, res) => {
+      const rows = await db.getPromptsByWorkItem(m[1]);
+      json(res, rows);
+    }],
+
     [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/refine$/, 'POST', async (m, _req, res) => {
       const itemId = m[1];
       const item = await db.getWorkItem(itemId);

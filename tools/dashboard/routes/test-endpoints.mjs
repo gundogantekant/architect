@@ -872,5 +872,23 @@ export default function testEndpointRoutes(deps) {
       const result = await db.getProjectAvgDispatchCost(projectKey);
       json(res, result);
     }],
+
+    // Seed a dispatch_prompts row directly (bypassing the live spawn handler)
+    [/^\/api\/test\/seed-prompt$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { dispatch_id, work_item_id, project_key, prompt_text, char_count, truncated } = body;
+      if (!prompt_text) return err(res, 'prompt_text is required', 400);
+      const resolvedCharCount = char_count !== undefined ? char_count : prompt_text.length;
+      const resolvedTruncated = truncated !== undefined ? truncated : false;
+      await db.insertPromptRecord({
+        dispatch_id: dispatch_id || null,
+        work_item_id: work_item_id || null,
+        project_key: project_key || null,
+        prompt_text,
+        char_count: resolvedCharCount,
+        truncated: resolvedTruncated,
+      });
+      json(res, { ok: true, char_count: resolvedCharCount, truncated: resolvedTruncated });
+    }],
   ];
 }

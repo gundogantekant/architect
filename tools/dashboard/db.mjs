@@ -197,6 +197,7 @@ export async function assertSchema() {
     adrs: ['id', 'org_key', 'title', 'type', 'repos', 'sync_run_id', 'detail_path', 'created_at'],
     dispatch_costs: ['id', 'model', 'agent_role', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'cost_usd_breakdown', 'recorded_at'],
     model_pricing: ['model_id', 'input_cost_per_mtok', 'output_cost_per_mtok', 'cache_read_cost_per_mtok', 'cache_write_cost_per_mtok', 'updated_at'],
+    dispatch_prompts: ['id', 'dispatch_id', 'work_item_id', 'project_key', 'prompt_text', 'char_count', 'truncated', 'created_at'],
   };
 
   const missing = [];
@@ -1808,6 +1809,27 @@ export async function getDispatchCostRows(dispatchId) {
   const r = await pool.query(
     'SELECT * FROM dispatch_costs WHERE id = $1',
     [dispatchId]
+  );
+  return r.rows;
+}
+
+// --- Prompt capture ---
+
+export async function insertPromptRecord({ dispatch_id, work_item_id, project_key, prompt_text, char_count, truncated }) {
+  await pool.query(
+    `INSERT INTO dispatch_prompts (dispatch_id, work_item_id, project_key, prompt_text, char_count, truncated)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [dispatch_id || null, work_item_id || null, project_key || null, prompt_text, char_count, truncated]
+  );
+}
+
+export async function getPromptsByWorkItem(workItemId) {
+  const r = await pool.query(
+    `SELECT dispatch_id, created_at, char_count, truncated, prompt_text
+     FROM dispatch_prompts
+     WHERE work_item_id = $1
+     ORDER BY created_at DESC`,
+    [workItemId]
   );
   return r.rows;
 }
