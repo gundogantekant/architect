@@ -62,6 +62,7 @@ export const SPEC_FILES = [
   'costs-summary',
   'terminal-project-filter',
   'sanitisation',
+  'pty-resize',
 ];
 
 function getLiveDashboardPorts() {

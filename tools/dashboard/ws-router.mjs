@@ -121,9 +121,14 @@ export function setupWebSocket(server) {
         return;
       }
 
-      // Register subscriber
+      // Register subscriber — store viewport dimensions for max-of-subscribers PTY resize
       const clientId = `${Date.now()}-${Math.random()}`;
-      terminal.eventStream.subscribers.set(clientId, { ws, lastSeq: terminal.eventStream.headSeq });
+      terminal.eventStream.subscribers.set(clientId, {
+        ws,
+        lastSeq: terminal.eventStream.headSeq,
+        cols: dims.cols,
+        rows: dims.rows,
+      });
 
       ws.on('message', (raw) => {
         try {
@@ -133,13 +138,27 @@ export function setupWebSocket(server) {
           } else if (msg.type === 'resize' && msg.cols && msg.rows) {
             clearTimeout(terminal._resizeTimer);
             terminal._resizeTimer = setTimeout(() => {
-              terminal.cols = msg.cols;
-              terminal.rows = msg.rows;
-              if (terminal.ptyProcess) try { terminal.ptyProcess.resize(msg.cols, msg.rows); } catch {}
-              // Broadcast resize event to all subscribers
-              const resizeEvent = terminal.eventStream.append('resize', { cols: msg.cols, rows: msg.rows });
-              try { appendFileSync(termEventLogPath(terminal.id), JSON.stringify(resizeEvent) + '\n'); } catch {}
-              terminal.eventStream.broadcast(resizeEvent);
+              // Update this subscriber's stored dimensions
+              const sub = terminal.eventStream.subscribers.get(clientId);
+              if (sub) {
+                sub.cols = msg.cols;
+                sub.rows = msg.rows;
+              }
+
+              // Compute max-of-subscribers to prevent smaller viewports from shrinking the PTY
+              const subscriberDimensions = [...terminal.eventStream.subscribers.values()];
+              const maxCols = Math.max(...subscriberDimensions.map(s => s.cols || 80));
+              const maxRows = Math.max(...subscriberDimensions.map(s => s.rows || 24));
+
+              // Only resize PTY if dimensions actually changed
+              if (maxCols !== terminal.cols || maxRows !== terminal.rows) {
+                terminal.cols = maxCols;
+                terminal.rows = maxRows;
+                if (terminal.ptyProcess) try { terminal.ptyProcess.resize(maxCols, maxRows); } catch {}
+                const resizeEvent = terminal.eventStream.append('resize', { cols: maxCols, rows: maxRows });
+                try { appendFileSync(termEventLogPath(terminal.id), JSON.stringify(resizeEvent) + '\n'); } catch {}
+                // Do NOT broadcast resize events — other subscribers must not have their viewport changed
+              }
             }, 50);
           }
         } catch {}
@@ -147,6 +166,20 @@ export function setupWebSocket(server) {
 
       ws.on('close', () => {
         terminal.eventStream.subscribers.delete(clientId);
+
+        // Recompute PTY size to the max of remaining subscribers after disconnect
+        const remaining = [...terminal.eventStream.subscribers.values()];
+        if (remaining.length > 0) {
+          const maxCols = Math.max(...remaining.map(s => s.cols || 80));
+          const maxRows = Math.max(...remaining.map(s => s.rows || 24));
+          if (maxCols !== terminal.cols || maxRows !== terminal.rows) {
+            terminal.cols = maxCols;
+            terminal.rows = maxRows;
+            if (terminal.ptyProcess) try { terminal.ptyProcess.resize(maxCols, maxRows); } catch {}
+            const resizeEvent = terminal.eventStream.append('resize', { cols: maxCols, rows: maxRows });
+            try { appendFileSync(termEventLogPath(terminal.id), JSON.stringify(resizeEvent) + '\n'); } catch {}
+          }
+        }
       });
     });
   });
