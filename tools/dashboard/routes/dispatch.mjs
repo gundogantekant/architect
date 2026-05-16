@@ -114,6 +114,19 @@ export default function dispatchRoutes(deps) {
       // Falls back to stdin for prompts > 512KB to avoid arg-size limits
       const onboardPromptFile = await writePromptFile(prompt, id, TMP_DIR);
 
+      // Capture prompt for audit — must complete before spawn; failure logged but does not abort dispatch
+      const MAX_PROMPT_CHARS = 1_048_576; // 1MB
+      const onboardTruncated = prompt.length > MAX_PROMPT_CHARS;
+      const onboardCapturedText = onboardTruncated ? prompt.slice(0, MAX_PROMPT_CHARS) : prompt;
+      await db.insertPromptRecord({
+        dispatch_id: id,
+        work_item_id: null,
+        project_key: null,
+        prompt_text: onboardCapturedText,
+        char_count: onboardCapturedText.length,
+        truncated: onboardTruncated,
+      }).catch(e => console.error('[prompt-capture] failed:', e.message));
+
       let proc;
       try {
         const onboardArgs = ['-p', '--output-format', 'stream-json', '--verbose'];
@@ -322,6 +335,19 @@ export default function dispatchRoutes(deps) {
       // Falls back to stdin for prompts > 512KB to avoid arg-size limits
       const standardPromptFile = await writePromptFile(prompt, id, TMP_DIR);
 
+      // Capture prompt for audit — must complete before spawn; failure logged but does not abort dispatch
+      const MAX_PROMPT_CHARS = 1_048_576; // 1MB
+      const standardTruncated = prompt.length > MAX_PROMPT_CHARS;
+      const standardCapturedText = standardTruncated ? prompt.slice(0, MAX_PROMPT_CHARS) : prompt;
+      await db.insertPromptRecord({
+        dispatch_id: id,
+        work_item_id: work_item_id || null,
+        project_key: project_key || null,
+        prompt_text: standardCapturedText,
+        char_count: standardCapturedText.length,
+        truncated: standardTruncated,
+      }).catch(e => console.error('[prompt-capture] failed:', e.message));
+
       let proc;
       try {
         const args = ['-p', '--output-format', 'stream-json', '--verbose'];
@@ -474,6 +500,19 @@ export default function dispatchRoutes(deps) {
       // Verified flag: --append-system-prompt-file (claude --help → --bare description: --append-system-prompt[-file])
       // Falls back to stdin for prompts > 512KB to avoid arg-size limits
       const autoPromptFile = await writePromptFile(prompt, id, TMP_DIR);
+
+      // Capture prompt for audit — must complete before spawn; failure logged but does not abort dispatch
+      const MAX_PROMPT_CHARS = 1_048_576; // 1MB
+      const autoTruncated = prompt.length > MAX_PROMPT_CHARS;
+      const autoCapturedText = autoTruncated ? prompt.slice(0, MAX_PROMPT_CHARS) : prompt;
+      await db.insertPromptRecord({
+        dispatch_id: id,
+        work_item_id: work_item_id || null,
+        project_key: project_key || null,
+        prompt_text: autoCapturedText,
+        char_count: autoCapturedText.length,
+        truncated: autoTruncated,
+      }).catch(e => console.error('[prompt-capture] failed:', e.message));
 
       let proc;
       try {
