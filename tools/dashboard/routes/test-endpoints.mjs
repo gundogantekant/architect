@@ -34,7 +34,7 @@ export default function testEndpointRoutes(deps) {
 
     [/^\/api\/test\/seed-dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { id, status, project_key, title, work_item_id, epic_id: seedEpicId, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch, pid: seedPid, dispatch_mode, agent_phase: seedAgentPhase, agent_phase_history: seedHistory } = body;
+      const { id, status, project_key, title, work_item_id, epic_id: seedEpicId, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch, pid: seedPid, dispatch_mode, agent_phase: seedAgentPhase, agent_phase_history: seedHistory, cost_usd: seedCostUsd } = body;
       if (!id) return err(res, 'id is required', 400);
       const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
 
@@ -72,6 +72,7 @@ export default function testEndpointRoutes(deps) {
         worktree_branch: worktree_branch || null,
         source_branch: source_branch || null,
         dispatch_mode: dispatch_mode || 'standard',
+        cost_usd: seedCostUsd !== undefined ? seedCostUsd : null,
         output,
         lastLines: [],
         wsClients: new Set(),
@@ -290,7 +291,7 @@ export default function testEndpointRoutes(deps) {
     // Seed a session_history entry (for time report tests)
     [/^\/api\/test\/seed-session-history$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { id: seedId, project_key, duration_seconds, cost_usd, started_at, ended_at } = body;
+      const { id: seedId, project_key, duration_seconds, cost_usd, started_at, ended_at, type: seedType } = body;
       if (!project_key) return err(res, 'project_key is required', 400);
       const end = ended_at || new Date().toISOString();
       const dur = duration_seconds || 300;
@@ -298,7 +299,7 @@ export default function testEndpointRoutes(deps) {
       const id = seedId || `SH-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       await db.recordSessionHistory({
         id,
-        type: 'test',
+        type: seedType || 'test',
         project_key,
         work_item_id: null,
         epic_id: null,
@@ -827,6 +828,48 @@ export default function testEndpointRoutes(deps) {
         }
       }
       json(res, { ok: true, phase });
+    }],
+
+    // --- Cost tracking test endpoints ---
+
+    // Seed a dispatch_costs row directly (bypassing the live stream handler)
+    [/^\/api\/test\/seed-dispatch-cost$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { id, model, agent_role, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens } = body;
+      if (!id) return err(res, 'id is required', 400);
+      const cost = await db.insertDispatchCost({
+        id,
+        model: model || 'claude-sonnet-4-6',
+        agentRole: agent_role || null,
+        inputTokens: input_tokens || 0,
+        outputTokens: output_tokens || 0,
+        cacheReadTokens: cache_read_tokens || 0,
+        cacheWriteTokens: cache_write_tokens || 0,
+      });
+      json(res, { id, cost_usd_breakdown: cost ?? null });
+    }],
+
+    // Fetch all dispatch_costs rows for a given dispatch ID
+    [/^\/api\/test\/dispatch-costs\/([^/]+)$/, 'GET', async (m, _req, res) => {
+      const rows = await db.getDispatchCostRows(m[1]);
+      json(res, rows.map(r => ({
+        id: r.id,
+        model: r.model,
+        agent_role: r.agent_role,
+        input_tokens: r.input_tokens,
+        output_tokens: r.output_tokens,
+        cache_read_tokens: r.cache_read_tokens,
+        cache_write_tokens: r.cache_write_tokens,
+        cost_usd_breakdown: typeof r.cost_usd_breakdown === 'number' ? r.cost_usd_breakdown : parseFloat(r.cost_usd_breakdown),
+        recorded_at: r.recorded_at,
+      })));
+    }],
+
+    // Expose getProjectAvgDispatchCost for regression testing
+    [/^\/api\/test\/project-avg-dispatch-cost\/(.+)$/, 'GET', async (m, _req, res) => {
+      const projectKey = decodeURIComponent(m[1]);
+      const result = await db.getProjectAvgDispatchCost(projectKey);
+      json(res, result);
     }],
   ];
 }

@@ -125,9 +125,23 @@ export function tailLogFile(dispatch) {
             dispatch.lastLines.push(text);
             if (dispatch.lastLines.length > 5) dispatch.lastLines.shift();
           }
-          if (evt.type === 'result' && evt.total_cost_usd != null) {
-            dispatch.cost_usd = evt.total_cost_usd;
-            saveDispatchToDb(dispatch).catch(e => console.error('[tail] saveDispatchToDb (cost):', e.message));
+          if (evt.type === 'result') {
+            if (evt.total_cost_usd != null) {
+              dispatch.cost_usd = evt.total_cost_usd;
+              saveDispatchToDb(dispatch).catch(e => console.error('[tail] saveDispatchToDb (cost):', e.message));
+            }
+            const usage = evt.usage || {};
+            if (usage.input_tokens != null || usage.output_tokens != null) {
+              db.insertDispatchCost({
+                id: dispatch.id,
+                model: evt.model || null,
+                agentRole: dispatch.agent_role || null,
+                inputTokens: usage.input_tokens || 0,
+                outputTokens: usage.output_tokens || 0,
+                cacheReadTokens: usage.cache_read_input_tokens || 0,
+                cacheWriteTokens: usage.cache_creation_input_tokens || 0,
+              }).catch(e => console.error('[cost] insertDispatchCost (tail):', e.message));
+            }
           }
         } catch {}
         broadcastDispatchLine(dispatch, line);
@@ -408,9 +422,23 @@ export function wireDispatchHandlers(dispatch, proc) {
           dispatch.claude_session_id = evt.session_id;
           saveDispatchToDb(dispatch).catch(e => console.error('[dispatch] saveDispatchToDb (session_id):', e.message));
         }
-        if (evt.type === 'result' && evt.total_cost_usd != null) {
-          dispatch.cost_usd = evt.total_cost_usd;
-          saveDispatchToDb(dispatch).catch(e => console.error('[dispatch] saveDispatchToDb (cost):', e.message));
+        if (evt.type === 'result') {
+          if (evt.total_cost_usd != null) {
+            dispatch.cost_usd = evt.total_cost_usd;
+            saveDispatchToDb(dispatch).catch(e => console.error('[dispatch] saveDispatchToDb (cost):', e.message));
+          }
+          const usage = evt.usage || {};
+          if (usage.input_tokens != null || usage.output_tokens != null) {
+            db.insertDispatchCost({
+              id: dispatch.id,
+              model: evt.model || null,
+              agentRole: dispatch.agent_role || null,
+              inputTokens: usage.input_tokens || 0,
+              outputTokens: usage.output_tokens || 0,
+              cacheReadTokens: usage.cache_read_input_tokens || 0,
+              cacheWriteTokens: usage.cache_creation_input_tokens || 0,
+            }).catch(e => console.error('[cost] insertDispatchCost:', e.message));
+          }
         }
         const newPhase = derivePhase(dispatch.agent_phase, evt);
         if (newPhase !== dispatch.agent_phase) {

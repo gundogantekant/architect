@@ -26,6 +26,8 @@
 .pipeline-stage-bar { padding: 2px 16px; }
 .btn-refine { font-size: 11px; padding: 2px 7px; border-radius: 3px; border: 1px solid var(--accent, #7c3aed); color: var(--accent, #7c3aed); background: transparent; cursor: pointer; margin-left: 4px; }
 .btn-refine:hover { background: var(--accent, #7c3aed); color: #fff; }
+.cost-badge { font-size: 11px; color: var(--text-light, #888); margin-left: 6px; font-variant-numeric: tabular-nums; }
+.cost-placeholder { font-size: 11px; color: var(--text-light, #888); margin-left: 6px; }
 </style>
 </head>
 <body>
@@ -1534,6 +1536,9 @@ function createSessionPanel(type, info) {
     const autoImplementBadge = dispatch.dispatch_mode === 'auto_implement' ? '<span class="status-badge badge-open badge-auto">[auto]</span>' : '';
     const alertBadges = renderDispatchAlerts(dispatch);
     const timeoutBadge = renderTimeoutCountdown(dispatch);
+    const costBadge = dispatch.cost_usd != null
+      ? `<span class="cost-badge">$${dispatch.cost_usd.toFixed(4)}</span>`
+      : '';
     const dKeyParts = (dispatch.project_key || '').split('/').filter(p => p && p !== '*');
     const dBreadcrumb = [];
     if (dKeyParts.length >= 2) dBreadcrumb.push(`${esc(dKeyParts[0])} / ${esc(dKeyParts[1])}`);
@@ -1553,7 +1558,7 @@ function createSessionPanel(type, info) {
       <div class="dispatch-header">
         <span class="status-dot ${isRunning ? (dispatch.agent_phase === 'waiting_for_input' ? 'needs-input' : dispatch.agent_phase === 'tool_running' ? 'tool-running' : 'generating') : dispatch.status}" title="${isRunning ? ({generating:'Thinking',tool_running:'Running tool',waiting_for_input:'Needs input'}[dispatch.agent_phase]||'') : ''}"></span>
         <span class="dispatch-title">${dispatchPathStr}${planBadge}${skipBadge}${suspendedBadge}${autoImplementBadge}${alertBadges}${timeoutBadge}</span>
-        <span class="dispatch-meta">${new Date(dispatch.started_at).toLocaleTimeString()}</span>
+        <span class="dispatch-meta">${new Date(dispatch.started_at).toLocaleTimeString()}${costBadge}</span>
         <button class="focus-btn" data-focus-dispatch="${esc(id)}">Focus</button>
         <button class="minimize-btn" data-minimize-dispatch="${esc(id)}">▼</button>
         <button class="suspend-btn" data-suspend-dispatch="${esc(id)}" ${!isRunning ? 'style="display:none"' : ''}>Suspend</button>
@@ -1703,7 +1708,7 @@ function createSessionPanel(type, info) {
       <div class="terminal-header">
         <span class="status-dot ${isRunning ? 'running' : terminalInfo.status}"></span>
         <span class="terminal-title">${termPathStr}${shellBadge}${planBadge}${skipBadge}${suspendedBadge}</span>
-        <span class="terminal-meta">${new Date(terminalInfo.started_at).toLocaleTimeString()}</span>
+        <span class="terminal-meta">${new Date(terminalInfo.started_at).toLocaleTimeString()}<span class="cost-placeholder">—</span></span>
         <button class="focus-btn" data-focus-terminal="${esc(id)}">Focus</button>
         <button class="minimize-btn" data-minimize-terminal="${esc(id)}">▼</button>
         <button class="suspend-btn" data-suspend-terminal="${esc(id)}" ${(!isRunning || terminalInfo.agent_type !== 'claude') ? 'style="display:none"' : ''}>Suspend</button>

@@ -56,6 +56,7 @@ export const SPEC_FILES = [
   'refine-terminal',
   'waiting-state',
   'date-columns',
+  'costs',
 ];
 
 function getLiveDashboardPorts() {

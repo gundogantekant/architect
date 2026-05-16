@@ -195,6 +195,8 @@ export async function assertSchema() {
     schema_migrations: ['version', 'applied_at', 'notes'],
     repo_sync_config: ['github_repo_name', 'github_org', 'default_branch', 'local_path', 'portfolio_key', 'sync_enabled', 'last_github_updated_at', 'created_at', 'updated_at'],
     adrs: ['id', 'org_key', 'title', 'type', 'repos', 'sync_run_id', 'detail_path', 'created_at'],
+    dispatch_costs: ['id', 'model', 'agent_role', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'cost_usd_breakdown', 'recorded_at'],
+    model_pricing: ['model_id', 'input_cost_per_mtok', 'output_cost_per_mtok', 'cache_read_cost_per_mtok', 'cache_write_cost_per_mtok', 'updated_at'],
   };
 
   const missing = [];
@@ -1705,4 +1707,89 @@ export async function unlinkRepoByPortfolioKey(portfolioKey) {
     'UPDATE repo_sync_config SET portfolio_key = NULL WHERE portfolio_key = $1',
     [portfolioKey]
   );
+}
+
+// --- Cost tracking ---
+
+export async function insertDispatchCost({ id, model, agentRole, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens }) {
+  const pricing = await pool.query('SELECT * FROM model_pricing WHERE model_id = $1', [model]);
+  if (!pricing.rows[0]) return;
+  const p = pricing.rows[0];
+  const cost =
+    (inputTokens || 0) * p.input_cost_per_mtok / 1_000_000 +
+    (outputTokens || 0) * p.output_cost_per_mtok / 1_000_000 +
+    (cacheReadTokens || 0) * p.cache_read_cost_per_mtok / 1_000_000 +
+    (cacheWriteTokens || 0) * p.cache_write_cost_per_mtok / 1_000_000;
+  await pool.query(
+    `INSERT INTO dispatch_costs
+       (id, model, agent_role, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd_breakdown)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [id, model, agentRole || null, inputTokens || 0, outputTokens || 0, cacheReadTokens || 0, cacheWriteTokens || 0, cost]
+  );
+  return cost;
+}
+
+export async function getCostByWorkItem(workItemId) {
+  const r = await pool.query(
+    `SELECT
+       COALESCE(SUM(dc.cost_usd_breakdown), 0) AS total_cost_usd,
+       COALESCE(SUM(dc.input_tokens + dc.output_tokens + dc.cache_read_tokens + dc.cache_write_tokens), 0) AS total_tokens,
+       COUNT(DISTINCT dc.id) AS sessions
+     FROM dispatch_costs dc
+     JOIN dispatches d ON d.id = dc.id
+     WHERE d.work_item_id = $1`,
+    [workItemId]
+  );
+  const row = r.rows[0];
+  return {
+    total_cost_usd: parseFloat(row.total_cost_usd),
+    total_tokens: parseInt(row.total_tokens, 10),
+    sessions: parseInt(row.sessions, 10),
+  };
+}
+
+export async function getCostByProject(projectKey) {
+  const r = await pool.query(
+    `SELECT
+       COALESCE(SUM(dc.cost_usd_breakdown), 0) AS total_cost_usd,
+       COALESCE(SUM(dc.input_tokens + dc.output_tokens + dc.cache_read_tokens + dc.cache_write_tokens), 0) AS total_tokens,
+       COUNT(DISTINCT dc.id) AS sessions
+     FROM dispatch_costs dc
+     JOIN dispatches d ON d.id = dc.id
+     WHERE d.project_key = $1`,
+    [projectKey]
+  );
+  const row = r.rows[0];
+  return {
+    total_cost_usd: parseFloat(row.total_cost_usd),
+    total_tokens: parseInt(row.total_tokens, 10),
+    sessions: parseInt(row.sessions, 10),
+  };
+}
+
+export async function getCostByEpic(epicId) {
+  const r = await pool.query(
+    `SELECT
+       COALESCE(SUM(dc.cost_usd_breakdown), 0) AS total_cost_usd,
+       COALESCE(SUM(dc.input_tokens + dc.output_tokens + dc.cache_read_tokens + dc.cache_write_tokens), 0) AS total_tokens,
+       COUNT(DISTINCT dc.id) AS sessions
+     FROM dispatch_costs dc
+     JOIN dispatches d ON d.id = dc.id
+     WHERE d.epic_id = $1`,
+    [epicId]
+  );
+  const row = r.rows[0];
+  return {
+    total_cost_usd: parseFloat(row.total_cost_usd),
+    total_tokens: parseInt(row.total_tokens, 10),
+    sessions: parseInt(row.sessions, 10),
+  };
+}
+
+export async function getDispatchCostRows(dispatchId) {
+  const r = await pool.query(
+    'SELECT * FROM dispatch_costs WHERE id = $1',
+    [dispatchId]
+  );
+  return r.rows;
 }

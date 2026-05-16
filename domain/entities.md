@@ -854,6 +854,43 @@ Aggregation rules:
 - Any `revise` (no `block`) → aggregate is `revise`
 - All `approve` → aggregate is `approve`
 
+## DispatchCost
+
+Per-token cost record for a completed dispatch. Stored in the `dispatch_costs` table. One row per dispatch that emitted a result event with usage data.
+
+```json
+{
+  "id": "string — dispatch ID (FK → DispatchRequest.id)",
+  "model": "string — model ID (e.g. claude-sonnet-4-6)",
+  "agent_role": "string — agent role (e.g. coder, planner)",
+  "input_tokens": "int",
+  "output_tokens": "int",
+  "cache_read_tokens": "int",
+  "cache_write_tokens": "int",
+  "cost_usd_breakdown": "float — computed from model_pricing at insert time",
+  "recorded_at": "string — ISO timestamp"
+}
+```
+
+Attribution hierarchy: dispatch → work item → project → epic.
+
+## ModelPricing
+
+Pricing table for known Claude model IDs. Updated in-place via SQL; server restart picks up new prices.
+
+```json
+{
+  "model_id": "string PK — e.g. claude-sonnet-4-6",
+  "input_cost_per_mtok": "float — USD per million input tokens",
+  "output_cost_per_mtok": "float — USD per million output tokens",
+  "cache_read_cost_per_mtok": "float — USD per million cache-read tokens",
+  "cache_write_cost_per_mtok": "float — USD per million cache-write tokens",
+  "updated_at": "string — ISO timestamp"
+}
+```
+
+Seeded models: `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`.
+
 ## RegistryEntry
 
 Stored in `portfolio/registry.json`.
