@@ -57,6 +57,7 @@ export const SPEC_FILES = [
   'waiting-state',
   'date-columns',
   'costs',
+  'terminal-project-filter',
 ];
 
 function getLiveDashboardPorts() {
