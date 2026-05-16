@@ -613,10 +613,39 @@ async function dismissAllCompleted() {
 
 let _placeTimer = null;
 let _suspendedContainer = null;
+// Off-DOM buffer for panels that don't match the active route's project context.
+// Never appended to document.body — panels move here non-destructively so their
+// DOM state (xterm, WebSocket, etc.) is preserved while hidden.
+const _hiddenPanelBuffer = document.createElement('div');
+
 function placeSessionPanels() {
   if (_placeTimer) return;
   _placeTimer = requestAnimationFrame(() => { _placeTimer = null; _placeSessionPanelsNow(); });
 }
+
+/**
+ * Derive the project_key for the currently active route.
+ * Returns an empty string when no project filter applies (home, agents, epic views, etc.).
+ */
+function _getActiveProjectKey() {
+  const hash = location.hash || '';
+  if (hash.startsWith('#agents')) return '';
+  const compMatch = hash.match(/^#component\/(.+)$/);
+  return compMatch ? compMatch[1] : '';
+}
+
+/**
+ * Return true when this session's panel should be visible in the current route.
+ * Sessions with no project_key are always shown (global sessions).
+ * On the /agents route all panels are shown.
+ * On a component route only sessions whose project_key matches are shown.
+ */
+function _isProjectMatch(sessionProjectKey, activeProjectKey) {
+  if (!sessionProjectKey) return true;          // null / '' → show everywhere
+  if (!activeProjectKey) return true;            // no route filter → show all
+  return sessionProjectKey === activeProjectKey;
+}
+
 function _placeSessionPanelsNow() {
   // 1. Ensure global fallback container exists
   let globalContainer = document.getElementById('dispatch-panels');
@@ -639,6 +668,9 @@ function _placeSessionPanelsNow() {
   let globalHasPanels = false;
   const pendingContentLoads = [];
 
+  // Derive the project filter for the active route (empty = no filter).
+  const activeProjectKey = _getActiveProjectKey();
+
   // 2. Build active session list
   const allSessions = [
     ...activeDispatches.map(d => ({ key: `dispatch:${d.id}`, work_item_id: d.work_item_id, epic_id: d.epic_id, project_key: d.project_key, org_key: d.org_key })),
@@ -651,6 +683,17 @@ function _placeSessionPanelsNow() {
   for (const session of allSessions) {
     const panel = sessionPanels.get(session.key);
     if (!panel) continue;
+
+    // Project filter: panels that don't belong to the active route go into the
+    // off-DOM buffer non-destructively (no WebSocket or PTY lifecycle changes).
+    if (!_isProjectMatch(session.project_key, activeProjectKey)) {
+      if (panel.parentElement !== _hiddenPanelBuffer) {
+        _hiddenPanelBuffer.appendChild(panel);
+      }
+      continue;
+    }
+
+    const wasOffDom = panel.parentElement === _hiddenPanelBuffer;
 
     let targetSlot = null;
 
@@ -698,6 +741,17 @@ function _placeSessionPanelsNow() {
     if (panel.parentElement !== targetSlot) {
       targetSlot.appendChild(panel);
       movedPanels.add(session.key);
+    }
+
+    // A panel re-entering the live DOM from the off-DOM buffer needs an explicit fit()
+    // because the isConnected guard in the normal moved-panels path fires only for
+    // same-slot moves, and xterm.js does not auto-resize when re-attached.
+    if (wasOffDom && panel.isConnected && panel.parentElement !== _hiddenPanelBuffer) {
+      const terminalInfo = activeTerminals.find(t => session.key === `terminal:${t.id}`);
+      const ss = terminalInfo?._sessionState;
+      if (ss?._fitAddon && ss._term) {
+        requestAnimationFrame(() => fitPreservingScroll(ss._term, ss._fitAddon));
+      }
     }
 
     // Collect dispatches needing content load — called after step 4 when all
