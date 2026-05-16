@@ -1002,7 +1002,7 @@ The DISPATCH_ID is found in the \`# Tracking\` section of your prompt (the work 
 After calling this endpoint, halt. Do not proceed to steps 13–16 — the dashboard handles merge-back automatically.`;
 }
 
-export function buildProjectRefinementPrompt({ projectKey, projectPath, template, items, epics, instructions, dryRun, port }) {
+export function buildProjectRefinementPrompt({ projectKey, projectPath, template, items, epics, instructions, dryRun, port, mode }) {
   const workingList = items.length === 0
     ? '(no items in scope)'
     : items.map((it, i) => `${i + 1}. ${it.id} [${it.status}] [${it.priority}] ${it.title}${it.depends_on?.length ? ` (depends: ${it.depends_on.join(', ')})` : ''}`).join('\n');
@@ -1011,13 +1011,18 @@ export function buildProjectRefinementPrompt({ projectKey, projectPath, template
     ? '(no epics in scope)'
     : epics.map(e => `- ${e.id} [${e.status}] ${e.title}`).join('\n');
 
+  const modeText = mode === 'interactive'
+    ? 'You are in a live PTY session. Ask clarifying questions directly in the terminal. The user can respond in real time.'
+    : 'You are running as a background agent at session depth 1. You MUST NOT call POST /api/dispatch or any dispatch endpoint.';
+
   const filledTemplate = template
     .replaceAll('{{PROJECT_KEY}}', projectKey)
     .replaceAll('{{DASHBOARD_URL}}', `http://127.0.0.1:${port}`)
     .replaceAll('{{WORKING_LIST}}', workingList)
     .replaceAll('{{EPICS_LIST}}', epicsList)
     .replaceAll('{{INSTRUCTIONS}}', instructions || '(none)')
-    .replaceAll('{{DRY_RUN}}', dryRun ? 'true' : 'false');
+    .replaceAll('{{DRY_RUN}}', dryRun ? 'true' : 'false')
+    .replaceAll('{{MODE}}', modeText);
 
   return filledTemplate;
 }

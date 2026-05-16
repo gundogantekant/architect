@@ -1,4 +1,5 @@
 import { spawnTerminalSession } from '../terminal-session.mjs';
+import { selectAgentsForDispatch } from '../prompt-builder.mjs';
 
 export default function projectsRoutes(deps) {
   const {
@@ -231,12 +232,18 @@ export default function projectsRoutes(deps) {
 
         const backlog = await db.getBacklog(org, false);
         const projectGroup = (backlog.projects || {})[projectKey] || { items: [] };
-        const items = (projectGroup.items || [])
-          .filter(it => ['draft', 'planned'].includes(it.status))   // intentionally excludes 'blocked'
+        // Intentionally excludes blocked items (differs from /refine which includes blocked)
+        const refinableItems = (projectGroup.items || [])
+          .filter(it => ['draft', 'planned'].includes(it.status))
           .sort((a, b) => {
             const pOrder = { high: 0, medium: 1, low: 2, critical: 0 };
             return (pOrder[a.priority] ?? 1) - (pOrder[b.priority] ?? 1);
           });
+
+        if (refinableItems.length === 0) {
+          terminals.delete(reservationKey);
+          return json(res, { error: 'no eligible items for refinement', count: 0 }, 400);
+        }
 
         const epicsRows = await db.listEpics();
 
@@ -244,26 +251,25 @@ export default function projectsRoutes(deps) {
           projectKey,
           projectPath: project.path,
           template,
-          items,
+          items: refinableItems,
           epics: epicsRows,
           instructions: body.instructions || '',
           dryRun: false,
           port,
+          mode: 'interactive',
         });
 
-        if (!prompt || !prompt.trim()) {
-          terminals.delete(reservationKey);
-          return err(res, 'refinement prompt is empty', 500);
-        }
+        const cwd = project.path && existsSync(project.path) ? project.path : ROOT;
 
         const id = `T-${Date.now()}`;
         const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
+        const agentDefs = await selectAgentsForDispatch({ workItem: null, portfolio: null });
 
         const terminal = await spawnTerminalSession(deps, {
           id,
-          projectPath: project.path,
+          projectPath: cwd,
           prompt,
-          agentDefs: [],
+          agentDefs,
           permissionMode: 'plan',
           skipPermissions: false,
           workItemId: null,

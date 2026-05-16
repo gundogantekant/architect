@@ -335,6 +335,7 @@ test.describe('Interactive terminal refine — /refine-terminal @fast', () => {
   test('RT-1: POST /refine-terminal on registered project returns 200 with terminal_id and accepted:true', async () => {
     const base = getBase();
     await seedProject(base, { path: '/tmp' });
+    await seedWorkItem(base, { status: 'draft', title: 'RT-1 item', project_key: 'testorg/testproj/main' });
     const resp = await postRefineTerminal();
     expect(resp.status).toBe(200);
     const body = await resp.json();
@@ -353,6 +354,7 @@ test.describe('Interactive terminal refine — /refine-terminal @fast', () => {
   test('RT-2: POST /refine-terminal while a live terminal session for the same project returns 409', async () => {
     const base = getBase();
     await seedProject(base, { path: '/tmp' });
+    await seedWorkItem(base, { status: 'draft', title: 'RT-2 item', project_key: 'testorg/testproj/main' });
     const first = await postRefineTerminal();
     expect(first.status).toBe(200);
     const firstBody = await first.json();
@@ -422,6 +424,7 @@ test.describe('Interactive terminal refine — /refine-terminal @fast', () => {
   test('RT-5: GET /api/terminal/active includes the new refine-terminal session', async () => {
     const base = getBase();
     await seedProject(base, { path: '/tmp' });
+    await seedWorkItem(base, { status: 'draft', title: 'RT-5 item', project_key: 'testorg/testproj/main' });
     const resp = await postRefineTerminal();
     expect(resp.status).toBe(200);
     const body = await resp.json();
@@ -466,6 +469,7 @@ test.describe('Interactive terminal refine — /refine-terminal @fast', () => {
   test('RT-7: DELETE /api/terminal/:id removes the refine-terminal session', async () => {
     const base = getBase();
     await seedProject(base, { path: '/tmp' });
+    await seedWorkItem(base, { status: 'draft', title: 'RT-7 item', project_key: 'testorg/testproj/main' });
     const resp = await postRefineTerminal();
     expect(resp.status).toBe(200);
     const body = await resp.json();
@@ -488,6 +492,7 @@ test.describe('Interactive terminal refine — /refine-terminal @fast', () => {
   test('RT-8: POST /refine-terminal response shape matches expected schema', async () => {
     const base = getBase();
     await seedProject(base, { path: '/tmp' });
+    await seedWorkItem(base, { status: 'draft', title: 'RT-8 item', project_key: 'testorg/testproj/main' });
     const resp = await postRefineTerminal();
     expect(resp.status).toBe(200);
     const body = await resp.json();
