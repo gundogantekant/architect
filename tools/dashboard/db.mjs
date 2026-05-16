@@ -1833,3 +1833,100 @@ export async function getPromptsByWorkItem(workItemId) {
   );
   return r.rows;
 }
+
+// --- Cost summary ---
+
+function buildBreakdownQuery(groupBy) {
+  if (groupBy === 'model') {
+    return { labelExpr: 'dc.model', joinClause: '' };
+  }
+  if (groupBy === 'agent_role') {
+    return { labelExpr: 'dc.agent_role', joinClause: '' };
+  }
+  if (groupBy === 'project_key') {
+    return {
+      labelExpr: 'd.project_key',
+      joinClause: 'JOIN dispatches d ON d.id = dc.id',
+    };
+  }
+  if (groupBy === 'epic_id') {
+    return {
+      labelExpr: 'd.epic_id',
+      joinClause: 'JOIN dispatches d ON d.id = dc.id',
+    };
+  }
+  return { labelExpr: 'dc.model', joinClause: '' };
+}
+
+function trendByDay(rows) {
+  const byDay = new Map();
+  for (const r of rows) {
+    const day = (r.recorded_at || '').slice(0, 10);
+    if (!day) continue;
+    const entry = byDay.get(day) || { period: day, cost_usd: 0, sessions: 0 };
+    entry.cost_usd += typeof r.cost_usd_breakdown === 'number' ? r.cost_usd_breakdown : parseFloat(r.cost_usd_breakdown || 0);
+    entry.sessions += 1;
+    byDay.set(day, entry);
+  }
+  return [...byDay.values()]
+    .sort((a, b) => a.period.localeCompare(b.period))
+    .map(e => ({ period: e.period, cost_usd: parseFloat(e.cost_usd.toFixed(4)), sessions: e.sessions }));
+}
+
+export async function getCostSummary({ from, to, groupBy = 'model' } = {}) {
+  const defaultFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const defaultTo = new Date().toISOString().slice(0, 10);
+  const fromDate = from || defaultFrom;
+  const toDate = to || defaultTo;
+
+  const totalsJoin = (groupBy === 'project_key' || groupBy === 'epic_id')
+    ? 'JOIN dispatches d ON d.id = dc.id'
+    : '';
+  const totalsResult = await pool.query(
+    `SELECT
+       COALESCE(SUM(dc.cost_usd_breakdown), 0)                                                   AS total_cost_usd,
+       COALESCE(SUM(dc.input_tokens + dc.output_tokens + dc.cache_read_tokens + dc.cache_write_tokens), 0) AS total_tokens,
+       COUNT(*)                                                                                   AS sessions
+     FROM dispatch_costs dc
+     ${totalsJoin}
+     WHERE dc.recorded_at >= $1 AND dc.recorded_at < ($2::date + INTERVAL '1 day')`,
+    [fromDate, toDate]
+  );
+  const totals = totalsResult.rows[0];
+
+  const { labelExpr, joinClause } = buildBreakdownQuery(groupBy);
+  const breakdownResult = await pool.query(
+    `SELECT
+       COALESCE(${labelExpr}::text, '(unknown)')                                                  AS label,
+       COALESCE(SUM(dc.cost_usd_breakdown), 0)                                                   AS cost_usd,
+       COALESCE(SUM(dc.input_tokens + dc.output_tokens + dc.cache_read_tokens + dc.cache_write_tokens), 0) AS tokens,
+       COUNT(*)                                                                                   AS sessions
+     FROM dispatch_costs dc
+     ${joinClause}
+     WHERE dc.recorded_at >= $1 AND dc.recorded_at < ($2::date + INTERVAL '1 day')
+     GROUP BY ${labelExpr}
+     ORDER BY cost_usd DESC`,
+    [fromDate, toDate]
+  );
+
+  const rawResult = await pool.query(
+    `SELECT dc.recorded_at, dc.cost_usd_breakdown
+     FROM dispatch_costs dc
+     WHERE dc.recorded_at >= $1 AND dc.recorded_at < ($2::date + INTERVAL '1 day')`,
+    [fromDate, toDate]
+  );
+
+  return {
+    total_cost_usd: parseFloat(totals.total_cost_usd),
+    total_tokens: parseInt(totals.total_tokens, 10),
+    sessions: parseInt(totals.sessions, 10),
+    period: { from: fromDate, to: toDate },
+    breakdown: breakdownResult.rows.map(r => ({
+      label: r.label,
+      cost_usd: parseFloat(r.cost_usd),
+      tokens: parseInt(r.tokens, 10),
+      sessions: parseInt(r.sessions, 10),
+    })),
+    trend: trendByDay(rawResult.rows),
+  };
+}
