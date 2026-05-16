@@ -971,11 +971,15 @@ class TerminalEventQueue {
     const { seq, eventType, payload } = event;
 
     if (eventType === 'resize') {
-      const rect = this._containerEl ? this._containerEl.getBoundingClientRect() : null;
-      if (rect && rect.width > 0 && rect.height > 0) {
-        fitPreservingScroll(this._term, this._fitAddon);
-      } else {
-        try { this._term.resize(payload.cols, payload.rows); } catch {}
+      // Only apply fitAddon.fit() when LIVE — replayed resize events during reconnect must not
+      // overwrite the local viewport that was already initialized from stream-start dims.
+      if (this._sessionState && this._sessionState.state === 'LIVE') {
+        const rect = this._containerEl ? this._containerEl.getBoundingClientRect() : null;
+        if (rect && rect.width > 0 && rect.height > 0) {
+          fitPreservingScroll(this._term, this._fitAddon);
+        } else {
+          try { this._term.resize(payload.cols, payload.rows); } catch {}
+        }
       }
     } else if (eventType === 'meta') {
       updatePanelMeta(this._sessionState, payload.key, payload.value);
@@ -1300,10 +1304,10 @@ async function initSession(terminalInfo) {
       sessionState.state = 'LIVE';
       if (loadingEl) { loadingEl.remove(); loadingEl = null; }
       wsManager.resetBackoff();
-      // Send resize to notify server of actual client dimensions
-      if (sessionState._term) {
-        wsManager.send({ type: 'resize', cols: sessionState._term.cols, rows: sessionState._term.rows });
-      }
+      // Do NOT auto-send resize on stream-live — this would overwrite existing subscribers'
+      // PTY dimensions with this client's (possibly smaller) viewport. The server sends
+      // authoritative cols/rows in stream-start; local xterm uses those to initialize its
+      // viewport. Suppress the WS send; only send resize on explicit ResizeObserver events.
       // Auto-focus on first LIVE transition
       if (!sessionState.firstLiveSeen && sessionState._term) {
         sessionState.firstLiveSeen = true;
