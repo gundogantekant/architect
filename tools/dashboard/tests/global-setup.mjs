@@ -61,6 +61,7 @@ export const SPEC_FILES = [
   'assets',
   'costs-summary',
   'terminal-project-filter',
+  'sanitisation',
 ];
 
 function getLiveDashboardPorts() {

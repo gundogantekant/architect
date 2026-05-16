@@ -1537,7 +1537,7 @@ function renderPhaseTimeline(history) {
     const color = phaseColors[entry.phase] || '#6B7280';
     const time = entry.at ? new Date(entry.at).toLocaleTimeString() : '';
     const label = entry.phase ? entry.phase.replace(/_/g, ' ') : 'idle';
-    return `<div class="phase-dot" style="background:${color}" title="${label} at ${time}"></div>`;
+    return `<div class="phase-dot" style="background:${color}" title="${esc(label)} at ${esc(time)}"></div>`;
   }).join('');
   return `<div class="phase-timeline">${dots}</div>`;
 }
@@ -7144,16 +7144,16 @@ function renderSettingsView(status, config) {
   // Card 1: Server Status
   html += '<div class="settings-card">';
   html += '<h3>Server Status</h3>';
-  html += '<div class="status-indicator"><span class="dot ' + dot + '"></span><span class="label">' + label + '</span></div>';
+  html += '<div class="status-indicator"><span class="dot ' + dot + '"></span><span class="label">' + esc(label) + '</span></div>';
   html += '<div class="settings-kv">';
-  html += '<div><span class="key">PID</span> ' + (status.pid || '—') + '</div>';
-  html += '<div><span class="key">Port</span> ' + config.port + '</div>';
-  html += '<div><span class="key">Uptime</span> <span id="settings-uptime">' + uptime + '</span></div>';
-  html += '<div><span class="key">Node</span> ' + (status.node_version || '—') + '</div>';
-  html += '<div><span class="key">Platform</span> ' + platform + '</div>';
-  html += '<div><span class="key">Dispatches</span> ' + (sessions.dispatches_active || 0) + ' active / ' + (sessions.dispatches_total || 0) + ' total</div>';
-  html += '<div><span class="key">Terminals</span> ' + (sessions.terminals_active || 0) + ' active / ' + (sessions.terminals_total || 0) + ' total</div>';
-  html += '<div><span class="key">Portfolio</span> <span style="font-family:monospace;font-size:11px;word-break:break-all">' + (config.portfolio_dir || '—') + '</span></div>';
+  html += '<div><span class="key">PID</span> ' + esc(String(status.pid || '—')) + '</div>';
+  html += '<div><span class="key">Port</span> ' + esc(String(config.port)) + '</div>';
+  html += '<div><span class="key">Uptime</span> <span id="settings-uptime">' + esc(uptime) + '</span></div>';
+  html += '<div><span class="key">Node</span> ' + esc(status.node_version || '—') + '</div>';
+  html += '<div><span class="key">Platform</span> ' + esc(platform) + '</div>';
+  html += '<div><span class="key">Dispatches</span> ' + esc(String(sessions.dispatches_active || 0)) + ' active / ' + esc(String(sessions.dispatches_total || 0)) + ' total</div>';
+  html += '<div><span class="key">Terminals</span> ' + esc(String(sessions.terminals_active || 0)) + ' active / ' + esc(String(sessions.terminals_total || 0)) + ' total</div>';
+  html += '<div><span class="key">Portfolio</span> <span style="font-family:monospace;font-size:11px;word-break:break-all">' + esc(config.portfolio_dir || '—') + '</span></div>';
   html += '</div></div>';
 
   // Card 2: Actions
