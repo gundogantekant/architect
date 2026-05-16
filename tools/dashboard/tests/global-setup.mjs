@@ -55,6 +55,7 @@ export const SPEC_FILES = [
   'project-refinement',
   'waiting-state',
   'date-columns',
+  'costs',
 ];
 
 function getLiveDashboardPorts() {

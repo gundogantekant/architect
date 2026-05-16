@@ -36,6 +36,7 @@ import syncRoutes from './routes/sync.mjs';
 import reposRoutes from './routes/repos.mjs';
 import adrsRoutes from './routes/adrs.mjs';
 import projectsRoutes from './routes/projects.mjs';
+import costsRoutes from './routes/costs.mjs';
 import testEndpointRoutes from './routes/test-endpoints.mjs';
 import { attemptMerge, isMergeLocked } from './merge.mjs';
 
@@ -75,6 +76,7 @@ const routes = [
   ...reposRoutes(deps),
   ...adrsRoutes(deps),
   ...projectsRoutes(deps),
+  ...costsRoutes(deps),
   ...(process.env.WORK_DIR ? testEndpointRoutes(deps) : []),
 ];
 

@@ -294,19 +294,21 @@ export async function seedDispatch(opts = {}) {
   const logLines = opts.output
     ? opts.output.map(text => JSON.stringify({ type: 'content_block_delta', delta: { text } }))
     : [];
+  const body = {
+    id,
+    status: opts.status || 'completed',
+    project_key: opts.project_key || 'ticari/architect/main',
+    title: opts.title || id,
+    work_item_id: opts.work_item_id || null,
+    log_lines: logLines,
+    claude_session_id: opts.claude_session_id || null,
+    dispatch_mode: opts.dispatch_mode || 'standard',
+    ...(opts.agent_phase !== undefined && { agent_phase: opts.agent_phase }),
+    ...(opts.cost_usd !== undefined && { cost_usd: opts.cost_usd }),
+  };
   const res = await api('test/seed-dispatch', {
     method: 'POST',
-    body: JSON.stringify({
-      id,
-      status: opts.status || 'completed',
-      project_key: opts.project_key || 'ticari/architect/main',
-      title: opts.title || id,
-      work_item_id: opts.work_item_id || null,
-      log_lines: logLines,
-      claude_session_id: opts.claude_session_id || null,
-      dispatch_mode: opts.dispatch_mode || 'standard',
-      ...(opts.agent_phase !== undefined && { agent_phase: opts.agent_phase }),
-    }),
+    body: JSON.stringify(body),
   });
   return { dispatch_id: id, ...res };
 }
