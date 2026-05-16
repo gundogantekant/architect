@@ -514,13 +514,14 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "additional_instructions": "string (optional)",
   "permission_mode": "string (plan|acceptEdits)",
   "skip_permissions": "boolean (default false, adds --dangerously-skip-permissions flag)",
-  "status": "running|completed|failed|killed|interrupted|suspended|merge_pending|merge_conflict",
+  "status": "running|completed|failed|killed|interrupted|suspended|merge_pending|merge_conflict|dismissed|superseded",
   "started_at": "string (ISO 8601)",
   "completed_at": "string (ISO 8601, optional)",
   "session_id": "string (Claude session ID, optional — legacy field)",
   "claude_session_id": "string (Claude CLI session UUID, optional — captured from stream-json init event, used for resume)",
   "cost_usd": "number (total cost, optional)",
   "pid": "number (OS process ID, optional — stored for restart survival)",
+  "exit_type": "'graceful'|'killed'|'interrupted'|'unknown'|null — how the process exited. Set by close handler: 'graceful' for code 0, 'killed' for intentional kill, 'interrupted' for ungraceful termination (crash, SIGKILL, OOM). null for dispatches that were never classified (pre-W-1139 rows).",
   "agent_phase": "AgentPhase (ephemeral, in-memory only — not persisted to PostgreSQL, derived from live stream-json event parsing or log replay)",
   "worktree_path": "string (absolute path to worktree, null if no worktree — persisted to PostgreSQL)",
   "worktree_branch": "string (worktree branch name, null if no worktree — persisted to PostgreSQL)",
@@ -537,6 +538,10 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "contract_satisfied_at": "string | null // ISO 8601 timestamp when contract satisfaction was confirmed"
 }
 ```
+
+Status semantics for terminal states:
+- `dismissed` — user acknowledged an interrupted session and dismissed the recovery banner. Not shown in recovery surface.
+- `superseded` — session was replaced by a re-dispatch. Treated same as dismissed in UI.
 
 CompleteDispatchRequest validation:
 - For medium+ complexity dispatches: reject completion if code_gate_passed !== true
