@@ -184,8 +184,8 @@ export async function assertSchema() {
     work_item_logs: ['id', 'work_item_id', 'logged_at', 'summary'],
     epics: ['id', 'title', 'status', 'priority', 'description', 'acceptance_criteria', 'target_date', 'tags', 'created_at', 'updated_at'],
     epic_logs: ['id', 'epic_id', 'logged_at', 'summary'],
-    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at', 'agent_phase', 'agent_phase_history', 'timeout_at', 'contract'],
-    terminals: ['id', 'type', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'exited_at', 'pid', 'tmux_session', 'claude_session_id', 'agent_type', 'head_seq'],
+    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at', 'agent_phase', 'agent_phase_history', 'timeout_at', 'contract', 'deleted_at'],
+    terminals: ['id', 'type', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'exited_at', 'pid', 'tmux_session', 'claude_session_id', 'agent_type', 'head_seq', 'deleted_at'],
     cli_sessions: ['id', 'project_key', 'work_item_id', 'epic_id', 'title', 'pid', 'status', 'registered_at', 'exited_at'],
     preferences: ['key', 'value'],
     projects: ['key', 'org', 'project', 'component', 'path', 'role', 'synced_at'],
@@ -896,11 +896,15 @@ export async function updatePipelineStage(id, stage) {
 }
 
 export async function deleteDispatch(id) {
-  await pool.query('DELETE FROM dispatches WHERE id = $1', [id]);
+  await pool.query('UPDATE dispatches SET deleted_at = NOW() WHERE id = $1', [id]);
 }
 
 export async function getPersistedDispatches() {
-  return pool.query('SELECT * FROM dispatches').then(r => r.rows);
+  return pool.query('SELECT * FROM dispatches WHERE deleted_at IS NULL').then(r => r.rows);
+}
+
+export async function getDeletedDispatches() {
+  return pool.query('SELECT * FROM dispatches WHERE deleted_at IS NOT NULL').then(r => r.rows);
 }
 
 // --- Sessions: Terminals ---
@@ -942,11 +946,15 @@ export async function updateTerminalClaudeSessionId(id, sessionId) {
 }
 
 export async function deleteTerminal(id) {
-  await pool.query('DELETE FROM terminals WHERE id = $1', [id]);
+  await pool.query('UPDATE terminals SET deleted_at = NOW() WHERE id = $1', [id]);
 }
 
 export async function getPersistedTerminals() {
-  return pool.query('SELECT * FROM terminals').then(r => r.rows);
+  return pool.query('SELECT * FROM terminals WHERE deleted_at IS NULL').then(r => r.rows);
+}
+
+export async function getDeletedTerminals() {
+  return pool.query('SELECT * FROM terminals WHERE deleted_at IS NOT NULL').then(r => r.rows);
 }
 
 // --- Sessions: CLI ---
