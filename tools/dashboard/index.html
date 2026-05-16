@@ -40,6 +40,7 @@
   <div class="sidebar-settings" onclick="navigate('repos')"><span class="nav-icon">&#128193;</span> <span>Repos</span></div>
   <div class="sidebar-settings" data-nav="all-sessions" onclick="location.hash='#all-sessions'"><span class="nav-icon">&#9635;</span> <span>Sessions</span></div>
   <div class="sidebar-settings" onclick="location.hash='#time-report'"><span class="nav-icon">&#9202;</span> <span>Time Report</span></div>
+  <div class="sidebar-settings" onclick="location.hash='#costs'"><span class="nav-icon">&#128176;</span> <span>Cost Report</span></div>
   <div class="sidebar-settings" onclick="location.hash='#settings'"><span class="nav-icon">&#9881;</span> <span>Settings</span></div>
   <a href="#" class="notes-toggle-btn sidebar-settings" data-notes-toggle title="Toggle notes panel" aria-label="Toggle notes panel">
     <span class="nav-icon">📝</span>
@@ -6912,6 +6913,112 @@ function bindTimeReportGroupToggle() {
   });
 }
 
+// --- Cost Report view ---
+
+function renderCostReport(summary, groupBy) {
+  const groupLabels = { model: 'Model', agent_role: 'Agent Role', project_key: 'Project', epic_id: 'Epic' };
+  const groupLabel = groupLabels[groupBy] || 'Model';
+
+  const groupSelector = `<select id="cost-group-by" style="font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text)">
+    <option value="model"${groupBy === 'model' ? ' selected' : ''}>By Model</option>
+    <option value="agent_role"${groupBy === 'agent_role' ? ' selected' : ''}>By Agent Role</option>
+    <option value="project_key"${groupBy === 'project_key' ? ' selected' : ''}>By Project</option>
+    <option value="epic_id"${groupBy === 'epic_id' ? ' selected' : ''}>By Epic</option>
+  </select>`;
+
+  const fromVal = summary.period.from;
+  const toVal = summary.period.to;
+
+  const controls = `<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
+    <label style="font-size:13px">From <input type="date" id="cost-from" value="${esc(fromVal)}" style="font-size:13px;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text)"></label>
+    <label style="font-size:13px">To <input type="date" id="cost-to" value="${esc(toVal)}" style="font-size:13px;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text)"></label>
+    ${groupSelector}
+    <button id="cost-refresh-btn" style="padding:5px 14px;font-size:13px;border:1px solid var(--border);border-radius:4px;background:var(--accent);color:#fff;cursor:pointer">Refresh</button>
+  </div>`;
+
+  const summary_row = `<div style="display:flex;gap:24px;margin-bottom:20px;flex-wrap:wrap">
+    <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:14px 20px;min-width:140px">
+      <div style="font-size:11px;color:var(--text-light);margin-bottom:4px">Total Cost</div>
+      <div style="font-size:22px;font-weight:700;color:var(--accent)">${esc('$' + summary.total_cost_usd.toFixed(4))}</div>
+    </div>
+    <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:14px 20px;min-width:140px">
+      <div style="font-size:11px;color:var(--text-light);margin-bottom:4px">Total Tokens</div>
+      <div style="font-size:22px;font-weight:700">${esc(summary.total_tokens.toLocaleString())}</div>
+    </div>
+    <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:14px 20px;min-width:140px">
+      <div style="font-size:11px;color:var(--text-light);margin-bottom:4px">Sessions</div>
+      <div style="font-size:22px;font-weight:700">${esc(String(summary.sessions))}</div>
+    </div>
+  </div>`;
+
+  function renderBreakdownTable(rows) {
+    if (!rows.length) return '<p style="color:var(--text-light);font-size:13px">No data for this period.</p>';
+    let html = `<table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="border-bottom:2px solid var(--border);text-align:left">
+        <th style="padding:8px 12px">${esc(groupLabel)}</th>
+        <th style="padding:8px 12px;text-align:right">Cost ($)</th>
+        <th style="padding:8px 12px;text-align:right">Tokens</th>
+        <th style="padding:8px 12px;text-align:right">Sessions</th>
+      </tr></thead><tbody>`;
+    for (const r of rows) {
+      html += `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:8px 12px">${esc(r.label || '(unknown)')}</td>
+        <td style="padding:8px 12px;text-align:right;font-weight:600">${esc('$' + r.cost_usd.toFixed(4))}</td>
+        <td style="padding:8px 12px;text-align:right">${esc(r.tokens.toLocaleString())}</td>
+        <td style="padding:8px 12px;text-align:right">${esc(String(r.sessions))}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    return html;
+  }
+
+  function renderTrendTable(rows) {
+    if (!rows.length) return '<p style="color:var(--text-light);font-size:13px">No trend data for this period.</p>';
+    let html = `<table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="border-bottom:2px solid var(--border);text-align:left">
+        <th style="padding:8px 12px">Date</th>
+        <th style="padding:8px 12px;text-align:right">Cost ($)</th>
+        <th style="padding:8px 12px;text-align:right">Sessions</th>
+      </tr></thead><tbody>`;
+    for (const r of rows) {
+      html += `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:8px 12px">${esc(r.period)}</td>
+        <td style="padding:8px 12px;text-align:right;font-weight:600">${esc('$' + r.cost_usd.toFixed(4))}</td>
+        <td style="padding:8px 12px;text-align:right">${esc(String(r.sessions))}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    return html;
+  }
+
+  return `<div class="card">
+    <h2 style="margin-bottom:4px">Cost Report</h2>
+    <p style="color:var(--text-light);font-size:13px;margin-bottom:16px">Period: ${esc(fromVal)} — ${esc(toVal)}</p>
+    ${controls}
+    ${summary_row}
+    <h3 style="font-size:14px;margin:0 0 10px;color:var(--accent)">Breakdown ${esc(groupLabel)}</h3>
+    ${renderBreakdownTable(summary.breakdown)}
+    <h3 style="font-size:14px;margin:20px 0 10px;color:var(--accent)">Daily Trend</h3>
+    ${renderTrendTable(summary.trend)}
+  </div>`;
+}
+
+function bindCostReportEvents() {
+  const refresh = document.getElementById('cost-refresh-btn');
+  if (!refresh) return;
+  refresh.onclick = () => {
+    const from = document.getElementById('cost-from').value;
+    const to = document.getElementById('cost-to').value;
+    const groupBy = document.getElementById('cost-group-by').value;
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    params.set('group_by', groupBy);
+    sessionStorage.setItem('cost-report-params', params.toString());
+    route();
+  };
+}
+
 // --- Settings view ---
 
 function formatUptime(seconds) {
@@ -7663,6 +7770,22 @@ async function route() {
       bindTimeReportGroupToggle();
     } catch (e) {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading time report: ${esc(String(e))}</p></div>`;
+    }
+    setActive('');
+    return;
+  }
+
+  if (parts[0] === 'costs') {
+    try {
+      const savedParams = sessionStorage.getItem('cost-report-params');
+      const params = new URLSearchParams(savedParams || '');
+      const groupBy = params.get('group_by') || 'model';
+      const qs = params.toString() ? `?${params.toString()}` : '';
+      const summary = await api(`costs/summary${qs}`);
+      main.innerHTML = renderCostReport(summary, groupBy);
+      bindCostReportEvents();
+    } catch (e) {
+      main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading cost report: ${esc(String(e))}</p></div>`;
     }
     setActive('');
     return;
