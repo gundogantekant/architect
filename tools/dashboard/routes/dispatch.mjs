@@ -625,6 +625,7 @@ export default function dispatchRoutes(deps) {
     // List dispatches (returns all including completed/failed/interrupted)
     [/^\/api\/dispatch\/active$/, 'GET', async (_m, req, res) => {
       const workerId = req.headers['x-test-worker-id'];
+      const includeDeleted = new URL(req.url, 'http://x').searchParams.get('include_deleted') === 'true';
       const list = await Promise.all([...dispatches].map(async ([id, d]) => {
         if (workerId !== undefined && d._testWorkerId !== workerId) return null;
         return {
@@ -661,9 +662,52 @@ export default function dispatchRoutes(deps) {
           session_log: Array.isArray(d.session_log) ? d.session_log : [],
           timeout_at: d.timeout_at || null,
           exit_type: d.exit_type || null,
+          deleted_at: null,
         };
       }));
-      json(res, list.filter(Boolean));
+      const active = list.filter(Boolean);
+      if (!includeDeleted) {
+        json(res, active);
+        return;
+      }
+      const deleted = await db.getDeletedDispatches();
+      const deletedRows = deleted
+        .map(d => ({
+          id: d.id,
+          title: d.title || null,
+          work_item_id: d.work_item_id || null,
+          work_item_title: null,
+          epic_id: d.epic_id || null,
+          epic_title: null,
+          project_key: d.project_key,
+          project_path: d.project_path || null,
+          status: d.status,
+          cost_usd: d.cost_usd || null,
+          started_at: d.started_at,
+          completed_at: d.completed_at || null,
+          last_output: [],
+          agent_phase: null,
+          agent_phase_history: [],
+          needs_input: false,
+          work_item_input_needed: false,
+          permission_mode: d.permission_mode || 'acceptEdits',
+          skip_permissions: d.skip_permissions || false,
+          claude_session_id: d.claude_session_id || null,
+          worktree_path: d.worktree_path || null,
+          worktree_branch: d.worktree_branch || null,
+          source_branch: d.source_branch || null,
+          dispatch_mode: d.dispatch_mode || 'standard',
+          completion_sha: d.completion_sha || null,
+          completion_summary: d.completion_summary || null,
+          merge_result: d.merge_result || null,
+          pipeline_stage: d.pipeline_stage || null,
+          contract: d.contract || null,
+          _exitedWithoutSignal: false,
+          session_log: [],
+          timeout_at: d.timeout_at || null,
+          deleted_at: d.deleted_at,
+        }));
+      json(res, [...active, ...deletedRows]);
     }],
 
     // List autonomous (auto-implement) dispatches only
@@ -794,9 +838,9 @@ export default function dispatchRoutes(deps) {
       archiveSession(dispatch, 'dispatch').catch(e => console.error('[kill dispatch] archiveSession:', e.message));
       broadcastDispatchDone(dispatch);
       dispatches.delete(m[1]);
+      const deletedAt = new Date().toISOString();
       await db.deleteDispatch(m[1]);
-      unlinkFile(join(LOGS_DIR, `${m[1]}.jsonl`)).catch(() => {});
-      json(res, { status: 'killed', id: m[1] });
+      json(res, { status: 'killed', id: m[1], deleted_at: deletedAt });
     }],
 
     // Cancel a pending merge (clears timer, keeps status as merge_pending)

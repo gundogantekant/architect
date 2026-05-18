@@ -535,7 +535,8 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "code_gate_passed": "boolean | null     // null until code gate runs; true if approved, false if blocked",
   "code_gate_passed_at": "string | null   // ISO 8601 timestamp when code gate resolved; null until then",
   "contract_satisfied": "boolean | null   // null until code gate; set true when all e2e_test_criteria confirmed passing",
-  "contract_satisfied_at": "string | null // ISO 8601 timestamp when contract satisfaction was confirmed"
+  "contract_satisfied_at": "string | null // ISO 8601 timestamp when contract satisfaction was confirmed",
+  "deleted_at": "string (ISO 8601) | null — set to the kill timestamp when the record is soft-deleted via DELETE /api/dispatch/:id. null for all active, completed, and terminal-state records. Records with a non-null deleted_at are excluded from all default list queries and not restored to in-memory state on server restart. Set concurrently with status = 'killed' — never independently. Presence means the record is dismissed from active UI views; the status field independently records the operational outcome."
 }
 ```
 
@@ -580,7 +581,8 @@ Record for an interactive PTY terminal session spawned from the dashboard. Persi
   "exited_at": "string (ISO 8601, null while running)",
   "pid": "number (OS process ID, optional — stored for restart survival)",
   "tmux_session": "string (tmux session name, optional — e.g. architect-T-xxx)",
-  "claude_session_id": "string (Claude CLI session UUID — required for suspend/resume; only present when agent_type === 'claude'. Suspend is rejected if absent or if agent_type !== 'claude')"
+  "claude_session_id": "string (Claude CLI session UUID — required for suspend/resume; only present when agent_type === 'claude'. Suspend is rejected if absent or if agent_type !== 'claude')",
+  "deleted_at": "string (ISO 8601) | null — set when the terminal is killed and removed via DELETE /api/terminal/:id. null for all live, suspended, and naturally exited terminals. Records with non-null deleted_at are filtered from the default active list and not loaded on server restart. Set concurrently with status = 'killed' — never independently."
 }
 ```
 

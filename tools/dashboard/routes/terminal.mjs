@@ -320,6 +320,7 @@ export default function terminalRoutes(deps) {
     // List active terminals
     [/^\/api\/terminal\/active$/, 'GET', async (_m, req, res) => {
       const workerId = req.headers['x-test-worker-id'];
+      const includeDeleted = new URL(req.url, 'http://x').searchParams.get('include_deleted') === 'true';
       const list = await Promise.all([...terminals].map(async ([id, t]) => {
         if (workerId !== undefined && t._testWorkerId !== workerId) return null;
         return {
@@ -344,9 +345,41 @@ export default function terminalRoutes(deps) {
           prompt: t.prompt || null,
           claude_session_id: t.claude_session_id || null,
           head_seq: t.eventStream ? t.eventStream.headSeq : 0,
+          deleted_at: null,
         };
       }));
-      json(res, list.filter(Boolean));
+      const active = list.filter(Boolean);
+      if (!includeDeleted) {
+        json(res, active);
+        return;
+      }
+      const deleted = await db.getDeletedTerminals();
+      const deletedRows = deleted
+        .map(t => ({
+          id: t.id,
+          type: t.type || 'claude',
+          agent_type: t.agent_type || t.type || 'claude',
+          work_item_id: t.work_item_id || null,
+          work_item_title: null,
+          work_item_input_needed: false,
+          epic_id: t.epic_id || null,
+          epic_title: null,
+          project_key: t.project_key,
+          project_path: t.project_path || null,
+          title: t.title,
+          status: t.status,
+          started_at: t.started_at,
+          exited_at: t.exited_at || null,
+          last_output: [],
+          permission_mode: t.permission_mode || 'acceptEdits',
+          skip_permissions: t.skip_permissions || false,
+          org_key: t.org_key || null,
+          prompt: null,
+          claude_session_id: t.claude_session_id || null,
+          head_seq: 0,
+          deleted_at: t.deleted_at,
+        }));
+      json(res, [...active, ...deletedRows]);
     }],
 
     // List suspended terminals only
@@ -434,7 +467,6 @@ export default function terminalRoutes(deps) {
       if (terminal.agents_file) unlinkFile(terminal.agents_file).catch(() => {});
       terminals.delete(m[1]);
       await db.deleteTerminal(m[1]);
-      unlinkFile(termEventLogPath(m[1])).catch(() => {});
       json(res, { status: 'killed', id: m[1] });
     }],
 

@@ -583,4 +583,71 @@ test.describe('API contracts @fast', () => {
       }
     }
   });
+
+  // --- Soft delete (W-1140) ---
+
+  test('SD-1: DELETE /api/work-items/:id preserves row with status cancelled', async () => {
+    const item = await seedWorkItem({ title: 'SD-1 soft delete' });
+    const del = await api(`work-items/${item.id}`, { method: 'DELETE' });
+    expect(del.deleted).toBe(item.id);
+    const fetched = await api(`work-items/${item.id}`);
+    expect(fetched.id).toBe(item.id);
+    expect(fetched.status).toBe('cancelled');
+    // Cancelled items remain in backlog with status 'cancelled' (archived items are hidden, not cancelled)
+    const backlog = await api('backlog');
+    const allItems = Object.values(backlog.projects || {}).flatMap(p => p.items || []);
+    const inBacklog = allItems.find(i => i.id === item.id);
+    expect(inBacklog).toBeDefined();
+    expect(inBacklog.status).toBe('cancelled');
+  });
+
+  test('SD-2: GET /api/dispatch/active excludes soft-deleted; include_deleted=true includes them', async () => {
+    const d = await seedDispatch({ title: 'SD-2 to soft-delete' });
+    const id = d.dispatch_id;
+    await api(`dispatch/${id}`, { method: 'DELETE' });
+    const active = await api('dispatch/active');
+    expect(active.find(x => x.id === id)).toBeUndefined();
+    const withDeleted = await api('dispatch/active?include_deleted=true');
+    const found = withDeleted.find(x => x.id === id);
+    expect(found).toBeDefined();
+    expect(found.deleted_at).toBeTruthy();
+  });
+
+  test('SD-3: DELETE /api/dispatch/:id response contains deleted_at timestamp', async () => {
+    const d = await seedDispatch({ title: 'SD-3 delete response check' });
+    const id = d.dispatch_id;
+    const res = await api(`dispatch/${id}`, { method: 'DELETE' });
+    expect(res.status).toBe('killed');
+    expect(res.id).toBe(id);
+    expect(res.deleted_at).toBeTruthy();
+    expect(new Date(res.deleted_at).getTime()).toBeGreaterThan(0);
+  });
+
+  test('SD-4: soft-deleting one dispatch does not affect other dispatches visibility', async () => {
+    const keep = await seedDispatch({ title: 'SD-4 keep' });
+    const remove = await seedDispatch({ title: 'SD-4 remove' });
+    await api(`dispatch/${remove.dispatch_id}`, { method: 'DELETE' });
+    const active = await api('dispatch/active');
+    expect(active.find(x => x.id === keep.dispatch_id)).toBeDefined();
+    expect(active.find(x => x.id === remove.dispatch_id)).toBeUndefined();
+    const withDeleted = await api('dispatch/active?include_deleted=true');
+    expect(withDeleted.length).toBeGreaterThanOrEqual(
+      active.filter(x => x.id === keep.dispatch_id).length
+    );
+  });
+
+  test('SD-5: dispatches and terminals schema includes deleted_at column', async () => {
+    const d = await seedDispatch({ title: 'SD-5 schema check dispatch' });
+    const t = await seedTerminal({ title: 'SD-5 schema check terminal' });
+    await api(`dispatch/${d.dispatch_id}`, { method: 'DELETE' });
+    await api(`terminal/${t.id}`, { method: 'DELETE' });
+    const deletedDispatches = await api('dispatch/active?include_deleted=true');
+    const foundDispatch = deletedDispatches.find(x => x.id === d.dispatch_id);
+    expect(foundDispatch).toBeDefined();
+    expect(typeof foundDispatch.deleted_at).toBe('string');
+    const deletedTerminals = await api('terminal/active?include_deleted=true');
+    const foundTerminal = deletedTerminals.find(x => x.id === t.id);
+    expect(foundTerminal).toBeDefined();
+    expect(typeof foundTerminal.deleted_at).toBe('string');
+  });
 });
