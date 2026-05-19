@@ -67,6 +67,8 @@ See `docs/architecture.md` for layer boundaries and dependency rules.
 
 Default models are overridden dynamically by the orchestrator based on task complexity. See `domain/rules.md` → Model Selection Rules → Review Board Escalation.
 
+For the recommended orchestrator session model and escalation triggers, see `domain/rules.md` → Orchestrator Behavior Rules → Orchestrator Session Model (Operator Guidance).
+
 ### Orchestrator Behavior
 
 The main thread is strictly an orchestrator/PM. It reads, plans, dispatches, and tracks — but does not implement code (except single-line trivial fixes like typos). Git operations are delegated to the git-ops agent. See `domain/rules.md` → Orchestrator Behavior Rules for the full dispatch decision flow.

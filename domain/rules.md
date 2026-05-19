@@ -983,6 +983,19 @@ When the orchestrator holds UnstructuredFindings (raw output from any investigat
 
 All git operations (commit, push, PR creation, branch management, worktree operations, merge) are delegated to the **git-ops** agent (haiku). The orchestrator does not run git commands directly except for read-only queries (status, log, diff for context).
 
+### Orchestrator Session Model (Operator Guidance)
+
+This guidance governs the model chosen for the **main-thread CLI session** itself. It is operator-applied at session start and is **not** enforced by architect dispatch or sub-agent overrides — the architect cannot select its own model at dispatch time.
+
+- **Default**: Sonnet. Suitable for the vast majority of orchestration work (triage, planning, dispatching, synthesis).
+- Escalation triggers — choose Opus when:
+  - Task complexity is `strategic` (per the Complexity-to-Model Mapping table above), or
+  - Task complexity is `large` AND the work involves architecture decisions or cross-system design.
+- See the Complexity-to-Model Mapping table for canonical complexity labels (trivial/small/medium/large/strategic).
+- **Limitation**: This is documentation-only guidance. The architect has no mechanism to verify or enforce the operator-selected session model at runtime, and recommendations may drift if not periodically reviewed.
+
+> Footnote: The orchestrator is intentionally absent from the Canonical Agent Default Models table because no architect process programmatically selects its model — that choice lives with the operator launching the CLI session.
+
 ## Session Scope Rules
 
 Every session has a `SessionIdentity` (see `domain/entities.md`) that determines its permissions. These rules define what each session type may and may not do.
