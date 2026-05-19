@@ -132,7 +132,7 @@ export default function dispatchRoutes(deps) {
 
       let proc;
       try {
-        const onboardArgs = ['-p', '--output-format', 'stream-json', '--verbose'];
+        const onboardArgs = ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet'];
         proc = spawn(CLAUDE_BIN, onboardArgs, {
           cwd: ROOT,
           stdio: ['pipe', 'pipe', 'pipe'],
@@ -353,7 +353,7 @@ export default function dispatchRoutes(deps) {
 
       let proc;
       try {
-        const args = ['-p', '--output-format', 'stream-json', '--verbose'];
+        const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet'];
         args.push('--permission-mode', resolvedPermMode === 'plan' ? 'plan' : 'acceptEdits');
         if (resolvedSkipPerms) {
           args.push('--dangerously-skip-permissions');
@@ -519,7 +519,7 @@ export default function dispatchRoutes(deps) {
 
       let proc;
       try {
-        const args = ['-p', '--output-format', 'stream-json', '--verbose',
+        const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet',
           '--permission-mode', 'acceptEdits',
           '--dangerously-skip-permissions',
           '--add-dir', ROOT,
@@ -996,7 +996,7 @@ export default function dispatchRoutes(deps) {
 
       const { workItem: freshWorkItem, portfolio } = await loadResumeContext({ work_item_id, project_key });
 
-      const args = ['-p', '--output-format', 'stream-json', '--verbose'];
+      const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet'];
       args.push('--resume', resumeSessionId);
       args.push('--permission-mode', resolvedPermMode === 'plan' ? 'plan' : 'acceptEdits');
       if (resolvedSkipPerms) args.push('--dangerously-skip-permissions');

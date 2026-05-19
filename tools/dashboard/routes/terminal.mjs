@@ -524,6 +524,7 @@ export default function terminalRoutes(deps) {
       let tmuxName = null;
       try {
         const ptyArgs = ['--resume', resumeSessionId];
+        ptyArgs.push('--model', 'sonnet');
         if (resolvedSkipPerms) ptyArgs.push('--dangerously-skip-permissions');
         ptyArgs.push('--add-dir', ROOT);
 

@@ -58,6 +58,7 @@ export async function spawnTerminalSession(deps, params) {
     skipPermissions,
     addDir: ROOT,
     agentsJson: null,
+    model: 'sonnet',
   });
 
   let ptyProcess;

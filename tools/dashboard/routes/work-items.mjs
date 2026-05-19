@@ -395,7 +395,7 @@ export default function workItemRoutes(deps) {
 
       let proc;
       try {
-        proc = spawn(CLAUDE_BIN, ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'plan'], {
+        proc = spawn(CLAUDE_BIN, ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet', '--permission-mode', 'plan'], {
           cwd: ROOT,
           stdio: ['pipe', 'pipe', 'pipe'],
           env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
