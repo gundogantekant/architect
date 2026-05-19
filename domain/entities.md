@@ -51,6 +51,20 @@ Full output of the classifier agent. Extends RequestClassification with dispatch
 
 **Rules**: When `needs_coordinator` is false, the orchestrator constructs a simple dispatch plan directly from this output. When true, the orchestrator dispatches the coordinator agent with this output as input.
 
+## UnstructuredFindings
+
+Value object capturing raw, unstructured output from an investigation agent (debugger, scout, security-auditor, etc.). The orchestrator routes findings of this shape through `usecases/synthesize-findings.md` (via the findings-coordinator agent) when follow-up dispatch is needed and no `ClassifierOutput` is in scope. No id, status, or lifecycle fields — instances are produced and consumed within a single orchestration turn.
+
+```json
+{
+  "source_agent": "string (agent name that produced the findings)",
+  "findings": "string (unstructured output text)",
+  "produced_at": "string | null (ISO 8601 timestamp, optional)"
+}
+```
+
+**Rules**: See `domain/rules.md` → Investigation Findings Routing — when the orchestrator holds an UnstructuredFindings (no ClassifierOutput), it follows the synthesize-findings workflow rather than triage-request.
+
 ## PreDispatchCheckResult
 
 Output by the orchestrator when running pre-dispatch awareness checks. The orchestrator evaluates whether the user's request overlaps with recent commits, done/in-progress work items, or active dispatches before proceeding with agent dispatch.
