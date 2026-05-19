@@ -1,15 +1,15 @@
 /**
  * Prompt Delivery Contract Tests (CT-1 through CT-6)
  *
- * Verifies that dispatch spawn sites use --append-system-prompt-file for prompt
- * delivery instead of stdin.write, with proper file lifecycle and size fallback.
+ * Verifies the per-session prompt file lifecycle. The dispatcher streams this file into
+ * the child's stdin (see routes/dispatch.mjs); these unit tests cover the file helper.
  *
- * CT-1: Standard dispatch with 64KB+ prompt → --append-system-prompt-file arg
- * CT-2: After process exit → prompt file deleted
+ * CT-1: 64KB+ prompt → file created with marker content and mode 0o600
+ * CT-2: After deletePromptFile → file removed
  * CT-3: Startup orphan sweep removes stale prompt files (mtime > 1h)
- * CT-4: 5 concurrent dispatches → distinct, non-contaminated prompt files
- * CT-5: 600KB prompt → stdin fallback, no prompt file created
- * CT-6: Onboard dispatch → --append-system-prompt-file arg
+ * CT-4: 5 concurrent writes → distinct, non-contaminated prompt files
+ * CT-5: 600KB prompt → writePromptFile returns null (stdin fallback)
+ * CT-6: writePromptFile works for onboard-style session ID
  */
 
 import { describe, it, before, after, beforeEach } from 'node:test';
@@ -162,5 +162,29 @@ describe('Prompt Delivery — CT-1 through CT-6', () => {
   it('CT-2b: deletePromptFile is a no-op for null path', async () => {
     await deletePromptFile(null);
     // no assertion needed — must not throw
+  });
+
+  // CT-7 guards the W-1184 regression: --append-system-prompt-file appends to the system
+  // prompt and leaves -p (print) mode without a user input. The dispatcher must stream the
+  // prompt file into the child's stdin instead.
+  it('CT-7: routes/dispatch.mjs does not use --append-system-prompt-file', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const { fileURLToPath } = await import('node:url');
+    const { dirname, resolve } = await import('node:path');
+    const here = dirname(fileURLToPath(import.meta.url));
+    const dispatchSrc = await readFile(resolve(here, '..', 'routes', 'dispatch.mjs'), 'utf8');
+    // Strip comments and string-literal usages of the flag in spawn args
+    const codeOnly = dispatchSrc
+      .replace(/\/\/[^\n]*\n/g, '\n')
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+    assert.equal(
+      codeOnly.includes("'--append-system-prompt-file'"),
+      false,
+      'routes/dispatch.mjs must not pass --append-system-prompt-file as a spawn arg (W-1141 regression)'
+    );
+    assert.ok(
+      dispatchSrc.includes('createReadStream'),
+      'routes/dispatch.mjs must stream the prompt file into child stdin'
+    );
   });
 });
