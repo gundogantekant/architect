@@ -1,4 +1,5 @@
 import { readFileSync, existsSync, createWriteStream, appendFileSync } from 'node:fs';
+import { unlink as unlinkFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { dispatches, terminals, cliSessions, saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession } from './state.mjs';
@@ -100,16 +101,47 @@ export function tailLogFile(dispatch) {
           const evt = JSON.parse(line);
           const newPhase = derivePhase(dispatch.agent_phase, evt);
           if (newPhase !== dispatch.agent_phase) {
+            const historyEntry = { phase: newPhase, at: new Date().toISOString() };
+            dispatch.agent_phase_history = dispatch.agent_phase_history || [];
+            dispatch.agent_phase_history = [...dispatch.agent_phase_history, historyEntry].slice(-50);
             dispatch.agent_phase = newPhase;
+            db.updateAgentPhase(dispatch.id, newPhase, historyEntry).catch(err =>
+              console.error(`[agent_phase] failed to persist phase ${newPhase} for ${dispatch.id}:`, err)
+            );
+            // # DECISION: Bridge agent waiting_for_input phase to work item input_needed flag.
+            // Only set via bridge; only clear when source=bridge AND no other waiting dispatches.
+            if (newPhase === 'waiting_for_input' && dispatch.work_item_id) {
+              db.setInputNeeded(dispatch.work_item_id, true, 'agent_phase_bridge').catch(err =>
+                console.error('[bridge] setInputNeeded failed:', err.message)
+              );
+            } else if (newPhase !== 'waiting_for_input' && dispatch.work_item_id) {
+              db.setInputNeeded(dispatch.work_item_id, false, 'agent_phase_bridge').catch(err =>
+                console.error('[bridge] clearInputNeeded failed:', err.message)
+              );
+            }
           }
           const text = extractStreamText(evt);
           if (text) {
             dispatch.lastLines.push(text);
             if (dispatch.lastLines.length > 5) dispatch.lastLines.shift();
           }
-          if (evt.type === 'result' && evt.total_cost_usd != null) {
-            dispatch.cost_usd = evt.total_cost_usd;
-            saveDispatchToDb(dispatch).catch(e => console.error('[tail] saveDispatchToDb (cost):', e.message));
+          if (evt.type === 'result') {
+            if (evt.total_cost_usd != null) {
+              dispatch.cost_usd = evt.total_cost_usd;
+              saveDispatchToDb(dispatch).catch(e => console.error('[tail] saveDispatchToDb (cost):', e.message));
+            }
+            const usage = evt.usage || {};
+            if (usage.input_tokens != null || usage.output_tokens != null) {
+              db.insertDispatchCost({
+                id: dispatch.id,
+                model: evt.model || null,
+                agentRole: dispatch.agent_role || null,
+                inputTokens: usage.input_tokens || 0,
+                outputTokens: usage.output_tokens || 0,
+                cacheReadTokens: usage.cache_read_input_tokens || 0,
+                cacheWriteTokens: usage.cache_creation_input_tokens || 0,
+              }).catch(e => console.error('[cost] insertDispatchCost (tail):', e.message));
+            }
           }
         } catch {}
         broadcastDispatchLine(dispatch, line);
@@ -117,6 +149,26 @@ export function tailLogFile(dispatch) {
     } catch {}
   }, 2000);
   dispatch._tailInterval = interval;
+}
+
+// Re-arm the auto-timeout for a reconnected running dispatch after server restart.
+// If timeout_at is already past, marks the dispatch as failed immediately.
+function rearmDispatchTimeout(dispatch) {
+  if (!dispatch.timeout_at) return;
+  const remainingMs = new Date(dispatch.timeout_at).getTime() - Date.now();
+  if (remainingMs <= 0) {
+    dispatch.status = 'failed';
+    dispatch.completed_at = new Date().toISOString();
+    saveDispatchToDb(dispatch).catch(() => {});
+    return;
+  }
+  dispatch._timeoutHandle = setTimeout(() => {
+    if (dispatch.status !== 'running') return;
+    dispatch.status = 'failed';
+    dispatch.completed_at = new Date().toISOString();
+    if (dispatch.process) { try { dispatch.process.kill('SIGTERM'); } catch {} }
+    saveDispatchToDb(dispatch).catch(() => {});
+  }, remainingMs);
 }
 
 // Restore persisted sessions from PostgreSQL with PID liveness checks
@@ -158,6 +210,14 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
       });
       continue;
     }
+    if (d.status === 'dismissed' || d.status === 'superseded') {
+      // Dismissed/superseded: user-acknowledged terminal states — load into memory
+      // with no log tail, no reconnect attempt. No recovery banner shown for these.
+      dispatches.set(d.id, {
+        ...d, output: [], lastLines: [], wsClients: new Set(), process: null,
+      });
+      continue;
+    }
     if (d.status === 'running' && d.pid) {
       if (isPidAlive(d.pid)) {
         // Process survived restart — reconnect via log file tailing
@@ -174,6 +234,7 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
         };
         dispatches.set(d.id, dispatch);
         tailLogFile(dispatch);
+        rearmDispatchTimeout(dispatch);
         console.log(`Dispatch ${d.id}: PID ${d.pid} still alive, reconnecting via log tail`);
       } else {
         // PID dead — mark interrupted, archive to session_history, load log content for display
@@ -197,6 +258,14 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
       dispatches.set(d.id, {
         ...d, output, lastLines: [], wsClients: new Set(), process: null,
       });
+    }
+  }
+
+  for (const [, d] of dispatches) {
+    if (d.agent_phase === 'waiting_for_input' && d.work_item_id && d.status === 'running') {
+      db.setInputNeeded(d.work_item_id, true, 'agent_phase_bridge').catch(e =>
+        console.error('[restore-bridge]', e.message)
+      );
     }
   }
 
@@ -361,13 +430,44 @@ export function wireDispatchHandlers(dispatch, proc) {
           dispatch.claude_session_id = evt.session_id;
           saveDispatchToDb(dispatch).catch(e => console.error('[dispatch] saveDispatchToDb (session_id):', e.message));
         }
-        if (evt.type === 'result' && evt.total_cost_usd != null) {
-          dispatch.cost_usd = evt.total_cost_usd;
-          saveDispatchToDb(dispatch).catch(e => console.error('[dispatch] saveDispatchToDb (cost):', e.message));
+        if (evt.type === 'result') {
+          if (evt.total_cost_usd != null) {
+            dispatch.cost_usd = evt.total_cost_usd;
+            saveDispatchToDb(dispatch).catch(e => console.error('[dispatch] saveDispatchToDb (cost):', e.message));
+          }
+          const usage = evt.usage || {};
+          if (usage.input_tokens != null || usage.output_tokens != null) {
+            db.insertDispatchCost({
+              id: dispatch.id,
+              model: evt.model || null,
+              agentRole: dispatch.agent_role || null,
+              inputTokens: usage.input_tokens || 0,
+              outputTokens: usage.output_tokens || 0,
+              cacheReadTokens: usage.cache_read_input_tokens || 0,
+              cacheWriteTokens: usage.cache_creation_input_tokens || 0,
+            }).catch(e => console.error('[cost] insertDispatchCost:', e.message));
+          }
         }
         const newPhase = derivePhase(dispatch.agent_phase, evt);
         if (newPhase !== dispatch.agent_phase) {
+          const historyEntry = { phase: newPhase, at: new Date().toISOString() };
+          dispatch.agent_phase_history = dispatch.agent_phase_history || [];
+          dispatch.agent_phase_history = [...dispatch.agent_phase_history, historyEntry].slice(-50);
           dispatch.agent_phase = newPhase;
+          db.updateAgentPhase(dispatch.id, newPhase, historyEntry).catch(err =>
+            console.error(`[agent_phase] failed to persist phase ${newPhase} for ${dispatch.id}:`, err)
+          );
+          // # DECISION: Bridge agent waiting_for_input phase to work item input_needed flag.
+          // Only set via bridge; only clear when source=bridge AND no other waiting dispatches.
+          if (newPhase === 'waiting_for_input' && dispatch.work_item_id) {
+            db.setInputNeeded(dispatch.work_item_id, true, 'agent_phase_bridge').catch(err =>
+              console.error('[bridge] setInputNeeded failed:', err.message)
+            );
+          } else if (newPhase !== 'waiting_for_input' && dispatch.work_item_id) {
+            db.setInputNeeded(dispatch.work_item_id, false, 'agent_phase_bridge').catch(err =>
+              console.error('[bridge] clearInputNeeded failed:', err.message)
+            );
+          }
         }
         const text = extractStreamText(evt);
         if (text) {
@@ -389,6 +489,10 @@ export function wireDispatchHandlers(dispatch, proc) {
   });
 
   proc.on('close', (code) => {
+    if (dispatch._timeoutHandle) {
+      clearTimeout(dispatch._timeoutHandle);
+      dispatch._timeoutHandle = null;
+    }
     if (dispatch._mergeHandled) {
       // Agent called POST /complete before exiting — status already set to merge_pending.
       // Do not overwrite status. Just clean up streams and persist.
@@ -398,6 +502,21 @@ export function wireDispatchHandlers(dispatch, proc) {
       saveDispatchToDb(dispatch).catch(e => console.error('[dispatch close] saveDispatchToDb (merge_pending):', e.message));
       return;
     }
+
+    // Classify exit type before overwriting status.
+    // _killedIntentionally is set by the DELETE endpoint before sending SIGTERM.
+    if (dispatch._killedIntentionally) {
+      dispatch.exit_type = 'killed';
+    } else if (code === 0) {
+      dispatch.exit_type = 'graceful';
+    } else {
+      // Non-zero exit without intentional kill: crash, SIGKILL, OOM, or other ungraceful termination.
+      dispatch.exit_type = 'interrupted';
+    }
+    db.updateDispatchExitType(dispatch.id, dispatch.exit_type).catch(e =>
+      console.error('[dispatch close] updateDispatchExitType:', e.message)
+    );
+
     dispatch.status = code === 0 ? 'completed' : 'failed';
     if (code === 0 && dispatch.dispatch_mode === 'auto_implement') {
       dispatch._exitedWithoutSignal = true;
@@ -406,6 +525,118 @@ export function wireDispatchHandlers(dispatch, proc) {
     dispatch.process = null;
     if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
     if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
+
+    // Cost anomaly and scope violation detection run after close; both are best-effort.
+    (async () => {
+      try {
+        const { avg_cost, count } = await db.getProjectAvgDispatchCost(dispatch.project_key);
+        if (count >= 3 && avg_cost > 0 && dispatch.cost_usd > avg_cost * 2 && dispatch.dispatch_mode !== 'project_refinement') {
+          dispatch.session_log = dispatch.session_log || [];
+          dispatch.session_log.push({
+            trigger: 'cost-anomaly',
+            summary: `Cost $${dispatch.cost_usd?.toFixed(4)} is ${(dispatch.cost_usd / avg_cost).toFixed(1)}x the 30-day average ($${avg_cost.toFixed(4)}) for this project`,
+            related_items: [dispatch.id],
+            detected_at: new Date().toISOString(),
+          });
+        }
+      } catch (err) {
+        console.error('[cost-anomaly] detection failed:', err.message);
+      }
+    })();
+
+    // Scope boundary violation detection: flag dispatches that modified files outside
+    // their contract's declared scope_boundary. Best-effort — skipped on any error.
+    if (dispatch.worktree_path && dispatch.contract?.scope_boundary) {
+      try {
+        const sourceBranch = dispatch.source_branch || 'HEAD~1';
+        const diffOutput = execFileSync(
+          'git', ['diff', '--name-only', sourceBranch],
+          { cwd: dispatch.worktree_path, encoding: 'utf8', timeout: 5000 }
+        );
+        const changedFiles = diffOutput.split('\n').filter(Boolean);
+        const boundary = dispatch.contract.scope_boundary.replace(/\/$/, '');
+        const violating = changedFiles.filter(f => !f.startsWith(boundary + '/') && f !== boundary);
+        if (violating.length > 0) {
+          dispatch.session_log = dispatch.session_log || [];
+          dispatch.session_log.push({
+            trigger: 'scope-violation',
+            summary: `${violating.length} file(s) modified outside scope boundary '${boundary}': ${violating.slice(0, 3).join(', ')}${violating.length > 3 ? ` +${violating.length - 3} more` : ''}`,
+            related_items: [dispatch.id],
+            detected_at: new Date().toISOString(),
+          });
+        }
+      } catch {
+        // worktree may be gone or git failed — skip silently
+      }
+    }
+
+    if (dispatch.dispatch_mode === 'task_creation' && dispatch.status === 'completed') {
+      (async () => {
+        try {
+          const output = (dispatch.output || []).map(line => {
+            try { return extractStreamText(JSON.parse(line)) || ''; } catch { return ''; }
+          }).join('');
+          const match = output.match(/CREATED_WORK_ITEM:\s*(W-\d+)/);
+          if (match) {
+            const workItemId = match[1];
+            await db.linkDispatchToWorkItem(dispatch.id, workItemId);
+          } else {
+            dispatch.output = [...(dispatch.output || []), JSON.stringify({ type: 'stderr', content: '\n\n[No work item was created. Open the direct form to create manually.]' })];
+          }
+        } catch (err) {
+          console.error('Task creation link failed:', err.message);
+        }
+      })();
+    }
+
+    if (dispatch.dispatch_mode === 'project_refinement' && dispatch.status === 'completed') {
+      (async () => {
+        try {
+          const fullText = (dispatch.output || []).map(line => {
+            try { return extractStreamText(JSON.parse(line)) || ''; } catch { return ''; }
+          }).join('');
+          const match = fullText.match(/# RefinementSummary\s*```json\s*([\s\S]*?)```/);
+          if (match) {
+            await db.updateDispatchMergeResult(dispatch.id, { completion_summary: match[1].trim() });
+          }
+        } catch (err) {
+          console.error('Project refinement summary extraction failed:', err.message);
+        }
+      })();
+    }
+
+    if (dispatch.dispatch_mode === 'refinement' && dispatch.status === 'completed') {
+      (async () => {
+        try {
+          const fullText = (dispatch.output || []).map(line => {
+            try { return extractStreamText(JSON.parse(line)) || ''; } catch { return ''; }
+          }).join('');
+          const match = fullText.match(/# DispatchContract\s*```json\s*([\s\S]*?)```/);
+          if (match) {
+            const contract = JSON.parse(match[1]);
+            const contractBlock = [
+              contract.goal ? `**Goal:** ${contract.goal}` : '',
+              contract.expected_output ? `**Expected Output:** ${contract.expected_output}` : '',
+              contract.constraints?.length ? `**Constraints:**\n${contract.constraints.map(c => `- ${c}`).join('\n')}` : '',
+              contract.failure_conditions?.length ? `**Failure Conditions:**\n${contract.failure_conditions.map(c => `- ${c}`).join('\n')}` : '',
+            ].filter(Boolean).join('\n\n');
+
+            await db.updateWorkItemRefinement(dispatch.work_item_id, {
+              description: contractBlock,
+              status: 'planned'
+            });
+          }
+        } catch (err) {
+          console.error('Refinement extraction failed:', err.message);
+        }
+      })();
+    }
+
+    if (dispatch.prompt_file) {
+      unlinkFile(dispatch.prompt_file).catch(() => {});
+      dispatch.prompt_file = null;
+    }
+
     broadcastDispatchDone(dispatch);
     archiveSession(dispatch, 'dispatch').catch(e => console.error('[dispatch close] archiveSession:', e.message));
     saveDispatchToDb(dispatch).catch(e => console.error('[dispatch close] saveDispatchToDb:', e.message));

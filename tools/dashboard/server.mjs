@@ -15,13 +15,15 @@ import { migrateLegacyPortfolio } from './portfolio-migration.mjs';
 import { json, text, err, safe, readJson, listDirs, listFiles, parseBody, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture, termEventLogPath, generateSeedContent, sleep } from './utils.mjs';
 
 import { dispatches, terminals, cliSessions, saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession } from './state.mjs';
-import { resolveProjectPath, resolveOrgPath, loadPortfolioContext, loadOrgContext, loadWorkItem, loadResumeContext, topoSort, loadEpicPlanSnippet, selectAgentsForDispatch, buildDispatchPrompt, buildResumePrompt, buildAutoImplementPrompt } from './prompt-builder.mjs';
+import { resolveProjectPath, resolveOrgPath, loadPortfolioContext, loadOrgContext, loadWorkItem, loadResumeContext, topoSort, loadEpicPlanSnippet, selectAgentsForDispatch, buildDispatchPrompt, buildResumePrompt, buildAutoImplementPrompt, buildRefinementPrompt, buildTaskCreationPrompt, buildProjectRefinementPrompt } from './prompt-builder.mjs';
 
 import { wireTerminalHandlers, injectPrompt } from './pty-manager.mjs';
 import { syncProjectsFromRegistry, broadcastDispatchLine, broadcastDispatchDone, tailLogFile, restoreSessions, extractStreamText, killProcess, killProcessGraceful, wireDispatchHandlers } from './dispatch-manager.mjs';
+import { sweepOrphanedPromptFiles } from './prompt-file.mjs';
 import { setupWebSocket } from './ws-router.mjs';
 
 import staticRoutes from './routes/static.mjs';
+import detachRoutes from './routes/detach.mjs';
 import portfolioRoutes from './routes/portfolio.mjs';
 import workItemRoutes from './routes/work-items.mjs';
 import approvalRoutes from './routes/approvals.mjs';
@@ -33,16 +35,21 @@ import serverMgmtRoutes from './routes/server-mgmt.mjs';
 import syncRoutes from './routes/sync.mjs';
 import reposRoutes from './routes/repos.mjs';
 import adrsRoutes from './routes/adrs.mjs';
+import projectsRoutes from './routes/projects.mjs';
+import costsRoutes from './routes/costs.mjs';
+import assetsRoutes from './routes/assets.mjs';
 import testEndpointRoutes from './routes/test-endpoints.mjs';
 import { attemptMerge, isMergeLocked } from './merge.mjs';
 
+const TMP_DIR = join(ROOT, 'tmp');
+
 const deps = {
   db, json, text, err, safe, parseBody, readJson, listDirs, listFiles,
-  PORTFOLIO, ROOT, WORK, LOGS_DIR, ARCHITECT_KEY, port,
+  PORTFOLIO, ROOT, WORK, LOGS_DIR, TMP_DIR, ARCHITECT_KEY, port,
   VALID_WORK_ITEM_STATUSES, VALID_EPIC_STATUSES, VALID_PRIORITIES,
   dispatches, terminals, cliSessions,
   wireTerminalHandlers, wireDispatchHandlers, injectPrompt,
-  buildDispatchPrompt, buildResumePrompt, buildAutoImplementPrompt, resolveProjectPath, resolveOrgPath, loadPortfolioContext, loadOrgContext, loadWorkItem, loadResumeContext, selectAgentsForDispatch, loadEpicPlanSnippet,
+  buildDispatchPrompt, buildResumePrompt, buildAutoImplementPrompt, buildRefinementPrompt, buildTaskCreationPrompt, buildProjectRefinementPrompt, resolveProjectPath, resolveOrgPath, loadPortfolioContext, loadOrgContext, loadWorkItem, loadResumeContext, selectAgentsForDispatch, loadEpicPlanSnippet,
   broadcastDispatchLine, broadcastDispatchDone, tailLogFile, killProcess, killProcessGraceful, extractStreamText, syncProjectsFromRegistry,
   saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession,
   restoreSessions,
@@ -57,6 +64,7 @@ const deps = {
 
 const routes = [
   ...staticRoutes(deps),
+  ...detachRoutes(deps),
   ...portfolioRoutes(deps),
   ...approvalRoutes(deps),
   ...workItemRoutes(deps),
@@ -68,6 +76,9 @@ const routes = [
   ...syncRoutes(deps),
   ...reposRoutes(deps),
   ...adrsRoutes(deps),
+  ...projectsRoutes(deps),
+  ...costsRoutes(deps),
+  ...assetsRoutes(deps),
   ...(process.env.WORK_DIR ? testEndpointRoutes(deps) : []),
 ];
 
@@ -180,7 +191,18 @@ async function shutdownFlush() {
     new Promise(resolve => setTimeout(resolve, 5000)),
   ]);
 }
-process.on('SIGTERM', () => { server.close(); shutdownFlush().finally(() => process.exit(0)); });
+process.on('SIGTERM', async () => {
+  server.close();
+  // Flush exit_type = 'interrupted' for all running dispatches that do not have a live PID.
+  // Dispatches with live PIDs will be marked by the close handler when they eventually exit.
+  // Budget: 3000ms via Promise.allSettled (non-blocking — partial flush is acceptable).
+  await Promise.allSettled(
+    [...dispatches.values()]
+      .filter(d => d.status === 'running' && !(d.pid && isPidAlive(d.pid)))
+      .map(d => db.updateDispatchExitType(d.id, 'interrupted').catch(() => {}))
+  );
+  shutdownFlush().finally(() => process.exit(0));
+});
 process.on('SIGINT', () => { server.close(); shutdownFlush().finally(() => process.exit(0)); });
 
 async function main() {
@@ -197,8 +219,12 @@ async function main() {
     process.exit(1);
   }
 
-  // Phase 2: Ensure logs directory
+  // Phase 2: Ensure logs directory and tmp directory
   await mkdir(LOGS_DIR, { recursive: true });
+  await mkdir(TMP_DIR, { recursive: true });
+
+  // On startup, sweep tmp/prompt-*.txt files older than 1 hour
+  sweepOrphanedPromptFiles(TMP_DIR).catch(e => console.error('[startup] prompt file sweep:', e.message));
 
   // Phase 2.5: Sync projects from portfolio registry
   migrateLegacyPortfolio({ legacyPath: LEGACY_PORTFOLIO, targetPath: PORTFOLIO });

@@ -1,6 +1,9 @@
 {
   "permissions": {
-    "allow": [],
+    "allow": [
+      "Bash(curl *127.0.0.1:3777*)",
+      "Bash(curl *localhost:3777*)"
+    ],
     "deny": []
   }
 }

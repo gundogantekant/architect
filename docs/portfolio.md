@@ -110,6 +110,45 @@ For these projects, dispatches run in-place on the project directory — no work
 
 To manually set this for an existing portfolio entry, update `worktree_mode` to `"none"` in the entry's JSON file, or run `/onboard <path> rescan`.
 
+## Detach a Project
+
+`DELETE /api/portfolio/:org/:project/:component` performs full cleanup — use this when removing a project permanently rather than just unregistering it.
+
+**When to use vs `/portfolio remove`**
+
+| Operation | `/portfolio remove` | `DELETE /api/portfolio/:org/:project/:component` |
+|-----------|--------------------|-------------------------------------------------|
+| Remove registry entry | yes | yes |
+| Delete portfolio JSON | yes | yes |
+| Cancel open work items | no | yes |
+| Kill active dispatches | no | optional (`kill_active_dispatches: true`) |
+| Remove git worktrees | no | optional (`remove_worktrees: true`) |
+| Delete CLAUDE.md from project | no | yes (ENOENT silently ignored) |
+| Preserve session_history | n/a | always (historical data retained) |
+
+**Cleanup flags** (request body, all optional):
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `kill_active_dispatches` | `false` | Kill running dispatches for this project. If `false` and dispatches exist, returns 409. |
+| `remove_worktrees` | `false` | Delete all worktrees for this project's work items. |
+
+**DetachReport** (response body):
+
+```json
+{
+  "project_key": "org/project/component",
+  "work_items_cancelled": 3,
+  "work_items_archived": 2,
+  "dispatches_killed": 0,
+  "worktrees_removed": 0,
+  "claude_md_removed": true,
+  "registry_updated": true
+}
+```
+
+**409 guard**: If `kill_active_dispatches: false` (default) and running dispatches exist for the project, the endpoint returns 409 before any mutation occurs. Set `kill_active_dispatches: true` to force cleanup.
+
 ## Context Loading
 
 Every skill loads portfolio context as step 1:

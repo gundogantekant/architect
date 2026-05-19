@@ -1,5 +1,5 @@
 export default function reposRoutes(deps) {
-  const { json, err, db: dbModule, parseBody, isPidAlive, execFileSync, spawn, existsSync, readFileSync, join, ROOT } = deps;
+  const { json, err, db: dbModule, parseBody, isPidAlive, execFileSync, spawn, existsSync, readFileSync, join, ROOT, PORTFOLIO, safe, readFile } = deps;
 
   return [
     [/^\/api\/repos$/, 'GET', async (_m, _req, res) => {
@@ -56,6 +56,47 @@ export default function reposRoutes(deps) {
       );
       child.unref();
       json(res, { started: true });
+    }],
+
+    [/^\/api\/org\/([a-zA-Z0-9_-]+)\/repos$/, 'GET', async (m, _req, res) => {
+      const orgKey = m[1];
+      if (!safe(orgKey)) return err(res, 'invalid org', 400);
+
+      let orgData = {};
+      try {
+        const raw = await readFile(join(PORTFOLIO, orgKey, 'organization.json'), 'utf8');
+        orgData = JSON.parse(raw);
+      } catch {}
+
+      const githubOrg = orgData.github_org ?? orgKey;
+      const rows = await dbModule.getRepoSyncConfigsByGithubOrg(githubOrg);
+
+      const enriched = await Promise.all(rows.map(async row => {
+        if (!row.portfolio_key) return row;
+        const [pOrg, pProject, pComponent] = row.portfolio_key.split('/');
+        try {
+          const entryRaw = await readFile(join(PORTFOLIO, pOrg, pProject, pComponent + '.json'), 'utf8');
+          const entry = JSON.parse(entryRaw);
+          return { ...row, portfolio: { name: entry.name, role: entry.role, last_scanned: entry.last_scanned ?? null } };
+        } catch {
+          return { ...row, portfolio: null };
+        }
+      }));
+
+      json(res, {
+        org: orgKey,
+        onboarded: enriched.filter(r => r.portfolio_key),
+        unregistered: enriched.filter(r => !r.portfolio_key),
+        seeded: rows.length > 0,
+      });
+    }],
+
+    [/^\/api\/repos\/([^/]+)\/portfolio-key$/, 'PATCH', async (m, req, res) => {
+      const name = decodeURIComponent(m[1]);
+      const body = await parseBody(req);
+      if (!('portfolio_key' in body)) return err(res, 'portfolio_key is required', 400);
+      await dbModule.setRepoPortfolioKey(name, body.portfolio_key);
+      json(res, { ok: true });
     }],
   ];
 }

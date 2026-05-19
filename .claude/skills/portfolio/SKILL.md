@@ -48,6 +48,7 @@ View and manage the architect project portfolio.
    - Delete the component JSON file
    - Remove the entry from `portfolio/registry.json`
    - Do not delete the project directory or org directory (other components may exist)
+   - Note: `/portfolio remove` is a shallow unregister (files only). For full cleanup with work item cancellation, dispatch cancellation, worktree removal, and CLAUDE.md deletion, use `DELETE /api/portfolio/:org/:project/:component`. See `docs/portfolio.md` → Detach a Project.
 
 ## Output
 

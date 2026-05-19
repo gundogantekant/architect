@@ -43,6 +43,8 @@ export const DISPATCHABLE_STATUSES = Object.freeze(
   ['draft', 'planned', 'in-progress', 'blocked']
 );
 
+export const DISPATCH_MODES = Object.freeze(['standard', 'auto_implement', 'refinement', 'task_creation', 'project_refinement']);
+
 // Subset for auto-implement (excludes `draft` — require human plan-gate first).
 // Excludes `blocked` — humans block, humans unblock; automation must not bypass that contract.
 export const AUTO_IMPLEMENTABLE_STATUSES = Object.freeze(
@@ -119,8 +121,21 @@ export const PIPELINE_STAGES = Object.freeze([
   'merge_pending', 'done',
 ]);
 
+export const DISPATCH_TIMEOUT_MS = {
+  trivial: 5 * 60 * 1000,
+  small:   15 * 60 * 1000,
+  medium:  60 * 60 * 1000,
+  large:   2 * 60 * 60 * 1000,
+};
+
 export const MIGRATIONS_DIR = join(import.meta.dirname, 'migrations');
 export const BACKUP_DIR = join(ROOT, 'assets', 'backups');
+
+export const INPUT_NEEDED_SOURCE = Object.freeze({
+  BRIDGE: 'agent_phase_bridge',
+  USER: 'user',
+  BLOCKING_QUESTIONS: 'blocking_questions',
+});
 
 export const TMUX_AVAILABLE = (() => {
   try {

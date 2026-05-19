@@ -27,10 +27,12 @@ export let sessionsSidebarInterval = null;
 export let agentsTileInterval = null;
 export let agentsFullRefreshInterval = null;
 export let settingsRefreshTimer = null;
+export let syncPollInterval = null;
 export function setSessionsSidebarInterval(v) { sessionsSidebarInterval = v; }
 export function setAgentsTileInterval(v) { agentsTileInterval = v; }
 export function setAgentsFullRefreshInterval(v) { agentsFullRefreshInterval = v; }
 export function setSettingsRefreshTimer(v) { settingsRefreshTimer = v; }
+export function setSyncPollInterval(v) { syncPollInterval = v; }
 
 // Focus popup
 export let activeFocusPopup = null;

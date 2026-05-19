@@ -9,6 +9,26 @@
 <link rel="modulepreload" href="/vendor/xterm-addon-web-links.mjs">
 <link rel="stylesheet" href="/styles/dashboard.css">
 <link rel="stylesheet" href="/vendor/xterm.css">
+<style>
+.phase-timeline { display: flex; align-items: center; gap: 3px; padding: 4px 16px 2px; min-height: 20px; }
+.phase-dot { width: 8px; height: 8px; border-radius: 50%; cursor: default; flex-shrink: 0; }
+.org-repos-section { margin-top: 8px; }
+.org-repos-section h4 { font-size: 12px; color: var(--text-light); margin: 12px 0 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+.alert-badge { font-size: 11px; padding: 1px 6px; border-radius: 3px; font-weight: 600; cursor: default; }
+.alert-cost  { background: #FEF3C7; color: #92400E; border: 1px solid #F59E0B; }
+.alert-scope { background: #FEE2E2; color: #991B1B; border: 1px solid #EF4444; }
+.timeout-countdown { font-size: 11px; color: var(--text-light, #888); margin-left: 6px; }
+.timeout-badge.timeout-expired { font-size: 11px; background: #FEE2E2; color: #991B1B; padding: 1px 5px; border-radius: 3px; }
+.dispatch-contract-summary { padding: 4px 16px; font-size: 0.85em; border-top: 1px solid var(--border); }
+.dispatch-contract-summary summary { cursor: pointer; color: var(--text-light, #888); user-select: none; }
+.contract-fields { padding: 4px 0; display: flex; flex-direction: column; gap: 3px; }
+.contract-fields div { color: var(--fg); }
+.pipeline-stage-bar { padding: 2px 16px; }
+.btn-refine { font-size: 11px; padding: 2px 7px; border-radius: 3px; border: 1px solid var(--accent, #7c3aed); color: var(--accent, #7c3aed); background: transparent; cursor: pointer; margin-left: 4px; }
+.btn-refine:hover { background: var(--accent, #7c3aed); color: #fff; }
+.cost-badge { font-size: 11px; color: var(--text-light, #888); margin-left: 6px; font-variant-numeric: tabular-nums; }
+.cost-placeholder { font-size: 11px; color: var(--text-light, #888); margin-left: 6px; }
+</style>
 </head>
 <body>
 
@@ -18,7 +38,10 @@
   <div id="sessions-sidebar" class="sessions-section"></div>
   <div id="tree"></div>
   <div class="sidebar-settings" onclick="navigate('repos')"><span class="nav-icon">&#128193;</span> <span>Repos</span></div>
+  <div class="sidebar-settings" data-nav="all-sessions" onclick="location.hash='#all-sessions'"><span class="nav-icon">&#9635;</span> <span>Sessions</span></div>
+  <div class="sidebar-settings" onclick="location.hash='#assets'"><span class="nav-icon">&#128196;</span> <span>Assets</span></div>
   <div class="sidebar-settings" onclick="location.hash='#time-report'"><span class="nav-icon">&#9202;</span> <span>Time Report</span></div>
+  <div class="sidebar-settings" onclick="location.hash='#costs'"><span class="nav-icon">&#128176;</span> <span>Cost Report</span></div>
   <div class="sidebar-settings" onclick="location.hash='#settings'"><span class="nav-icon">&#9881;</span> <span>Settings</span></div>
   <a href="#" class="notes-toggle-btn sidebar-settings" data-notes-toggle title="Toggle notes panel" aria-label="Toggle notes panel">
     <span class="nav-icon">📝</span>
@@ -49,6 +72,7 @@ import {
   agentsTileInterval, setAgentsTileInterval,
   agentsFullRefreshInterval, setAgentsFullRefreshInterval,
   settingsRefreshTimer, setSettingsRefreshTimer,
+  syncPollInterval, setSyncPollInterval,
   activeFocusPopup, setActiveFocusPopup,
   setPrefs, getPrefs,
 } from '/js/state.mjs';
@@ -447,6 +471,10 @@ function finalizeDispatchPanel(dispatch) {
   if (dispatch.dispatch_mode === 'auto_implement') {
     showAutoImplementToast(dispatch);
   }
+  if (dispatch.dispatch_mode === 'refinement' && dispatch.status === 'completed') {
+    setBacklog(null);
+    buildTree().then(() => route()).catch(() => {});
+  }
   syncSessionState();
   if (dispatch.status !== 'running' && dispatch.status !== 'suspended') {
     scheduleAutoDismiss('dispatch', dispatch.id, dispatch);
@@ -585,10 +613,39 @@ async function dismissAllCompleted() {
 
 let _placeTimer = null;
 let _suspendedContainer = null;
+// Off-DOM buffer for panels that don't match the active route's project context.
+// Never appended to document.body — panels move here non-destructively so their
+// DOM state (xterm, WebSocket, etc.) is preserved while hidden.
+const _hiddenPanelBuffer = document.createElement('div');
+
 function placeSessionPanels() {
   if (_placeTimer) return;
   _placeTimer = requestAnimationFrame(() => { _placeTimer = null; _placeSessionPanelsNow(); });
 }
+
+/**
+ * Derive the project_key for the currently active route.
+ * Returns an empty string when no project filter applies (home, agents, epic views, etc.).
+ */
+function _getActiveProjectKey() {
+  const hash = location.hash || '';
+  if (hash.startsWith('#agents')) return '';
+  const compMatch = hash.match(/^#component\/(.+)$/);
+  return compMatch ? compMatch[1] : '';
+}
+
+/**
+ * Return true when this session's panel should be visible in the current route.
+ * Sessions with no project_key are always shown (global sessions).
+ * On the /agents route all panels are shown.
+ * On a component route only sessions whose project_key matches are shown.
+ */
+function _isProjectMatch(sessionProjectKey, activeProjectKey) {
+  if (!sessionProjectKey) return true;          // null / '' → show everywhere
+  if (!activeProjectKey) return true;            // no route filter → show all
+  return sessionProjectKey === activeProjectKey;
+}
+
 function _placeSessionPanelsNow() {
   // 1. Ensure global fallback container exists
   let globalContainer = document.getElementById('dispatch-panels');
@@ -611,6 +668,9 @@ function _placeSessionPanelsNow() {
   let globalHasPanels = false;
   const pendingContentLoads = [];
 
+  // Derive the project filter for the active route (empty = no filter).
+  const activeProjectKey = _getActiveProjectKey();
+
   // 2. Build active session list
   const allSessions = [
     ...activeDispatches.map(d => ({ key: `dispatch:${d.id}`, work_item_id: d.work_item_id, epic_id: d.epic_id, project_key: d.project_key, org_key: d.org_key })),
@@ -623,6 +683,17 @@ function _placeSessionPanelsNow() {
   for (const session of allSessions) {
     const panel = sessionPanels.get(session.key);
     if (!panel) continue;
+
+    // Project filter: panels that don't belong to the active route go into the
+    // off-DOM buffer non-destructively (no WebSocket or PTY lifecycle changes).
+    if (!_isProjectMatch(session.project_key, activeProjectKey)) {
+      if (panel.parentElement !== _hiddenPanelBuffer) {
+        _hiddenPanelBuffer.appendChild(panel);
+      }
+      continue;
+    }
+
+    const wasOffDom = panel.parentElement === _hiddenPanelBuffer;
 
     let targetSlot = null;
 
@@ -672,6 +743,17 @@ function _placeSessionPanelsNow() {
       movedPanels.add(session.key);
     }
 
+    // A panel re-entering the live DOM from the off-DOM buffer needs an explicit fit()
+    // because the isConnected guard in the normal moved-panels path fires only for
+    // same-slot moves, and xterm.js does not auto-resize when re-attached.
+    if (wasOffDom && panel.isConnected && panel.parentElement !== _hiddenPanelBuffer) {
+      const terminalInfo = activeTerminals.find(t => session.key === `terminal:${t.id}`);
+      const ss = terminalInfo?._sessionState;
+      if (ss?._fitAddon && ss._term) {
+        requestAnimationFrame(() => fitPreservingScroll(ss._term, ss._fitAddon));
+      }
+    }
+
     // Collect dispatches needing content load — called after step 4 when all
     // containers are in the document, so getElementById resolves correctly.
     if (session.key.startsWith('dispatch:')) {
@@ -703,7 +785,9 @@ function _placeSessionPanelsNow() {
     loadDispatchContent(dispatch);
   }
 
-  // 5. Context-aware expand/collapse: expand relevant panels, collapse others
+  // 5. Context-aware expand/collapse: expand relevant panels, collapse others.
+  // Guards on previousProjectKey to prevent cross-project navigation from folding
+  // sessions that belong to a project the user is navigating away from.
   const hash = location.hash || '';
   let viewProjectKey = '';
   let viewEpicId = '';
@@ -712,7 +796,10 @@ function _placeSessionPanelsNow() {
   const epicMatch = hash.match(/^#epic\/(.+)$/);
   if (epicMatch) viewEpicId = epicMatch[1];
 
-  if (viewProjectKey || viewEpicId) {
+  // Skip auto-fold when navigating to a different project than was previously shown.
+  const isCrossProjectNav = viewProjectKey && previousProjectKey && viewProjectKey !== previousProjectKey;
+
+  if (!isCrossProjectNav && (viewProjectKey || viewEpicId)) {
     for (const session of allSessions) {
       let isRelevant = true;
       if (viewProjectKey) {
@@ -940,11 +1027,15 @@ class TerminalEventQueue {
     const { seq, eventType, payload } = event;
 
     if (eventType === 'resize') {
-      const rect = this._containerEl ? this._containerEl.getBoundingClientRect() : null;
-      if (rect && rect.width > 0 && rect.height > 0) {
-        fitPreservingScroll(this._term, this._fitAddon);
-      } else {
-        try { this._term.resize(payload.cols, payload.rows); } catch {}
+      // Only apply fitAddon.fit() when LIVE — replayed resize events during reconnect must not
+      // overwrite the local viewport that was already initialized from stream-start dims.
+      if (this._sessionState && this._sessionState.state === 'LIVE') {
+        const rect = this._containerEl ? this._containerEl.getBoundingClientRect() : null;
+        if (rect && rect.width > 0 && rect.height > 0) {
+          fitPreservingScroll(this._term, this._fitAddon);
+        } else {
+          try { this._term.resize(payload.cols, payload.rows); } catch {}
+        }
       }
     } else if (eventType === 'meta') {
       updatePanelMeta(this._sessionState, payload.key, payload.value);
@@ -1269,10 +1360,10 @@ async function initSession(terminalInfo) {
       sessionState.state = 'LIVE';
       if (loadingEl) { loadingEl.remove(); loadingEl = null; }
       wsManager.resetBackoff();
-      // Send resize to notify server of actual client dimensions
-      if (sessionState._term) {
-        wsManager.send({ type: 'resize', cols: sessionState._term.cols, rows: sessionState._term.rows });
-      }
+      // Do NOT auto-send resize on stream-live — this would overwrite existing subscribers'
+      // PTY dimensions with this client's (possibly smaller) viewport. The server sends
+      // authoritative cols/rows in stream-start; local xterm uses those to initialize its
+      // viewport. Suppress the WS send; only send resize on explicit ResizeObserver events.
       // Auto-focus on first LIVE transition
       if (!sessionState.firstLiveSeen && sessionState._term) {
         sessionState.firstLiveSeen = true;
@@ -1443,6 +1534,48 @@ async function restoreTerminals() {
   } catch {}
 }
 
+function renderPhaseTimeline(history) {
+  if (!history || history.length < 2) return '';
+  const phaseColors = { generating: '#4A9EFF', tool_running: '#F59E0B', waiting_for_input: '#F59E0B' };
+  const dots = history.map(entry => {
+    const color = phaseColors[entry.phase] || '#6B7280';
+    const time = entry.at ? new Date(entry.at).toLocaleTimeString() : '';
+    const label = entry.phase ? entry.phase.replace(/_/g, ' ') : 'idle';
+    return `<div class="phase-dot" style="background:${color}" title="${esc(label)} at ${esc(time)}"></div>`;
+  }).join('');
+  return `<div class="phase-timeline">${dots}</div>`;
+}
+
+function renderDispatchAlerts(dispatch) {
+  const log = dispatch.session_log || [];
+  const badges = [];
+  const costAlert = log.find(e => e.trigger === 'cost-anomaly');
+  const scopeAlert = log.find(e => e.trigger === 'scope-violation');
+  if (costAlert) {
+    badges.push(`<span class="alert-badge alert-cost" title="${esc(costAlert.summary)}">⚠ Cost</span>`);
+  }
+  if (scopeAlert) {
+    badges.push(`<span class="alert-badge alert-scope" title="${esc(scopeAlert.summary)}">⚠ Scope</span>`);
+  }
+  return badges.join('');
+}
+
+function renderTimeoutCountdown(dispatch) {
+  if (!dispatch.timeout_at) return '';
+  if (dispatch.status === 'running') {
+    const remaining = new Date(dispatch.timeout_at).getTime() - Date.now();
+    if (remaining <= 0) return '<span class="timeout-badge timeout-expired">Timed out</span>';
+    const mins = Math.floor(remaining / 60000);
+    const secs = Math.floor((remaining % 60000) / 1000);
+    return `<span class="timeout-countdown" title="Auto-timeout in ${mins}m ${secs}s">⏱ ${mins}m${secs < 10 ? '0' : ''}${secs}s</span>`;
+  }
+  if (dispatch.status === 'failed' && dispatch.completed_at) {
+    const diff = Math.abs(new Date(dispatch.completed_at).getTime() - new Date(dispatch.timeout_at).getTime());
+    if (diff < 10000) return '<span class="timeout-badge timeout-expired">Timed out</span>';
+  }
+  return '';
+}
+
 function createCliSessionPanel(session) {
   return createSessionPanel('cli', session);
 }
@@ -1461,6 +1594,11 @@ function createSessionPanel(type, info) {
     const planBadge = dispatch.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
     const suspendedBadge = isSuspended ? '<span class="suspended-badge">[suspended]</span>' : '';
     const autoImplementBadge = dispatch.dispatch_mode === 'auto_implement' ? '<span class="status-badge badge-open badge-auto">[auto]</span>' : '';
+    const alertBadges = renderDispatchAlerts(dispatch);
+    const timeoutBadge = renderTimeoutCountdown(dispatch);
+    const costBadge = dispatch.cost_usd != null
+      ? `<span class="cost-badge">$${dispatch.cost_usd.toFixed(4)}</span>`
+      : '';
     const dKeyParts = (dispatch.project_key || '').split('/').filter(p => p && p !== '*');
     const dBreadcrumb = [];
     if (dKeyParts.length >= 2) dBreadcrumb.push(`${esc(dKeyParts[0])} / ${esc(dKeyParts[1])}`);
@@ -1479,8 +1617,8 @@ function createSessionPanel(type, info) {
     panel.innerHTML = `
       <div class="dispatch-header">
         <span class="status-dot ${isRunning ? (dispatch.agent_phase === 'waiting_for_input' ? 'needs-input' : dispatch.agent_phase === 'tool_running' ? 'tool-running' : 'generating') : dispatch.status}" title="${isRunning ? ({generating:'Thinking',tool_running:'Running tool',waiting_for_input:'Needs input'}[dispatch.agent_phase]||'') : ''}"></span>
-        <span class="dispatch-title">${dispatchPathStr}${planBadge}${skipBadge}${suspendedBadge}${autoImplementBadge}</span>
-        <span class="dispatch-meta">${new Date(dispatch.started_at).toLocaleTimeString()}</span>
+        <span class="dispatch-title">${dispatchPathStr}${planBadge}${skipBadge}${suspendedBadge}${autoImplementBadge}${alertBadges}${timeoutBadge}</span>
+        <span class="dispatch-meta">${new Date(dispatch.started_at).toLocaleTimeString()}${costBadge}</span>
         <button class="focus-btn" data-focus-dispatch="${esc(id)}">Focus</button>
         <button class="minimize-btn" data-minimize-dispatch="${esc(id)}">▼</button>
         <button class="suspend-btn" data-suspend-dispatch="${esc(id)}" ${!isRunning ? 'style="display:none"' : ''}>Suspend</button>
@@ -1488,6 +1626,26 @@ function createSessionPanel(type, info) {
         <button class="kill-btn" data-kill-dispatch="${esc(id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
         <button class="dismiss-btn" data-dismiss-dispatch="${esc(id)}" ${isRunning ? 'style="display:none"' : ''}>✕</button>
       </div>
+      ${renderPhaseTimeline(dispatch.agent_phase_history)}
+      ${dispatch.pipeline_stage ? `<div class="pipeline-stage-bar">${renderPipelineStageBar(dispatch.pipeline_stage)}</div>` : ''}
+      ${dispatch.contract ? `
+<details class="dispatch-contract-summary">
+  <summary>Contract</summary>
+  <div class="contract-fields">
+    ${dispatch.contract.goal ? `<div><strong>Goal:</strong> ${esc(dispatch.contract.goal)}</div>` : ''}
+    ${dispatch.contract.expected_output ? `<div><strong>Expected:</strong> ${esc(dispatch.contract.expected_output)}</div>` : ''}
+    ${dispatch.contract.constraints?.length ? `<div><strong>Constraints:</strong> ${(Array.isArray(dispatch.contract.constraints) ? dispatch.contract.constraints : [dispatch.contract.constraints]).map(esc).join(', ')}</div>` : ''}
+    ${dispatch.contract.failure_conditions?.length ? `<div><strong>Failure:</strong> ${(Array.isArray(dispatch.contract.failure_conditions) ? dispatch.contract.failure_conditions : [dispatch.contract.failure_conditions]).map(esc).join(', ')}</div>` : ''}
+  </div>
+</details>` : ''}
+      ${dispatch.work_item_input_needed ? '<div class="input-needed-banner" style="background:#FEF3C7;color:#92400E;padding:4px 8px;font-size:11px;border-radius:3px;margin-bottom:4px;">⚠ Waiting for input</div>' : ''}
+      ${dispatch.exit_type === 'interrupted' ? `
+      <div class="recovery-banner" data-recovery-dispatch="${esc(id)}" style="background:#EDE9FE;color:#5B21B6;border:1px solid #8B5CF6;border-radius:4px;padding:6px 10px;margin:4px 8px;font-size:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span style="font-weight:600;">Session interrupted — recover?</span>
+        ${dispatch.claude_session_id ? `<span style="font-family:monospace;font-size:11px;opacity:0.8;">${esc(dispatch.claude_session_id)}</span>` : ''}
+        <button class="btn-redispatch" data-redispatch="${esc(id)}" style="font-size:11px;padding:2px 8px;border-radius:3px;border:1px solid #7C3AED;color:#7C3AED;background:transparent;cursor:pointer;">Re-dispatch</button>
+        <button class="btn-dismiss-interrupted" data-dismiss-interrupted="${esc(id)}" style="font-size:11px;padding:2px 8px;border-radius:3px;border:1px solid #9CA3AF;color:#6B7280;background:transparent;cursor:pointer;">Dismiss</button>
+      </div>` : ''}
       <div class="dispatch-log${resolveTermTheme() === 'light' ? ' log-light' : ''}" id="log-${id}"></div>
       <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
         <button class="focus-btn" data-focus-dispatch-bottom="${esc(id)}">Focus</button>
@@ -1585,6 +1743,38 @@ function createSessionPanel(type, info) {
       syncSessionState();
     };
 
+    // Recovery banner: Re-dispatch button — opens dispatch modal pre-filled with same context
+    const redispatchBtn = panel.querySelector(`[data-redispatch="${id}"]`);
+    if (redispatchBtn) {
+      redispatchBtn.onclick = async () => {
+        // Open dispatch modal pre-filled with the interrupted dispatch's context
+        const modal = document.getElementById('dispatch-modal');
+        if (modal) {
+          const wiInput = modal.querySelector('[name="work_item_id"], #dispatch-work-item-id');
+          const projectInput = modal.querySelector('[name="project_key"], #dispatch-project-key');
+          if (wiInput && dispatch.work_item_id) wiInput.value = dispatch.work_item_id;
+          if (projectInput && dispatch.project_key) projectInput.value = dispatch.project_key;
+          modal.style.display = '';
+          modal.removeAttribute('hidden');
+        }
+      };
+    }
+
+    // Recovery banner: Dismiss button — marks dispatch as dismissed (no more recovery banner)
+    const dismissInterruptedBtn = panel.querySelector(`[data-dismiss-interrupted="${id}"]`);
+    if (dismissInterruptedBtn) {
+      dismissInterruptedBtn.onclick = async () => {
+        try {
+          const resp = await fetch(`/api/dispatch/${id}/dismiss`, { method: 'POST' });
+          if (resp.ok) {
+            const banner = panel.querySelector(`[data-recovery-dispatch="${id}"]`);
+            if (banner) banner.remove();
+            dispatch.exit_type = null;
+          }
+        } catch {}
+      };
+    }
+
   } else if (type === 'terminal') {
     const terminalInfo = info;
     panel.className = `terminal-panel status-${terminalInfo.status}`;
@@ -1617,7 +1807,7 @@ function createSessionPanel(type, info) {
       <div class="terminal-header">
         <span class="status-dot ${isRunning ? 'running' : terminalInfo.status}"></span>
         <span class="terminal-title">${termPathStr}${shellBadge}${planBadge}${skipBadge}${suspendedBadge}</span>
-        <span class="terminal-meta">${new Date(terminalInfo.started_at).toLocaleTimeString()}</span>
+        <span class="terminal-meta">${new Date(terminalInfo.started_at).toLocaleTimeString()}<span class="cost-placeholder">—</span></span>
         <button class="focus-btn" data-focus-terminal="${esc(id)}">Focus</button>
         <button class="minimize-btn" data-minimize-terminal="${esc(id)}">▼</button>
         <button class="suspend-btn" data-suspend-terminal="${esc(id)}" ${(!isRunning || terminalInfo.agent_type !== 'claude') ? 'style="display:none"' : ''}>Suspend</button>
@@ -1784,6 +1974,20 @@ async function restoreCliSessions() {
     placeSessionPanels();
     syncSessionState();
   } catch {}
+}
+
+async function refineWorkItem(id) {
+  try {
+    const res = await fetch(`/api/work-items/${id}/refine`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    if (!res.ok) {
+      const e = await res.json();
+      alert(e.error || 'Refinement failed');
+      return;
+    }
+    setTimeout(() => location.reload(), 500);
+  } catch (e) {
+    alert('Refinement request failed');
+  }
 }
 
 async function dispatchWorkItem(workItem, projectKey) {
@@ -2252,8 +2456,34 @@ async function restoreDispatches() {
     for (const d of list) {
       const existing = activeDispatches.find(a => a.id === d.id);
       if (existing) {
+        const prevPhase = existing.agent_phase;
         existing.agent_phase = d.agent_phase || null;
+        existing.agent_phase_history = d.agent_phase_history || existing.agent_phase_history || [];
         existing.status = d.status;
+        existing.timeout_at = d.timeout_at || existing.timeout_at || null;
+        existing.work_item_input_needed = d.work_item_input_needed || false;
+        const panelEl = document.getElementById(`dispatch-${existing.id}`);
+        if (panelEl) {
+          const prev = panelEl.querySelector('.phase-timeline');
+          const next = renderPhaseTimeline(existing.agent_phase_history);
+          if (next) {
+            const tmp = document.createElement('div');
+            tmp.innerHTML = next;
+            if (prev) prev.replaceWith(tmp.firstChild);
+            else {
+              const logEl = panelEl.querySelector(`#log-${existing.id}`);
+              if (logEl) logEl.before(tmp.firstChild);
+            }
+          } else if (prev) {
+            prev.remove();
+          }
+          if (!existing.work_item_input_needed) {
+            panelEl.querySelector('.input-needed-banner')?.remove();
+          }
+        }
+        if (prevPhase !== 'waiting_for_input' && existing.agent_phase === 'waiting_for_input' && existing.project_key) {
+          scheduleAwaitingActionRefresh(existing.project_key);
+        }
         continue;
       }
       if (d.status === 'suspended') {
@@ -2433,7 +2663,7 @@ async function buildTree() {
         item.className = 'project-item';
         item.dataset.key = key;
         const projInitial = (proj || '?')[0].toUpperCase();
-        item.innerHTML = `<span class="nav-avatar" title="${esc(proj + '/' + comp)}">${esc(projInitial)}</span><span class="signal-dot ${sig.color}" title="${esc(sig.title || '')}"></span>${esc(proj)} / ${esc(comp)}`;
+        item.innerHTML = `<span class="nav-avatar" title="${esc(proj + '/' + comp)}">${esc(projInitial)}</span><span class="signal-dot ${sig.color}" title="${esc(sig.title || '')}"></span>${comp === 'main' ? esc(proj) : `${esc(proj)} / ${esc(comp)}`}`;
         item.onclick = (e) => {
           e.stopPropagation();
           location.hash = `#component/${o}/${proj}/${comp}`;
@@ -2541,6 +2771,11 @@ function renderOrgView(org, data, orgSessions) {
     }
   }
 
+  // Async repos section — populated after render
+  html += `<div id="org-repos-${esc(org)}" style="margin-top:16px">`;
+  html += `<h3 style="font-size:14px;margin:0 0 8px">Repositories <span id="org-repos-loading-${esc(org)}" style="font-size:11px;color:var(--text-light)">(loading…)</span></h3>`;
+  html += `</div>`;
+
   // Org-level session slot for terminal panels
   html += `<div data-session-slot-org="${esc(org)}" style="margin-top:16px"></div>`;
 
@@ -2548,9 +2783,263 @@ function renderOrgView(org, data, orgSessions) {
   return html;
 }
 
+function renderOrgReposSection(org, data) {
+  let html = `<div class="org-repos-section">`;
+
+  if (data.seeded === false) {
+    html += `<p style="font-size:13px;color:var(--text-light);margin:4px 0 8px">No repositories seeded.</p>`;
+    html += `<button class="btn-add-wi" id="org-repos-seed-${esc(org)}" style="background:var(--accent)">Seed from GitHub</button>`;
+    html += `</div>`;
+    return html;
+  }
+
+  if (data.onboarded && data.onboarded.length > 0) {
+    html += `<h4>Onboarded (${data.onboarded.length})</h4>`;
+    html += `<table class="org-agents-table"><thead><tr><th>Repo</th><th>Path</th><th>Last Updated</th><th></th></tr></thead><tbody>`;
+    for (const repo of data.onboarded) {
+      const parts = (repo.portfolio_key || '').split('/');
+      const project = parts[1] || '';
+      const component = parts[2] || '';
+      const updated = repo.updated_at ? fmtDate(repo.updated_at) : '\u2014';
+      html += `<tr>`;
+      html += `<td><code>${esc(repo.name || repo.portfolio_key || '')}</code></td>`;
+      html += `<td style="font-size:11px;color:var(--text-light)">${esc(repo.path || '\u2014')}</td>`;
+      html += `<td style="font-size:11px">${esc(updated)}</td>`;
+      html += `<td>`;
+      if (repo.portfolio_key) {
+        html += `<a href="#component/${esc(repo.portfolio_key.replace(/\//g, '/'))}" style="font-size:11px;color:var(--accent);margin-right:8px">View</a>`;
+      }
+      html += `<button class="focus-btn" data-detach-org="${esc(org)}" data-detach-project="${esc(project)}" data-detach-component="${esc(component)}" style="font-size:11px;color:var(--danger,#e74c3c);border-color:var(--danger,#e74c3c)">Detach</button>`;
+      html += `</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+
+  if (data.unregistered && data.unregistered.length > 0) {
+    html += `<h4>Unregistered (${data.unregistered.length})</h4>`;
+    html += `<table class="org-agents-table"><thead><tr><th>Repo</th><th>Last Updated</th><th></th></tr></thead><tbody>`;
+    for (const repo of data.unregistered) {
+      const updated = repo.updated_at ? fmtDate(repo.updated_at) : '\u2014';
+      html += `<tr>`;
+      html += `<td><code>${esc(repo.name || '')}</code></td>`;
+      html += `<td style="font-size:11px">${esc(updated)}</td>`;
+      html += `<td><button class="focus-btn" data-onboard-repo="${esc(repo.name || '')}" style="font-size:11px">Onboard</button></td>`;
+      html += `</tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+
+  if ((!data.onboarded || !data.onboarded.length) && (!data.unregistered || !data.unregistered.length)) {
+    html += `<p style="font-size:13px;color:var(--text-light);margin:4px 0">No repositories found.</p>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+function bindOrgReposEvents(org, data) {
+  // Seed from GitHub button
+  const seedBtn = document.getElementById(`org-repos-seed-${org}`);
+  if (seedBtn) {
+    seedBtn.onclick = async () => {
+      seedBtn.disabled = true;
+      seedBtn.textContent = 'Seeding\u2026';
+      try {
+        const resp = await fetch(`/api/repos/seed?org=${encodeURIComponent(org)}`, { method: 'POST' });
+        if (!resp.ok) throw new Error('Seed failed');
+        refreshOrgReposSection(org);
+      } catch (e) {
+        seedBtn.disabled = false;
+        seedBtn.textContent = 'Seed from GitHub';
+        alert('Seed failed: ' + e.message);
+      }
+    };
+  }
+
+  // Detach buttons
+  document.querySelectorAll(`[data-detach-org="${CSS.escape(org)}"]`).forEach(btn => {
+    btn.onclick = () => {
+      const project = btn.dataset.detachProject;
+      const component = btn.dataset.detachComponent;
+      showDetachModal(org, project, component);
+    };
+  });
+
+  // Onboard buttons
+  document.querySelectorAll('[data-onboard-repo]').forEach(btn => {
+    btn.onclick = () => showOnboardFromRepoModal(org, btn.dataset.onboardRepo);
+  });
+}
+
+async function refreshOrgReposSection(org) {
+  const el = document.getElementById(`org-repos-${org}`);
+  if (!el) return;
+  el.innerHTML = `<h3 style="font-size:14px;margin:0 0 8px">Repositories <span style="font-size:11px;color:var(--text-light)">(loading\u2026)</span></h3>`;
+  fetch(`/api/org/${encodeURIComponent(org)}/repos`)
+    .then(r => r.ok ? r.json() : null)
+    .then(data => {
+      if (!el) return;
+      if (!data) {
+        el.innerHTML = `<h3 style="font-size:14px;margin:0 0 8px">Repositories</h3>`;
+        return;
+      }
+      el.innerHTML = `<h3 style="font-size:14px;margin:0 0 8px">Repositories</h3>` + renderOrgReposSection(org, data);
+      bindOrgReposEvents(org, data);
+    })
+    .catch(() => {
+      if (el) el.innerHTML = `<h3 style="font-size:14px;margin:0 0 8px">Repositories</h3><p style="color:var(--danger,#e74c3c);font-size:12px">Failed to load repositories</p>`;
+    });
+}
+
+function showDetachModal(org, project, component) {
+  const portfolioKey = `${org}/${project}/${component}`;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Detach Repository</h3>
+      <p style="font-size:13px;margin:0 0 12px">Detach <code>${esc(portfolioKey)}</code> from the portfolio.</p>
+      <div style="font-size:13px;margin-bottom:12px">
+        <div style="font-weight:600;margin-bottom:6px">Cleanup options:</div>
+        <label style="display:block;margin-bottom:4px"><input type="checkbox" name="cancel_open" checked style="margin-right:6px">Cancel open work items</label>
+        <label style="display:block;margin-bottom:4px"><input type="checkbox" name="archive_done" checked style="margin-right:6px">Archive done work items</label>
+        <label style="display:block;margin-bottom:4px"><input type="checkbox" name="remove_claude_md" checked style="margin-right:6px">Remove CLAUDE.md <span style="font-size:11px;color:var(--text-light)">(recoverable from git)</span></label>
+        <label style="display:block;margin-bottom:4px"><input type="checkbox" name="unlink_repo_sync" checked style="margin-right:6px">Unlink repo sync</label>
+        <label style="display:block;margin-bottom:4px"><input type="checkbox" name="kill_dispatches" checked style="margin-right:6px">Kill active dispatches</label>
+        <label style="display:block;margin-bottom:4px"><input type="checkbox" name="remove_worktrees" style="margin-right:6px">Remove worktrees <span style="font-size:11px;color:var(--text-light)">&#9888; Destructive \u2014 unmerged work will be lost</span></label>
+      </div>
+      <div id="detach-report-${esc(portfolioKey.replace(/\//g, '-'))}" style="margin-bottom:8px"></div>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" id="detach-cancel">Cancel</button>
+        <button class="btn btn-dispatch" id="detach-confirm" style="background:var(--danger,#e74c3c)">Detach</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#detach-cancel').onclick = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  const reportEl = overlay.querySelector(`#detach-report-${portfolioKey.replace(/\//g, '-')}`);
+
+  overlay.querySelector('#detach-confirm').onclick = async () => {
+    const confirmBtn = overlay.querySelector('#detach-confirm');
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Detaching\u2026';
+
+    const opts = {};
+    overlay.querySelectorAll('input[type=checkbox]').forEach(cb => {
+      opts[cb.name] = cb.checked;
+    });
+
+    try {
+      const resp = await fetch(`/api/portfolio/${encodeURIComponent(org)}/${encodeURIComponent(project)}/${encodeURIComponent(component)}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(opts),
+      });
+      const result = await resp.json();
+      if (!resp.ok) {
+        const errors = result.errors || [result.error || 'Detach failed'];
+        reportEl.innerHTML = `<ul style="color:var(--danger,#e74c3c);font-size:12px;margin:0;padding-left:16px">${errors.map(e => `<li>${esc(String(e))}</li>`).join('')}</ul>`;
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Detach';
+        return;
+      }
+      // Show DetachReport steps
+      const steps = result.steps || [];
+      if (steps.length) {
+        reportEl.innerHTML = `<ul style="font-size:12px;color:var(--text-light);margin:0;padding-left:16px">${steps.map(s => `<li>${esc(String(s))}</li>`).join('')}</ul>`;
+      } else {
+        reportEl.innerHTML = `<p style="font-size:12px;color:var(--text-light)">Detached successfully.</p>`;
+      }
+      overlay.querySelector('#detach-cancel').textContent = 'Close';
+      overlay.querySelector('#detach-cancel').style.display = '';
+      confirmBtn.style.display = 'none';
+      setTimeout(() => {
+        overlay.remove();
+        location.hash = `#org/${org}`;
+      }, 2000);
+    } catch (e) {
+      reportEl.innerHTML = `<p style="color:var(--danger,#e74c3c);font-size:12px">${esc(e.message || 'Detach failed')}</p>`;
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = 'Detach';
+    }
+  };
+}
+
+function showOnboardFromRepoModal(org, repoName) {
+  const defaultPath = `/Users/tekantgundogan/Documents/${repoName}`;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Onboard Repository</h3>
+      <div class="field">
+        <label>Repository</label>
+        <div style="font-size:13px"><code>${esc(repoName)}</code></div>
+      </div>
+      <div class="field">
+        <label>Local Path *</label>
+        <input type="text" id="onboard-repo-path" value="${esc(defaultPath)}" placeholder="/absolute/path/to/repo" />
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" id="onboard-repo-cancel">Cancel</button>
+        <button class="btn btn-dispatch" id="onboard-repo-go">Open terminal to onboard</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#onboard-repo-cancel').onclick = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  overlay.querySelector('#onboard-repo-go').onclick = async () => {
+    const localPath = overlay.querySelector('#onboard-repo-path').value.trim();
+    if (!localPath) { alert('Local path is required'); return; }
+
+    const btn = overlay.querySelector('#onboard-repo-go');
+    btn.disabled = true;
+    btn.textContent = 'Opening terminal\u2026';
+
+    try {
+      const resp = await fetch('/api/terminal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: `/onboard ${localPath}`, title: `Onboard ${repoName}` }),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error || 'Failed to open terminal');
+
+      const terminalInfo = {
+        id: result.terminal_id,
+        agent_type: 'claude',
+        work_item_id: null,
+        project_key: null,
+        org_key: org,
+        title: `Onboard ${repoName}`,
+        status: 'running',
+        started_at: new Date().toISOString(),
+      };
+      activeTerminals.push(terminalInfo);
+      syncSessionState();
+      createTerminalPanel(terminalInfo);
+      placeSessionPanels();
+      await initSession(terminalInfo);
+      overlay.remove();
+      location.hash = `#terminal/${result.terminal_id}`;
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = 'Open terminal to onboard';
+      alert('Failed: ' + e.message);
+    }
+  };
+}
+
 // Store current work items context for dispatch
 let currentWorkItems = [];
 let currentProjectKey = '';
+// Tracks the project key visible to the user before the current navigation began.
+// Used by placeSessionPanels to distinguish same-project panel updates from cross-project navigations.
+let previousProjectKey = '';
 const ARCHITECT_KEY = '\u2013/architect/\u2013';
 
 // Render a work items table — reusable for both flat and epic-grouped modes.
@@ -2559,7 +3048,7 @@ const ARCHITECT_KEY = '\u2013/architect/\u2013';
 // `tableId` = optional id attribute for the table element.
 function renderWorkItemsTable(items, allWorkItems, tableId) {
   if (!items.length) return '';
-  let html = `<table${tableId ? ` id="${tableId}"` : ''} class="wi-table"><thead><tr><th data-wi-sort="id" style="cursor:pointer">ID &#8645;</th><th>Title</th><th data-wi-sort="status" style="cursor:pointer">Status &#8645;</th><th data-wi-sort="priority" style="cursor:pointer">Priority &#8645;</th><th>Depends On</th><th>Epic</th><th>Tags</th><th></th></tr></thead><tbody>`;
+  let html = `<table${tableId ? ` id="${tableId}"` : ''} class="wi-table"><thead><tr><th data-wi-sort="id" style="cursor:pointer">ID &#8645;</th><th>Title</th><th data-wi-sort="status" style="cursor:pointer">Status &#8645;</th><th data-wi-sort="priority" style="cursor:pointer">Priority &#8645;</th><th>Depends On</th><th>Epic</th><th>Tags</th><th data-wi-sort="createdat" style="cursor:pointer">Created &#8645;</th><th data-wi-sort="doneat" style="cursor:pointer">Done &#8645;</th><th></th></tr></thead><tbody>`;
   for (const w of items) {
     const idx = allWorkItems.indexOf(w);
     const sc = w.status || 'draft';
@@ -2574,14 +3063,19 @@ function renderWorkItemsTable(items, allWorkItems, tableId) {
     const depTooltip = depState.blocked ? ` title="Dependencies not yet complete: ${depState.pending.join(', ')}"` : '';
     const flagHtml = (w.input_needed ? `<span class="flag-badge flag-input">input needed</span>` : '') +
                      (w.approval_active ? `<span class="flag-badge flag-approval">approval needed</span>` : '');
-    html += `<tr${rowClass}${depTooltip} data-wi-row="${idx}" data-wi-status-val="${esc(w.status)}" data-wi-priority-val="${esc(w.priority || 'medium')}" data-wi-epic-val="${esc(w.epic_id || '')}" data-wi-tags-val="${esc((w.tags||[]).join(','))}"><td><code>${esc(w.id)}</code></td><td>${esc(w.title)}</td>`;
+    html += `<tr${rowClass}${depTooltip} data-wi-row="${idx}" data-wi-status-val="${esc(w.status)}" data-wi-priority-val="${esc(w.priority || 'medium')}" data-wi-epic-val="${esc(w.epic_id || '')}" data-wi-tags-val="${esc((w.tags||[]).join(','))}" data-wi-createdat-val="${w.created_at ? new Date(w.created_at).getTime() : 0}" data-wi-doneat-val="${w.done_at ? new Date(w.done_at).getTime() : 0}"><td><code>${esc(w.id)}</code></td><td>${esc(w.title)}</td>`;
     html += `<td><span class="badge badge-${sc}" data-status-click="${esc(w.id)}" data-current-status="${esc(w.status)}" style="cursor:pointer">${esc(w.status)}</span>${flagHtml}</td>`;
     html += `<td><span class="badge badge-${w.priority || 'medium'}">${esc(w.priority || '\u2014')}</span></td>`;
     html += `<td>${depHtml}</td>`;
     html += `<td>${w.epic_id ? `<span class="badge badge-epic" data-epic-nav="${esc(w.epic_id)}">${esc(w.epic_id)}</span>` : ''}</td>`;
     html += `<td>${(w.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
+    html += `<td>${w.created_at ? new Date(w.created_at).toLocaleDateString() : '—'}</td>`;
+    html += `<td>${w.done_at ? new Date(w.done_at).toLocaleDateString() : '—'}</td>`;
     html += `<td><button class="expand-btn" data-wi="${idx}">details</button>`;
     html += `<button class="edit-btn" data-wi-edit="${idx}">edit</button>`;
+    if (w.status === 'draft') {
+      html += `<button class="btn-refine" onclick="refineWorkItem('${esc(w.id)}')" title="Ask coordinator to generate an implementation contract">Refine</button>`;
+    }
     if (canDispatch) {
       const hasActiveDispatch = (window._activeDispatches || []).some(d => d.work_item_id === w.id && d.status === 'running');
       // Keep in sync with constants.mjs AUTO_IMPLEMENTABLE_STATUSES (frontend has no module loader).
@@ -2595,7 +3089,7 @@ function renderWorkItemsTable(items, allWorkItems, tableId) {
     }
     html += `<button class="delete-btn" data-wi-del="${idx}">delete</button>`;
     html += `</td></tr>`;
-    html += `<tr class="wi-detail" data-wi-detail="${idx}" style="display:none"><td colspan="8">`;
+    html += `<tr class="wi-detail" data-wi-detail="${idx}" style="display:none"><td colspan="10">`;
     html += `<div style="font-size:11px;color:var(--text-light);margin-bottom:8px;display:flex;flex-wrap:wrap;gap:4px 12px">`;
     html += `<span>Created: ${fmtDate(w.created_at)}</span>`;
     html += `<span>Updated: ${fmtDate(w.updated_at)}</span>`;
@@ -2622,7 +3116,7 @@ function renderWorkItemsTable(items, allWorkItems, tableId) {
     html += `</div>`;
     html += `<div class="wi-artifact-container" data-artifact-for="${esc(w.id)}" style="margin-top:8px"></div>`;
     html += `</td></tr>`;
-    html += `<tr class="wi-sessions-row" data-wi-sessions="${esc(w.id)}" style="display:none"><td colspan="8"><div class="wi-sessions-container" data-session-slot="${esc(w.id)}"></div></td></tr>`;
+    html += `<tr class="wi-sessions-row" data-wi-sessions="${esc(w.id)}" style="display:none"><td colspan="10"><div class="wi-sessions-container" data-session-slot="${esc(w.id)}"></div></td></tr>`;
   }
   html += `</tbody></table>`;
   return html;
@@ -2681,11 +3175,17 @@ function renderEpicGroupedBoard(workItems, epics, projectKey) {
 
 function renderComponentView(org, proj, comp, data, workItems, files, projectEpics) {
   currentWorkItems = workItems;
+  previousProjectKey = currentProjectKey;
   currentProjectKey = `${org}/${proj}/${comp}`;
 
   const tabs = ['Board', 'Overview', 'Docs'];
-  let html = `<div class="card"><h2>${esc(data.name || `${proj}/${comp}`)}</h2>`;
+  let html = `<div class="card"><h2>${esc(data.name || (comp === 'main' ? proj : `${proj}/${comp}`))}</h2>`;
   html += `<span class="badge badge-role">${esc(data.role || 'unknown')}</span>`;
+  const _projKey = `${org}/${proj}/${comp}`;
+  const _refinementDispatch = (window._activeDispatches || []).find(d => d.dispatch_mode === 'project_refinement' && d.project_key === _projKey && d.status === 'running');
+  if (_refinementDispatch) {
+    html += `<span class="badge" style="background:var(--orange);cursor:pointer;margin-left:8px" onclick="focusRefinementDispatch('${esc(_refinementDispatch.id)}')">&#8635; Refinement in progress</span>`;
+  }
   html += `<div id="sync-freshness-${esc(`${org}/${proj}/${comp}`)}" style="font-size:12px;color:var(--text-light);margin:6px 0 2px"></div>`;
   html += `<div class="tabs" id="comp-tabs">`;
   tabs.forEach((t, i) => {
@@ -2704,6 +3204,7 @@ function renderComponentView(org, proj, comp, data, workItems, files, projectEpi
   html += `<button class="btn-add-wi" id="add-work-item">+ Add Task</button>`;
   html += `<button class="btn-add-wi" id="discuss-agent" style="background:var(--teal);margin-left:8px">Discuss with Agent</button>`;
   html += `<button class="btn-add-wi" id="review-prs" style="background:var(--blue);margin-left:8px">Review PRs</button>`;
+  html += `<button class="btn-add-wi" id="refine-project" style="background:var(--purple);margin-left:8px">Refine Project</button>`;
   html += `<a href="#agents?project=${esc(currentProjectKey)}" style="margin-left:8px;font-size:12px;color:var(--accent)">View agents</a>`;
 
   // Board toggle bar (only if project has epic-linked items or epics exist)
@@ -2804,6 +3305,7 @@ function renderComponentView(org, proj, comp, data, workItems, files, projectEpi
     }
     html += `</dl>`;
   }
+  html += `<div style="margin-top:12px"><a href="#settings" onclick="navigateToRefinementTemplate('${esc(org)}','${esc(proj)}','${esc(comp)}')" style="color:var(--teal);font-size:13px">&#9998; Edit refinement template</a></div>`;
   // Guidance
   html += `<hr style="margin:16px 0">`;
   html += `<h3>Guidance</h3>`;
@@ -2900,9 +3402,9 @@ function bindTabs() {
     });
   });
 
-  // Add work item button
+  // Add work item button — agent-gated by default (Shift+N for direct form)
   const addBtn = document.getElementById('add-work-item');
-  if (addBtn) addBtn.onclick = () => showWorkItemModal(null);
+  if (addBtn) addBtn.onclick = () => startAgentTaskCreation(currentProjectKey);
 
   // Edit buttons
   document.querySelectorAll('.edit-btn').forEach(btn => {
@@ -3031,6 +3533,8 @@ function bindTabs() {
   if (discussBtn) discussBtn.onclick = () => showDiscussModal();
   const reviewBtn = document.getElementById('review-prs');
   if (reviewBtn) reviewBtn.onclick = () => showReviewModal(currentProjectKey);
+  const refineProjectBtn = document.getElementById('refine-project');
+  if (refineProjectBtn) refineProjectBtn.onclick = () => showRefineProjectModal(org, proj, comp);
 
   // Filter bar
   bindFilterBar();
@@ -3156,6 +3660,12 @@ function showStatusDropdown(badge, itemId, currentStatus) {
 }
 
 // --- Awaiting Action widget ---
+let _awaitingActionDebounceTimer = null;
+function scheduleAwaitingActionRefresh(projectKey) {
+  clearTimeout(_awaitingActionDebounceTimer);
+  _awaitingActionDebounceTimer = setTimeout(() => loadAwaitingAction(projectKey), 300);
+}
+
 async function loadAwaitingAction(projectKey) {
   const widget = document.getElementById('awaiting-action-widget');
   if (!widget) return;
@@ -3363,6 +3873,15 @@ function bindFilterBar() {
           } else if (col === 'priority') {
             va = priorityOrder[a.dataset.wiPriorityVal] ?? 99;
             vb = priorityOrder[b.dataset.wiPriorityVal] ?? 99;
+          } else if (col === 'createdat') {
+            va = parseInt(a.dataset.wiCreatedatVal || '0', 10);
+            vb = parseInt(b.dataset.wiCreatedatVal || '0', 10);
+          } else if (col === 'doneat') {
+            va = parseInt(a.dataset.wiDoneatVal || '0', 10);
+            vb = parseInt(b.dataset.wiDoneatVal || '0', 10);
+            if (va === 0 && vb === 0) return 0;
+            if (va === 0) return 1;
+            if (vb === 0) return -1;
           }
           return sortAsc ? va - vb : vb - va;
         });
@@ -3380,6 +3899,40 @@ function bindFilterBar() {
     });
   }
 }
+
+// --- Agent-Gated Task Creation ---
+async function startAgentTaskCreation(projectKey) {
+  const input = prompt('Describe the task you want to create (the coordinator will turn this into a work item):');
+  if (!input || !input.trim()) return;
+
+  try {
+    const res = await fetch('/api/dispatch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        work_item_id: null,
+        project_key: projectKey,
+        dispatch_mode: 'task_creation',
+        additional_instructions: input.trim(),
+        permission_mode: 'acceptEdits'
+      })
+    });
+    if (!res.ok) {
+      const e = await res.json();
+      alert(e.error || 'Failed to start task creation');
+      return;
+    }
+    refreshSessionsSidebar();
+  } catch (e) {
+    alert('Task creation request failed');
+  }
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.shiftKey && e.key === 'N') {
+    showWorkItemModal(null);
+  }
+});
 
 // --- Work Item Modal ---
 function showWorkItemModal(existingItem = null) {
@@ -3630,6 +4183,117 @@ function showOrgDiscussModal(orgName) {
       createTerminalPanel(terminalInfo);
       placeSessionPanels();
       await initSession(terminalInfo);
+    },
+  });
+}
+
+function focusRefinementDispatch(dispatchId) {
+  const panel = document.getElementById(`dispatch-${dispatchId}`);
+  if (panel) {
+    panel.scrollIntoView({ behavior: 'smooth' });
+    panel.classList.remove('collapsed');
+  }
+}
+
+function navigateToRefinementTemplate(org, proj, comp) {
+  navigate('#settings');
+  setTimeout(() => {
+    const el = document.getElementById(`refine-tmpl-${org}-${proj}-${comp}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth' });
+  }, 200);
+}
+
+async function showRefineProjectModal(org, proj, comp) {
+  const projectKey = `${org}/${proj}/${comp}`;
+  let inScopeItems = [];
+  try {
+    const res = await fetch(`/api/backlog?org=${encodeURIComponent(org)}`);
+    const data = await res.json();
+    const group = (data.projects || {})[projectKey] || { items: [] };
+    const nonTerminal = new Set(['draft', 'planned', 'blocked']);
+    inScopeItems = (group.items || []).filter(it => nonTerminal.has(it.status));
+  } catch {}
+
+  const byStatus = {};
+  for (const item of inScopeItems) {
+    if (!byStatus[item.status]) byStatus[item.status] = [];
+    byStatus[item.status].push(item);
+  }
+
+  let itemListHtml = '';
+  for (const [status, items] of Object.entries(byStatus)) {
+    itemListHtml += `<div style="margin-top:8px"><strong style="font-size:12px;text-transform:uppercase;color:var(--text-light)">${esc(status)}</strong><ul style="margin:4px 0 0 16px;padding:0;font-size:13px">`;
+    for (const item of items) itemListHtml += `<li>${esc(item.id)}: ${esc(item.title)}</li>`;
+    itemListHtml += `</ul></div>`;
+  }
+  if (!itemListHtml) itemListHtml = '<p style="font-size:13px;color:var(--text-light)">No non-terminal items in scope.</p>';
+
+  const { overlay, close } = createDispatchOverlay({
+    title: `Refine Project: ${org}/${proj}/${comp}`,
+    submitLabel: 'Confirm',
+    cancelId: 'refine-project-cancel',
+    submitId: 'refine-project-submit',
+    buildFields: () => `
+      <div class="field">
+        <label>In-scope items (${inScopeItems.length})</label>
+        <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:8px">${itemListHtml}</div>
+      </div>
+      <div class="field">
+        <label for="refine-project-instructions">Additional instructions (optional)</label>
+        <textarea id="refine-project-instructions" placeholder="e.g. Focus on API contracts; skip infrastructure items..." style="height:80px"></textarea>
+      </div>
+      <div style="margin-bottom:12px;">
+        <label style="font-weight:600;display:block;margin-bottom:6px;">Mode</label>
+        <label style="display:inline-flex;align-items:center;gap:6px;margin-right:16px;">
+          <input type="radio" name="refine-mode" value="background" checked> Background
+        </label>
+        <label style="display:inline-flex;align-items:center;gap:6px;">
+          <input type="radio" name="refine-mode" value="terminal"> Interactive terminal
+        </label>
+      </div>
+      <div id="refine-project-dry-run-field" class="field" style="flex-direction:row;align-items:center;gap:8px">
+        <input type="checkbox" id="refine-project-dry-run" />
+        <label for="refine-project-dry-run" style="font-size:13px">Dry run (no changes — preview only)</label>
+      </div>
+    `,
+    afterMount: (ov) => {
+      const radios = ov.querySelectorAll('input[name="refine-mode"]');
+      const dryRunField = ov.querySelector('#refine-project-dry-run-field');
+      const toggleDryRun = () => {
+        const mode = ov.querySelector('input[name="refine-mode"]:checked')?.value;
+        if (dryRunField) dryRunField.style.display = mode === 'terminal' ? 'none' : '';
+      };
+      radios.forEach(r => r.addEventListener('change', toggleDryRun));
+    },
+    onSubmit: async (ov) => {
+      const instructions = ov.querySelector('#refine-project-instructions')?.value || '';
+      const dryRun = ov.querySelector('#refine-project-dry-run')?.checked || false;
+      const mode = ov.querySelector('input[name="refine-mode"]:checked')?.value ?? 'background';
+      const endpoint = mode === 'terminal'
+        ? `/api/projects/${encodeURIComponent(org)}/${encodeURIComponent(proj)}/${encodeURIComponent(comp)}/refine-terminal`
+        : `/api/projects/${encodeURIComponent(org)}/${encodeURIComponent(proj)}/${encodeURIComponent(comp)}/refine`;
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instructions: instructions || undefined, dry_run: dryRun || undefined }),
+      });
+      const result = await res.json();
+      if (res.status === 400) {
+        throw new Error(result.error || 'No eligible items for refinement');
+      }
+      if (res.status === 409) {
+        throw new Error('A refinement session is already running for this project');
+      }
+      if (!res.ok) throw new Error(result.error || 'Dispatch failed');
+      if (result.terminal_id) {
+        showToast('Refinement terminal starting…');
+        window.location.hash = `#terminal/${result.terminal_id}`;
+        return;
+      }
+      setTimeout(() => {
+        const panel = document.getElementById(`dispatch-${result.dispatch_id}`);
+        if (panel) panel.scrollIntoView({ behavior: 'smooth' });
+      }, 300);
     },
   });
 }
@@ -5137,14 +5801,56 @@ function refreshSessionsSidebar() {
     return entry;
   }
 
+  const totalSuspended = activeDispatches.filter(d => d.status === 'suspended').length;
+  const sidebarLabel = document.querySelector('#sessions-sidebar .sidebar-section-label');
+  if (sidebarLabel) {
+    let globalSuspBadge = sidebarLabel.querySelector('.susp-total-badge');
+    if (totalSuspended > 0) {
+      if (!globalSuspBadge) {
+        globalSuspBadge = document.createElement('span');
+        globalSuspBadge.className = 'susp-total-badge';
+        globalSuspBadge.style.cssText = 'background:#6B7280;color:#fff;font-size:10px;padding:1px 5px;border-radius:9px;margin-left:6px;cursor:default';
+        sidebarLabel.appendChild(globalSuspBadge);
+      }
+      globalSuspBadge.textContent = totalSuspended;
+      globalSuspBadge.title = `${totalSuspended} session${totalSuspended !== 1 ? 's' : ''} suspended`;
+    } else if (globalSuspBadge) {
+      globalSuspBadge.remove();
+    }
+  }
+
   // Render project > epic > session hierarchy
   for (const [pk, pg] of projectGroups) {
     // Show project label (drop org prefix for brevity)
     const parts = pk.split('/');
-    const shortLabel = parts.length >= 3 ? `${parts[1]}/${parts[2]}` : pk;
+    const shortLabel = parts.length >= 3 ? (parts[2] === 'main' ? parts[1] : `${parts[1]}/${parts[2]}`) : pk;
     const projLabel = document.createElement('div');
     projLabel.className = 'sidebar-project-label';
-    projLabel.textContent = shortLabel;
+    projLabel.style.display = 'flex';
+    projLabel.style.alignItems = 'center';
+    projLabel.style.justifyContent = 'space-between';
+    const projNameSpan = document.createElement('span');
+    projNameSpan.textContent = shortLabel;
+    projLabel.appendChild(projNameSpan);
+    const projSessions = [...(pg.noEpic || []), ...[...pg.epics.values()].flat()];
+    const projSuspCount = projSessions.filter(s => s.status === 'suspended').length;
+    const projInputNeeded = activeDispatches.some(d => d.project_key === pk && d.work_item_input_needed);
+    const badgeGroup = document.createElement('span');
+    badgeGroup.style.cssText = 'display:flex;align-items:center;gap:4px';
+    if (projInputNeeded) {
+      const dot = document.createElement('span');
+      dot.style.cssText = 'width:7px;height:7px;border-radius:50%;background:#F59E0B;display:inline-block;flex-shrink:0';
+      dot.title = 'Agent waiting for input';
+      badgeGroup.appendChild(dot);
+    }
+    if (projSuspCount > 0) {
+      const badge = document.createElement('span');
+      badge.style.cssText = 'background:#6B7280;color:#fff;font-size:10px;padding:1px 5px;border-radius:9px;cursor:default';
+      badge.textContent = projSuspCount;
+      badge.title = `${projSuspCount} session${projSuspCount !== 1 ? 's' : ''} suspended`;
+      badgeGroup.appendChild(badge);
+    }
+    if (badgeGroup.children.length) projLabel.appendChild(badgeGroup);
     projLabel.onclick = () => {
       const [org, proj, comp] = pk.split('/');
       if (org && proj && comp) location.hash = `#component/${org}/${proj}/${comp}`;
@@ -6305,6 +7011,112 @@ function bindTimeReportGroupToggle() {
   });
 }
 
+// --- Cost Report view ---
+
+function renderCostReport(summary, groupBy) {
+  const groupLabels = { model: 'Model', agent_role: 'Agent Role', project_key: 'Project', epic_id: 'Epic' };
+  const groupLabel = groupLabels[groupBy] || 'Model';
+
+  const groupSelector = `<select id="cost-group-by" style="font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text)">
+    <option value="model"${groupBy === 'model' ? ' selected' : ''}>By Model</option>
+    <option value="agent_role"${groupBy === 'agent_role' ? ' selected' : ''}>By Agent Role</option>
+    <option value="project_key"${groupBy === 'project_key' ? ' selected' : ''}>By Project</option>
+    <option value="epic_id"${groupBy === 'epic_id' ? ' selected' : ''}>By Epic</option>
+  </select>`;
+
+  const fromVal = summary.period.from;
+  const toVal = summary.period.to;
+
+  const controls = `<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
+    <label style="font-size:13px">From <input type="date" id="cost-from" value="${esc(fromVal)}" style="font-size:13px;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text)"></label>
+    <label style="font-size:13px">To <input type="date" id="cost-to" value="${esc(toVal)}" style="font-size:13px;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text)"></label>
+    ${groupSelector}
+    <button id="cost-refresh-btn" style="padding:5px 14px;font-size:13px;border:1px solid var(--border);border-radius:4px;background:var(--accent);color:#fff;cursor:pointer">Refresh</button>
+  </div>`;
+
+  const summary_row = `<div style="display:flex;gap:24px;margin-bottom:20px;flex-wrap:wrap">
+    <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:14px 20px;min-width:140px">
+      <div style="font-size:11px;color:var(--text-light);margin-bottom:4px">Total Cost</div>
+      <div style="font-size:22px;font-weight:700;color:var(--accent)">${esc('$' + summary.total_cost_usd.toFixed(4))}</div>
+    </div>
+    <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:14px 20px;min-width:140px">
+      <div style="font-size:11px;color:var(--text-light);margin-bottom:4px">Total Tokens</div>
+      <div style="font-size:22px;font-weight:700">${esc(summary.total_tokens.toLocaleString())}</div>
+    </div>
+    <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:14px 20px;min-width:140px">
+      <div style="font-size:11px;color:var(--text-light);margin-bottom:4px">Sessions</div>
+      <div style="font-size:22px;font-weight:700">${esc(String(summary.sessions))}</div>
+    </div>
+  </div>`;
+
+  function renderBreakdownTable(rows) {
+    if (!rows.length) return '<p style="color:var(--text-light);font-size:13px">No data for this period.</p>';
+    let html = `<table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="border-bottom:2px solid var(--border);text-align:left">
+        <th style="padding:8px 12px">${esc(groupLabel)}</th>
+        <th style="padding:8px 12px;text-align:right">Cost ($)</th>
+        <th style="padding:8px 12px;text-align:right">Tokens</th>
+        <th style="padding:8px 12px;text-align:right">Sessions</th>
+      </tr></thead><tbody>`;
+    for (const r of rows) {
+      html += `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:8px 12px">${esc(r.label || '(unknown)')}</td>
+        <td style="padding:8px 12px;text-align:right;font-weight:600">${esc('$' + r.cost_usd.toFixed(4))}</td>
+        <td style="padding:8px 12px;text-align:right">${esc(r.tokens.toLocaleString())}</td>
+        <td style="padding:8px 12px;text-align:right">${esc(String(r.sessions))}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    return html;
+  }
+
+  function renderTrendTable(rows) {
+    if (!rows.length) return '<p style="color:var(--text-light);font-size:13px">No trend data for this period.</p>';
+    let html = `<table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="border-bottom:2px solid var(--border);text-align:left">
+        <th style="padding:8px 12px">Date</th>
+        <th style="padding:8px 12px;text-align:right">Cost ($)</th>
+        <th style="padding:8px 12px;text-align:right">Sessions</th>
+      </tr></thead><tbody>`;
+    for (const r of rows) {
+      html += `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:8px 12px">${esc(r.period)}</td>
+        <td style="padding:8px 12px;text-align:right;font-weight:600">${esc('$' + r.cost_usd.toFixed(4))}</td>
+        <td style="padding:8px 12px;text-align:right">${esc(String(r.sessions))}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    return html;
+  }
+
+  return `<div class="card">
+    <h2 style="margin-bottom:4px">Cost Report</h2>
+    <p style="color:var(--text-light);font-size:13px;margin-bottom:16px">Period: ${esc(fromVal)} — ${esc(toVal)}</p>
+    ${controls}
+    ${summary_row}
+    <h3 style="font-size:14px;margin:0 0 10px;color:var(--accent)">Breakdown ${esc(groupLabel)}</h3>
+    ${renderBreakdownTable(summary.breakdown)}
+    <h3 style="font-size:14px;margin:20px 0 10px;color:var(--accent)">Daily Trend</h3>
+    ${renderTrendTable(summary.trend)}
+  </div>`;
+}
+
+function bindCostReportEvents() {
+  const refresh = document.getElementById('cost-refresh-btn');
+  if (!refresh) return;
+  refresh.onclick = () => {
+    const from = document.getElementById('cost-from').value;
+    const to = document.getElementById('cost-to').value;
+    const groupBy = document.getElementById('cost-group-by').value;
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    params.set('group_by', groupBy);
+    sessionStorage.setItem('cost-report-params', params.toString());
+    route();
+  };
+}
+
 // --- Settings view ---
 
 function formatUptime(seconds) {
@@ -6336,16 +7148,16 @@ function renderSettingsView(status, config) {
   // Card 1: Server Status
   html += '<div class="settings-card">';
   html += '<h3>Server Status</h3>';
-  html += '<div class="status-indicator"><span class="dot ' + dot + '"></span><span class="label">' + label + '</span></div>';
+  html += '<div class="status-indicator"><span class="dot ' + dot + '"></span><span class="label">' + esc(label) + '</span></div>';
   html += '<div class="settings-kv">';
-  html += '<div><span class="key">PID</span> ' + (status.pid || '—') + '</div>';
-  html += '<div><span class="key">Port</span> ' + config.port + '</div>';
-  html += '<div><span class="key">Uptime</span> <span id="settings-uptime">' + uptime + '</span></div>';
-  html += '<div><span class="key">Node</span> ' + (status.node_version || '—') + '</div>';
-  html += '<div><span class="key">Platform</span> ' + platform + '</div>';
-  html += '<div><span class="key">Dispatches</span> ' + (sessions.dispatches_active || 0) + ' active / ' + (sessions.dispatches_total || 0) + ' total</div>';
-  html += '<div><span class="key">Terminals</span> ' + (sessions.terminals_active || 0) + ' active / ' + (sessions.terminals_total || 0) + ' total</div>';
-  html += '<div><span class="key">Portfolio</span> <span style="font-family:monospace;font-size:11px;word-break:break-all">' + (config.portfolio_dir || '—') + '</span></div>';
+  html += '<div><span class="key">PID</span> ' + esc(String(status.pid || '—')) + '</div>';
+  html += '<div><span class="key">Port</span> ' + esc(String(config.port)) + '</div>';
+  html += '<div><span class="key">Uptime</span> <span id="settings-uptime">' + esc(uptime) + '</span></div>';
+  html += '<div><span class="key">Node</span> ' + esc(status.node_version || '—') + '</div>';
+  html += '<div><span class="key">Platform</span> ' + esc(platform) + '</div>';
+  html += '<div><span class="key">Dispatches</span> ' + esc(String(sessions.dispatches_active || 0)) + ' active / ' + esc(String(sessions.dispatches_total || 0)) + ' total</div>';
+  html += '<div><span class="key">Terminals</span> ' + esc(String(sessions.terminals_active || 0)) + ' active / ' + esc(String(sessions.terminals_total || 0)) + ' total</div>';
+  html += '<div><span class="key">Portfolio</span> <span style="font-family:monospace;font-size:11px;word-break:break-all">' + esc(config.portfolio_dir || '—') + '</span></div>';
   html += '</div></div>';
 
   // Card 2: Actions
@@ -6408,7 +7220,13 @@ function renderSettingsView(status, config) {
   html += '</select></div>';
   html += '</div></div>';
 
-  // Card 5: Recent Logs
+  // Card 5: Refinement Templates
+  html += '<div class="settings-card">';
+  html += '<h3>Refinement Templates</h3>';
+  html += '<div id="refinement-templates-list">Loading...</div>';
+  html += '</div>';
+
+  // Card 6: Recent Logs
   html += '<div class="settings-card">';
   html += '<h3>Recent Logs <button class="settings-btn" id="settings-refresh-logs" style="float:right;padding:4px 12px;font-size:12px">Refresh</button></h3>';
   html += '<div class="settings-log-box" id="settings-log-box">(loading...)</div>';
@@ -6421,6 +7239,7 @@ function renderSettingsView(status, config) {
 
 function bindSettingsEvents(status, config) {
   loadSettingsLogs();
+  loadRefinementTemplates();
   document.getElementById('settings-log-box')?.classList.toggle('log-light', resolveTermTheme() === 'light');
 
   if (settingsRefreshTimer) clearInterval(settingsRefreshTimer);
@@ -6569,6 +7388,84 @@ async function loadSettingsLogs() {
   }
 }
 
+async function loadRefinementTemplates() {
+  const container = document.getElementById('refinement-templates-list');
+  if (!container) return;
+  try {
+    const res = await fetch('/api/projects');
+    if (!res.ok) { container.textContent = '(could not load projects)'; return; }
+    const projects = await res.json();
+    if (projects.length === 0) { container.innerHTML = '<p style="font-size:13px;color:var(--text-light)">No projects onboarded.</p>'; return; }
+
+    let html = '';
+    for (const p of projects) {
+      const { org, project, component } = p;
+      const id = `refine-tmpl-${org}-${project}-${component}`;
+      html += `<div id="${id}" style="margin-bottom:20px;border-top:1px solid var(--border);padding-top:12px">`;
+      html += `<div style="font-size:13px;font-weight:600;margin-bottom:8px">${esc(org)}/${esc(project)}/${esc(component)}</div>`;
+      html += `<textarea id="${id}-body" style="width:100%;height:200px;font-family:monospace;font-size:12px;border:1px solid var(--border);border-radius:4px;padding:8px;box-sizing:border-box" placeholder="Loading...">(loading...)</textarea>`;
+      html += `<div style="margin-top:6px;display:flex;gap:8px">`;
+      html += `<button class="settings-btn primary" onclick="saveRefinementTemplate('${esc(org)}','${esc(project)}','${esc(component)}')">Save</button>`;
+      html += `<button class="settings-btn danger" onclick="resetRefinementTemplate('${esc(org)}','${esc(project)}','${esc(component)}')">Reset to default</button>`;
+      html += `</div></div>`;
+    }
+    container.innerHTML = html;
+
+    // Load each template
+    for (const p of projects) {
+      const { org, project, component } = p;
+      const id = `refine-tmpl-${org}-${project}-${component}`;
+      const textarea = document.getElementById(`${id}-body`);
+      if (!textarea) continue;
+      try {
+        const r = await fetch(`/api/projects/${encodeURIComponent(org)}/${encodeURIComponent(project)}/${encodeURIComponent(component)}/artifacts/refinement-template`);
+        if (r.ok) {
+          const t = await r.json();
+          textarea.value = t.body;
+        } else {
+          textarea.value = '(failed to load)';
+        }
+      } catch {
+        textarea.value = '(error loading template)';
+      }
+    }
+  } catch {
+    container.textContent = '(could not load refinement templates)';
+  }
+}
+
+async function saveRefinementTemplate(org, proj, comp) {
+  const id = `refine-tmpl-${org}-${proj}-${comp}`;
+  const textarea = document.getElementById(`${id}-body`);
+  if (!textarea) return;
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(org)}/${encodeURIComponent(proj)}/${encodeURIComponent(comp)}/artifacts/refinement-template`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: textarea.value }),
+    });
+    if (!res.ok) throw new Error('Save failed');
+  } catch (e) {
+    alert('Failed to save: ' + e.message);
+  }
+}
+
+async function resetRefinementTemplate(org, proj, comp) {
+  if (!confirm(`Reset the refinement template for ${org}/${proj}/${comp} to the default? This cannot be undone.`)) return;
+  const id = `refine-tmpl-${org}-${proj}-${comp}`;
+  const textarea = document.getElementById(`${id}-body`);
+  try {
+    await fetch(`/api/projects/${encodeURIComponent(org)}/${encodeURIComponent(proj)}/${encodeURIComponent(comp)}/artifacts/refinement-template`, { method: 'DELETE' });
+    const res = await fetch(`/api/projects/${encodeURIComponent(org)}/${encodeURIComponent(proj)}/${encodeURIComponent(comp)}/artifacts/refinement-template`);
+    if (res.ok) {
+      const t = await res.json();
+      if (textarea) textarea.value = t.body;
+    }
+  } catch (e) {
+    alert('Failed to reset: ' + e.message);
+  }
+}
+
 function showReconnectingOverlay() {
   const overlay = document.createElement('div');
   overlay.className = 'reconnecting-overlay';
@@ -6596,6 +7493,91 @@ function showReconnectingOverlay() {
 
 
 
+// --- Assets view ---
+function renderAssetsView(index) {
+  const CATEGORIES = [
+    { key: 'agents',    label: 'Agents' },
+    { key: 'skills',    label: 'Skills' },
+    { key: 'usecases',  label: 'Use Cases' },
+    { key: 'templates', label: 'Templates' },
+  ];
+
+  function renderCategory(cat) {
+    const items = index[cat.key] || [];
+    const rows = items.map(item => `
+      <div class="asset-entry" data-path="${esc(item.path)}" style="padding:4px 8px;cursor:pointer;border-radius:4px;font-size:13px;display:flex;justify-content:space-between;align-items:center">
+        <span class="asset-path">${esc(item.path)}</span>
+        <span style="color:var(--text-light);font-size:11px">${(item.size / 1024).toFixed(1)} KB</span>
+      </div>`).join('');
+    return `
+      <details open style="margin-bottom:16px">
+        <summary style="cursor:pointer;font-weight:600;font-size:13px;padding:6px 0;user-select:none">
+          ${esc(cat.label)} <span style="color:var(--text-light);font-weight:400">(${items.length})</span>
+        </summary>
+        <div class="asset-list" style="margin-top:4px">
+          ${rows || '<p style="color:var(--text-light);font-size:13px;padding:4px 8px">No files found.</p>'}
+        </div>
+      </details>`;
+  }
+
+  return `<div class="card">
+    <h2>Assets</h2>
+    <p style="color:var(--text-light);font-size:13px;margin-bottom:16px">Read-only browser for agent prompts, skills, use cases, and templates.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+      <div id="assets-listing">
+        ${CATEGORIES.map(renderCategory).join('')}
+      </div>
+      <div id="assets-preview" style="border-left:1px solid var(--border);padding-left:20px">
+        <p style="color:var(--text-light);font-size:13px">Select a file to preview its content.</p>
+      </div>
+    </div>
+  </div>`;
+}
+
+function bindAssetsEvents() {
+  document.querySelectorAll('.asset-entry').forEach(el => {
+    el.addEventListener('mouseenter', () => el.style.background = 'var(--hover-bg, rgba(0,0,0,0.05))');
+    el.addEventListener('mouseleave', () => el.style.background = '');
+    el.addEventListener('click', () => loadAssetContent(el.dataset.path));
+  });
+}
+
+async function loadAssetContent(path) {
+  const preview = document.getElementById('assets-preview');
+  if (!preview) return;
+  preview.innerHTML = '<p style="color:var(--text-light);font-size:13px">Loading…</p>';
+
+  // Highlight selected entry
+  document.querySelectorAll('.asset-entry').forEach(e => e.style.background = '');
+  const activeEntry = document.querySelector(`.asset-entry[data-path="${CSS.escape(path)}"]`);
+  if (activeEntry) activeEntry.style.background = 'var(--hover-bg, rgba(0,0,0,0.08))';
+
+  try {
+    const data = await api(`assets/content?path=${encodeURIComponent(path)}`);
+    if (data.binary) {
+      preview.innerHTML = `
+        <p style="font-size:13px;font-weight:600;margin-bottom:8px">${esc(path)}</p>
+        <p style="color:var(--text-light);font-size:13px">${esc(data.preview)}</p>`;
+      return;
+    }
+    const placeholderChips = data.placeholders && data.placeholders.length
+      ? `<div style="margin-bottom:10px;font-size:12px;color:var(--text-light)">
+           Placeholders: ${data.placeholders.map(p => `<code style="background:var(--hover-bg,rgba(0,0,0,0.06));padding:1px 5px;border-radius:3px">{{${esc(p)}}}</code>`).join(' ')}
+         </div>`
+      : '';
+    const truncatedNote = data.truncated
+      ? '<p style="color:var(--text-light);font-size:11px;margin-bottom:6px">Content truncated at 100 KB.</p>'
+      : '';
+    preview.innerHTML = `
+      <p style="font-size:13px;font-weight:600;margin-bottom:8px">${esc(path)}</p>
+      ${placeholderChips}
+      ${truncatedNote}
+      <pre style="overflow:auto;max-height:600px;font-size:12px;line-height:1.5;background:var(--hover-bg,rgba(0,0,0,0.04));padding:12px;border-radius:6px"><code>${esc(data.content)}</code></pre>`;
+  } catch (e) {
+    preview.innerHTML = `<p style="color:var(--red);font-size:13px">Error: ${esc(String(e))}</p>`;
+  }
+}
+
 // --- Navigate helper (used by sidebar and repo/adr views) ---
 function navigate(fragment) {
   location.hash = '#' + fragment;
@@ -6614,6 +7596,52 @@ function timeAgo(isoString) {
   if (h < 24) return h + 'h ago';
   const d = Math.floor(h / 24);
   return d + 'd ago';
+}
+
+// --- All-Sessions view ---
+function renderAllSessionsView(dispatches, terminals, cliSessions, history) {
+  const TYPE_LABEL = { dispatch: 'Dispatch', terminal: 'Terminal', cli: 'CLI' };
+
+  function sessionRow(type, id, title, project, status, startedAt, cost) {
+    const costStr = cost != null ? `$${Number(cost).toFixed(2)}` : '—';
+    return `<tr>
+      <td><span class="badge badge-role">${esc(TYPE_LABEL[type] || type)}</span></td>
+      <td><code>${esc(id)}</code></td>
+      <td>${esc(title || '—')}</td>
+      <td>${esc(project || '—')}</td>
+      <td><span class="badge badge-${esc(status || 'unknown')}">${esc(status || '—')}</span></td>
+      <td>${fmtDate(startedAt)}</td>
+      <td>${costStr}</td>
+    </tr>`;
+  }
+
+  function tableHead() {
+    return `<thead><tr><th>Type</th><th>ID</th><th>Title</th><th>Project</th><th>Status</th><th>Started</th><th>Cost</th></tr></thead>`;
+  }
+
+  let active = '';
+  for (const d of (dispatches || [])) {
+    active += sessionRow('dispatch', d.id, d.work_item_id || d.title || d.id, d.project_key, d.status, d.started_at, null);
+  }
+  for (const t of (terminals || [])) {
+    active += sessionRow('terminal', t.id, t.title || t.id, t.project_key, t.status, t.started_at, null);
+  }
+  for (const c of (cliSessions || [])) {
+    active += sessionRow('cli', c.id, c.title || c.id, c.project_key, c.status, c.registered_at, null);
+  }
+
+  let hist = '';
+  for (const h of (history || [])) {
+    hist += sessionRow(h.type || 'dispatch', h.id, h.title || h.id, h.project_key, h.status, h.started_at, h.cost_usd);
+  }
+
+  return `<div class="card">
+    <h2>Sessions</h2>
+    <h3 style="font-size:14px;margin:16px 0 6px">Active</h3>
+    ${active ? `<table class="wi-table">${tableHead()}<tbody>${active}</tbody></table>` : '<p style="color:var(--text-light);font-size:13px">No active sessions.</p>'}
+    <h3 style="font-size:14px;margin:20px 0 6px">History</h3>
+    ${hist ? `<table class="wi-table">${tableHead()}<tbody>${hist}</tbody></table>` : '<p style="color:var(--text-light);font-size:13px">No session history.</p>'}
+  </div>`;
 }
 
 // --- Repos view ---
@@ -6657,10 +7685,26 @@ function renderReposView(repos) {
       <div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <button id="btn-seed-repos" class="btn btn-secondary">Refresh from GitHub</button>
         <button id="btn-sync-now" class="btn btn-primary">Sync Now</button>
+        <span id="sync-status-label" class="muted" style="font-size:13px"></span>
         <a href="#adrs" onclick="navigate('adrs')" class="btn btn-sm">View ADRs →</a>
       </div>
     </div>
   `;
+
+  // Populate last-synced timestamp — non-blocking
+  (async () => {
+    try {
+      const resp = await fetch('/api/sync/status');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const timestamps = (Array.isArray(data) ? data : Object.values(data))
+        .map(p => p.last_synced_at).filter(Boolean);
+      if (!timestamps.length) return;
+      const newestTs = timestamps.sort().at(-1);
+      const el = document.getElementById('sync-status-label');
+      if (el) el.textContent = `Last synced: ${new Date(newestTs).toLocaleTimeString()}`;
+    } catch {}
+  })();
 }
 
 function bindReposEvents() {
@@ -6715,12 +7759,69 @@ function bindReposEvents() {
   const syncBtn = document.getElementById('btn-sync-now');
   if (syncBtn) {
     syncBtn.addEventListener('click', async () => {
+      const button = syncBtn;
+      const statusEl = document.getElementById('sync-status-label');
+      button.disabled = true;
+      if (statusEl) statusEl.textContent = '';
+
+      let snapshotTs = null;
       try {
-        await fetch('/api/repo-sync/run-now', { method: 'POST' });
-        alert('Sync started — check tmp/repo-sync.log for progress');
+        const statusResp = await fetch('/api/sync/status');
+        if (statusResp.ok) {
+          const data = await statusResp.json();
+          const timestamps = (Array.isArray(data) ? data : Object.values(data))
+            .map(p => p.last_synced_at).filter(Boolean);
+          snapshotTs = timestamps.length ? timestamps.sort().at(-1) : null;
+        }
+      } catch {}
+
+      let syncResp;
+      try {
+        syncResp = await fetch('/api/repo-sync/run-now', { method: 'POST' });
       } catch {
-        alert('Sync request failed');
+        button.disabled = false;
+        if (statusEl) statusEl.textContent = 'Sync request failed — network error';
+        return;
       }
+
+      if (syncResp.status === 409) {
+        if (statusEl) statusEl.textContent = 'Sync in progress...';
+        // Fall through to poll
+      } else if (!syncResp.ok) {
+        button.disabled = false;
+        if (statusEl) statusEl.textContent = `Sync failed (HTTP ${syncResp.status})`;
+        return;
+      } else {
+        button.textContent = '⟳ Syncing...';
+      }
+
+      // Poll every 3s for completion (stop when newer timestamp found OR 60s elapsed)
+      const startTime = Date.now();
+      setSyncPollInterval(setInterval(async () => {
+        try {
+          const pollResp = await fetch('/api/sync/status');
+          if (!pollResp.ok) return;
+          const data = await pollResp.json();
+          const timestamps = (Array.isArray(data) ? data : Object.values(data))
+            .map(p => p.last_synced_at).filter(Boolean);
+          const newestTs = timestamps.length ? timestamps.sort().at(-1) : null;
+
+          const isNewer = newestTs && newestTs !== snapshotTs;
+          const timedOut = Date.now() - startTime > 60_000;
+
+          if (isNewer || timedOut) {
+            clearInterval(syncPollInterval);
+            setSyncPollInterval(null);
+            button.disabled = false;
+            button.textContent = 'Sync Now';
+            if (isNewer) {
+              if (statusEl) statusEl.textContent = `Synced at ${new Date(newestTs).toLocaleTimeString()}`;
+            } else {
+              if (statusEl) statusEl.textContent = 'Sync may still be running — check server logs (tmp/dashboard.log) for status';
+            }
+          }
+        } catch {}
+      }, 3000));
     });
   }
 }
@@ -6791,6 +7892,7 @@ async function route() {
   updateTitle(getRouteTitle());
   stopAgentsTileRefresh();
   if (settingsRefreshTimer) { clearInterval(settingsRefreshTimer); setSettingsRefreshTimer(null); }
+  if (syncPollInterval) { clearInterval(syncPollInterval); setSyncPollInterval(null); }
 
   if (!hash) {
     main.innerHTML = `<div class="card"><h2>Portfolio Dashboard</h2><p style="color:var(--text-light);font-size:14px">Select an organization or project from the sidebar.</p></div>`;
@@ -6856,6 +7958,22 @@ async function route() {
     return;
   }
 
+  if (parts[0] === 'costs') {
+    try {
+      const savedParams = sessionStorage.getItem('cost-report-params');
+      const params = new URLSearchParams(savedParams || '');
+      const groupBy = params.get('group_by') || 'model';
+      const qs = params.toString() ? `?${params.toString()}` : '';
+      const summary = await api(`costs/summary${qs}`);
+      main.innerHTML = renderCostReport(summary, groupBy);
+      bindCostReportEvents();
+    } catch (e) {
+      main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading cost report: ${esc(String(e))}</p></div>`;
+    }
+    setActive('');
+    return;
+  }
+
   if (parts[0] === 'settings') {
     try {
       const [status, config] = await Promise.all([
@@ -6909,6 +8027,23 @@ async function route() {
       // Bind org discuss button
       const orgDiscussBtn = document.getElementById('discuss-org-agent');
       if (orgDiscussBtn) orgDiscussBtn.onclick = () => showOrgDiscussModal(org);
+      // Async repos section fetch
+      fetch(`/api/org/${encodeURIComponent(org)}/repos`)
+        .then(r => r.ok ? r.json() : null)
+        .then(repoData => {
+          const el = document.getElementById(`org-repos-${org}`);
+          if (!el) return;
+          if (!repoData) {
+            el.querySelector(`#org-repos-loading-${org}`)?.remove();
+            return;
+          }
+          el.innerHTML = `<h3 style="font-size:14px;margin:0 0 8px">Repositories</h3>` + renderOrgReposSection(org, repoData);
+          bindOrgReposEvents(org, repoData);
+        })
+        .catch(() => {
+          const el = document.getElementById(`org-repos-${org}`);
+          if (el) el.innerHTML = `<h3 style="font-size:14px;margin:0 0 8px">Repositories</h3><p style="color:var(--danger,#e74c3c);font-size:12px">Failed to load repositories</p>`;
+        });
     } catch (e) {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
     }
@@ -6972,6 +8107,36 @@ async function route() {
     } catch (e) {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error: ${esc(String(e))}</p></div>`;
     }
+    placeSessionPanels();
+    return;
+  }
+
+  if (parts[0] === 'all-sessions') {
+    try {
+      const [dispatches, terminals, cliSessions, history] = await Promise.all([
+        api('dispatch/active'),
+        api('terminal/active'),
+        api('sessions/active'),
+        api('sessions/all'),
+      ]);
+      main.innerHTML = renderAllSessionsView(dispatches, terminals, cliSessions, history);
+    } catch (e) {
+      main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading sessions: ${esc(String(e))}</p></div>`;
+    }
+    setActive('');
+    placeSessionPanels();
+    return;
+  }
+
+  if (parts[0] === 'assets') {
+    try {
+      const index = await api('assets');
+      main.innerHTML = renderAssetsView(index);
+      bindAssetsEvents();
+    } catch (e) {
+      main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading assets: ${esc(String(e))}</p></div>`;
+    }
+    setActive('');
     placeSessionPanels();
     return;
   }
@@ -7112,6 +8277,26 @@ Promise.all([buildTree(), buildEpicTree()]).catch(err => { console.error('[start
   setInterval(restoreTerminals, 10000);
   setInterval(restoreCliSessions, 10000);
   setInterval(refreshSuspendedPanel, 10000);
+  // Live countdown ticker: update timeout countdowns once per second for running dispatches
+  setInterval(() => {
+    for (const d of activeDispatches) {
+      if (!d.timeout_at) continue;
+      const panelEl = document.getElementById(`dispatch-${d.id}`);
+      if (!panelEl) continue;
+      const titleEl = panelEl.querySelector('.dispatch-title');
+      if (!titleEl) continue;
+      const oldCountdown = titleEl.querySelector('.timeout-countdown, .timeout-badge.timeout-expired');
+      const newHtml = renderTimeoutCountdown(d);
+      if (newHtml) {
+        const tmp = document.createElement('span');
+        tmp.innerHTML = newHtml;
+        if (oldCountdown) oldCountdown.replaceWith(tmp.firstChild);
+        else titleEl.insertAdjacentHTML('beforeend', newHtml);
+      } else if (oldCountdown) {
+        oldCountdown.remove();
+      }
+    }
+  }, 1000);
 });
 </script>
 

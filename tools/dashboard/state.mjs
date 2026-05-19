@@ -21,6 +21,11 @@ export async function saveDispatchToDb(d) {
     worktree_branch: d.worktree_branch || null,
     source_branch: d.source_branch || null,
     dispatch_mode: d.dispatch_mode || 'standard',
+    agent_phase: d.agent_phase ?? null,
+    agent_phase_history: d.agent_phase_history || [],
+    timeout_at: d.timeout_at || null,
+    contract: d.contract || null,
+    exit_type: d.exit_type || null,
   });
 }
 

@@ -1,4 +1,5 @@
 import { shouldCreateWorktree, checkWorktreeReadiness, isGitRepository } from '../worktree.mjs';
+import { promises as fs } from 'node:fs';
 
 export default function testEndpointRoutes(deps) {
   const {
@@ -33,7 +34,7 @@ export default function testEndpointRoutes(deps) {
 
     [/^\/api\/test\/seed-dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { id, status, project_key, title, work_item_id, epic_id: seedEpicId, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch, pid: seedPid, dispatch_mode } = body;
+      const { id, status, project_key, title, work_item_id, epic_id: seedEpicId, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch, pid: seedPid, dispatch_mode, agent_phase: seedAgentPhase, agent_phase_history: seedHistory, cost_usd: seedCostUsd, exit_type: seedExitType } = body;
       if (!id) return err(res, 'id is required', 400);
       const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
 
@@ -51,6 +52,9 @@ export default function testEndpointRoutes(deps) {
         output = content.split('\n').filter(l => l.trim());
       } catch {}
 
+      const resolvedStatus = status || 'completed';
+      const resolvedPhase = 'agent_phase' in body ? seedAgentPhase : (resolvedStatus === 'running' ? 'generating' : null);
+
       const dispatch = {
         id,
         work_item_id: work_item_id || null,
@@ -60,18 +64,21 @@ export default function testEndpointRoutes(deps) {
         title: title || id,
         permission_mode: 'plan',
         skip_permissions: false,
-        status: status || 'completed',
-        agent_phase: (status || 'completed') === 'running' ? 'generating' : null,
+        status: resolvedStatus,
+        agent_phase: resolvedPhase,
+        agent_phase_history: seedHistory || [],
         claude_session_id: claude_session_id || null,
         worktree_path: worktree_path || null,
         worktree_branch: worktree_branch || null,
         source_branch: source_branch || null,
         dispatch_mode: dispatch_mode || 'standard',
+        cost_usd: seedCostUsd !== undefined ? seedCostUsd : null,
+        exit_type: seedExitType || null,
         output,
         lastLines: [],
         wsClients: new Set(),
         started_at: new Date().toISOString(),
-        completed_at: status !== 'running' ? new Date().toISOString() : null,
+        completed_at: resolvedStatus !== 'running' ? new Date().toISOString() : null,
         process: null,
         pid: seedPid || null,
         logPath,
@@ -80,7 +87,7 @@ export default function testEndpointRoutes(deps) {
 
       dispatches.set(id, dispatch);
       await saveDispatchToDb(dispatch);
-      json(res, { dispatch_id: id, status: dispatch.status });
+      json(res, { id, dispatch_id: id, status: dispatch.status });
     }],
 
     // Simulate server restart: clear memory, re-load from DB + log files
@@ -285,7 +292,7 @@ export default function testEndpointRoutes(deps) {
     // Seed a session_history entry (for time report tests)
     [/^\/api\/test\/seed-session-history$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { id: seedId, project_key, duration_seconds, cost_usd, started_at, ended_at } = body;
+      const { id: seedId, project_key, duration_seconds, cost_usd, started_at, ended_at, type: seedType } = body;
       if (!project_key) return err(res, 'project_key is required', 400);
       const end = ended_at || new Date().toISOString();
       const dur = duration_seconds || 300;
@@ -293,7 +300,7 @@ export default function testEndpointRoutes(deps) {
       const id = seedId || `SH-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       await db.recordSessionHistory({
         id,
-        type: 'test',
+        type: seedType || 'test',
         project_key,
         work_item_id: null,
         epic_id: null,
@@ -732,6 +739,156 @@ export default function testEndpointRoutes(deps) {
         worktreeContext: worktree_context || null,
       });
       json(res, { prompt });
+    }],
+
+    // POST /_test/seed-portfolio — create a minimal portfolio entry and registry row for detach contract tests
+    [/^\/_test\/seed-portfolio$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { org, project, component, path: projectPath } = body;
+      if (!org || !project || !component) return err(res, 'org, project, and component are required', 400);
+      const portfolioKey = `${org}/${project}/${component}`;
+      const portDir = join(PORTFOLIO, org, project);
+      await fs.mkdir(portDir, { recursive: true });
+      await fs.writeFile(
+        join(portDir, component + '.json'),
+        JSON.stringify({ name: project, role: 'app', path: projectPath || `/tmp/${project}`, org_key: org, project_key: portfolioKey })
+      );
+      const regPath = join(PORTFOLIO, 'registry.json');
+      let registry = {};
+      try { registry = JSON.parse(await fs.readFile(regPath, 'utf8')); } catch {}
+      if (projectPath) registry[projectPath] = portfolioKey;
+      await fs.writeFile(regPath, JSON.stringify(registry, null, 2));
+      // Insert into projects table so db.getProject() can find it
+      await db.upsertProject({ key: portfolioKey, org, project, component, path: projectPath || `/tmp/${project}`, role: 'app' });
+      json(res, { ok: true, portfolio_key: portfolioKey });
+    }],
+
+    // POST /_test/seed-work-item — create a work item with given status (for refinement contract tests)
+    [/^\/_test\/seed-work-item$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { status = 'draft', title = 'Test item', project_key = 'test/test/main' } = body;
+      const item = await db.createWorkItem({ title, status, project_key, description: '' });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ id: item.id }));
+    }],
+
+    // POST /_test/seed-dispatch — create a minimal dispatch for detach conflict tests (auto-generates ID)
+    [/^\/_test\/seed-dispatch$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const id = `D-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const resolvedStatus = body.status || 'running';
+      const dispatch = {
+        id,
+        work_item_id: null,
+        epic_id: null,
+        project_key: body.project_key || 'test/test/main',
+        project_path: ROOT,
+        title: id,
+        permission_mode: 'plan',
+        skip_permissions: false,
+        status: resolvedStatus,
+        agent_phase: resolvedStatus === 'running' ? 'generating' : null,
+        agent_phase_history: [],
+        contract: body.contract || null,
+        claude_session_id: null,
+        worktree_path: null,
+        worktree_branch: null,
+        source_branch: null,
+        dispatch_mode: 'standard',
+        timeout_at: body.timeout_at || null,
+        output: [],
+        lastLines: [],
+        wsClients: new Set(),
+        started_at: new Date().toISOString(),
+        completed_at: resolvedStatus !== 'running' ? new Date().toISOString() : null,
+        process: null,
+        pid: null,
+        logPath: join(LOGS_DIR, `${id}.jsonl`),
+        _testWorkerId: req.headers['x-test-worker-id'] ?? null,
+      };
+      dispatches.set(id, dispatch);
+      await saveDispatchToDb(dispatch);
+      json(res, { id, dispatch_id: id, status: dispatch.status });
+    }],
+
+    [/^\/api\/dispatch\/([^/]+)\/agent-phase$/, 'PATCH', async (m, req, res) => {
+      const id = m[1];
+      const body = await parseBody(req);
+      const { phase } = body;
+      const dispatch = dispatches.get(id);
+      if (!dispatch) return err(res, 'dispatch not found', 404);
+      const historyEntry = { phase, at: new Date().toISOString() };
+      dispatch.agent_phase = phase;
+      dispatch.agent_phase_history = [...(dispatch.agent_phase_history || []), historyEntry].slice(-50);
+      await db.updateAgentPhase(id, phase, historyEntry).catch(() => {});
+      if (dispatch.work_item_id) {
+        if (phase === 'waiting_for_input') {
+          await db.setInputNeeded(dispatch.work_item_id, true, 'agent_phase_bridge').catch(() => {});
+        } else {
+          await db.setInputNeeded(dispatch.work_item_id, false, 'agent_phase_bridge').catch(() => {});
+        }
+      }
+      json(res, { ok: true, phase });
+    }],
+
+    // --- Cost tracking test endpoints ---
+
+    // Seed a dispatch_costs row directly (bypassing the live stream handler)
+    [/^\/api\/test\/seed-dispatch-cost$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { id, model, agent_role, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens } = body;
+      if (!id) return err(res, 'id is required', 400);
+      const cost = await db.insertDispatchCost({
+        id,
+        model: model || 'claude-sonnet-4-6',
+        agentRole: agent_role || null,
+        inputTokens: input_tokens || 0,
+        outputTokens: output_tokens || 0,
+        cacheReadTokens: cache_read_tokens || 0,
+        cacheWriteTokens: cache_write_tokens || 0,
+      });
+      json(res, { id, cost_usd_breakdown: cost ?? null });
+    }],
+
+    // Fetch all dispatch_costs rows for a given dispatch ID
+    [/^\/api\/test\/dispatch-costs\/([^/]+)$/, 'GET', async (m, _req, res) => {
+      const rows = await db.getDispatchCostRows(m[1]);
+      json(res, rows.map(r => ({
+        id: r.id,
+        model: r.model,
+        agent_role: r.agent_role,
+        input_tokens: r.input_tokens,
+        output_tokens: r.output_tokens,
+        cache_read_tokens: r.cache_read_tokens,
+        cache_write_tokens: r.cache_write_tokens,
+        cost_usd_breakdown: typeof r.cost_usd_breakdown === 'number' ? r.cost_usd_breakdown : parseFloat(r.cost_usd_breakdown),
+        recorded_at: r.recorded_at,
+      })));
+    }],
+
+    // Expose getProjectAvgDispatchCost for regression testing
+    [/^\/api\/test\/project-avg-dispatch-cost\/(.+)$/, 'GET', async (m, _req, res) => {
+      const projectKey = decodeURIComponent(m[1]);
+      const result = await db.getProjectAvgDispatchCost(projectKey);
+      json(res, result);
+    }],
+
+    // Seed a dispatch_prompts row directly (bypassing the live spawn handler)
+    [/^\/api\/test\/seed-prompt$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { dispatch_id, work_item_id, project_key, prompt_text, char_count, truncated } = body;
+      if (!prompt_text) return err(res, 'prompt_text is required', 400);
+      const resolvedCharCount = char_count !== undefined ? char_count : prompt_text.length;
+      const resolvedTruncated = truncated !== undefined ? truncated : false;
+      await db.insertPromptRecord({
+        dispatch_id: dispatch_id || null,
+        work_item_id: work_item_id || null,
+        project_key: project_key || null,
+        prompt_text,
+        char_count: resolvedCharCount,
+        truncated: resolvedTruncated,
+      });
+      json(res, { ok: true, char_count: resolvedCharCount, truncated: resolvedTruncated });
     }],
   ];
 }

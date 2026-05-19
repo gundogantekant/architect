@@ -1,6 +1,14 @@
 export default function sessionRoutes(deps) {
-  const { json, err, parseBody, isPidAlive, cliSessions, saveCliSessionToDb, archiveSession } = deps;
+  const { db, json, err, parseBody, isPidAlive, cliSessions, saveCliSessionToDb, archiveSession } = deps;
   return [
+    // --- Aggregate history endpoint ---
+
+    // All sessions history (last 100, newest first)
+    [/^\/api\/sessions\/all$/, 'GET', async (_m, _req, res) => {
+      const rows = await db.getSessionHistory({ limit: 100 });
+      json(res, rows);
+    }],
+
     // --- CLI session endpoints ---
 
     // Register CLI session

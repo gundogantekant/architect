@@ -1,3 +1,5 @@
+import { spawnTerminalSession } from '../terminal-session.mjs';
+
 export default function terminalRoutes(deps) {
   const {
     db, json, err, parseBody,
@@ -98,6 +100,35 @@ export default function terminalRoutes(deps) {
       const resolvedTermPermMode = permission_mode || 'acceptEdits';
       const resolvedTermSkipPerms = skip_permissions === true || skip_permissions === 'true';
 
+      if (agentType === 'claude') {
+        // Delegate to shared module for claude PTY spawn
+        let terminal;
+        try {
+          terminal = await spawnTerminalSession(deps, {
+            id,
+            projectPath,
+            prompt,
+            agentDefs: termAgentDefs,
+            permissionMode: resolvedTermPermMode,
+            skipPermissions: resolvedTermSkipPerms,
+            workItemId: work_item_id || null,
+            epicId: epic_id || null,
+            projectKey: project_key || null,
+            orgKey: org_key || null,
+            title: title || additional_instructions?.slice(0, 60) || 'Interactive session',
+            testWorkerId: _testWorkerId,
+            skip_seed: !!skip_seed,
+          });
+        } catch (spawnErr) {
+          return json(res, { error: `Failed to spawn terminal: ${spawnErr.message}` }, 500);
+        }
+        return json(res, { terminal_id: terminal.id, status: 'running' });
+      }
+
+      // Non-claude agentType: shell and other adapters spawn inline
+      let ptyProcess;
+      let tmuxName = null;
+
       // Create EventStream and inject seed content before PTY starts
       const eventStream = new EventStream(id);
       await mkdir(LOGS_DIR, { recursive: true });
@@ -111,68 +142,8 @@ export default function terminalRoutes(deps) {
         try { appendFileSync(termEventLogPath(id), jsonlLines.join('\n') + '\n'); } catch {}
       }
 
-      // Spawn interactive PTY with claude, optionally wrapped in tmux for restart survival
-      let ptyProcess;
-      let tmuxName = null;
-      let agentsFile = null;
-      const claudeSessionId = crypto.randomUUID();
       try {
-        const ptyArgs = adapter.buildArgs(claudeSessionId, {
-          permissionMode: resolvedTermPermMode,
-          skipPermissions: resolvedTermSkipPerms,
-          addDir: ROOT,
-          agentsJson: null, // will be set below if needed
-        });
-
-        if (agentType === 'claude') {
-          if (termAgentDefs.length) {
-            if (TMUX_AVAILABLE) {
-              // Write agents JSON to temp file to avoid ARG_MAX overflow in tmux
-              const tmpDir = join(ROOT, 'tmp');
-              try { await mkdir(tmpDir, { recursive: true }); } catch {}
-              agentsFile = join(tmpDir, `agents-${id}.json`);
-              writeFileSync(agentsFile, JSON.stringify(termAgentDefs));
-            } else {
-              ptyArgs.push('--agents', JSON.stringify(termAgentDefs));
-            }
-          }
-
-          if (TMUX_AVAILABLE) {
-            tmuxName = `architect-${id}`;
-            // Build shell command that reads agents from temp file to stay within ARG_MAX
-            const cliParts = [CLAUDE_BIN, ...ptyArgs.map(a => `'${a.replace(/'/g, "'\\''")}'`)];
-            if (agentsFile) {
-              cliParts.push('--agents', `"$(cat '${agentsFile}')"`);
-            }
-            const shellCmd = 'exec ' + cliParts.join(' ');
-            // Create detached tmux session running claude via shell wrapper
-            // exec replaces sh with claude — when claude exits, the tmux pane exits immediately
-            execFileSync('tmux', [
-              'new-session', '-d', '-s', tmuxName, '-x', '80', '-y', '24',
-              'sh', '-c', shellCmd,
-            ], { cwd: projectPath, env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO } });
-            // Enable mouse support so SGR wheel sequences reach the inner application
-            try { execFileSync('tmux', ['set-option', '-t', tmuxName, '-g', 'mouse', 'on']); } catch {}
-            // Attach node-pty to the tmux session for WebSocket streaming
-            ptyProcess = pty.spawn('tmux', ['attach-session', '-t', tmuxName], {
-              name: 'xterm-256color', cols: 80, rows: 24,
-              cwd: projectPath,
-              env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
-            });
-            ptyProcess.on('error', (err) => {
-              console.error(JSON.stringify({ type: 'pty_error', errno: err.code, message: err.message, pid: ptyProcess.pid, session_id: id, timestamp: new Date().toISOString() }));
-            });
-          } else {
-            ptyProcess = pty.spawn(CLAUDE_BIN, ptyArgs, {
-              name: 'xterm-256color', cols: 80, rows: 24,
-              cwd: projectPath,
-              env: { ...process.env, TERM: 'xterm-256color', ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
-            });
-            ptyProcess.on('error', (err) => {
-              console.error(JSON.stringify({ type: 'pty_error', errno: err.code, message: err.message, pid: ptyProcess.pid, session_id: id, timestamp: new Date().toISOString() }));
-            });
-          }
-        } else if (agentType === 'shell') {
+        if (agentType === 'shell') {
           const shellBin = process.env.SHELL || '/bin/zsh';
           // Skip shell init scripts (oh-my-zsh, git hooks, mouse reporting plugins)
           // to prevent scroll interference and post-exit noise. PATH is inherited from process.env.
@@ -187,9 +158,6 @@ export default function terminalRoutes(deps) {
             cwd: projectPath,
             env: shellEnv,
           });
-          ptyProcess.on('error', (err) => {
-            console.error(JSON.stringify({ type: 'pty_error', errno: err.code, message: err.message, pid: ptyProcess.pid, session_id: id, timestamp: new Date().toISOString() }));
-          });
         } else {
           // Other adapters: spawn shell as fallback
           const shellBin = process.env.SHELL || '/bin/zsh';
@@ -199,12 +167,11 @@ export default function terminalRoutes(deps) {
             cwd: projectPath,
             env: { ...process.env, TERM: 'xterm-256color' },
           });
-          ptyProcess.on('error', (err) => {
-            console.error(JSON.stringify({ type: 'pty_error', errno: err.code, message: err.message, pid: ptyProcess.pid, session_id: id, timestamp: new Date().toISOString() }));
-          });
         }
+        ptyProcess.on('error', (e) => {
+          console.error(JSON.stringify({ type: 'pty_error', errno: e.code, message: e.message, pid: ptyProcess.pid, session_id: id, timestamp: new Date().toISOString() }));
+        });
       } catch (spawnErr) {
-        // Clean up tmux session on failure
         if (tmuxName) { try { execFileSync('tmux', ['kill-session', '-t', tmuxName], { stdio: 'ignore' }); } catch {} }
         return json(res, { error: `Failed to spawn terminal: ${spawnErr.message}` }, 500);
       }
@@ -224,20 +191,18 @@ export default function terminalRoutes(deps) {
         skip_permissions: resolvedTermSkipPerms,
         status: 'running',
         ptyProcess,
-        pid: tmuxName
-          ? parseInt(execFileSync('tmux', ['display-message', '-t', tmuxName, '-p', '#{pane_pid}'], { encoding: 'utf8' }).trim(), 10)
-          : ptyProcess.pid,
-        tmux_session: tmuxName,
-        claude_session_id: agentType === 'claude' ? claudeSessionId : null,
-        agents_file: agentsFile,
+        pid: ptyProcess.pid,
+        tmux_session: null,
+        claude_session_id: null,
+        agents_file: null,
         eventStream,
         wsClients: eventStream.subscribers,
         cols: 80,
         rows: 24,
         _adapter: adapter,
         _accumulated: '',
-        _pendingPrompt: agentType === 'claude' ? prompt : null,
-        _readyForPrompt: agentType !== 'claude', // shell is immediately ready
+        _pendingPrompt: null,
+        _readyForPrompt: true, // shell/other are immediately ready
         _permissionMode: resolvedTermPermMode,
         _skipPermissions: resolvedTermSkipPerms,
         _testWorkerId,
@@ -246,24 +211,6 @@ export default function terminalRoutes(deps) {
       };
 
       wireTerminalHandlers(terminal);
-
-      // For shell: no prompt injection needed
-      // For claude: injectPrompt is triggered by detectReadiness in wireTerminalHandlers
-      // For claude with shell fallback: inject immediately after first data
-      if (agentType === 'shell') {
-        // No prompt to inject
-      }
-
-      // Fallback: if claude readiness never fires, inject after MAX_WAIT
-      if (agentType === 'claude') {
-        const MAX_WAIT = tmuxName ? 8000 : 5000;
-        setTimeout(() => {
-          if (terminal._pendingPrompt && terminal.ptyProcess) {
-            terminal._readyForPrompt = true;
-            injectPrompt(terminal);
-          }
-        }, MAX_WAIT);
-      }
 
       terminals.set(id, terminal);
       await saveTerminalToDb(terminal);
@@ -373,6 +320,7 @@ export default function terminalRoutes(deps) {
     // List active terminals
     [/^\/api\/terminal\/active$/, 'GET', async (_m, req, res) => {
       const workerId = req.headers['x-test-worker-id'];
+      const includeDeleted = new URL(req.url, 'http://x').searchParams.get('include_deleted') === 'true';
       const list = await Promise.all([...terminals].map(async ([id, t]) => {
         if (workerId !== undefined && t._testWorkerId !== workerId) return null;
         return {
@@ -381,6 +329,7 @@ export default function terminalRoutes(deps) {
           agent_type: t.agent_type || t.type || 'claude',
           work_item_id: t.work_item_id,
           work_item_title: t.work_item_id ? await db.getWorkItemTitle(t.work_item_id) : null,
+          work_item_input_needed: t.work_item_id ? await db.getWorkItemInputNeeded(t.work_item_id).catch(() => false) : false,
           epic_id: t.epic_id || null,
           epic_title: t.epic_id ? await db.getEpicTitle(t.epic_id) : null,
           project_key: t.project_key,
@@ -396,9 +345,41 @@ export default function terminalRoutes(deps) {
           prompt: t.prompt || null,
           claude_session_id: t.claude_session_id || null,
           head_seq: t.eventStream ? t.eventStream.headSeq : 0,
+          deleted_at: null,
         };
       }));
-      json(res, list.filter(Boolean));
+      const active = list.filter(Boolean);
+      if (!includeDeleted) {
+        json(res, active);
+        return;
+      }
+      const deleted = await db.getDeletedTerminals();
+      const deletedRows = deleted
+        .map(t => ({
+          id: t.id,
+          type: t.type || 'claude',
+          agent_type: t.agent_type || t.type || 'claude',
+          work_item_id: t.work_item_id || null,
+          work_item_title: null,
+          work_item_input_needed: false,
+          epic_id: t.epic_id || null,
+          epic_title: null,
+          project_key: t.project_key,
+          project_path: t.project_path || null,
+          title: t.title,
+          status: t.status,
+          started_at: t.started_at,
+          exited_at: t.exited_at || null,
+          last_output: [],
+          permission_mode: t.permission_mode || 'acceptEdits',
+          skip_permissions: t.skip_permissions || false,
+          org_key: t.org_key || null,
+          prompt: null,
+          claude_session_id: t.claude_session_id || null,
+          head_seq: 0,
+          deleted_at: t.deleted_at,
+        }));
+      json(res, [...active, ...deletedRows]);
     }],
 
     // List suspended terminals only
@@ -486,7 +467,6 @@ export default function terminalRoutes(deps) {
       if (terminal.agents_file) unlinkFile(terminal.agents_file).catch(() => {});
       terminals.delete(m[1]);
       await db.deleteTerminal(m[1]);
-      unlinkFile(termEventLogPath(m[1])).catch(() => {});
       json(res, { status: 'killed', id: m[1] });
     }],
 

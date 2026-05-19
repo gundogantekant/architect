@@ -914,6 +914,46 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
   return sections.join('\n\n');
 }
 
+export function buildTaskCreationPrompt(projectKey, initialInput) {
+  return `You are a coordinator agent creating a new work item for project ${projectKey}.
+
+## User Request
+${initialInput}
+
+## Task
+Create a draft work item for this request:
+1. Call POST /api/work-items with the dashboard API (base URL from DASHBOARD_URL env var or http://127.0.0.1:3777)
+   Body: { "title": "<concise title>", "description": "<goal, constraints, expected output as markdown>", "status": "draft", "project_key": "${projectKey}", "priority": "medium" }
+2. After creating the work item, output the following line exactly:
+   CREATED_WORK_ITEM: <id from API response>
+3. Signal completion.
+
+Keep the title under 80 characters. The description should include **Goal:**, **Constraints:**, and **Expected Output:** sections.`;
+}
+
+export function buildRefinementPrompt(workItem) {
+  return `You are a coordinator agent refining a draft work item into an actionable implementation contract.
+
+## Work Item
+Title: ${workItem.title}
+Description: ${workItem.description || '(none)'}
+
+## Task
+Analyze this work item and produce a structured DispatchContract. Output the contract as a fenced JSON block under the exact heading below — nothing else after the heading:
+
+# DispatchContract
+\`\`\`json
+{
+  "goal": "...",
+  "constraints": ["..."],
+  "expected_output": "...",
+  "failure_conditions": ["..."]
+}
+\`\`\`
+
+Be concise and specific. The contract must be implementable by a coding agent.`;
+}
+
 /**
  * Build the `# Auto-Implement Mode` section injected into the autonomous dispatch prompt.
  * References the workflow path rather than embedding its content.
@@ -960,6 +1000,31 @@ After step 12 (commit) succeeds in Auto-Implement Mode, retrieve the commit SHA 
 
 The DISPATCH_ID is found in the \`# Tracking\` section of your prompt (the work item dispatch ID, starts with D-).
 After calling this endpoint, halt. Do not proceed to steps 13–16 — the dashboard handles merge-back automatically.`;
+}
+
+export function buildProjectRefinementPrompt({ projectKey, projectPath, template, items, epics, instructions, dryRun, port, mode }) {
+  const workingList = items.length === 0
+    ? '(no items in scope)'
+    : items.map((it, i) => `${i + 1}. ${it.id} [${it.status}] [${it.priority}] ${it.title}${it.depends_on?.length ? ` (depends: ${it.depends_on.join(', ')})` : ''}`).join('\n');
+
+  const epicsList = epics.length === 0
+    ? '(no epics in scope)'
+    : epics.map(e => `- ${e.id} [${e.status}] ${e.title}`).join('\n');
+
+  const modeText = mode === 'interactive'
+    ? 'You are in a live PTY session. Ask clarifying questions directly in the terminal. The user can respond in real time.'
+    : 'You are running as a background agent at session depth 1. You MUST NOT call POST /api/dispatch or any dispatch endpoint.';
+
+  const filledTemplate = template
+    .replaceAll('{{PROJECT_KEY}}', projectKey)
+    .replaceAll('{{DASHBOARD_URL}}', `http://127.0.0.1:${port}`)
+    .replaceAll('{{WORKING_LIST}}', workingList)
+    .replaceAll('{{EPICS_LIST}}', epicsList)
+    .replaceAll('{{INSTRUCTIONS}}', instructions || '(none)')
+    .replaceAll('{{DRY_RUN}}', dryRun ? 'true' : 'false')
+    .replaceAll('{{MODE}}', modeText);
+
+  return filledTemplate;
 }
 
 /**

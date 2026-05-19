@@ -106,7 +106,7 @@ These rules apply to ALL workflow patterns, not only `parallel-fan-out`:
 
 | Category | Agents | Can modify code | Can write data | Can interact with web | Uses worktree |
 |----------|--------|-----------------|----------------|-----------------------|---------------|
-| Read-only | reviewer, security-auditor, performance, strategist, classifier, coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod | No | No | No | No (main tree) |
+| Read-only | reviewer, security-auditor, performance, strategist, classifier, coordinator, findings-coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod | No | No | No | No (main tree) |
 | Interactive | browser | No | No | Yes | No |
 | Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer, git-ops | Yes | No | No | Yes (worktree) |
 | Onboarding | profiler | No (writes only CLAUDE.md to target project) | No | No | No |
@@ -926,7 +926,7 @@ Each agent receives only the context layers relevant to its role. This reduces t
 |--------------|--------|-----------------|
 | none | git-ops | Branch name and project path only |
 | minimal | classifier, scout, tracker, dependency-manager, browser | `guidance.stack_summary`, `scout_report.language`, `scout_report.framework` |
-| standard | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, coordinator, planner, debugger, documenter, api-designer, refactorer, strategist, profiler, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod | Minimal + `guidance.structure`, `guidance.conventions`, `custom_rules`, `agents.dispatch_notes`, `brief.purpose`, `brief.domain`, `brief.users`, `doc_paths`, `portfolio_guides` |
+| standard | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, coordinator, findings-coordinator, planner, debugger, documenter, api-designer, refactorer, strategist, profiler, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod | Minimal + `guidance.structure`, `guidance.conventions`, `custom_rules`, `agents.dispatch_notes`, `brief.purpose`, `brief.domain`, `brief.users`, `doc_paths`, `portfolio_guides` |
 | full | tester, reviewer, security-auditor, ci-cd, performance | Standard + `guidance.ci_cd`, `guidance.testing`, complete `brief` (all fields), `doc_paths` |
 
 ### Application
@@ -973,6 +973,11 @@ The orchestrator dispatches sub-agents for research, analysis, and investigation
 | Task matches Trivial Exception Rule | Handle inline |
 
 The orchestrator's inline work should be limited to: decomposing tasks, constructing dispatch prompts, synthesizing agent results, answering direct questions, and running read-only git/API queries. Extended reading, analysis, and investigation belong in sub-agents.
+
+### Investigation Findings Routing
+
+When the orchestrator holds a ClassifierOutput (structured type/complexity/workflow signal from the classifier): follow the triage-request workflow.
+When the orchestrator holds UnstructuredFindings (raw output from any investigation agent) and no ClassifierOutput: follow the synthesize-findings workflow.
 
 ### Git Operations
 

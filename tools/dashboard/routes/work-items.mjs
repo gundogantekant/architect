@@ -78,7 +78,12 @@ function validateTransition(fromStatus, toStatus, item, body) {
 }
 
 export default function workItemRoutes(deps) {
-  const { db, json, err, parseBody, readFile, writeFile, readdir, unlinkFile, mkdir, join, WORK, VALID_WORK_ITEM_STATUSES, VALID_PRIORITIES, text } = deps;
+  const {
+    db, json, err, parseBody, readFile, writeFile, readdir, unlinkFile, mkdir, join, WORK, VALID_WORK_ITEM_STATUSES, VALID_PRIORITIES, text,
+    dispatches, LOGS_DIR, CLAUDE_BIN, ROOT, PORTFOLIO,
+    buildRefinementPrompt, wireDispatchHandlers, saveDispatchToDb, broadcastDispatchDone,
+    spawn, createWriteStream,
+  } = deps;
   return [
     [/^\/api\/backlog$/, 'GET', async (_m, req, res) => {
       const reqUrl = new URL(req.url, 'http://localhost');
@@ -342,6 +347,78 @@ export default function workItemRoutes(deps) {
       } catch {
         err(res, 'artifact not found', 404);
       }
+    }],
+
+    [/^\/api\/work-items\/(W-\d+)\/prompt-history$/, 'GET', async (m, _req, res) => {
+      const rows = await db.getPromptsByWorkItem(m[1]);
+      json(res, rows);
+    }],
+
+    [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/refine$/, 'POST', async (m, _req, res) => {
+      const itemId = m[1];
+      const item = await db.getWorkItem(itemId);
+      if (!item) return err(res, 'Work item not found', 404);
+      if (item.status !== 'draft') return err(res, 'Only draft items can be refined', 409);
+
+      for (const d of (dispatches || new Map()).values()) {
+        if (d.work_item_id === itemId && d.status === 'running') {
+          return err(res, 'Active dispatch already exists for this item', 409);
+        }
+      }
+
+      const dispatchId = `D-${Date.now()}`;
+      const prompt = buildRefinementPrompt(item);
+
+      const dispatch = {
+        id: dispatchId,
+        work_item_id: itemId,
+        epic_id: null,
+        project_key: item.project_key,
+        project_path: ROOT,
+        title: `Refine: ${item.title}`,
+        permission_mode: 'plan',
+        skip_permissions: false,
+        dispatch_mode: 'refinement',
+        status: 'running',
+        agent_phase: 'generating',
+        agent_phase_history: [],
+        claude_session_id: null,
+        worktree_path: null,
+        worktree_branch: null,
+        source_branch: null,
+        output: [],
+        lastLines: [],
+        wsClients: new Set(),
+        started_at: new Date().toISOString(),
+        completed_at: null,
+      };
+
+      let proc;
+      try {
+        proc = spawn(CLAUDE_BIN, ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'plan'], {
+          cwd: ROOT,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
+        });
+      } catch (spawnErr) {
+        return err(res, `Failed to spawn claude: ${spawnErr.message}`, 500);
+      }
+
+      if (!proc.stdin.write(prompt)) {
+        await new Promise(r => proc.stdin.once('drain', r));
+      }
+      proc.stdin.end();
+
+      dispatch.process = proc;
+      dispatch.pid = proc.pid;
+      dispatch.logPath = join(LOGS_DIR, `${dispatchId}.jsonl`);
+      dispatch.logStream = createWriteStream(dispatch.logPath, { flags: 'a' });
+
+      wireDispatchHandlers(dispatch, proc);
+
+      dispatches.set(dispatchId, dispatch);
+      await saveDispatchToDb(dispatch);
+      json(res, { dispatch_id: dispatchId, accepted: true });
     }],
   ];
 }

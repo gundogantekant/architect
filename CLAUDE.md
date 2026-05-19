@@ -29,6 +29,7 @@ See `docs/architecture.md` for layer boundaries and dependency rules.
 |------|-------|---------------|
 | Fast request triage | classifier | haiku |
 | Detailed dispatch planning | coordinator | sonnet |
+| Synthesize investigation findings into a DispatchPlan | findings-coordinator | sonnet |
 | Scan a project's tech stack | scout | haiku |
 | Project analysis and CLAUDE.md generation | profiler | sonnet |
 | Strategic evaluation of a request | strategist | opus |
@@ -69,6 +70,8 @@ Default models are overridden dynamically by the orchestrator based on task comp
 ### Orchestrator Behavior
 
 The main thread is strictly an orchestrator/PM. It reads, plans, dispatches, and tracks — but does not implement code (except single-line trivial fixes like typos). Git operations are delegated to the git-ops agent. See `domain/rules.md` → Orchestrator Behavior Rules for the full dispatch decision flow.
+
+When an investigation agent completes and follow-up dispatch is needed: if a `ClassifierOutput` is already in scope, route through coordinator (triage-request workflow); if only unstructured findings exist, route through findings-coordinator (synthesize-findings workflow).
 
 ### Session Identity & Scope
 

@@ -16,7 +16,7 @@ Canonical schemas for all structured data in the architect system. Agents and sk
 }
 ```
 
-**Read-only agents**: reviewer, security-auditor, performance, strategist, classifier, coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod
+**Read-only agents**: reviewer, security-auditor, performance, strategist, classifier, coordinator, findings-coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod
 **Interactive agents**: browser (interacts with web via Playwright, no code/data writes)
 **Implementation agents**: coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer, git-ops
 **Onboarding agents**: profiler (writes only CLAUDE.md to the target project)
@@ -514,13 +514,14 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "additional_instructions": "string (optional)",
   "permission_mode": "string (plan|acceptEdits)",
   "skip_permissions": "boolean (default false, adds --dangerously-skip-permissions flag)",
-  "status": "running|completed|failed|killed|interrupted|suspended|merge_pending|merge_conflict",
+  "status": "running|completed|failed|killed|interrupted|suspended|merge_pending|merge_conflict|dismissed|superseded",
   "started_at": "string (ISO 8601)",
   "completed_at": "string (ISO 8601, optional)",
   "session_id": "string (Claude session ID, optional — legacy field)",
   "claude_session_id": "string (Claude CLI session UUID, optional — captured from stream-json init event, used for resume)",
   "cost_usd": "number (total cost, optional)",
   "pid": "number (OS process ID, optional — stored for restart survival)",
+  "exit_type": "'graceful'|'killed'|'interrupted'|'unknown'|null — how the process exited. Set by close handler: 'graceful' for code 0, 'killed' for intentional kill, 'interrupted' for ungraceful termination (crash, SIGKILL, OOM). null for dispatches that were never classified (pre-W-1139 rows).",
   "agent_phase": "AgentPhase (ephemeral, in-memory only — not persisted to PostgreSQL, derived from live stream-json event parsing or log replay)",
   "worktree_path": "string (absolute path to worktree, null if no worktree — persisted to PostgreSQL)",
   "worktree_branch": "string (worktree branch name, null if no worktree — persisted to PostgreSQL)",
@@ -534,9 +535,14 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "code_gate_passed": "boolean | null     // null until code gate runs; true if approved, false if blocked",
   "code_gate_passed_at": "string | null   // ISO 8601 timestamp when code gate resolved; null until then",
   "contract_satisfied": "boolean | null   // null until code gate; set true when all e2e_test_criteria confirmed passing",
-  "contract_satisfied_at": "string | null // ISO 8601 timestamp when contract satisfaction was confirmed"
+  "contract_satisfied_at": "string | null // ISO 8601 timestamp when contract satisfaction was confirmed",
+  "deleted_at": "string (ISO 8601) | null — set to the kill timestamp when the record is soft-deleted via DELETE /api/dispatch/:id. null for all active, completed, and terminal-state records. Records with a non-null deleted_at are excluded from all default list queries and not restored to in-memory state on server restart. Set concurrently with status = 'killed' — never independently. Presence means the record is dismissed from active UI views; the status field independently records the operational outcome."
 }
 ```
+
+Status semantics for terminal states:
+- `dismissed` — user acknowledged an interrupted session and dismissed the recovery banner. Not shown in recovery surface.
+- `superseded` — session was replaced by a re-dispatch. Treated same as dismissed in UI.
 
 CompleteDispatchRequest validation:
 - For medium+ complexity dispatches: reject completion if code_gate_passed !== true
@@ -575,7 +581,8 @@ Record for an interactive PTY terminal session spawned from the dashboard. Persi
   "exited_at": "string (ISO 8601, null while running)",
   "pid": "number (OS process ID, optional — stored for restart survival)",
   "tmux_session": "string (tmux session name, optional — e.g. architect-T-xxx)",
-  "claude_session_id": "string (Claude CLI session UUID — required for suspend/resume; only present when agent_type === 'claude'. Suspend is rejected if absent or if agent_type !== 'claude')"
+  "claude_session_id": "string (Claude CLI session UUID — required for suspend/resume; only present when agent_type === 'claude'. Suspend is rejected if absent or if agent_type !== 'claude')",
+  "deleted_at": "string (ISO 8601) | null — set when the terminal is killed and removed via DELETE /api/terminal/:id. null for all live, suspended, and naturally exited terminals. Records with non-null deleted_at are filtered from the default active list and not loaded on server restart. Set concurrently with status = 'killed' — never independently."
 }
 ```
 
@@ -853,6 +860,67 @@ Aggregation rules:
 - Any `block` → aggregate is `block`
 - Any `revise` (no `block`) → aggregate is `revise`
 - All `approve` → aggregate is `approve`
+
+## DispatchCost
+
+Per-token cost record for a completed dispatch. Stored in the `dispatch_costs` table. One row per dispatch that emitted a result event with usage data.
+
+```json
+{
+  "id": "string — dispatch ID (FK → DispatchRequest.id)",
+  "model": "string — model ID (e.g. claude-sonnet-4-6)",
+  "agent_role": "string — agent role (e.g. coder, planner)",
+  "input_tokens": "int",
+  "output_tokens": "int",
+  "cache_read_tokens": "int",
+  "cache_write_tokens": "int",
+  "cost_usd_breakdown": "float — computed from model_pricing at insert time",
+  "recorded_at": "string — ISO timestamp"
+}
+```
+
+Attribution hierarchy: dispatch → work item → project → epic.
+
+## ModelPricing
+
+Pricing table for known Claude model IDs. Updated in-place via SQL; server restart picks up new prices.
+
+```json
+{
+  "model_id": "string PK — e.g. claude-sonnet-4-6",
+  "input_cost_per_mtok": "float — USD per million input tokens",
+  "output_cost_per_mtok": "float — USD per million output tokens",
+  "cache_read_cost_per_mtok": "float — USD per million cache-read tokens",
+  "cache_write_cost_per_mtok": "float — USD per million cache-write tokens",
+  "updated_at": "string — ISO timestamp"
+}
+```
+
+Seeded models: `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`.
+
+## PromptRecord
+
+Stored in PostgreSQL (`dispatch_prompts` table). Captures the full assembled prompt text immediately before a Claude process is spawned, enabling audit and replay.
+
+```json
+{
+  "id": "number (serial PK)",
+  "dispatch_id": "string | null (FK → DispatchRequest.id ON DELETE SET NULL — row survives dispatch deletion)",
+  "work_item_id": "string | null",
+  "project_key": "string | null",
+  "prompt_text": "string (capped at 1MB)",
+  "char_count": "number",
+  "truncated": "boolean",
+  "created_at": "string (ISO 8601)"
+}
+```
+
+Capture rules:
+- Inserted immediately before the spawn call at each of the three spawn sites (onboard, standard, auto-implement).
+- `prompt_text` is truncated to 1,048,576 characters (1MB) when the assembled prompt exceeds this limit; `truncated` is set to `true` when capping occurs.
+- Failure to insert is logged (`[prompt-capture] failed:`) but does not abort the dispatch — the spawn proceeds regardless.
+- `dispatch_id` is set to `null` when the referenced dispatch is deleted (`ON DELETE SET NULL`), making the record permanently available for audit via `work_item_id`.
+- Retrieved via `GET /api/work-items/:id/prompt-history`, sorted by `created_at DESC`.
 
 ## RegistryEntry
 

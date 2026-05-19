@@ -31,6 +31,8 @@ Investigate and diagnose a bug or issue.
    - Report what was investigated
    - Suggest additional diagnostic steps
 
+6. If the debugger's findings include actionable issues and the user requests follow-up remediation dispatch: follow `usecases/synthesize-findings.md` — pass the debugger findings as `## Findings`, the user's original issue as `## Goal`, and the resolved target_project as `## Context`.
+
 ## Debugging Guidelines
 
 When portfolio context includes debug-related guidance (via `custom_rules`, `dispatch_notes.debugger`, or `portfolio_guides`), pass it to the debugger agent. The debugger must follow project-specific conventions over generic practices. See `usecases/load-portfolio-context.md` → Debug context augmentation.

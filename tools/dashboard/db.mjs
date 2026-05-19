@@ -178,13 +178,14 @@ export async function assertSchema() {
       'tags', 'depends_on', 'created_at', 'updated_at', 'input_needed', 'input_needed_from',
       'input_needed_reason', 'input_needed_at', 'approval_active', 'approval_mode',
       'approval_requested_at', 'approval_resolved_at', 'released_at', 'released_version',
+      'done_at',
     ],
     work_item_approvals: ['id', 'work_item_id', 'identity', 'status', 'sort_order', 'blocking_work_item_id', 'decided_at', 'reason', 'created_at'],
     work_item_logs: ['id', 'work_item_id', 'logged_at', 'summary'],
     epics: ['id', 'title', 'status', 'priority', 'description', 'acceptance_criteria', 'target_date', 'tags', 'created_at', 'updated_at'],
     epic_logs: ['id', 'epic_id', 'logged_at', 'summary'],
-    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at'],
-    terminals: ['id', 'type', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'exited_at', 'pid', 'tmux_session', 'claude_session_id', 'agent_type', 'head_seq'],
+    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at', 'agent_phase', 'agent_phase_history', 'timeout_at', 'contract', 'exit_type', 'deleted_at'],
+    terminals: ['id', 'type', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'exited_at', 'pid', 'tmux_session', 'claude_session_id', 'agent_type', 'head_seq', 'deleted_at'],
     cli_sessions: ['id', 'project_key', 'work_item_id', 'epic_id', 'title', 'pid', 'status', 'registered_at', 'exited_at'],
     preferences: ['key', 'value'],
     projects: ['key', 'org', 'project', 'component', 'path', 'role', 'synced_at'],
@@ -194,6 +195,9 @@ export async function assertSchema() {
     schema_migrations: ['version', 'applied_at', 'notes'],
     repo_sync_config: ['github_repo_name', 'github_org', 'default_branch', 'local_path', 'portfolio_key', 'sync_enabled', 'last_github_updated_at', 'created_at', 'updated_at'],
     adrs: ['id', 'org_key', 'title', 'type', 'repos', 'sync_run_id', 'detail_path', 'created_at'],
+    dispatch_costs: ['id', 'model', 'agent_role', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'cost_usd_breakdown', 'recorded_at'],
+    model_pricing: ['model_id', 'input_cost_per_mtok', 'output_cost_per_mtok', 'cache_read_cost_per_mtok', 'cache_write_cost_per_mtok', 'updated_at'],
+    dispatch_prompts: ['id', 'dispatch_id', 'work_item_id', 'project_key', 'prompt_text', 'char_count', 'truncated', 'created_at'],
   };
 
   const missing = [];
@@ -479,7 +483,57 @@ export async function updateWorkItem(id, fields) {
   values.push(new Date().toISOString());
   values.push(id);
   await pool.query(`UPDATE work_items SET ${sets.join(', ')} WHERE id = $${paramIdx}`, values);
+  if (fields.status === 'done') {
+    await pool.query(
+      `UPDATE work_items SET done_at = NOW() WHERE id = $1 AND done_at IS NULL`,
+      [id]
+    );
+  }
   return getWorkItem(id);
+}
+
+export async function updateWorkItemRefinement(id, { description, status }) {
+  await pool.query(
+    `UPDATE work_items SET description = $1, status = $2, updated_at = NOW() WHERE id = $3`,
+    [description, status, id]
+  );
+}
+
+export async function setInputNeeded(workItemId, active, source) {
+  if (active) {
+    // Don't overwrite if already set by a non-bridge source (e.g. 'user')
+    const current = await pool.query(
+      'SELECT input_needed, input_needed_from FROM work_items WHERE id=$1',
+      [workItemId]
+    );
+    if (current.rows[0]?.input_needed && current.rows[0]?.input_needed_from !== 'agent_phase_bridge') return;
+    const now = new Date().toISOString();
+    await pool.query(
+      `UPDATE work_items SET input_needed=$1, input_needed_from=$2, input_needed_at=$3 WHERE id=$4`,
+      [true, source, now, workItemId]
+    );
+  } else {
+    const remaining = await pool.query(
+      `SELECT COUNT(*) FROM dispatches WHERE work_item_id=$1 AND agent_phase='waiting_for_input' AND status IN ('running','pending')`,
+      [workItemId]
+    );
+    if (parseInt(remaining.rows[0].count, 10) > 0) return;
+    const current = await pool.query(
+      `SELECT input_needed_from FROM work_items WHERE id=$1`,
+      [workItemId]
+    );
+    if (!current.rows[0] || current.rows[0].input_needed_from !== 'agent_phase_bridge') return;
+    await pool.query(
+      `UPDATE work_items SET input_needed=false, input_needed_from=NULL, input_needed_reason=NULL, input_needed_at=NULL WHERE id=$1`,
+      [workItemId]
+    );
+  }
+}
+
+export async function getWorkItemInputNeeded(workItemId) {
+  if (!workItemId) return false;
+  const r = await pool.query('SELECT input_needed FROM work_items WHERE id=$1', [workItemId]);
+  return r.rows[0]?.input_needed ?? false;
 }
 
 // --- Work Item Approvals ---
@@ -784,8 +838,8 @@ export async function getEpicProjectKeys(epicId) {
 
 export async function saveDispatch(d) {
   await pool.query(`
-    INSERT INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode, pipeline_stage)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+    INSERT INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode, pipeline_stage, agent_phase, agent_phase_history, timeout_at, contract, exit_type)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
     ON CONFLICT (id) DO UPDATE SET
       work_item_id = EXCLUDED.work_item_id,
       epic_id = EXCLUDED.epic_id,
@@ -804,14 +858,40 @@ export async function saveDispatch(d) {
       worktree_branch = EXCLUDED.worktree_branch,
       source_branch = EXCLUDED.source_branch,
       dispatch_mode = EXCLUDED.dispatch_mode,
-      pipeline_stage = EXCLUDED.pipeline_stage
+      pipeline_stage = EXCLUDED.pipeline_stage,
+      agent_phase = EXCLUDED.agent_phase,
+      agent_phase_history = EXCLUDED.agent_phase_history,
+      timeout_at = EXCLUDED.timeout_at,
+      contract = EXCLUDED.contract,
+      exit_type = EXCLUDED.exit_type
   `, [
     d.id, d.work_item_id || null, d.epic_id || null, d.project_key, d.project_path || '',
     d.title || '', d.permission_mode || 'acceptEdits', d.skip_permissions ?? false,
     d.status, d.started_at, d.completed_at || null, d.cost_usd || null, d.pid || null,
     d.claude_session_id || null, d.worktree_path || null, d.worktree_branch || null,
     d.source_branch || null, d.dispatch_mode || 'standard', d.pipeline_stage || null,
+    d.agent_phase ?? null, jsonb(d.agent_phase_history, []), d.timeout_at || null,
+    d.contract !== undefined ? jsonb(d.contract) : null,
+    d.exit_type || null,
   ]);
+}
+
+export async function updateAgentPhase(id, phase, historyEntry) {
+  const res = await pool.query(
+    'SELECT agent_phase_history FROM dispatches WHERE id = $1',
+    [id]
+  );
+  if (!res.rows.length) return;
+
+  const existing = res.rows[0].agent_phase_history || [];
+  const updated = [...existing, historyEntry].slice(-50);
+
+  await pool.query(
+    `UPDATE dispatches
+     SET agent_phase = $2, agent_phase_history = $3
+     WHERE id = $1`,
+    [id, phase, JSON.stringify(updated)]
+  );
 }
 
 export async function updatePipelineStage(id, stage) {
@@ -819,11 +899,26 @@ export async function updatePipelineStage(id, stage) {
 }
 
 export async function deleteDispatch(id) {
-  await pool.query('DELETE FROM dispatches WHERE id = $1', [id]);
+  await pool.query('UPDATE dispatches SET deleted_at = NOW() WHERE id = $1', [id]);
 }
 
 export async function getPersistedDispatches() {
-  return pool.query('SELECT * FROM dispatches').then(r => r.rows);
+  // Exclude terminal statuses to prevent unbounded memory growth on restart.
+  // 'dismissed' and 'superseded' are user-acknowledged terminal states;
+  // 'completed', 'failed', and 'killed' are normal end states loaded separately
+  // only when the user has them in active view. Interrupted sessions are kept
+  // so the recovery banner can be surfaced.
+  return pool.query(
+    `SELECT * FROM dispatches WHERE deleted_at IS NULL AND status NOT IN ('dismissed', 'superseded', 'completed', 'failed', 'killed')`
+  ).then(r => r.rows);
+}
+
+export async function getPersistedDispatchesAll() {
+  return pool.query('SELECT * FROM dispatches WHERE deleted_at IS NULL').then(r => r.rows);
+}
+
+export async function getDeletedDispatches() {
+  return pool.query('SELECT * FROM dispatches WHERE deleted_at IS NOT NULL').then(r => r.rows);
 }
 
 // --- Sessions: Terminals ---
@@ -865,11 +960,15 @@ export async function updateTerminalClaudeSessionId(id, sessionId) {
 }
 
 export async function deleteTerminal(id) {
-  await pool.query('DELETE FROM terminals WHERE id = $1', [id]);
+  await pool.query('UPDATE terminals SET deleted_at = NOW() WHERE id = $1', [id]);
 }
 
 export async function getPersistedTerminals() {
-  return pool.query('SELECT * FROM terminals').then(r => r.rows);
+  return pool.query('SELECT * FROM terminals WHERE deleted_at IS NULL').then(r => r.rows);
+}
+
+export async function getDeletedTerminals() {
+  return pool.query('SELECT * FROM terminals WHERE deleted_at IS NOT NULL').then(r => r.rows);
 }
 
 // --- Sessions: CLI ---
@@ -914,6 +1013,11 @@ export async function updateDispatchStatus(id, status, completed_at) {
   await pool.query('UPDATE dispatches SET status = $1, completed_at = $2 WHERE id = $3', [status, completed_at || null, id]);
 }
 
+// exit_type values: 'graceful', 'killed', 'interrupted', 'unknown'
+export async function updateDispatchExitType(id, exitType) {
+  await pool.query('UPDATE dispatches SET exit_type = $1 WHERE id = $2', [exitType, id]);
+}
+
 export async function updateDispatchMergeResult(id, { status, completed_at, completion_sha, completion_summary, merge_result } = {}) {
   const fields = [];
   const values = [];
@@ -928,6 +1032,13 @@ export async function updateDispatchMergeResult(id, { status, completed_at, comp
   if (!fields.length) return;
   values.push(id);
   await pool.query(`UPDATE dispatches SET ${fields.join(', ')} WHERE id = $${paramIdx}`, values);
+}
+
+export async function linkDispatchToWorkItem(dispatchId, workItemId) {
+  await pool.query(
+    `UPDATE dispatches SET work_item_id = $1 WHERE id = $2`,
+    [workItemId, dispatchId]
+  );
 }
 
 export async function updateTerminalStatus(id, status, exited_at) {
@@ -1070,6 +1181,7 @@ function hydrateWorkItem(row, approvals = []) {
     depends_on: row.depends_on ?? [],
     created_at: row.created_at,
     updated_at: row.updated_at,
+    done_at: row.done_at || null,
     input_needed: !!row.input_needed,
     input_needed_from: row.input_needed_from || '',
     input_needed_reason: row.input_needed_reason || '',
@@ -1548,4 +1660,281 @@ export async function explainApproverPendingQuery(identity) {
   } finally {
     client.release();
   }
+}
+
+// --- Org Repo Management ---
+
+export async function getRepoSyncConfigsByGithubOrg(githubOrg) {
+  const r = await pool.query(
+    'SELECT * FROM repo_sync_config WHERE github_org = $1 ORDER BY github_repo_name',
+    [githubOrg]
+  );
+  return r.rows;
+}
+
+export async function setRepoPortfolioKey(repoName, portfolioKey) {
+  await pool.query(
+    'UPDATE repo_sync_config SET portfolio_key = $2, updated_at = now() WHERE github_repo_name = $1',
+    [repoName, portfolioKey]
+  );
+}
+
+export async function getProjectAvgDispatchCost(projectKey) {
+  const r = await pool.query(
+    `SELECT AVG(cost_usd) AS avg_cost, COUNT(*) AS count
+     FROM session_history
+     WHERE project_key = $1
+       AND type = 'dispatch'
+       AND cost_usd IS NOT NULL
+       AND ended_at > NOW() - INTERVAL '30 days'`,
+    [projectKey]
+  );
+  const row = r.rows[0];
+  return {
+    avg_cost: row.avg_cost ? parseFloat(row.avg_cost) : 0,
+    count: parseInt(row.count, 10),
+  };
+}
+
+export async function getDispatchesByProjectKey(projectKey) {
+  const r = await pool.query(
+    'SELECT * FROM dispatches WHERE project_key = $1',
+    [projectKey]
+  );
+  return r.rows;
+}
+
+export async function cancelWorkItemsByProjectKey(projectKey) {
+  const r = await pool.query(
+    `UPDATE work_items SET status = 'cancelled', updated_at = now()
+     WHERE project_key = $1 AND status NOT IN ('done','cancelled','archived')
+     RETURNING id`,
+    [projectKey]
+  );
+  return r.rows.map(row => row.id);
+}
+
+export async function archiveWorkItemsByProjectKey(projectKey) {
+  const r = await pool.query(
+    `UPDATE work_items SET status = 'archived', updated_at = now()
+     WHERE project_key = $1 AND status IN ('done','cancelled')
+     RETURNING id`,
+    [projectKey]
+  );
+  return r.rows;
+}
+
+export async function deleteProjectRow(projectKey) {
+  await pool.query('DELETE FROM session_history WHERE project_key = $1', [projectKey]);
+  await pool.query('DELETE FROM projects WHERE key = $1', [projectKey]);
+}
+
+export async function unlinkRepoByPortfolioKey(portfolioKey) {
+  await pool.query(
+    'UPDATE repo_sync_config SET portfolio_key = NULL WHERE portfolio_key = $1',
+    [portfolioKey]
+  );
+}
+
+// --- Cost tracking ---
+
+export async function insertDispatchCost({ id, model, agentRole, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens }) {
+  const pricing = await pool.query('SELECT * FROM model_pricing WHERE model_id = $1', [model]);
+  if (!pricing.rows[0]) return;
+  const p = pricing.rows[0];
+  const cost =
+    (inputTokens || 0) * p.input_cost_per_mtok / 1_000_000 +
+    (outputTokens || 0) * p.output_cost_per_mtok / 1_000_000 +
+    (cacheReadTokens || 0) * p.cache_read_cost_per_mtok / 1_000_000 +
+    (cacheWriteTokens || 0) * p.cache_write_cost_per_mtok / 1_000_000;
+  await pool.query(
+    `INSERT INTO dispatch_costs
+       (id, model, agent_role, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd_breakdown)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [id, model, agentRole || null, inputTokens || 0, outputTokens || 0, cacheReadTokens || 0, cacheWriteTokens || 0, cost]
+  );
+  return cost;
+}
+
+export async function getCostByWorkItem(workItemId) {
+  const r = await pool.query(
+    `SELECT
+       COALESCE(SUM(dc.cost_usd_breakdown), 0) AS total_cost_usd,
+       COALESCE(SUM(dc.input_tokens + dc.output_tokens + dc.cache_read_tokens + dc.cache_write_tokens), 0) AS total_tokens,
+       COUNT(DISTINCT dc.id) AS sessions
+     FROM dispatch_costs dc
+     JOIN dispatches d ON d.id = dc.id
+     WHERE d.work_item_id = $1`,
+    [workItemId]
+  );
+  const row = r.rows[0];
+  return {
+    total_cost_usd: parseFloat(row.total_cost_usd),
+    total_tokens: parseInt(row.total_tokens, 10),
+    sessions: parseInt(row.sessions, 10),
+  };
+}
+
+export async function getCostByProject(projectKey) {
+  const r = await pool.query(
+    `SELECT
+       COALESCE(SUM(dc.cost_usd_breakdown), 0) AS total_cost_usd,
+       COALESCE(SUM(dc.input_tokens + dc.output_tokens + dc.cache_read_tokens + dc.cache_write_tokens), 0) AS total_tokens,
+       COUNT(DISTINCT dc.id) AS sessions
+     FROM dispatch_costs dc
+     JOIN dispatches d ON d.id = dc.id
+     WHERE d.project_key = $1`,
+    [projectKey]
+  );
+  const row = r.rows[0];
+  return {
+    total_cost_usd: parseFloat(row.total_cost_usd),
+    total_tokens: parseInt(row.total_tokens, 10),
+    sessions: parseInt(row.sessions, 10),
+  };
+}
+
+export async function getCostByEpic(epicId) {
+  const r = await pool.query(
+    `SELECT
+       COALESCE(SUM(dc.cost_usd_breakdown), 0) AS total_cost_usd,
+       COALESCE(SUM(dc.input_tokens + dc.output_tokens + dc.cache_read_tokens + dc.cache_write_tokens), 0) AS total_tokens,
+       COUNT(DISTINCT dc.id) AS sessions
+     FROM dispatch_costs dc
+     JOIN dispatches d ON d.id = dc.id
+     WHERE d.epic_id = $1`,
+    [epicId]
+  );
+  const row = r.rows[0];
+  return {
+    total_cost_usd: parseFloat(row.total_cost_usd),
+    total_tokens: parseInt(row.total_tokens, 10),
+    sessions: parseInt(row.sessions, 10),
+  };
+}
+
+export async function getDispatchCostRows(dispatchId) {
+  const r = await pool.query(
+    'SELECT * FROM dispatch_costs WHERE id = $1',
+    [dispatchId]
+  );
+  return r.rows;
+}
+
+// --- Prompt capture ---
+
+export async function insertPromptRecord({ dispatch_id, work_item_id, project_key, prompt_text, char_count, truncated }) {
+  await pool.query(
+    `INSERT INTO dispatch_prompts (dispatch_id, work_item_id, project_key, prompt_text, char_count, truncated)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [dispatch_id || null, work_item_id || null, project_key || null, prompt_text, char_count, truncated]
+  );
+}
+
+export async function getPromptsByWorkItem(workItemId) {
+  const r = await pool.query(
+    `SELECT dispatch_id, created_at, char_count, truncated, prompt_text
+     FROM dispatch_prompts
+     WHERE work_item_id = $1
+     ORDER BY created_at DESC`,
+    [workItemId]
+  );
+  return r.rows;
+}
+
+// --- Cost summary ---
+
+function buildBreakdownQuery(groupBy) {
+  if (groupBy === 'model') {
+    return { labelExpr: 'dc.model', joinClause: '' };
+  }
+  if (groupBy === 'agent_role') {
+    return { labelExpr: 'dc.agent_role', joinClause: '' };
+  }
+  if (groupBy === 'project_key') {
+    return {
+      labelExpr: 'd.project_key',
+      joinClause: 'JOIN dispatches d ON d.id = dc.id',
+    };
+  }
+  if (groupBy === 'epic_id') {
+    return {
+      labelExpr: 'd.epic_id',
+      joinClause: 'JOIN dispatches d ON d.id = dc.id',
+    };
+  }
+  return { labelExpr: 'dc.model', joinClause: '' };
+}
+
+function trendByDay(rows) {
+  const byDay = new Map();
+  for (const r of rows) {
+    const day = (r.recorded_at || '').slice(0, 10);
+    if (!day) continue;
+    const entry = byDay.get(day) || { period: day, cost_usd: 0, sessions: 0 };
+    entry.cost_usd += typeof r.cost_usd_breakdown === 'number' ? r.cost_usd_breakdown : parseFloat(r.cost_usd_breakdown || 0);
+    entry.sessions += 1;
+    byDay.set(day, entry);
+  }
+  return [...byDay.values()]
+    .sort((a, b) => a.period.localeCompare(b.period))
+    .map(e => ({ period: e.period, cost_usd: parseFloat(e.cost_usd.toFixed(4)), sessions: e.sessions }));
+}
+
+export async function getCostSummary({ from, to, groupBy = 'model' } = {}) {
+  const defaultFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const defaultTo = new Date().toISOString().slice(0, 10);
+  const fromDate = from || defaultFrom;
+  const toDate = to || defaultTo;
+
+  const totalsJoin = (groupBy === 'project_key' || groupBy === 'epic_id')
+    ? 'JOIN dispatches d ON d.id = dc.id'
+    : '';
+  const totalsResult = await pool.query(
+    `SELECT
+       COALESCE(SUM(dc.cost_usd_breakdown), 0)                                                   AS total_cost_usd,
+       COALESCE(SUM(dc.input_tokens + dc.output_tokens + dc.cache_read_tokens + dc.cache_write_tokens), 0) AS total_tokens,
+       COUNT(*)                                                                                   AS sessions
+     FROM dispatch_costs dc
+     ${totalsJoin}
+     WHERE dc.recorded_at >= $1 AND dc.recorded_at < ($2::date + INTERVAL '1 day')`,
+    [fromDate, toDate]
+  );
+  const totals = totalsResult.rows[0];
+
+  const { labelExpr, joinClause } = buildBreakdownQuery(groupBy);
+  const breakdownResult = await pool.query(
+    `SELECT
+       COALESCE(${labelExpr}::text, '(unknown)')                                                  AS label,
+       COALESCE(SUM(dc.cost_usd_breakdown), 0)                                                   AS cost_usd,
+       COALESCE(SUM(dc.input_tokens + dc.output_tokens + dc.cache_read_tokens + dc.cache_write_tokens), 0) AS tokens,
+       COUNT(*)                                                                                   AS sessions
+     FROM dispatch_costs dc
+     ${joinClause}
+     WHERE dc.recorded_at >= $1 AND dc.recorded_at < ($2::date + INTERVAL '1 day')
+     GROUP BY ${labelExpr}
+     ORDER BY cost_usd DESC`,
+    [fromDate, toDate]
+  );
+
+  const rawResult = await pool.query(
+    `SELECT dc.recorded_at, dc.cost_usd_breakdown
+     FROM dispatch_costs dc
+     WHERE dc.recorded_at >= $1 AND dc.recorded_at < ($2::date + INTERVAL '1 day')`,
+    [fromDate, toDate]
+  );
+
+  return {
+    total_cost_usd: parseFloat(totals.total_cost_usd),
+    total_tokens: parseInt(totals.total_tokens, 10),
+    sessions: parseInt(totals.sessions, 10),
+    period: { from: fromDate, to: toDate },
+    breakdown: breakdownResult.rows.map(r => ({
+      label: r.label,
+      cost_usd: parseFloat(r.cost_usd),
+      tokens: parseInt(r.tokens, 10),
+      sessions: parseInt(r.sessions, 10),
+    })),
+    trend: trendByDay(rawResult.rows),
+  };
 }
