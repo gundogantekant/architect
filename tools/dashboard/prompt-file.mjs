@@ -1,5 +1,8 @@
-// Verified flag: --append-system-prompt-file (claude --help → --bare description: --append-system-prompt[-file])
-// Falls back to stdin for prompts > 512KB to avoid arg-size limits
+// Per-session prompt file under tmp/. The dispatcher streams this file into the child's
+// stdin so backpressure handles the buffer-truncation risk that motivated W-1141. Prompts
+// > 512KB skip the file and fall back to a direct stdin write (with drain handling). See
+// routes/dispatch.mjs for the streaming site (W-1184 restored streaming after a regression
+// that incorrectly used --append-system-prompt-file).
 import { writeFile, unlink, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 

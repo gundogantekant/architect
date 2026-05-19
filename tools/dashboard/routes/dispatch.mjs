@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, createReadStream } from 'node:fs';
 import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository, checkWorktreeReadiness } from '../worktree.mjs';
 import { AUTO_IMPLEMENTABLE_STATUSES, DISPATCH_TIMEOUT_MS, PIPELINE_STAGES, PORTFOLIO } from '../constants.mjs';
 import { triggerMerge } from '../dispatch-manager.mjs';
@@ -110,8 +110,11 @@ export default function dispatchRoutes(deps) {
         completed_at: null,
       };
 
-      // Verified flag: --append-system-prompt-file (claude --help → --bare description: --append-system-prompt[-file])
-      // Falls back to stdin for prompts > 512KB to avoid arg-size limits
+      // Prompt delivery: write to a per-session file under tmp/ (when small enough), then stream
+      // the file to the child's stdin. Streaming with backpressure addresses the buffer-truncation
+      // risk that motivated W-1141, while keeping the prompt as the user message that `-p` mode
+      // requires (--append-system-prompt-file only appends to the system prompt and leaves -p
+      // without input — regression seen in W-1184).
       const onboardPromptFile = await writePromptFile(prompt, id, TMP_DIR);
 
       // Capture prompt for audit — must complete before spawn; failure logged but does not abort dispatch
@@ -130,12 +133,9 @@ export default function dispatchRoutes(deps) {
       let proc;
       try {
         const onboardArgs = ['-p', '--output-format', 'stream-json', '--verbose'];
-        if (onboardPromptFile) {
-          onboardArgs.push('--append-system-prompt-file', onboardPromptFile);
-        }
         proc = spawn(CLAUDE_BIN, onboardArgs, {
           cwd: ROOT,
-          stdio: onboardPromptFile ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
+          stdio: ['pipe', 'pipe', 'pipe'],
           env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
         });
       } catch (spawnErr) {
@@ -143,7 +143,11 @@ export default function dispatchRoutes(deps) {
         return json(res, { error: `Failed to spawn claude: ${spawnErr.message}` }, 500);
       }
 
-      if (!onboardPromptFile) {
+      if (onboardPromptFile) {
+        const stream = createReadStream(onboardPromptFile);
+        stream.on('error', e => console.error('[prompt-stream onboard]', e.message));
+        stream.pipe(proc.stdin);
+      } else {
         if (!proc.stdin.write(prompt)) {
           await new Promise(r => proc.stdin.once('drain', r));
         }
@@ -331,8 +335,7 @@ export default function dispatchRoutes(deps) {
         completed_at: null,
       };
 
-      // Verified flag: --append-system-prompt-file (claude --help → --bare description: --append-system-prompt[-file])
-      // Falls back to stdin for prompts > 512KB to avoid arg-size limits
+      // Prompt delivery: see W-1184 comment in the onboard handler above.
       const standardPromptFile = await writePromptFile(prompt, id, TMP_DIR);
 
       // Capture prompt for audit — must complete before spawn; failure logged but does not abort dispatch
@@ -359,12 +362,9 @@ export default function dispatchRoutes(deps) {
         if (agentDefs.length) {
           args.push('--agents', JSON.stringify(agentDefs));
         }
-        if (standardPromptFile) {
-          args.push('--append-system-prompt-file', standardPromptFile);
-        }
         proc = spawn(CLAUDE_BIN, args, {
           cwd: effectiveCwd,
-          stdio: standardPromptFile ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
+          stdio: ['pipe', 'pipe', 'pipe'],
           env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
         });
       } catch (spawnErr) {
@@ -372,7 +372,11 @@ export default function dispatchRoutes(deps) {
         return json(res, { error: `Failed to spawn claude: ${spawnErr.message}` }, 500);
       }
 
-      if (!standardPromptFile) {
+      if (standardPromptFile) {
+        const stream = createReadStream(standardPromptFile);
+        stream.on('error', e => console.error('[prompt-stream standard]', e.message));
+        stream.pipe(proc.stdin);
+      } else {
         if (!proc.stdin.write(prompt)) {
           await new Promise(r => proc.stdin.once('drain', r));
         }
@@ -497,8 +501,7 @@ export default function dispatchRoutes(deps) {
         completed_at: null,
       };
 
-      // Verified flag: --append-system-prompt-file (claude --help → --bare description: --append-system-prompt[-file])
-      // Falls back to stdin for prompts > 512KB to avoid arg-size limits
+      // Prompt delivery: see W-1184 comment in the onboard handler above.
       const autoPromptFile = await writePromptFile(prompt, id, TMP_DIR);
 
       // Capture prompt for audit — must complete before spawn; failure logged but does not abort dispatch
@@ -524,12 +527,9 @@ export default function dispatchRoutes(deps) {
         if (agentDefs.length) {
           args.push('--agents', JSON.stringify(agentDefs));
         }
-        if (autoPromptFile) {
-          args.push('--append-system-prompt-file', autoPromptFile);
-        }
         proc = spawn(CLAUDE_BIN, args, {
           cwd: effectiveCwd,
-          stdio: autoPromptFile ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
+          stdio: ['pipe', 'pipe', 'pipe'],
           env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
         });
       } catch (spawnErr) {
@@ -537,7 +537,11 @@ export default function dispatchRoutes(deps) {
         return json(res, { error: `Failed to spawn claude: ${spawnErr.message}` }, 500);
       }
 
-      if (!autoPromptFile) {
+      if (autoPromptFile) {
+        const stream = createReadStream(autoPromptFile);
+        stream.on('error', e => console.error('[prompt-stream auto]', e.message));
+        stream.pipe(proc.stdin);
+      } else {
         if (!proc.stdin.write(prompt)) {
           await new Promise(r => proc.stdin.once('drain', r));
         }
