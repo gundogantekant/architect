@@ -41,9 +41,13 @@ export default function projectsRoutes(deps) {
       try {
         template = await readFile(templatePath, 'utf8');
       } catch {
-        template = await readFile(defaultTemplatePath, 'utf8');
-        await mkdir(join(PORTFOLIO, org, proj), { recursive: true });
-        await writeFile(templatePath, template);
+        try {
+          template = await readFile(defaultTemplatePath, 'utf8');
+          await mkdir(join(PORTFOLIO, org, proj), { recursive: true });
+          await writeFile(templatePath, template);
+        } catch {
+          return err(res, 'refinement template not found: no custom template and no default template', 404);
+        }
       }
 
       const backlog = await db.getBacklog(org, false);
@@ -84,6 +88,7 @@ export default function projectsRoutes(deps) {
         permission_mode: 'plan',
         skip_permissions: false,
         dispatch_mode: 'project_refinement',
+        dry_run: body.dry_run || false,
         status: 'running',
         agent_phase: 'generating',
         agent_phase_history: [],

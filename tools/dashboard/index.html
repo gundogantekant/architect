@@ -1639,6 +1639,7 @@ function createSessionPanel(type, info) {
   </div>
 </details>` : ''}
       ${dispatch.work_item_input_needed ? '<div class="input-needed-banner" style="background:#FEF3C7;color:#92400E;padding:4px 8px;font-size:11px;border-radius:3px;margin-bottom:4px;">⚠ Waiting for input</div>' : ''}
+      ${dispatch.completion_summary_error ? `<div class="alert-badge alert-scope" style="margin:4px 8px;display:block;" title="${esc(dispatch.completion_summary_error)}">⚠ Refinement error: ${esc(dispatch.completion_summary_error)}</div>` : ''}
       ${dispatch.exit_type === 'interrupted' ? `
       <div class="recovery-banner" data-recovery-dispatch="${esc(id)}" style="background:#EDE9FE;color:#5B21B6;border:1px solid #8B5CF6;border-radius:4px;padding:6px 10px;margin:4px 8px;font-size:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <span style="font-weight:600;">Session interrupted — recover?</span>
