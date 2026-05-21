@@ -1074,17 +1074,25 @@ export async function getAllPreferences() {
 
 // --- Backlog reconstruction (legacy shape for API compat) ---
 
-export async function getBacklog(orgFilter, includeArchived = false) {
+export async function getBacklog(orgFilter, includeArchived = false, dateFilter = {}) {
   const archivedClause = includeArchived ? '' : " AND status != 'archived'";
-  let rows;
+  const params = [];
+  let where = `1=1${archivedClause}`;
+
   if (orgFilter) {
-    rows = await pool.query(
-      `SELECT * FROM work_items WHERE project_key LIKE $1${archivedClause}`,
-      [orgFilter.toLowerCase() + '/%']
-    ).then(r => r.rows);
-  } else {
-    rows = await pool.query(`SELECT * FROM work_items WHERE 1=1${archivedClause}`).then(r => r.rows);
+    params.push(orgFilter.toLowerCase() + '/%');
+    where = `project_key LIKE $${params.length}${archivedClause}`;
   }
+  if (dateFilter.from) {
+    params.push(dateFilter.from);
+    where += ` AND created_at >= $${params.length}::timestamptz`;
+  }
+  if (dateFilter.to) {
+    params.push(dateFilter.to);
+    where += ` AND created_at < ($${params.length}::date + INTERVAL '1 day')`;
+  }
+
+  const rows = await pool.query(`SELECT * FROM work_items WHERE ${where}`, params).then(r => r.rows);
 
   const hydratedItems = await hydrateWorkItemsBatch(rows);
   const statsMap = await getAllWorkItemStats();
@@ -1124,6 +1132,26 @@ export async function getBacklog(orgFilter, includeArchived = false) {
     projects,
     epics,
   };
+}
+
+export async function backdateWorkItem(id, createdAt) {
+  await pool.query(
+    `UPDATE work_items SET created_at = $1::timestamptz WHERE id = $2`,
+    [createdAt, id]
+  );
+}
+
+export async function purgeAllWorkItemsForTest() {
+  if (!process.env.WORK_DIR) {
+    throw new Error('purgeAllWorkItemsForTest refused: not in test mode');
+  }
+  await withTransaction(async (client) => {
+    await client.query('SET CONSTRAINTS ALL DEFERRED');
+    await client.query('DELETE FROM epic_logs');
+    await client.query('DELETE FROM work_items');
+    await client.query('DELETE FROM epics');
+    await client.query('DELETE FROM dispatches');
+  });
 }
 
 // --- Single work item with full details ---

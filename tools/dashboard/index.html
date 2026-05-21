@@ -3264,6 +3264,8 @@ function renderComponentView(org, proj, comp, data, workItems, files, projectEpi
     if (allTags.length) {
       html += `<input type="text" id="wi-filter-tags" placeholder="Filter by tag..." style="width:120px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;margin-left:8px" />`;
     }
+    html += `<select id="wi-filter-date-preset" style="margin-left:8px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"><option value="all">All dates</option><option value="today">Today</option><option value="7d">Last 7d</option><option value="30d">Last 30d</option><option value="custom">Custom</option></select>`;
+    html += `<span id="wi-date-custom-range" hidden style="display:inline-flex;align-items:center;gap:4px;margin-left:4px"><input type="date" id="wi-filter-date-from" style="padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" /><span style="color:var(--text-light)">–</span><input type="date" id="wi-filter-date-to" style="padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" /></span>`;
     html += `<span class="filter-count" id="wi-filter-count">${workItems.length} tasks</span>`;
     html += `<button class="filter-clear" id="wi-filter-clear" style="display:none">Clear filters</button>`;
     html += `</div>`;
@@ -3698,6 +3700,27 @@ async function loadAwaitingAction(projectKey) {
   } catch { widget.innerHTML = ''; }
 }
 
+// --- Date filter utilities ---
+
+function utcMidnightMs(daysBack) {
+  const now = new Date();
+  const y = now.getUTCFullYear(), m = now.getUTCMonth(), d = now.getUTCDate();
+  return new Date(Date.UTC(y, m, d - daysBack)).getTime();
+}
+
+function computeDateBounds(preset, dateFrom, dateTo) {
+  if (preset === 'all') return { fromMs: null, toMs: null };
+  if (preset === 'today') return { fromMs: utcMidnightMs(0), toMs: null };
+  if (preset === '7d') return { fromMs: utcMidnightMs(6), toMs: null };
+  if (preset === '30d') return { fromMs: utcMidnightMs(29), toMs: null };
+  if (preset === 'custom') {
+    const fromMs = dateFrom ? new Date(dateFrom + 'T00:00:00Z').getTime() : null;
+    const toMs = dateTo ? new Date(dateTo + 'T00:00:00Z').getTime() + 86400000 : null;
+    return { fromMs, toMs };
+  }
+  return { fromMs: null, toMs: null };
+}
+
 // --- Filter bar logic ---
 function bindFilterBar() {
   const bar = document.getElementById('wi-filter-bar');
@@ -3706,7 +3729,7 @@ function bindFilterBar() {
   // Exclusion model: unchecked = hidden. Default: done + cancelled + archived excluded.
   const excludedStatus = new Set(['done', 'cancelled', 'archived']);
   const excludedPriority = new Set();
-  const activeFilters = { epic: '', tags: '' };
+  const activeFilters = { epic: '', tags: '', datePreset: 'all', dateFrom: null, dateTo: null };
   const prefsKey = 'wi_filters';
 
   // Restore from server preferences (async, applies on load)
@@ -3722,6 +3745,9 @@ function bindFilterBar() {
         if (saved.excludedPriority) saved.excludedPriority.forEach(p => excludedPriority.add(p));
         activeFilters.epic = saved.epic || '';
         activeFilters.tags = saved.tags || '';
+        activeFilters.datePreset = saved.date_preset || 'all';
+        activeFilters.dateFrom = saved.date_from || null;
+        activeFilters.dateTo = saved.date_to || null;
         // Sync checkbox UI
         bar.querySelectorAll('input[data-wi-status]').forEach(cb => {
           cb.checked = !excludedStatus.has(cb.dataset.wiStatus);
@@ -3733,6 +3759,15 @@ function bindFilterBar() {
         if (epicSel && activeFilters.epic) epicSel.value = activeFilters.epic;
         const tagsInput = document.getElementById('wi-filter-tags');
         if (tagsInput && activeFilters.tags) tagsInput.value = activeFilters.tags;
+        // Sync date preset UI
+        const datePre = document.getElementById('wi-filter-date-preset');
+        if (datePre) datePre.value = activeFilters.datePreset;
+        const customRange = document.getElementById('wi-date-custom-range');
+        if (customRange) customRange.hidden = activeFilters.datePreset !== 'custom';
+        const dateFromInput = document.getElementById('wi-filter-date-from');
+        if (dateFromInput && activeFilters.dateFrom) dateFromInput.value = activeFilters.dateFrom;
+        const dateToInput = document.getElementById('wi-filter-date-to');
+        if (dateToInput && activeFilters.dateTo) dateToInput.value = activeFilters.dateTo;
         applyFilters();
       } else {
         applyFilters(); // apply defaults
@@ -3746,6 +3781,9 @@ function bindFilterBar() {
       excludedPriority: [...excludedPriority],
       epic: activeFilters.epic,
       tags: activeFilters.tags,
+      date_preset: activeFilters.datePreset,
+      date_from: activeFilters.dateFrom,
+      date_to: activeFilters.dateTo,
     });
     fetch('/api/settings/preferences', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -3757,7 +3795,9 @@ function bindFilterBar() {
     const rows = document.querySelectorAll('[data-wi-row]');
     let visible = 0;
     const total = rows.length;
-    const hasFilters = excludedStatus.size || excludedPriority.size || activeFilters.epic || activeFilters.tags;
+    const hasFilters = excludedStatus.size || excludedPriority.size || activeFilters.epic || activeFilters.tags || activeFilters.datePreset !== 'all';
+
+    const { fromMs: dateFromMs, toMs: dateToMs } = computeDateBounds(activeFilters.datePreset, activeFilters.dateFrom, activeFilters.dateTo);
 
     // Build set of work item IDs that have active sessions
     const wiIdsWithActiveSessions = new Set();
@@ -3772,6 +3812,11 @@ function bindFilterBar() {
       if (activeFilters.tags) {
         const rowTags = (row.dataset.wiTagsVal || '').toLowerCase();
         if (!rowTags.includes(activeFilters.tags.toLowerCase())) show = false;
+      }
+      if (dateFromMs !== null || dateToMs !== null) {
+        const createdAt = parseInt(row.dataset.wiCreatedatVal || '0', 10);
+        if (dateFromMs !== null && createdAt < dateFromMs) show = false;
+        if (dateToMs !== null && createdAt >= dateToMs) show = false;
       }
       // Force-show rows with active sessions even if filtered out
       const wiId = row.querySelector('code')?.textContent;
@@ -3830,6 +3875,33 @@ function bindFilterBar() {
   const tagsInput = document.getElementById('wi-filter-tags');
   if (tagsInput) tagsInput.oninput = () => { activeFilters.tags = tagsInput.value; applyFilters(); };
 
+  // Date preset selector
+  const datePresetSel = document.getElementById('wi-filter-date-preset');
+  const customDateRange = document.getElementById('wi-date-custom-range');
+  const dateFromInput = document.getElementById('wi-filter-date-from');
+  const dateToInput = document.getElementById('wi-filter-date-to');
+
+  if (datePresetSel) {
+    datePresetSel.onchange = () => {
+      activeFilters.datePreset = datePresetSel.value;
+      if (customDateRange) customDateRange.hidden = activeFilters.datePreset !== 'custom';
+      applyFilters();
+    };
+  }
+
+  // Custom date inputs — debounced 300ms wrapping both applyFilters and saveFilters as a unit
+  let dateDebounceTimer = null;
+  function onCustomDateChange() {
+    clearTimeout(dateDebounceTimer);
+    dateDebounceTimer = setTimeout(() => {
+      activeFilters.dateFrom = dateFromInput ? (dateFromInput.value || null) : null;
+      activeFilters.dateTo = dateToInput ? (dateToInput.value || null) : null;
+      applyFilters();
+    }, 300);
+  }
+  if (dateFromInput) dateFromInput.oninput = onCustomDateChange;
+  if (dateToInput) dateToInput.oninput = onCustomDateChange;
+
   // Clear button — resets to show all
   const clearBtn = document.getElementById('wi-filter-clear');
   if (clearBtn) clearBtn.onclick = () => {
@@ -3837,9 +3909,16 @@ function bindFilterBar() {
     excludedPriority.clear();
     activeFilters.epic = '';
     activeFilters.tags = '';
+    activeFilters.datePreset = 'all';
+    activeFilters.dateFrom = null;
+    activeFilters.dateTo = null;
     bar.querySelectorAll('input[data-wi-status], input[data-wi-priority]').forEach(cb => { cb.checked = true; });
     if (epicSel) epicSel.value = '';
     if (tagsInput) tagsInput.value = '';
+    if (datePresetSel) datePresetSel.value = 'all';
+    if (customDateRange) customDateRange.hidden = true;
+    if (dateFromInput) dateFromInput.value = '';
+    if (dateToInput) dateToInput.value = '';
     applyFilters();
   };
 
@@ -4653,6 +4732,8 @@ async function renderEpicDetailView(epicId) {
       const checked = (s !== 'done' && s !== 'cancelled' && s !== 'archived') ? 'checked' : '';
       html += `<label class="filter-checkbox"><input type="checkbox" data-ef-status="${esc(s)}" ${checked} />${esc(s)}</label>`;
     }
+    html += `<select id="ef-filter-date-preset" style="margin-left:8px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"><option value="all">All dates</option><option value="today">Today</option><option value="7d">Last 7d</option><option value="30d">Last 30d</option><option value="custom">Custom</option></select>`;
+    html += `<span id="ef-date-custom-range" hidden style="display:inline-flex;align-items:center;gap:4px;margin-left:4px"><input type="date" id="ef-filter-date-from" style="padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" /><span style="color:var(--text-light)">–</span><input type="date" id="ef-filter-date-to" style="padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" /></span>`;
     html += `<span class="filter-count" id="epic-filter-count">${items.length} tasks</span>`;
     html += `<button class="filter-clear" id="epic-filter-clear" style="display:none">Clear filters</button>`;
     html += `</div>`;
@@ -4670,7 +4751,7 @@ async function renderEpicDetailView(epicId) {
       const depTooltip = depState.blocked ? ` title="Dependencies not yet complete: ${depState.pending.join(', ')}"` : '';
       const itemFlagHtml = (item.input_needed ? `<span class="flag-badge flag-input">input needed</span>` : '') +
                            (item.approval_active ? `<span class="flag-badge flag-approval">approval needed</span>` : '');
-      html += `<tr class="epic-task-row${rowClass}" data-ef-row data-ef-status-val="${esc(item.status)}"${depTooltip}>`;
+      html += `<tr class="epic-task-row${rowClass}" data-ef-row data-ef-status-val="${esc(item.status)}" data-ef-createdat-val="${new Date(item.created_at).getTime() || 0}"${depTooltip}>`;
       html += `<td><code>${esc(item.id)}</code></td>`;
       html += `<td>${esc(item.title)}</td>`;
       html += `<td><span class="badge badge-${sc}" data-status-click="${esc(item.id)}" data-current-status="${esc(item.status)}" style="cursor:pointer">${esc(item.status)}</span>${itemFlagHtml}</td>`;
@@ -4781,11 +4862,35 @@ function bindEpicDetailEvents(epicId) {
   const efBar = document.getElementById('epic-filter-bar');
   if (efBar) {
     const excludedStatus = new Set(['done', 'cancelled']);
+    const efPrefsKey = 'ef_filters';
+    let efDatePreset = 'all';
+    let efDateFrom = null;
+    let efDateTo = null;
+
+    function saveEpicFilters() {
+      const payload = JSON.stringify({
+        epic_date_preset: efDatePreset,
+        epic_date_from: efDateFrom,
+        epic_date_to: efDateTo,
+      });
+      fetch('/api/settings/preferences', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [efPrefsKey]: payload }),
+      }).catch(() => {});
+    }
+
     function applyEpicFilters() {
       const rows = document.querySelectorAll('[data-ef-row]');
       let visible = 0;
+      const { fromMs: efFromMs, toMs: efToMs } = computeDateBounds(efDatePreset, efDateFrom, efDateTo);
+      const hasDateFilter = efDatePreset !== 'all';
       rows.forEach(row => {
-        const show = !excludedStatus.has(row.dataset.efStatusVal);
+        let show = !excludedStatus.has(row.dataset.efStatusVal);
+        if (show && (efFromMs !== null || efToMs !== null)) {
+          const createdAt = parseInt(row.dataset.efCreatedatVal || '0', 10);
+          if (efFromMs !== null && createdAt < efFromMs) show = false;
+          if (efToMs !== null && createdAt >= efToMs) show = false;
+        }
         row.style.display = show ? '' : 'none';
         // Hide associated detail and session rows
         const id = row.querySelector('code')?.textContent;
@@ -4799,10 +4904,36 @@ function bindEpicDetailEvents(epicId) {
       });
       const total = rows.length;
       const countEl = document.getElementById('epic-filter-count');
-      if (countEl) countEl.textContent = excludedStatus.size ? `${visible} of ${total} tasks` : `${total} tasks`;
+      const hasFilters = excludedStatus.size || hasDateFilter;
+      if (countEl) countEl.textContent = hasFilters ? `${visible} of ${total} tasks` : `${total} tasks`;
       const clearBtn = document.getElementById('epic-filter-clear');
-      if (clearBtn) clearBtn.style.display = excludedStatus.size ? '' : 'none';
+      if (clearBtn) clearBtn.style.display = hasFilters ? '' : 'none';
+      saveEpicFilters();
     }
+
+    // Restore epic date filter from preferences
+    (async () => {
+      try {
+        const res = await fetch('/api/settings/preferences');
+        const prefs = await res.json();
+        if (prefs[efPrefsKey]) {
+          const saved = JSON.parse(prefs[efPrefsKey]);
+          efDatePreset = saved.epic_date_preset || 'all';
+          efDateFrom = saved.epic_date_from || null;
+          efDateTo = saved.epic_date_to || null;
+          const efDateSel = document.getElementById('ef-filter-date-preset');
+          if (efDateSel) efDateSel.value = efDatePreset;
+          const efCustomRange = document.getElementById('ef-date-custom-range');
+          if (efCustomRange) efCustomRange.hidden = efDatePreset !== 'custom';
+          const efFromInput = document.getElementById('ef-filter-date-from');
+          if (efFromInput && efDateFrom) efFromInput.value = efDateFrom;
+          const efToInput = document.getElementById('ef-filter-date-to');
+          if (efToInput && efDateTo) efToInput.value = efDateTo;
+        }
+      } catch {}
+      applyEpicFilters();
+    })();
+
     efBar.querySelectorAll('input[data-ef-status]').forEach(cb => {
       cb.onchange = () => {
         if (cb.checked) excludedStatus.delete(cb.dataset.efStatus);
@@ -4810,13 +4941,47 @@ function bindEpicDetailEvents(epicId) {
         applyEpicFilters();
       };
     });
+
+    // Epic date preset selector
+    const efDateSel = document.getElementById('ef-filter-date-preset');
+    const efCustomRange = document.getElementById('ef-date-custom-range');
+    const efFromInput = document.getElementById('ef-filter-date-from');
+    const efToInput = document.getElementById('ef-filter-date-to');
+
+    if (efDateSel) {
+      efDateSel.onchange = () => {
+        efDatePreset = efDateSel.value;
+        if (efCustomRange) efCustomRange.hidden = efDatePreset !== 'custom';
+        applyEpicFilters();
+      };
+    }
+
+    // Epic custom date inputs — debounced 300ms
+    let efDateDebounceTimer = null;
+    function onEfCustomDateChange() {
+      clearTimeout(efDateDebounceTimer);
+      efDateDebounceTimer = setTimeout(() => {
+        efDateFrom = efFromInput ? (efFromInput.value || null) : null;
+        efDateTo = efToInput ? (efToInput.value || null) : null;
+        applyEpicFilters();
+      }, 300);
+    }
+    if (efFromInput) efFromInput.oninput = onEfCustomDateChange;
+    if (efToInput) efToInput.oninput = onEfCustomDateChange;
+
     const efClear = document.getElementById('epic-filter-clear');
     if (efClear) efClear.onclick = () => {
       excludedStatus.clear();
+      efDatePreset = 'all';
+      efDateFrom = null;
+      efDateTo = null;
       efBar.querySelectorAll('input[data-ef-status]').forEach(cb => { cb.checked = true; });
+      if (efDateSel) efDateSel.value = 'all';
+      if (efCustomRange) efCustomRange.hidden = true;
+      if (efFromInput) efFromInput.value = '';
+      if (efToInput) efToInput.value = '';
       applyEpicFilters();
     };
-    applyEpicFilters(); // apply defaults (hide done+cancelled)
   }
 
   // Unlink buttons
@@ -6305,6 +6470,9 @@ function renderAgentsView(agents, filters = {}) {
   const epicFilter = filters.epic || '';
   const projectFilter = filters.project || '';
   const autoOnly = filters.autoOnly || false;
+  const agentDatePreset = filters.agentDate || 'all';
+  const agentDateFrom = filters.agentDateFrom || '';
+  const agentDateTo = filters.agentDateTo || '';
 
   let filtered = agents;
   if (statusFilter === 'active') filtered = filtered.filter(a => a.status === 'running');
@@ -6313,6 +6481,15 @@ function renderAgentsView(agents, filters = {}) {
   if (epicFilter) filtered = filtered.filter(a => a.epic_id === epicFilter);
   if (projectFilter) filtered = filtered.filter(a => a.project_key === projectFilter);
   if (autoOnly) filtered = filtered.filter(a => a.dispatch_mode === 'auto_implement');
+  if (agentDatePreset !== 'all') {
+    const { fromMs, toMs } = computeDateBounds(agentDatePreset, agentDateFrom, agentDateTo);
+    filtered = filtered.filter(a => {
+      const t = a.started_at ? new Date(a.started_at).getTime() : 0;
+      if (fromMs !== null && t < fromMs) return false;
+      if (toMs !== null && t >= toMs) return false;
+      return true;
+    });
+  }
 
   // Collect unique epics/projects for dropdowns
   const allEpics = [...new Set(agents.map(a => a.epic_id).filter(Boolean))].sort();
@@ -6337,6 +6514,11 @@ function renderAgentsView(agents, filters = {}) {
   }
   html += `<button class="btn-add-wi" id="agents-quick-dispatch">+ Dispatch</button>`;
   html += `<label style="font-size:12px;display:inline-flex;align-items:center;gap:4px;margin-left:8px;cursor:pointer"><input type="checkbox" id="agents-auto-only"${filters.autoOnly ? ' checked' : ''}> Auto-implement only</label>`;
+  const agentDatePreset = filters.agentDate || 'all';
+  html += `<select id="agents-date-preset" style="margin-left:8px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"><option value="all"${agentDatePreset === 'all' ? ' selected' : ''}>All dates</option><option value="today"${agentDatePreset === 'today' ? ' selected' : ''}>Today</option><option value="7d"${agentDatePreset === '7d' ? ' selected' : ''}>Last 7d</option><option value="30d"${agentDatePreset === '30d' ? ' selected' : ''}>Last 30d</option><option value="custom"${agentDatePreset === 'custom' ? ' selected' : ''}>Custom</option></select>`;
+  const agentDateFrom = filters.agentDateFrom || '';
+  const agentDateTo = filters.agentDateTo || '';
+  html += `<span id="agents-date-custom-range"${agentDatePreset !== 'custom' ? ' hidden' : ''} style="display:inline-flex;align-items:center;gap:4px;margin-left:4px"><input type="date" id="agents-filter-date-from" value="${esc(agentDateFrom)}" style="padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" /><span style="color:var(--text-light)">–</span><input type="date" id="agents-filter-date-to" value="${esc(agentDateTo)}" style="padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" /></span>`;
   html += `</div>`;
 
   if (filtered.length) {
@@ -6530,6 +6712,37 @@ function bindAgentsEvents(agents, filters) {
     };
   }
 
+  // Date preset filter
+  const agentsDatePreset = document.getElementById('agents-date-preset');
+  if (agentsDatePreset) {
+    agentsDatePreset.onchange = () => {
+      const preset = agentsDatePreset.value;
+      const customRange = document.getElementById('agents-date-custom-range');
+      if (customRange) customRange.hidden = preset !== 'custom';
+      const hash = buildAgentsHash({ ...filters, agentDate: preset, agentDateFrom: filters.agentDateFrom || '', agentDateTo: filters.agentDateTo || '' });
+      location.hash = hash;
+    };
+  }
+
+  // Agents custom date inputs
+  let agentsDateDebounceTimer = null;
+  const agentsDateFrom = document.getElementById('agents-filter-date-from');
+  const agentsDateTo = document.getElementById('agents-filter-date-to');
+  function onAgentsCustomDateChange() {
+    clearTimeout(agentsDateDebounceTimer);
+    agentsDateDebounceTimer = setTimeout(() => {
+      const hash = buildAgentsHash({
+        ...filters,
+        agentDate: 'custom',
+        agentDateFrom: agentsDateFrom ? agentsDateFrom.value : '',
+        agentDateTo: agentsDateTo ? agentsDateTo.value : '',
+      });
+      location.hash = hash;
+    }, 300);
+  }
+  if (agentsDateFrom) agentsDateFrom.oninput = onAgentsCustomDateChange;
+  if (agentsDateTo) agentsDateTo.oninput = onAgentsCustomDateChange;
+
   // Quick dispatch button
   const quickDispatchBtn = document.getElementById('agents-quick-dispatch');
   if (quickDispatchBtn) quickDispatchBtn.onclick = () => showQuickDispatchModal();
@@ -6542,12 +6755,17 @@ function buildAgentsHash(filters) {
   if (filters.epic) params.push(`epic=${filters.epic}`);
   if (filters.project) params.push(`project=${filters.project}`);
   if (filters.autoOnly) params.push(`autoOnly=1`);
+  if (filters.agentDate && filters.agentDate !== 'all') params.push(`agent_date=${filters.agentDate}`);
+  if (filters.agentDate === 'custom') {
+    if (filters.agentDateFrom) params.push(`agent_date_from=${filters.agentDateFrom}`);
+    if (filters.agentDateTo) params.push(`agent_date_to=${filters.agentDateTo}`);
+  }
   if (params.length) hash += '?' + params.join('&');
   return hash;
 }
 
 function parseAgentsFilters(hash) {
-  const filters = { status: 'all', epic: '', project: '', autoOnly: false };
+  const filters = { status: 'all', epic: '', project: '', autoOnly: false, agentDate: 'all', agentDateFrom: '', agentDateTo: '' };
   const qIdx = hash.indexOf('?');
   if (qIdx === -1) return filters;
   const params = new URLSearchParams(hash.slice(qIdx + 1));
@@ -6555,6 +6773,9 @@ function parseAgentsFilters(hash) {
   if (params.get('epic')) filters.epic = params.get('epic');
   if (params.get('project')) filters.project = params.get('project');
   if (params.get('autoOnly') === '1') filters.autoOnly = true;
+  if (params.get('agent_date')) filters.agentDate = params.get('agent_date');
+  if (params.get('agent_date_from')) filters.agentDateFrom = params.get('agent_date_from');
+  if (params.get('agent_date_to')) filters.agentDateTo = params.get('agent_date_to');
   return filters;
 }
 
