@@ -58,7 +58,7 @@
 
 <script type="module">
 import { api, apiText } from '/js/api.mjs';
-import { $, esc, ACTIVE_DOT_CLASSES, clearActiveDotClasses, fmtDate,
+import { $, esc, ACTIVE_DOT_CLASSES, clearActiveDotClasses, fmtDate, fmtTimestamp,
          getRouteTitle, updateTitle, topoSort, isBlockedByDeps, epicSignalColor } from '/js/utils.mjs';
 import {
   backlog, setBacklog,
@@ -1618,7 +1618,7 @@ function createSessionPanel(type, info) {
       <div class="dispatch-header">
         <span class="status-dot ${isRunning ? (dispatch.agent_phase === 'waiting_for_input' ? 'needs-input' : dispatch.agent_phase === 'tool_running' ? 'tool-running' : 'generating') : dispatch.status}" title="${isRunning ? ({generating:'Thinking',tool_running:'Running tool',waiting_for_input:'Needs input'}[dispatch.agent_phase]||'') : ''}"></span>
         <span class="dispatch-title">${dispatchPathStr}${planBadge}${skipBadge}${suspendedBadge}${autoImplementBadge}${alertBadges}${timeoutBadge}</span>
-        <span class="dispatch-meta">${new Date(dispatch.started_at).toLocaleTimeString()}${costBadge}</span>
+        <span class="dispatch-meta">${fmtTimestamp(dispatch.started_at)}${costBadge}</span>
         <button class="focus-btn" data-focus-dispatch="${esc(id)}">Focus</button>
         <button class="minimize-btn" data-minimize-dispatch="${esc(id)}">▼</button>
         <button class="suspend-btn" data-suspend-dispatch="${esc(id)}" ${!isRunning ? 'style="display:none"' : ''}>Suspend</button>
@@ -1807,7 +1807,7 @@ function createSessionPanel(type, info) {
       <div class="terminal-header">
         <span class="status-dot ${isRunning ? 'running' : terminalInfo.status}"></span>
         <span class="terminal-title">${termPathStr}${shellBadge}${planBadge}${skipBadge}${suspendedBadge}</span>
-        <span class="terminal-meta">${new Date(terminalInfo.started_at).toLocaleTimeString()}<span class="cost-placeholder">—</span></span>
+        <span class="terminal-meta">${fmtTimestamp(terminalInfo.started_at)}<span class="cost-placeholder">—</span></span>
         <button class="focus-btn" data-focus-terminal="${esc(id)}">Focus</button>
         <button class="minimize-btn" data-minimize-terminal="${esc(id)}">▼</button>
         <button class="suspend-btn" data-suspend-terminal="${esc(id)}" ${(!isRunning || terminalInfo.agent_type !== 'claude') ? 'style="display:none"' : ''}>Suspend</button>
@@ -1912,12 +1912,11 @@ function createSessionPanel(type, info) {
     panel.className = 'cli-session-panel';
     panel.id = `cli-${id}`;
     const isRunning = session.status === 'running';
-    const elapsed = formatElapsed(session.registered_at);
     panel.innerHTML = `
       <div class="cli-session-header">
         <span class="status-dot ${isRunning ? 'running' : 'exited'}"></span>
         <span class="cli-title">${esc(session.title)}<span class="badge-cli">[CLI]</span></span>
-        <span class="cli-meta">${elapsed}</span>
+        <span class="cli-meta">${fmtTimestamp(session.registered_at)}</span>
         <button class="minimize-btn" data-minimize-cli="${esc(id)}">▼</button>
       </div>
       <div class="cli-session-body"></div>
@@ -1961,14 +1960,12 @@ async function restoreCliSessions() {
         sessionPanels.delete(key);
       }
     }
-    // Update status dots and elapsed times
+    // Update status dots
     for (const c of list) {
       const panel = document.getElementById(`cli-${c.id}`);
       if (panel) {
         const dot = panel.querySelector('.status-dot');
         if (dot) { dot.className = `status-dot ${c.status === 'running' ? 'running' : 'exited'}`; }
-        const meta = panel.querySelector('.cli-meta');
-        if (meta) { meta.textContent = formatElapsed(c.registered_at); }
       }
     }
     placeSessionPanels();
@@ -3069,8 +3066,8 @@ function renderWorkItemsTable(items, allWorkItems, tableId) {
     html += `<td>${depHtml}</td>`;
     html += `<td>${w.epic_id ? `<span class="badge badge-epic" data-epic-nav="${esc(w.epic_id)}">${esc(w.epic_id)}</span>` : ''}</td>`;
     html += `<td>${(w.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
-    html += `<td>${w.created_at ? new Date(w.created_at).toLocaleDateString() : '—'}</td>`;
-    html += `<td>${w.done_at ? new Date(w.done_at).toLocaleDateString() : '—'}</td>`;
+    html += `<td>${fmtTimestamp(w.created_at)}</td>`;
+    html += `<td>${fmtTimestamp(w.done_at)}</td>`;
     html += `<td><button class="expand-btn" data-wi="${idx}">details</button>`;
     html += `<button class="edit-btn" data-wi-edit="${idx}">edit</button>`;
     if (w.status === 'draft') {
@@ -4743,8 +4740,8 @@ async function renderEpicDetailView(epicId) {
   html += `<dt>Target Date</dt><dd>${epic.target_date || '—'}</dd>`;
   html += `<dt>Tags</dt><dd>${(epic.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('') || '—'}</dd>`;
   html += `<dt>Projects</dt><dd>${(epic.project_keys || []).map(k => `<span class="tag">${esc(k)}</span>`).join('') || '—'}</dd>`;
-  html += `<dt>Created</dt><dd>${epic.created_at ? new Date(epic.created_at).toLocaleDateString() : (epic.created || '—')}</dd>`;
-  html += `<dt>Updated</dt><dd>${epic.updated_at ? new Date(epic.updated_at).toLocaleDateString() : (epic.updated || '—')}</dd>`;
+  html += `<dt>Created</dt><dd>${epic.created_at ? fmtTimestamp(epic.created_at) : (epic.created || '—')}</dd>`;
+  html += `<dt>Updated</dt><dd>${epic.updated_at ? fmtTimestamp(epic.updated_at) : (epic.updated || '—')}</dd>`;
   html += `</dl>`;
   if (epic.description?.trim()) {
     html += `<h3>Description</h3><div class="md-inline">${renderMd(epic.description)}</div>`;
@@ -6151,7 +6148,6 @@ function renderAgentTile(agent) {
   } else {
     dotClass = 'generating';
   }
-  const elapsed = formatElapsed(agent.started_at);
   const aKeyParts = (agent.project_key || '').split('/').filter(p => p && p !== '*');
   const aBreadcrumb = [];
   if (aKeyParts.length >= 2) aBreadcrumb.push(`${aKeyParts[0]} / ${aKeyParts[1]}`);
@@ -6187,7 +6183,7 @@ function renderAgentTile(agent) {
     <div class="agent-tile-header">
       <span class="status-dot ${dotClass}"></span>
       <span class="agent-tile-title">${esc(title)}</span>
-      <span class="agent-tile-elapsed" data-started="${agent.started_at}">${elapsed}</span>
+      <span class="agent-tile-elapsed" data-started="${agent.started_at}">${fmtTimestamp(agent.started_at)}</span>
     </div>
     <div class="agent-tile-badges">${badges}</div>
     <div class="agent-tile-preview">${esc(preview)}</div>
@@ -6560,12 +6556,6 @@ function parseAgentsFilters(hash) {
 
 function startAgentsTileRefresh(agents, filters) {
   stopAgentsTileRefresh();
-  // Update elapsed times every 3s
-  setAgentsTileInterval(setInterval(() => {
-    document.querySelectorAll('.agent-tile-elapsed[data-started]').forEach(el => {
-      el.textContent = formatElapsed(el.dataset.started);
-    });
-  }, 3000));
   // Full refresh every 15s
   setAgentsFullRefreshInterval(setInterval(async () => {
     if (!location.hash.startsWith('#agents')) { stopAgentsTileRefresh(); return; }
@@ -7610,7 +7600,7 @@ function renderAllSessionsView(dispatches, terminals, cliSessions, history) {
       <td>${esc(title || '—')}</td>
       <td>${esc(project || '—')}</td>
       <td><span class="badge badge-${esc(status || 'unknown')}">${esc(status || '—')}</span></td>
-      <td>${fmtDate(startedAt)}</td>
+      <td>${fmtTimestamp(startedAt)}</td>
       <td>${costStr}</td>
     </tr>`;
   }
@@ -7851,7 +7841,7 @@ function renderAdrsView(adrs) {
               <td>${esc(adr.title || '—')}</td>
               <td><span class="badge">${esc(adr.type || '—')}</span></td>
               <td>${(adr.repos || []).map(r => esc(r)).join(', ')}</td>
-              <td>${adr.created_at ? new Date(adr.created_at).toLocaleDateString() : '—'}</td>
+              <td>${adr.created_at ? fmtTimestamp(adr.created_at) : '—'}</td>
               <td><button class="btn btn-sm adr-detail" data-id="${esc(String(adr.id))}">View</button></td>
             </tr>
           `).join('')}
@@ -7877,7 +7867,7 @@ function renderAdrDetailView(adr) {
       </div>
       <dl class="kv">
         <dt>Repos</dt><dd>${(adr.repos || []).map(r => `<span class="tag">${esc(r)}</span>`).join(' ') || '—'}</dd>
-        <dt>Date</dt><dd>${adr.created_at ? new Date(adr.created_at).toLocaleDateString() : '—'}</dd>
+        <dt>Date</dt><dd>${adr.created_at ? fmtTimestamp(adr.created_at) : '—'}</dd>
         <dt>Detail Path</dt><dd><pre style="margin:0;font-size:12px">${esc(adr.detail_path || '—')}</pre></dd>
       </dl>
     </div>
