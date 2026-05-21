@@ -5,6 +5,10 @@ import { triggerMerge } from '../dispatch-manager.mjs';
 import { isMediumOrAbove } from '../utils/complexity.mjs';
 import { writePromptFile, deletePromptFile } from '../prompt-file.mjs';
 
+const SKILL_REGISTRY = {
+  'project-refine-tasks': (workItemId) => workItemId ? `/project-refine-tasks ${workItemId}` : '/project-refine-tasks',
+};
+
 function complexityTierFromPriority(priority) {
   if (priority === 'critical' || priority === 'high') return 'large';
   if (priority === 'medium') return 'medium';
@@ -172,7 +176,7 @@ export default function dispatchRoutes(deps) {
     // Create dispatch
     [/^\/api\/dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode, contract: rawContract, dispatch_mode: rawDispatchMode } = body;
+      const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode, contract: rawContract, dispatch_mode: rawDispatchMode, skill_id } = body;
       const dispatch_mode = rawDispatchMode || 'standard';
 
       // Strip empty-string contract fields per domain/rules.md → Dispatch Contract Rules
@@ -195,7 +199,10 @@ export default function dispatchRoutes(deps) {
       if (!project_key) {
         return err(res, 'project_key is required', 400);
       }
-      if (!work_item_id && !additional_instructions && dispatch_mode !== 'task_creation') {
+      if (skill_id !== undefined && !SKILL_REGISTRY[skill_id]) {
+        return err(res, `Unknown skill_id: ${skill_id}`, 400);
+      }
+      if (!work_item_id && !additional_instructions && dispatch_mode !== 'task_creation' && !skill_id) {
         return err(res, 'work_item_id or additional_instructions is required', 400);
       }
 
@@ -249,9 +256,12 @@ export default function dispatchRoutes(deps) {
 
       // Validate contract completeness for medium+ complexity before proceeding.
       // Runs on rawContract (pre-strip) so empty-string fields are caught as missing.
-      const contractViolations = validateContractForComplexity(effectiveWorkItem, rawContract);
-      if (contractViolations) {
-        return json(res, { error: 'Contract incomplete', violations: contractViolations }, 422);
+      // Skill dispatches bypass contract validation — the skill manages its own workflow.
+      if (!skill_id) {
+        const contractViolations = validateContractForComplexity(effectiveWorkItem, rawContract);
+        if (contractViolations) {
+          return json(res, { error: 'Contract incomplete', violations: contractViolations }, 422);
+        }
       }
 
       // Resolve permission mode and skip_permissions independently
@@ -264,7 +274,8 @@ export default function dispatchRoutes(deps) {
       let worktreeContext = null;
       let effectiveCwd = projectPath;
 
-      const willCreateWorktree = await shouldCreateWorktree({
+      // Skill dispatches run at project root — no worktree isolation needed.
+      const willCreateWorktree = !skill_id && await shouldCreateWorktree({
         permissionMode: resolvedPermMode,
         workItemId: work_item_id,
         portfolioEntry: rawEntry,
@@ -293,19 +304,21 @@ export default function dispatchRoutes(deps) {
         }
       }
 
-      const prompt = dispatch_mode === 'task_creation'
-        ? buildTaskCreationPrompt(project_key, additional_instructions || '')
-        : buildDispatchPrompt({
-            workItem: effectiveWorkItem,
-            projectKey: project_key,
-            projectPath,
-            additionalInstructions: additional_instructions,
-            portfolio,
-            epicContext,
-            relatedProjects,
-            worktreeContext,
-            contract: contract && Object.keys(contract).length ? contract : null,
-          });
+      const prompt = skill_id
+        ? SKILL_REGISTRY[skill_id](work_item_id || '')
+        : (dispatch_mode === 'task_creation'
+          ? buildTaskCreationPrompt(project_key, additional_instructions || '')
+          : buildDispatchPrompt({
+              workItem: effectiveWorkItem,
+              projectKey: project_key,
+              projectPath,
+              additionalInstructions: additional_instructions,
+              portfolio,
+              epicContext,
+              relatedProjects,
+              worktreeContext,
+              contract: contract && Object.keys(contract).length ? contract : null,
+            }));
 
       // Select sub-agents based on work item and portfolio context
       const agentDefs = await selectAgentsForDispatch({ workItem: effectiveWorkItem, portfolio });
@@ -319,7 +332,8 @@ export default function dispatchRoutes(deps) {
         title: title || work_item_id || '',
         permission_mode: resolvedPermMode,
         skip_permissions: resolvedSkipPerms,
-        dispatch_mode,
+        dispatch_mode: skill_id ? 'skill' : dispatch_mode,
+        skill_id: skill_id || null,
         status: 'running',
         agent_phase: 'generating',
         agent_phase_history: [],
@@ -657,6 +671,7 @@ export default function dispatchRoutes(deps) {
           worktree_branch: d.worktree_branch || null,
           source_branch: d.source_branch || null,
           dispatch_mode: d.dispatch_mode || 'standard',
+          skill_id: d.skill_id || null,
           completion_sha: d.completion_sha || null,
           completion_summary: d.completion_summary || null,
           merge_result: d.merge_result || null,
