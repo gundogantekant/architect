@@ -11,6 +11,21 @@ export function fmtDate(s) {
   try { return new Date(s).toLocaleDateString(); } catch { return s; }
 }
 
+export function fmtTimestampParts(s) {
+  const d = new Date(s);
+  const date = d.toLocaleDateString(undefined, { year: 'numeric', month: 'numeric', day: 'numeric' });
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  return { date, time };
+}
+
+export function fmtTimestamp(s) {
+  if (!s) return '—';
+  try {
+    const { date, time } = fmtTimestampParts(s);
+    return `<span style="display:block;white-space:nowrap">${esc(date)}</span><span style="display:block;white-space:nowrap">${esc(time)}</span>`;
+  } catch { return s; }
+}
+
 export function getRouteTitle() {
   const hash = location.hash.slice(1);
   if (!hash) return null;
