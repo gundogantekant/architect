@@ -66,6 +66,7 @@ export const SPEC_FILES = [
   'fmt-timestamp',
   'date-filter',
   'prompt-preview.contract',
+  'work-item-assets',
 ];
 
 function getLiveDashboardPorts() {

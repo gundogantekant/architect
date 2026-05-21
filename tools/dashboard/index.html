@@ -4083,7 +4083,7 @@ function showWorkItemModal(existingItem = null) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
-    <div class="modal">
+    <div class="modal modal-wide">
       <h3>${isEdit ? `Edit ${esc(existingItem.id)}` : 'New Task'}</h3>
       <div class="field">
         <label>Title *</label>
@@ -4102,16 +4102,39 @@ function showWorkItemModal(existingItem = null) {
         </select>
       </div>
       <div class="field">
-        <label>Description</label>
-        <textarea id="wi-description">${isEdit && existingItem.description ? esc(existingItem.description) : ''}</textarea>
-      </div>
-      <div class="field">
         <label>Tags (comma-separated)</label>
         <input type="text" id="wi-tags" value="${isEdit && existingItem.tags ? esc(existingItem.tags.join(', ')) : ''}" />
       </div>
       <div class="field">
         <label>Depends On (comma-separated W-XXX IDs)</label>
         <input type="text" id="wi-depends" value="${isEdit && existingItem.depends_on ? esc(existingItem.depends_on.join(', ')) : ''}" />
+      </div>
+      <div class="field">
+        <label>Description</label>
+        <div id="wi-attach-banner" class="attach-unavailable-banner" style="display:none">
+          Attachments unavailable — edit as plain text
+        </div>
+        <div class="editor-panes">
+          <div class="editor-input-pane">
+            <textarea id="wi-description" placeholder="Markdown supported...">${isEdit && existingItem.description ? esc(existingItem.description) : ''}</textarea>
+            <div id="wi-drop-zone" class="drop-zone">
+              <span class="drop-zone-text" id="wi-drop-text">Drop files here or click to browse</span>
+              <button type="button" class="btn-browse" id="wi-browse-btn">Browse</button>
+              <input type="file" id="wi-file-input" style="display:none" accept="image/*,.pdf,.txt,.md,.csv">
+            </div>
+            <div id="wi-upload-progress" class="upload-progress" style="display:none">
+              <div class="upload-progress-track">
+                <div class="upload-progress-fill" id="wi-progress-fill" style="width:0%"></div>
+              </div>
+              <span id="wi-progress-text">0%</span>
+            </div>
+            <div id="wi-upload-error" class="upload-error" style="display:none"></div>
+          </div>
+          <div class="editor-preview-pane">
+            <div class="editor-preview-label">Preview</div>
+            <div id="wi-preview" class="editor-preview-content"></div>
+          </div>
+        </div>
       </div>
       <div class="modal-actions">
         <button class="btn btn-cancel" id="wi-cancel">Cancel</button>
@@ -4120,6 +4143,122 @@ function showWorkItemModal(existingItem = null) {
     </div>
   `;
   document.body.appendChild(overlay);
+
+  const textarea    = overlay.querySelector('#wi-description');
+  const preview     = overlay.querySelector('#wi-preview');
+  const dropZone    = overlay.querySelector('#wi-drop-zone');
+  const dropText    = overlay.querySelector('#wi-drop-text');
+  const fileInput   = overlay.querySelector('#wi-file-input');
+  const browseBtn   = overlay.querySelector('#wi-browse-btn');
+  const progressEl  = overlay.querySelector('#wi-upload-progress');
+  const progressFill = overlay.querySelector('#wi-progress-fill');
+  const progressText = overlay.querySelector('#wi-progress-text');
+  const errorEl     = overlay.querySelector('#wi-upload-error');
+  const bannerEl    = overlay.querySelector('#wi-attach-banner');
+
+  function updatePreview() {
+    preview.innerHTML = renderMd(textarea.value || '');
+  }
+  textarea.addEventListener('input', updatePreview);
+  updatePreview();
+
+  fetch('/api/work-items/assets/probe').then(r => {
+    if (!r.ok) showAttachUnavailable();
+  }).catch(() => showAttachUnavailable());
+
+  function showAttachUnavailable() {
+    bannerEl.style.display = '';
+    dropZone.style.display = 'none';
+    progressEl.style.display = 'none';
+  }
+
+  function showUploadError(msg) {
+    errorEl.textContent = msg;
+    errorEl.style.display = '';
+  }
+
+  function insertAtCursorOrAppend(ta, text) {
+    const { selectionStart: start, selectionEnd: end } = ta;
+    const val = ta.value;
+    if (start !== end) {
+      ta.value = val.slice(0, start) + text + val.slice(end);
+      ta.setSelectionRange(start + text.length, start + text.length);
+    } else if (document.activeElement === ta) {
+      ta.value = val.slice(0, start) + text + val.slice(start);
+      ta.setSelectionRange(start + text.length, start + text.length);
+    } else {
+      ta.value = val + text;
+    }
+  }
+
+  function uploadFile(file) {
+    errorEl.style.display = 'none';
+    progressEl.style.display = '';
+    progressFill.style.width = '0%';
+    progressText.textContent = '0%';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/work-items/assets/upload');
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const pct = Math.round((e.loaded / e.total) * 100);
+        progressFill.style.width = `${pct}%`;
+        progressText.textContent = `${pct}%`;
+      }
+    };
+
+    xhr.onload = () => {
+      progressEl.style.display = 'none';
+      if (xhr.status >= 200 && xhr.status < 300) {
+        progressFill.style.width = '100%';
+        try {
+          const result = JSON.parse(xhr.responseText);
+          const url = `![${file.name}](/api/work-items/assets/${result.filename})`;
+          insertAtCursorOrAppend(textarea, url);
+          updatePreview();
+        } catch {
+          showUploadError('Upload failed — your text has not been changed');
+        }
+      } else {
+        showUploadError('Upload failed — your text has not been changed');
+      }
+    };
+
+    xhr.onerror = () => {
+      progressEl.style.display = 'none';
+      showUploadError('Upload failed — your text has not been changed');
+    };
+
+    xhr.send(formData);
+  }
+
+  dropZone.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drop-active');
+    dropText.textContent = 'Release to upload';
+  });
+  dropZone.addEventListener('dragover', (e) => { e.preventDefault(); });
+  dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('drop-active');
+    dropText.textContent = 'Drop files here or click to browse';
+  });
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drop-active');
+    dropText.textContent = 'Drop files here or click to browse';
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    if (files.length > 0) uploadFile(files[0]);
+  });
+
+  browseBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files.length > 0) uploadFile(fileInput.files[0]);
+    fileInput.value = '';
+  });
 
   overlay.querySelector('#wi-cancel').onclick = () => overlay.remove();
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
@@ -4136,7 +4275,7 @@ function showWorkItemModal(existingItem = null) {
       title,
       status: overlay.querySelector('#wi-status').value,
       priority: overlay.querySelector('#wi-priority').value,
-      description: overlay.querySelector('#wi-description').value.trim(),
+      description: textarea.value.trim(),
       tags: overlay.querySelector('#wi-tags').value.split(',').map(t => t.trim()).filter(Boolean),
       depends_on: overlay.querySelector('#wi-depends').value.split(',').map(t => t.trim()).filter(Boolean),
     };
@@ -4155,7 +4294,7 @@ function showWorkItemModal(existingItem = null) {
       if (!resp.ok) throw new Error(result.error || 'Failed');
 
       overlay.remove();
-      setBacklog(null); setEpicCache(null); // bust cache
+      setBacklog(null); setEpicCache(null);
       await Promise.all([buildTree(), buildEpicTree()]);
       route();
     } catch (e) {
@@ -4164,6 +4303,8 @@ function showWorkItemModal(existingItem = null) {
       alert('Error: ' + e.message);
     }
   };
+
+  overlay.querySelector('#wi-title').focus();
 }
 
 // --- Discuss Modal ---
