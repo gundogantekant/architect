@@ -26,6 +26,10 @@
 .pipeline-stage-bar { padding: 2px 16px; }
 .btn-refine { font-size: 11px; padding: 2px 7px; border-radius: 3px; border: 1px solid var(--accent, #7c3aed); color: var(--accent, #7c3aed); background: transparent; cursor: pointer; margin-left: 4px; }
 .btn-refine:hover { background: var(--accent, #7c3aed); color: #fff; }
+.btn-item-refine { font-size: 12px; padding: 3px 10px; border-radius: 4px; border: 1px solid var(--accent); color: var(--accent); background: transparent; cursor: pointer; margin-left: 4px; }
+.btn-item-refine:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.btn-item-refine:disabled { opacity: 0.6; cursor: not-allowed; }
+.split-btn-group .btn-item-refine { border-radius: 0; margin-left: 0; border-left: none; }
 .cost-badge { font-size: 11px; color: var(--text-light, #888); margin-left: 6px; font-variant-numeric: tabular-nums; }
 .cost-placeholder { font-size: 11px; color: var(--text-light, #888); margin-left: 6px; }
 </style>
@@ -158,7 +162,7 @@ function wireAgentTypeToggle(overlay, agentTypeId, permModeId, skipPermsId) {
 }
 
 function createDispatchOverlay(opts) {
-  const { title, buildFields, onSubmit, submitLabel = 'Dispatch', cancelId, submitId, afterMount } = opts;
+  const { title, buildFields, onSubmit, submitLabel = 'Dispatch', cancelId, submitId, afterMount, onClose } = opts;
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -173,7 +177,7 @@ function createDispatchOverlay(opts) {
     </div>
   `;
 
-  const close = () => overlay.remove();
+  const close = () => { overlay.remove(); if (onClose) onClose(); };
 
   overlay.querySelector('[data-modal-cancel]').onclick = close;
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
@@ -3070,19 +3074,22 @@ function renderWorkItemsTable(items, allWorkItems, tableId) {
     html += `<td>${fmtTimestamp(w.done_at)}</td>`;
     html += `<td><button class="expand-btn" data-wi="${idx}">details</button>`;
     html += `<button class="edit-btn" data-wi-edit="${idx}">edit</button>`;
-    if (w.status === 'draft') {
-      html += `<button class="btn-refine" onclick="refineWorkItem('${esc(w.id)}')" title="Ask coordinator to generate an implementation contract">Refine</button>`;
-    }
+    const canRefineSkill = ['draft','planned','blocked','in-progress'].includes(w.status);
     if (canDispatch) {
       const hasActiveDispatch = (window._activeDispatches || []).some(d => d.work_item_id === w.id && d.status === 'running');
       // Keep in sync with constants.mjs AUTO_IMPLEMENTABLE_STATUSES (frontend has no module loader).
       const isAutoEligible = !hasActiveDispatch && ['planned','in-progress'].includes(w.status);
       html += `<span class="split-btn-group" data-split-wi="${idx}">`;
       html += `<button class="dispatch-btn" data-wi-idx="${idx}">dispatch</button>`;
+      if (canRefineSkill) {
+        html += `<button class="btn-item-refine" data-refine-dispatch-wi="${esc(w.id)}">Refine</button>`;
+      }
       html += `<button class="dispatch-chevron" data-chevron-wi="${idx}" title="More dispatch options">▾</button>`;
       html += `<div class="dispatch-dropdown hidden" data-dropdown-wi="${idx}">`;
       html += `<button ${isAutoEligible ? '' : 'disabled'} data-auto-wi="${idx}" title="${hasActiveDispatch ? 'A dispatch is already running for this item' : (!isAutoEligible ? 'Item status not eligible' : '')}">Auto-implement</button>`;
       html += `</div></span>`;
+    } else if (canRefineSkill) {
+      html += `<button class="btn-item-refine" data-refine-dispatch-wi="${esc(w.id)}">Refine</button>`;
     }
     html += `<button class="delete-btn" data-wi-del="${idx}">delete</button>`;
     html += `</td></tr>`;
@@ -3201,7 +3208,7 @@ function renderComponentView(org, proj, comp, data, workItems, files, projectEpi
   html += `<button class="btn-add-wi" id="add-work-item">+ Add Task</button>`;
   html += `<button class="btn-add-wi" id="discuss-agent" style="background:var(--teal);margin-left:8px">Discuss with Agent</button>`;
   html += `<button class="btn-add-wi" id="review-prs" style="background:var(--blue);margin-left:8px">Review PRs</button>`;
-  html += `<button class="btn-add-wi" id="refine-project" style="background:var(--purple);margin-left:8px">Refine Project</button>`;
+  html += `<button class="btn-add-wi" id="refine-project" style="background:var(--accent);margin-left:8px">Refine Project</button>`;
   html += `<a href="#agents?project=${esc(currentProjectKey)}" style="margin-left:8px;font-size:12px;color:var(--accent)">View agents</a>`;
 
   // Board toggle bar (only if project has epic-linked items or epics exist)
@@ -3438,6 +3445,65 @@ function bindTabs() {
       const idx = parseInt(btn.dataset.wiIdx);
       const wi = currentWorkItems[idx];
       if (wi) dispatchWorkItem(wi, currentProjectKey);
+    };
+  });
+
+  // Per-item Refine skill dispatch buttons
+  document.querySelectorAll('.btn-item-refine[data-refine-dispatch-wi]').forEach(btn => {
+    btn.onclick = async () => {
+      const wiId = btn.dataset.refineDispatchWi;
+      const activeRefine = (window._activeDispatches || []).find(d =>
+        d.work_item_id === wiId && d.skill_id === 'project-refine-tasks' && d.status === 'running'
+      );
+      if (activeRefine) {
+        showToast('A Refine dispatch is already active for this item', 'error');
+        return;
+      }
+      btn.disabled = true;
+      const origText = btn.textContent;
+      btn.textContent = '...';
+      try {
+        const resp = await fetch('/api/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_key: currentProjectKey,
+            work_item_id: wiId,
+            skill_id: 'project-refine-tasks',
+            additional_instructions: '',
+          }),
+        });
+        const result = await resp.json();
+        if (!resp.ok) {
+          showToast(result.error || 'Refine dispatch failed', 'error');
+        } else {
+          const wi = currentWorkItems.find(w => w.id === wiId);
+          const dispatch = {
+            id: result.dispatch_id,
+            work_item_id: wiId,
+            work_item_title: wi?.title || '',
+            project_key: currentProjectKey,
+            title: wi?.title || wiId,
+            permission_mode: 'acceptEdits',
+            skip_permissions: false,
+            dispatch_mode: 'skill',
+            skill_id: 'project-refine-tasks',
+            status: 'running',
+            agent_phase: 'generating',
+            claude_session_id: null,
+            started_at: new Date().toISOString(),
+          };
+          activeDispatches.push(dispatch);
+          syncSessionState();
+          createDispatchPanel(dispatch);
+          placeSessionPanels();
+          await loadDispatchContent(dispatch);
+        }
+      } catch {
+        showToast('Refine dispatch failed — network error', 'error');
+      }
+      btn.disabled = false;
+      btn.textContent = origText;
     };
   });
 
@@ -4201,6 +4267,7 @@ function navigateToRefinementTemplate(org, proj, comp) {
 }
 
 async function showRefineProjectModal(org, proj, comp) {
+  const triggerEl = document.getElementById('refine-project');
   const projectKey = `${org}/${proj}/${comp}`;
   let inScopeItems = [];
   try {
@@ -4230,6 +4297,7 @@ async function showRefineProjectModal(org, proj, comp) {
     submitLabel: 'Confirm',
     cancelId: 'refine-project-cancel',
     submitId: 'refine-project-submit',
+    onClose: () => { if (triggerEl) triggerEl.focus(); },
     buildFields: () => `
       <div class="field">
         <label>In-scope items (${inScopeItems.length})</label>
