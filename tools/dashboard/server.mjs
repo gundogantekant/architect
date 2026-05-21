@@ -38,6 +38,7 @@ import adrsRoutes from './routes/adrs.mjs';
 import projectsRoutes from './routes/projects.mjs';
 import costsRoutes from './routes/costs.mjs';
 import assetsRoutes from './routes/assets.mjs';
+import promptsRoutes from './routes/prompts.mjs';
 import testEndpointRoutes from './routes/test-endpoints.mjs';
 import { attemptMerge, isMergeLocked } from './merge.mjs';
 
@@ -79,6 +80,7 @@ const routes = [
   ...projectsRoutes(deps),
   ...costsRoutes(deps),
   ...assetsRoutes(deps),
+  ...promptsRoutes(deps),
   ...(process.env.WORK_DIR ? testEndpointRoutes(deps) : []),
 ];
 

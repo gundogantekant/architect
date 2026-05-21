@@ -16,6 +16,8 @@ export const LEGACY_PORTFOLIO = join(ROOT, 'portfolio');
 export const PORTFOLIO = process.env.PORTFOLIO_DIR || join(homedir(), '.architect', 'portfolio');
 export const WORK = process.env.WORK_DIR || join(ROOT, 'work');
 export const LOGS_DIR = join(WORK, 'logs');
+export const PROMPTS_DIR = process.env.PROMPTS_DIR || join(ROOT, 'tools', 'dashboard', 'prompts');
+export const TRUNCATION_LIMIT = 100 * 1024; // 100 KB — same threshold as MAX_CONTENT_BYTES in assets.mjs
 export const ARCHITECT_KEY = '\u2013/architect/\u2013';
 
 export const port = (() => {
