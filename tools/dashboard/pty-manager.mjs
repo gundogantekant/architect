@@ -81,6 +81,19 @@ export function wireTerminalHandlers(terminal) {
   });
 }
 
+function sanitizePrompt(raw) {
+  // Strip ESC-led sequences (CSI, OSC, etc.) and standalone BEL/BS control codes.
+  // These are interpreted by the PTY terminal driver rather than inserted as text,
+  // causing character mangling around adjacent multibyte characters.
+  // Process longest sequences first so prefix matches don't leave residue.
+  return raw
+    .replace(/\x1b\[[\x20-\x3f]*[\x40-\x7e]/g, '')          // CSI: ESC[ params final-byte
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')       // OSC: ESC] content ST/BEL
+    .replace(/\x1b[\x20-\x7e]/g, '')                         // 2-char ESC sequences
+    .replace(/\x1b/g, '')                                    // any remaining lone ESC
+    .replace(/[\x07\x08]/g, '');                             // standalone BEL and BS
+}
+
 export async function injectPrompt(terminal) {
   if (!terminal._pendingPrompt || !terminal.ptyProcess) return;
   const prompt = terminal._pendingPrompt;
@@ -92,14 +105,18 @@ export async function injectPrompt(terminal) {
   terminal.eventStream.broadcast(startEvent);
 
   try {
-    // Bracketed paste mode chunked delivery
-    terminal.ptyProcess.write('\x1b[200~');
+    // Bracketed paste mode chunked delivery.
+    // Sanitize first to strip ANSI sequences that the PTY would interpret as control codes.
+    // Chunk by Unicode code points (not UTF-16 code units) to prevent surrogate pair splits.
+    const sanitized = sanitizePrompt(prompt);
+    const codePoints = [...sanitized];
     const CHUNK_SIZE = 1024;
     const CHUNK_DELAY = 100;
-    for (let i = 0; i < prompt.length; i += CHUNK_SIZE) {
-      const chunk = prompt.slice(i, i + CHUNK_SIZE);
+    terminal.ptyProcess.write('\x1b[200~');
+    for (let i = 0; i < codePoints.length; i += CHUNK_SIZE) {
+      const chunk = codePoints.slice(i, i + CHUNK_SIZE).join('');
       try { terminal.ptyProcess.write(chunk); } catch {}
-      if (i + CHUNK_SIZE < prompt.length) await sleep(CHUNK_DELAY);
+      if (i + CHUNK_SIZE < codePoints.length) await sleep(CHUNK_DELAY);
     }
     terminal.ptyProcess.write('\x1b[201~');
     terminal.ptyProcess.write('\r');
