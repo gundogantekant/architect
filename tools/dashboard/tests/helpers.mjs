@@ -306,12 +306,20 @@ export async function seedDispatch(opts = {}) {
     ...(opts.agent_phase !== undefined && { agent_phase: opts.agent_phase }),
     ...(opts.cost_usd !== undefined && { cost_usd: opts.cost_usd }),
     ...(opts.exit_type !== undefined && { exit_type: opts.exit_type }),
+    ...(opts.started_at !== undefined && { started_at: opts.started_at }),
   };
   const res = await api('test/seed-dispatch', {
     method: 'POST',
     body: JSON.stringify(body),
   });
   return { dispatch_id: id, ...res };
+}
+
+export async function backdateWorkItem(id, createdAt) {
+  return api('test/backdate-work-item', {
+    method: 'POST',
+    body: JSON.stringify({ id, created_at: createdAt }),
+  });
 }
 
 export async function getDispatchLogScrollMetrics(page, id) {

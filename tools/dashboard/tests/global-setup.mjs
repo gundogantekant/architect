@@ -64,6 +64,7 @@ export const SPEC_FILES = [
   'sanitisation',
   'pty-resize',
   'fmt-timestamp',
+  'date-filter',
 ];
 
 function getLiveDashboardPorts() {

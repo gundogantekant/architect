@@ -55,6 +55,9 @@ export default function testEndpointRoutes(deps) {
       const resolvedStatus = status || 'completed';
       const resolvedPhase = 'agent_phase' in body ? seedAgentPhase : (resolvedStatus === 'running' ? 'generating' : null);
 
+      const { started_at: seedStartedAt } = body;
+      const resolvedStartedAt = seedStartedAt || new Date().toISOString();
+
       const dispatch = {
         id,
         work_item_id: work_item_id || null,
@@ -77,7 +80,7 @@ export default function testEndpointRoutes(deps) {
         output,
         lastLines: [],
         wsClients: new Set(),
-        started_at: new Date().toISOString(),
+        started_at: resolvedStartedAt,
         completed_at: resolvedStatus !== 'running' ? new Date().toISOString() : null,
         process: null,
         pid: seedPid || null,
@@ -889,6 +892,22 @@ export default function testEndpointRoutes(deps) {
         truncated: resolvedTruncated,
       });
       json(res, { ok: true, char_count: resolvedCharCount, truncated: resolvedTruncated });
+    }],
+
+    // Set created_at on a work item to a specific timestamp (for date-filter contract tests)
+    [/^\/api\/test\/backdate-work-item$/, 'POST', async (_m, req, res) => {
+      const body = await parseBody(req);
+      const { id, created_at } = body;
+      if (!id || !created_at) return err(res, 'id and created_at are required', 400);
+      await db.backdateWorkItem(id, created_at);
+      json(res, { ok: true, id, created_at });
+    }],
+
+    // Hard-delete ALL work items and dispatches (for date-filter tests that backdate items
+    // and thus bypass the 2h cutoff in hardDeleteAllTestData)
+    [/^\/api\/test\/purge-work-items$/, 'POST', async (_m, _req, res) => {
+      await db.purgeAllWorkItemsForTest();
+      json(res, { ok: true });
     }],
   ];
 }
