@@ -63,6 +63,7 @@ export const SPEC_FILES = [
   'terminal-project-filter',
   'sanitisation',
   'pty-resize',
+  'work-item-assets',
 ];
 
 function getLiveDashboardPorts() {

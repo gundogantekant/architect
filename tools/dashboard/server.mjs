@@ -38,6 +38,7 @@ import adrsRoutes from './routes/adrs.mjs';
 import projectsRoutes from './routes/projects.mjs';
 import costsRoutes from './routes/costs.mjs';
 import assetsRoutes from './routes/assets.mjs';
+import workItemAssetsRoutes from './routes/work-item-assets.mjs';
 import testEndpointRoutes from './routes/test-endpoints.mjs';
 import { attemptMerge, isMergeLocked } from './merge.mjs';
 
@@ -79,6 +80,7 @@ const routes = [
   ...projectsRoutes(deps),
   ...costsRoutes(deps),
   ...assetsRoutes(deps),
+  ...workItemAssetsRoutes(deps),
   ...(process.env.WORK_DIR ? testEndpointRoutes(deps) : []),
 ];
 
@@ -219,9 +221,10 @@ async function main() {
     process.exit(1);
   }
 
-  // Phase 2: Ensure logs directory and tmp directory
+  // Phase 2: Ensure logs directory, tmp directory, and work/assets directory
   await mkdir(LOGS_DIR, { recursive: true });
   await mkdir(TMP_DIR, { recursive: true });
+  await mkdir(join(WORK, 'assets'), { recursive: true });
 
   // On startup, sweep tmp/prompt-*.txt files older than 1 hour
   sweepOrphanedPromptFiles(TMP_DIR).catch(e => console.error('[startup] prompt file sweep:', e.message));
