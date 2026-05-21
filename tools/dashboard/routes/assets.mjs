@@ -2,9 +2,9 @@ import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { join, resolve, relative } from 'node:path';
 
 const MAX_CONTENT_BYTES = 100 * 1024; // 100 KB
-const PLACEHOLDER_RE = /\{\{([A-Z0-9_]+)\}\}/g;
+export const PLACEHOLDER_RE = /\{\{([A-Z0-9_]+)\}\}/g;
 
-function extractPlaceholders(content) {
+export function extractPlaceholders(content) {
   const found = new Set();
   let match;
   while ((match = PLACEHOLDER_RE.exec(content)) !== null) {
@@ -15,7 +15,7 @@ function extractPlaceholders(content) {
   return [...found];
 }
 
-async function resolveWithinRoot(requestedPath, projectRoot, roots) {
+export async function resolveWithinRoot(requestedPath, projectRoot, roots) {
   // requestedPath is relative to projectRoot (e.g. "usecases/implement-work-item.md")
   // Resolve against projectRoot, then verify it falls inside one of the permitted roots.
   const candidate = resolve(projectRoot, requestedPath);

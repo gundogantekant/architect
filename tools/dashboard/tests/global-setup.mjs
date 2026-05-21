@@ -65,6 +65,7 @@ export const SPEC_FILES = [
   'pty-resize',
   'fmt-timestamp',
   'date-filter',
+  'prompt-preview.contract',
 ];
 
 function getLiveDashboardPorts() {
