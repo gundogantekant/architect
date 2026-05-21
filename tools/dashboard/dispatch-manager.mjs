@@ -3,6 +3,7 @@ import { unlink as unlinkFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { dispatches, terminals, cliSessions, saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession } from './state.mjs';
+import { applyRefinementSummary } from './lib/refine-apply.mjs';
 import { isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture, termEventLogPath, sleep } from './utils.mjs';
 import { PORTFOLIO, WORK, LOGS_DIR, TMUX_AVAILABLE } from './constants.mjs';
 import * as db from './db.mjs';
@@ -481,6 +482,20 @@ export function wireDispatchHandlers(dispatch, proc) {
     }
   });
 
+  proc.stdout.on('end', () => {
+    if (buffer.trim()) {
+      try {
+        JSON.parse(buffer.trim()); // validate parseable before accepting
+        const rawLine = buffer.trim();
+        dispatch.output.push(rawLine);
+        if (dispatch.logStream) dispatch.logStream.write(rawLine + '\n');
+        broadcastDispatchLine(dispatch, rawLine);
+      } catch (e) {
+        // silently skip unparseable trailing content
+      }
+    }
+  });
+
   proc.stderr.on('data', (chunk) => {
     const line = JSON.stringify({ type: 'stderr', content: chunk.toString() });
     dispatch.output.push(line);
@@ -595,12 +610,35 @@ export function wireDispatchHandlers(dispatch, proc) {
           const fullText = (dispatch.output || []).map(line => {
             try { return extractStreamText(JSON.parse(line)) || ''; } catch { return ''; }
           }).join('');
+
           const match = fullText.match(/# RefinementSummary\s*```json\s*([\s\S]*?)```/);
-          if (match) {
-            await db.updateDispatchMergeResult(dispatch.id, { completion_summary: match[1].trim() });
+          if (!match) {
+            const errMsg = 'RefinementSummary block not found in output';
+            dispatch.completion_summary_error = errMsg;
+            await db.updateDispatchMergeResult(dispatch.id, { completion_summary_error: errMsg });
+            return;
           }
-        } catch (err) {
-          console.error('Project refinement summary extraction failed:', err.message);
+
+          let summary;
+          try {
+            summary = JSON.parse(match[1]);
+          } catch (parseErr) {
+            const errMsg = `RefinementSummary parse failed: ${parseErr.message}`;
+            dispatch.completion_summary_error = errMsg;
+            await db.updateDispatchMergeResult(dispatch.id, { completion_summary_error: errMsg });
+            return;
+          }
+
+          if (dispatch.dry_run) return;
+
+          await applyRefinementSummary(dispatch.id, summary, { db });
+        } catch (handlerErr) {
+          console.error(`[project_refinement] close handler error for ${dispatch.id}:`, handlerErr);
+          const errMsg = 'Unhandled error in refinement close handler';
+          dispatch.completion_summary_error = errMsg;
+          try {
+            await db.updateDispatchMergeResult(dispatch.id, { completion_summary_error: errMsg });
+          } catch {}
         }
       })();
     }

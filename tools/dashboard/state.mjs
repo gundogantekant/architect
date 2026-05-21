@@ -26,6 +26,7 @@ export async function saveDispatchToDb(d) {
     timeout_at: d.timeout_at || null,
     contract: d.contract || null,
     exit_type: d.exit_type || null,
+    dry_run: d.dry_run ?? false,
   });
 }
 
