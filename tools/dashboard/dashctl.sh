@@ -718,16 +718,23 @@ cmd_db_restore() {
     exit 1
   fi
 
-  if ! docker inspect "$CONTAINER" > /dev/null 2>&1; then
+  if [ "$(docker inspect --format '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" != "true" ]; then
     echo "Error: container '$CONTAINER' is not running. Start it with: dashctl.sh db:up"
     exit 1
   fi
 
   echo "Restoring $FILE into $PG_DB via $CONTAINER..."
+  set +e
   docker exec -i "$CONTAINER" \
     pg_restore -U "$PG_USER" -d "$PG_DB" --clean --if-exists \
     < "$FILE"
-  echo "Restore complete."
+  local rc=$?
+  set -e
+  if [ $rc -ne 0 ]; then
+    echo "Warning: pg_restore exited $rc — non-fatal warnings may have occurred. Check output above."
+  else
+    echo "Restore complete."
+  fi
 }
 
 cmd_db_reset_confirmed() {

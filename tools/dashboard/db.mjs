@@ -40,7 +40,7 @@ function buildPoolConfig() {
     max: parseInt(process.env.PG_POOL_MAX ?? '10', 10),
     idleTimeoutMillis: parseInt(process.env.PG_POOL_IDLE_TIMEOUT_MS ?? '30000', 10),
     connectionTimeoutMillis: parseInt(process.env.PG_CONNECTION_TIMEOUT_MS ?? '5000', 10),
-    statementTimeout: parseInt(process.env.PG_STATEMENT_TIMEOUT_MS ?? '30000', 10),
+    statementTimeoutMs: parseInt(process.env.PG_STATEMENT_TIMEOUT_MS ?? '30000', 10),
   };
 }
 
@@ -85,7 +85,7 @@ export async function initDatabaseAsync(workDir, migrationsDir) {
 
   pool = new pg.Pool({
     ...config,
-    options: `-c statement_timeout=${config.statementTimeout} -c idle_in_transaction_session_timeout=${config.statementTimeout}`,
+    options: `-c statement_timeout=${config.statementTimeoutMs} -c idle_in_transaction_session_timeout=${config.statementTimeoutMs}`,
   });
 
   pool.on('error', (err) => {
