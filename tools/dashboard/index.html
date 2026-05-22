@@ -6720,10 +6720,7 @@ function renderAgentsView(agents, filters = {}) {
   }
   html += `<button class="btn-add-wi" id="agents-quick-dispatch">+ Dispatch</button>`;
   html += `<label style="font-size:12px;display:inline-flex;align-items:center;gap:4px;margin-left:8px;cursor:pointer"><input type="checkbox" id="agents-auto-only"${filters.autoOnly ? ' checked' : ''}> Auto-implement only</label>`;
-  const agentDatePreset = filters.agentDate || 'all';
   html += `<select id="agents-date-preset" style="margin-left:8px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"><option value="all"${agentDatePreset === 'all' ? ' selected' : ''}>All dates</option><option value="today"${agentDatePreset === 'today' ? ' selected' : ''}>Today</option><option value="7d"${agentDatePreset === '7d' ? ' selected' : ''}>Last 7d</option><option value="30d"${agentDatePreset === '30d' ? ' selected' : ''}>Last 30d</option><option value="custom"${agentDatePreset === 'custom' ? ' selected' : ''}>Custom</option></select>`;
-  const agentDateFrom = filters.agentDateFrom || '';
-  const agentDateTo = filters.agentDateTo || '';
   html += `<span id="agents-date-custom-range"${agentDatePreset !== 'custom' ? ' hidden' : ''} style="display:inline-flex;align-items:center;gap:4px;margin-left:4px"><input type="date" id="agents-filter-date-from" value="${esc(agentDateFrom)}" style="padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" /><span style="color:var(--text-light)">–</span><input type="date" id="agents-filter-date-to" value="${esc(agentDateTo)}" style="padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" /></span>`;
   html += `</div>`;
 
