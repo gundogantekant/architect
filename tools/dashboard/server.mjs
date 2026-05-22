@@ -220,11 +220,10 @@ async function main() {
   } catch (e) {
     const connectionCodes = new Set(['ECONNREFUSED', 'ETIMEDOUT', '28P01', '3D000', '57P03']);
     if (connectionCodes.has(e.code) || /not reachable|ECONNREFUSED|ETIMEDOUT/i.test(e.message)) {
-      console.error('PostgreSQL unreachable. Ensure Docker is running: docker compose up -d');
+      console.error(`PostgreSQL unreachable. Ensure Docker is running: docker compose up -d\nDetails: ${e.message}`);
     } else {
       console.error(`Database initialization failed: ${e.message}`);
     }
-    console.error('Details:', e.message);
     process.exit(1);
   }
 

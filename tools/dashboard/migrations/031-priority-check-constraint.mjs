@@ -2,6 +2,12 @@ export const version = 31;
 
 export async function up(client) {
   await client.query(`
+    UPDATE work_items
+    SET priority = 'medium'
+    WHERE priority NOT IN ('low', 'medium', 'high', 'critical')
+  `);
+
+  await client.query(`
     DO $$
     BEGIN
       IF NOT EXISTS (
@@ -16,6 +22,12 @@ export async function up(client) {
   `);
 
   await client.query(`ALTER TABLE work_items VALIDATE CONSTRAINT work_items_priority_check`);
+
+  await client.query(`
+    UPDATE epics
+    SET priority = 'medium'
+    WHERE priority NOT IN ('low', 'medium', 'high', 'critical')
+  `);
 
   await client.query(`
     DO $$

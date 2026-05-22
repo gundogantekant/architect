@@ -324,7 +324,7 @@ export async function backupDatabase(workDir, backupDir) {
       let stderr = '';
       child.stdout.pipe(out);
       child.stderr.on('data', (d) => { stderr += d; });
-      child.on('error', (err) => reject(new Error(`Docker not available: ${err.message}`)));
+      child.on('error', (err) => { out.destroy(); reject(new Error(`Docker not available: ${err.message}`)); });
       child.on('close', (code) => {
         if (code !== 0) {
           if (stderr.includes('No such container')) {

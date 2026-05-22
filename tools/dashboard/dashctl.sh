@@ -681,20 +681,21 @@ cmd_db_psql() {
 
 cmd_db_dump() {
   local BACKUP_DIR="$ROOT/assets/backups"
+  local CONTAINER="${ARCHITECT_PG_CONTAINER:-architect-postgres}"
   mkdir -p "$BACKUP_DIR"
   local TIMESTAMP
   TIMESTAMP="$(date -u +%Y-%m-%dT%H-%M-%S)"
   local DEST="$BACKUP_DIR/architect-${TIMESTAMP}.dump"
+  local TMP_DEST="${DEST}.tmp"
 
-  local PG_PASSWORD="${ARCHITECT_PG_PASSWORD:-}"
-  local args=(-h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -Fc -f "$DEST" "$PG_DB")
-
-  echo "Dumping $PG_DB to $DEST..."
-  if [ -n "$PG_PASSWORD" ]; then
-    PGPASSWORD="$PG_PASSWORD" pg_dump "${args[@]}"
-  else
-    pg_dump "${args[@]}"
+  if [ "$(docker inspect --format '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" != "true" ]; then
+    echo "Error: container '$CONTAINER' is not running. Start it with: dashctl.sh db:up"
+    exit 1
   fi
+
+  echo "Dumping $PG_DB to $DEST via $CONTAINER..."
+  docker exec "$CONTAINER" pg_dump -U "$PG_USER" -Fc "$PG_DB" > "$TMP_DEST"
+  mv "$TMP_DEST" "$DEST"
   echo "Backup complete: $DEST"
 }
 
