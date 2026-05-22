@@ -121,18 +121,9 @@ export default function dispatchRoutes(deps) {
       // without input — regression seen in W-1184).
       const onboardPromptFile = await writePromptFile(prompt, id, TMP_DIR);
 
-      // Capture prompt for audit — must complete before spawn; failure logged but does not abort dispatch
       const MAX_PROMPT_CHARS = 1_048_576; // 1MB
       const onboardTruncated = prompt.length > MAX_PROMPT_CHARS;
       const onboardCapturedText = onboardTruncated ? prompt.slice(0, MAX_PROMPT_CHARS) : prompt;
-      await db.insertPromptRecord({
-        dispatch_id: id,
-        work_item_id: null,
-        project_key: null,
-        prompt_text: onboardCapturedText,
-        char_count: onboardCapturedText.length,
-        truncated: onboardTruncated,
-      }).catch(e => console.error('[prompt-capture] failed:', e.message));
 
       let proc;
       try {
@@ -168,6 +159,15 @@ export default function dispatchRoutes(deps) {
 
       dispatches.set(id, dispatch);
       await saveDispatchToDb(dispatch);
+      // Capture prompt for audit — must run after saveDispatchToDb so the FK parent row exists
+      await db.insertPromptRecord({
+        dispatch_id: id,
+        work_item_id: null,
+        project_key: null,
+        prompt_text: onboardCapturedText,
+        char_count: onboardCapturedText.length,
+        truncated: onboardTruncated,
+      }).catch(e => console.error('[prompt-capture] failed:', e.message));
       json(res, { dispatch_id: id, status: 'running' });
     }],
 
@@ -352,18 +352,9 @@ export default function dispatchRoutes(deps) {
       // Prompt delivery: see W-1184 comment in the onboard handler above.
       const standardPromptFile = await writePromptFile(prompt, id, TMP_DIR);
 
-      // Capture prompt for audit — must complete before spawn; failure logged but does not abort dispatch
       const MAX_PROMPT_CHARS = 1_048_576; // 1MB
       const standardTruncated = prompt.length > MAX_PROMPT_CHARS;
       const standardCapturedText = standardTruncated ? prompt.slice(0, MAX_PROMPT_CHARS) : prompt;
-      await db.insertPromptRecord({
-        dispatch_id: id,
-        work_item_id: work_item_id || null,
-        project_key: project_key || null,
-        prompt_text: standardCapturedText,
-        char_count: standardCapturedText.length,
-        truncated: standardTruncated,
-      }).catch(e => console.error('[prompt-capture] failed:', e.message));
 
       let proc;
       try {
@@ -410,6 +401,15 @@ export default function dispatchRoutes(deps) {
 
       dispatches.set(id, dispatch);
       await saveDispatchToDb(dispatch);
+      // Capture prompt for audit — must run after saveDispatchToDb so the FK parent row exists
+      await db.insertPromptRecord({
+        dispatch_id: id,
+        work_item_id: work_item_id || null,
+        project_key: project_key || null,
+        prompt_text: standardCapturedText,
+        char_count: standardCapturedText.length,
+        truncated: standardTruncated,
+      }).catch(e => console.error('[prompt-capture] failed:', e.message));
       json(res, { dispatch_id: id, status: 'running' });
     }],
 
@@ -518,18 +518,9 @@ export default function dispatchRoutes(deps) {
       // Prompt delivery: see W-1184 comment in the onboard handler above.
       const autoPromptFile = await writePromptFile(prompt, id, TMP_DIR);
 
-      // Capture prompt for audit — must complete before spawn; failure logged but does not abort dispatch
       const MAX_PROMPT_CHARS = 1_048_576; // 1MB
       const autoTruncated = prompt.length > MAX_PROMPT_CHARS;
       const autoCapturedText = autoTruncated ? prompt.slice(0, MAX_PROMPT_CHARS) : prompt;
-      await db.insertPromptRecord({
-        dispatch_id: id,
-        work_item_id: work_item_id || null,
-        project_key: project_key || null,
-        prompt_text: autoCapturedText,
-        char_count: autoCapturedText.length,
-        truncated: autoTruncated,
-      }).catch(e => console.error('[prompt-capture] failed:', e.message));
 
       let proc;
       try {
@@ -575,6 +566,15 @@ export default function dispatchRoutes(deps) {
 
       dispatches.set(id, dispatch);
       await saveDispatchToDb(dispatch);
+      // Capture prompt for audit — must run after saveDispatchToDb so the FK parent row exists
+      await db.insertPromptRecord({
+        dispatch_id: id,
+        work_item_id: work_item_id || null,
+        project_key: project_key || null,
+        prompt_text: autoCapturedText,
+        char_count: autoCapturedText.length,
+        truncated: autoTruncated,
+      }).catch(e => console.error('[prompt-capture] failed:', e.message));
       json(res, { id, dispatch_id: id, status: 'running', worktree_path: dispatch.worktree_path });
     }],
 

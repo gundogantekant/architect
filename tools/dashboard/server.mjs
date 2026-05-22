@@ -218,7 +218,12 @@ async function main() {
     await db.initDatabaseAsync(WORK, MIGRATIONS_DIR);
     console.log('PostgreSQL database ready');
   } catch (e) {
-    console.error('PostgreSQL unreachable. Ensure Docker is running: docker compose up -d');
+    const connectionCodes = new Set(['ECONNREFUSED', 'ETIMEDOUT', '28P01', '3D000', '57P03']);
+    if (connectionCodes.has(e.code) || /not reachable|ECONNREFUSED|ETIMEDOUT/i.test(e.message)) {
+      console.error('PostgreSQL unreachable. Ensure Docker is running: docker compose up -d');
+    } else {
+      console.error(`Database initialization failed: ${e.message}`);
+    }
     console.error('Details:', e.message);
     process.exit(1);
   }
