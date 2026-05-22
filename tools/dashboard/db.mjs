@@ -2,8 +2,9 @@ import pg from 'pg';
 import { readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { execFile } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { mkdirSync, createWriteStream } from 'node:fs';
+import { rename, unlink } from 'node:fs/promises';
 
 // Return TIMESTAMPTZ values as ISO strings instead of Date objects.
 // OID 1114 = TIMESTAMP WITHOUT TIME ZONE, OID 1184 = TIMESTAMP WITH TIME ZONE.
@@ -312,29 +313,44 @@ export async function withTransaction(fn) {
 
 export async function backupDatabase(workDir, backupDir) {
   const config = buildPoolConfig();
+  const container = process.env.ARCHITECT_PG_CONTAINER ?? 'architect-postgres';
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const dest = join(backupDir, `architect-${timestamp}.dump`);
+  const tmpDest = dest + '.tmp';
 
   mkdirSync(backupDir, { recursive: true });
 
-  return new Promise((resolve, reject) => {
-    const args = [
-      '-h', config.host,
-      '-p', String(config.port),
-      '-U', config.user,
-      '-Fc',
-      '-f', dest,
-      config.database,
-    ];
-    const env = { ...process.env };
-    if (config.password) env.PGPASSWORD = config.password;
-
-    execFile('pg_dump', args, { env }, (err) => {
-      if (err) return reject(new Error(`pg_dump failed: ${err.message}`));
-      console.log(`Database backup: ${dest}`);
-      resolve(dest);
+  try {
+    await new Promise((resolve, reject) => {
+      const child = spawn('docker', [
+        'exec', container,
+        'pg_dump', '-U', config.user, '-Fc', config.database,
+      ]);
+      const out = createWriteStream(tmpDest);
+      let stderr = '';
+      child.stdout.pipe(out);
+      child.stderr.on('data', (d) => { stderr += d; });
+      child.on('error', (err) => reject(new Error(`Docker not available: ${err.message}`)));
+      child.on('close', (code) => {
+        if (code !== 0) {
+          if (stderr.includes('No such container')) {
+            reject(new Error(`Container '${container}' not found. Set ARCHITECT_PG_CONTAINER env var.`));
+          } else {
+            reject(new Error(`pg_dump failed (exit ${code}): ${stderr.trim()}`));
+          }
+        } else {
+          out.end(() => resolve());
+        }
+      });
     });
-  });
+  } catch (err) {
+    await unlink(tmpDest).catch(() => {});
+    throw err;
+  }
+
+  await rename(tmpDest, dest);
+  console.log(`Database backup: ${dest}`);
+  return dest;
 }
 
 // --- Sequences (atomic UPDATE…RETURNING prevents races) ---

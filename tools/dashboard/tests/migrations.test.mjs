@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { mkdtempSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +18,7 @@ function buildAdminConfig() {
     port: parseInt(process.env.ARCHITECT_PG_PORT ?? '3778', 10),
     database: 'postgres',
     user: process.env.ARCHITECT_PG_USER ?? 'architect',
-    password: process.env.ARCHITECT_PG_PASSWORD,
+    password: process.env.ARCHITECT_PG_PASSWORD ?? 'architect',
     connectionTimeoutMillis: 5000,
   };
 }
@@ -100,7 +100,25 @@ test('MG-1: migration files have unique version numbers', () => {
   }
 });
 
-// ── MG-2 / MG-3 / MG-4: migration runner runtime guardrails ──────────────────
+// ── MG-5: version export matches filename prefix (no PG needed) ──────────────
+
+test('MG-5: migration version exports match their filename prefix', () => {
+  const files = readdirSync(MIGRATIONS_DIR).filter(f => /^\d{3}-.+\.mjs$/.test(f));
+  for (const f of files) {
+    const content = readFileSync(join(MIGRATIONS_DIR, f), 'utf8');
+    const match = content.match(/export\s+const\s+version\s*=\s*(\d+)/);
+    if (!match) continue;
+    const exportedVersion = parseInt(match[1], 10);
+    const filenameVersion = parseInt(f.slice(0, 3), 10);
+    assert.strictEqual(
+      exportedVersion,
+      filenameVersion,
+      `${f}: exports version ${exportedVersion} but filename prefix is ${filenameVersion}`,
+    );
+  }
+});
+
+// ── MG-2 / MG-3 / MG-4 / MG-6: migration runner runtime guardrails ──────────
 // Each test creates its own isolated PostgreSQL database. closeDatabase() is
 // called in afterEach to reset the module-level pool singleton.
 
@@ -161,5 +179,49 @@ test('MG-4: duplicate migration version numbers throw at runtime', async () => {
     );
   } finally {
     rmSync(dupMigsDir, { recursive: true, force: true });
+  }
+});
+
+// ── MG-6: priority CHECK constraints exist on work_items and epics ────────────
+
+test('MG-6: work_items has a priority CHECK constraint', async () => {
+  await initDatabaseAsync(tmpDir, MIGRATIONS_DIR);
+  const client = new pg.Client({
+    host: process.env.ARCHITECT_PG_HOST ?? '127.0.0.1',
+    port: parseInt(process.env.ARCHITECT_PG_PORT ?? '3778', 10),
+    database: testDbName,
+    user: process.env.ARCHITECT_PG_USER ?? 'architect',
+    password: process.env.ARCHITECT_PG_PASSWORD ?? 'architect',
+  });
+  await client.connect();
+  try {
+    const { rows } = await client.query(`
+      SELECT conname FROM pg_constraint
+      WHERE conrelid = 'work_items'::regclass AND conname = 'work_items_priority_check'
+    `);
+    assert.strictEqual(rows.length, 1, 'work_items_priority_check constraint must exist');
+  } finally {
+    await client.end();
+  }
+});
+
+test('MG-6: epics has a priority CHECK constraint', async () => {
+  await initDatabaseAsync(tmpDir, MIGRATIONS_DIR);
+  const client = new pg.Client({
+    host: process.env.ARCHITECT_PG_HOST ?? '127.0.0.1',
+    port: parseInt(process.env.ARCHITECT_PG_PORT ?? '3778', 10),
+    database: testDbName,
+    user: process.env.ARCHITECT_PG_USER ?? 'architect',
+    password: process.env.ARCHITECT_PG_PASSWORD ?? 'architect',
+  });
+  await client.connect();
+  try {
+    const { rows } = await client.query(`
+      SELECT conname FROM pg_constraint
+      WHERE conrelid = 'epics'::regclass AND conname = 'epics_priority_check'
+    `);
+    assert.strictEqual(rows.length, 1, 'epics_priority_check constraint must exist');
+  } finally {
+    await client.end();
   }
 });

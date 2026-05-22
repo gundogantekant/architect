@@ -1,4 +1,4 @@
-export const version = 29;
+export const version = 30;
 
 export async function up(client) {
   await client.query(`ALTER TABLE dispatches ADD COLUMN IF NOT EXISTS completion_summary_error TEXT`);
