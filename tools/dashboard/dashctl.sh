@@ -700,24 +700,33 @@ cmd_db_dump() {
 
 cmd_db_restore() {
   local FILE="${1:-}"
+  local BACKUP_DIR="$ROOT/assets/backups"
+  local CONTAINER="${ARCHITECT_PG_CONTAINER:-architect-postgres}"
+
   if [ -z "$FILE" ]; then
-    echo "Usage: dashctl.sh db:restore <file>"
-    exit 1
+    FILE="$(ls -t "$BACKUP_DIR"/*.dump 2>/dev/null | head -1)"
+    if [ -z "$FILE" ]; then
+      echo "Usage: dashctl.sh db:restore <file>"
+      echo "No .dump files found in $BACKUP_DIR"
+      exit 1
+    fi
+    echo "No file specified — using latest backup: $FILE"
   fi
+
   if [ ! -f "$FILE" ]; then
     echo "Error: file not found: $FILE"
     exit 1
   fi
 
-  local PG_PASSWORD="${ARCHITECT_PG_PASSWORD:-}"
-  local args=(-h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DB" "$FILE")
-
-  echo "Restoring $FILE into $PG_DB..."
-  if [ -n "$PG_PASSWORD" ]; then
-    PGPASSWORD="$PG_PASSWORD" pg_restore "${args[@]}"
-  else
-    pg_restore "${args[@]}"
+  if ! docker inspect "$CONTAINER" > /dev/null 2>&1; then
+    echo "Error: container '$CONTAINER' is not running. Start it with: dashctl.sh db:up"
+    exit 1
   fi
+
+  echo "Restoring $FILE into $PG_DB via $CONTAINER..."
+  docker exec -i "$CONTAINER" \
+    pg_restore -U "$PG_USER" -d "$PG_DB" --clean --if-exists \
+    < "$FILE"
   echo "Restore complete."
 }
 
