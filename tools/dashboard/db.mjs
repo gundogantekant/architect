@@ -79,23 +79,17 @@ export async function waitForPostgres(config, { maxAttempts = 10, baseDelayMs = 
   throw new Error(`PostgreSQL not reachable after ${maxAttempts} attempts: ${lastError?.message}`);
 }
 
-async function applyStatementTimeout(client, timeoutMs) {
-  await client.query(`SET statement_timeout = '${timeoutMs}ms'`);
-  await client.query(`SET idle_in_transaction_session_timeout = '${timeoutMs}ms'`);
-}
-
 export async function initDatabaseAsync(workDir, migrationsDir) {
   const config = buildPoolConfig();
   await waitForPostgres(config);
 
-  pool = new pg.Pool(config);
+  pool = new pg.Pool({
+    ...config,
+    options: `-c statement_timeout=${config.statementTimeout} -c idle_in_transaction_session_timeout=${config.statementTimeout}`,
+  });
 
   pool.on('error', (err) => {
     console.error(JSON.stringify({ type: 'pg_pool_error', message: err.message, code: err.code, timestamp: new Date().toISOString() }));
-  });
-
-  pool.on('connect', async (client) => {
-    await applyStatementTimeout(client, config.statementTimeout);
   });
 
   await runMigrations(migrationsDir);
