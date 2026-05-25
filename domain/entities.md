@@ -17,7 +17,7 @@ Canonical schemas for all structured data in the architect system. Agents and sk
 ```
 
 **Read-only agents**: reviewer, security-auditor, performance, strategist, classifier, coordinator, findings-coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod
-**Interactive agents**: browser (interacts with web via Playwright, no code/data writes)
+**Interactive agents**: browser (interacts with web via Playwright, no code/data writes); discuss (conversational agent; answers questions about the project, no code/data writes, no web interaction)
 **Implementation agents**: coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer, git-ops
 **Onboarding agents**: profiler (writes only CLAUDE.md to the target project)
 **Data-write agents**: tracker (uses dashboard API (http://127.0.0.1:3777/api/...) for work item and epic CRUD; writes work/epics/E-XXX/*.md and work/items/W-XXX/*.md for artifacts)
