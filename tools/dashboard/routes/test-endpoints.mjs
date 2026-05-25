@@ -125,11 +125,12 @@ export default function testEndpointRoutes(deps) {
     // Build auto-implement prompt without spawning (for contract/prompt tests)
     [/^\/api\/test\/build-auto-implement-prompt$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { workItem, projectKey, projectPath } = body;
+      const { workItem, projectKey, projectPath, additionalInstructions } = body;
       const prompt = buildAutoImplementPrompt({
         workItem: workItem || null,
         projectKey: projectKey || 'test/test/main',
         projectPath: projectPath || ROOT,
+        additionalInstructions: additionalInstructions || null,
         portfolio: null,
         epicContext: null,
       });

@@ -1030,14 +1030,16 @@ export function buildProjectRefinementPrompt({ projectKey, projectPath, template
 
 /**
  * Build an autonomous auto-implement dispatch prompt.
- * Delegates to buildDispatchPrompt for all standard sections, then replaces
- * the Dispatch Instructions section with the Auto-Implement Mode section.
+ * Delegates to buildDispatchPrompt for all standard sections, then inserts
+ * the Auto-Implement Mode section before # Isolated Work Mandate.
  */
 export function buildAutoImplementPrompt(args) {
   const base = buildDispatchPrompt(args);
   const autoSection = buildAutoImplementSection(args.workItem);
-  if (base.includes('# Dispatch Instructions')) {
-    return base.replace(/# Dispatch Instructions[\s\S]*?(?=\n# [A-Z]|$)/, autoSection);
+  const IWM = '\n# Isolated Work Mandate';
+  const idx = base.indexOf(IWM);
+  if (idx !== -1) {
+    return base.slice(0, idx) + '\n\n' + autoSection + base.slice(idx);
   }
   return base + '\n\n' + autoSection;
 }
