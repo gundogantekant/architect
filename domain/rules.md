@@ -108,6 +108,7 @@ These rules apply to ALL workflow patterns, not only `parallel-fan-out`:
 |----------|--------|-----------------|----------------|-----------------------|---------------|
 | Read-only | reviewer, security-auditor, performance, strategist, classifier, coordinator, findings-coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod | No | No | No | No (main tree) |
 | Interactive | browser | No | No | Yes | No |
+| Interactive | discuss | No | No | No | No |
 | Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer, git-ops | Yes | No | No | Yes (worktree) |
 | Onboarding | profiler | No (writes only CLAUDE.md to target project) | No | No | No |
 | Data-write | tracker | No | Yes (dashboard API for work items/epics; `work/epics/E-XXX/*.md`, `work/items/W-XXX/*.md` for artifacts) | No | No |
@@ -890,6 +891,7 @@ Static defaults defined in each agent's frontmatter. The orchestrator overrides 
 | refactorer | sonnet | implementation |
 | ci-cd | sonnet | implementation |
 | browser | sonnet | interactive |
+| discuss | sonnet | interactive |
 | profiler | sonnet | onboarding |
 | planner | opus | read-only |
 | strategist | opus | read-only |
