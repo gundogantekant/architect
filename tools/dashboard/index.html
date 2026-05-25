@@ -3766,7 +3766,10 @@ function bindTabs() {
   const reviewBtn = document.getElementById('review-prs');
   if (reviewBtn) reviewBtn.onclick = () => showReviewModal(currentProjectKey);
   const refineProjectBtn = document.getElementById('refine-project');
-  if (refineProjectBtn) refineProjectBtn.onclick = () => showRefineProjectModal(org, proj, comp);
+  if (refineProjectBtn) refineProjectBtn.onclick = () => {
+    const [_org, _proj, _comp] = currentProjectKey.split('/');
+    showRefineProjectModal(_org, _proj, _comp);
+  };
 
   // Filter bar
   bindFilterBar();
