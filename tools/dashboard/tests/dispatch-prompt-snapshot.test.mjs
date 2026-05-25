@@ -15,10 +15,14 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ROOT } from '../constants.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const GOLDEN_FILE = join(__dir, 'snapshots', 'dispatch-prompt-golden.txt');
 const REGEN = process.env.REGEN === '1';
+
+const FIXED_TS = new Date('2026-05-25T12:00:00Z').getTime();
+const normalize = (str) => str.replaceAll(ROOT, '<ROOT>');
 
 // Dynamic import so the module loads only after all statics are defined.
 const { buildDispatchPrompt } = await import('../prompt-builder.mjs');
@@ -122,7 +126,7 @@ const RELATED_PROJECTS = [
 ];
 
 const WORKTREE_CONTEXT = {
-  worktreePath: '/Users/dev/project-W-999-branch',
+  worktreePath: '/tmp/project-W-999-branch',
   branchName: 'feature-W-999-branch',
   sourceBranch: 'main',
 };
@@ -166,6 +170,9 @@ async function runFixture(label, args) {
   const result = await buildDispatchPrompt(args);
   return `=== FIXTURE: ${label} ===\n\n${result}`;
 }
+
+const _origNow = Date.now;
+Date.now = () => FIXED_TS;
 
 const fixtureResults = await Promise.all([
   runFixture('full', {
@@ -215,7 +222,9 @@ const fixtureResults = await Promise.all([
   }),
 ]);
 
-const combined = fixtureResults.join('\n\n' + '='.repeat(80) + '\n\n');
+Date.now = _origNow;
+
+const combined = normalize(fixtureResults.join('\n\n' + '='.repeat(80) + '\n\n'));
 
 // ── Regen or compare ──────────────────────────────────────────────────────────
 

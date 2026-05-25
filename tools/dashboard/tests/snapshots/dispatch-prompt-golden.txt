@@ -193,7 +193,7 @@ Active decisions governing this project. Follow these when planning or implement
 - abc12345 [feature] (2026-05-01): Added date filter to work items view
   Files: routes/work-items.mjs
 
-*Knowledge base: last synced 35h ago*
+*Knowledge base: last synced 108h ago*
 
 # Task
 
@@ -310,7 +310,7 @@ Organization conventions are always included. Use `domain/rules.md` → Model Se
 # Environment
 
 You are running in the target project directory: /projects/proj
-The architect project (portfolio, backlog, domain rules) is at: /Users/tekantgundogan/Documents/architect
+The architect project (portfolio, backlog, domain rules) is at: <ROOT>
 - Backlog: PostgreSQL via dashboard API at http://127.0.0.1:3777
 - Dashboard API: http://127.0.0.1:3777
 
@@ -320,7 +320,7 @@ Use the architect project to look up cross-project context, related tasks, domai
 
 You are running in a dedicated worktree — all file changes are isolated from the main branch.
 
-- **Worktree path**: /Users/dev/project-W-999-branch
+- **Worktree path**: /tmp/project-W-999-branch
 - **Source path**: /projects/proj
 - **Branch**: feature-W-999-branch
 - **Originating branch**: main
@@ -492,7 +492,7 @@ Organization conventions are always included. Use `domain/rules.md` → Model Se
 # Environment
 
 You are running in the target project directory: /projects/proj
-The architect project (portfolio, backlog, domain rules) is at: /Users/tekantgundogan/Documents/architect
+The architect project (portfolio, backlog, domain rules) is at: <ROOT>
 - Backlog: PostgreSQL via dashboard API at http://127.0.0.1:3777
 - Dashboard API: http://127.0.0.1:3777
 
@@ -683,7 +683,7 @@ Organization conventions are always included. Use `domain/rules.md` → Model Se
 # Environment
 
 You are running in the target project directory: /projects/testorg
-The architect project (portfolio, backlog, domain rules) is at: /Users/tekantgundogan/Documents/architect
+The architect project (portfolio, backlog, domain rules) is at: <ROOT>
 - Backlog: PostgreSQL via dashboard API at http://127.0.0.1:3777
 - Dashboard API: http://127.0.0.1:3777
 
@@ -934,7 +934,7 @@ Organization conventions are always included. Use `domain/rules.md` → Model Se
 # Environment
 
 You are running in the target project directory: /projects/proj
-The architect project (portfolio, backlog, domain rules) is at: /Users/tekantgundogan/Documents/architect
+The architect project (portfolio, backlog, domain rules) is at: <ROOT>
 - Backlog: PostgreSQL via dashboard API at http://127.0.0.1:3777
 - Dashboard API: http://127.0.0.1:3777
 
