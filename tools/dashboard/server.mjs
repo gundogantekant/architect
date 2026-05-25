@@ -45,6 +45,8 @@ import { attemptMerge, isMergeLocked } from './merge.mjs';
 
 const TMP_DIR = join(ROOT, 'tmp');
 
+let syncWarnings = [];
+
 const deps = {
   db, json, text, err, safe, parseBody, readJson, listDirs, listFiles,
   PORTFOLIO, ROOT, WORK, LOGS_DIR, TMP_DIR, ARCHITECT_KEY, port,
@@ -52,7 +54,7 @@ const deps = {
   dispatches, terminals, cliSessions,
   wireTerminalHandlers, wireDispatchHandlers, injectPrompt,
   buildDispatchPrompt, buildResumePrompt, buildAutoImplementPrompt, buildRefinementPrompt, buildTaskCreationPrompt, buildProjectRefinementPrompt, resolveProjectPath, resolveOrgPath, loadPortfolioContext, loadOrgContext, loadWorkItem, loadResumeContext, selectAgentsForDispatch, loadEpicPlanSnippet,
-  broadcastDispatchLine, broadcastDispatchDone, tailLogFile, killProcess, killProcessGraceful, extractStreamText, syncProjectsFromRegistry,
+  broadcastDispatchLine, broadcastDispatchDone, tailLogFile, killProcess, killProcessGraceful, extractStreamText, syncProjectsFromRegistry, getSyncWarnings: () => syncWarnings,
   saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession,
   restoreSessions,
   termEventLogPath, generateSeedContent, sleep, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture,
@@ -237,7 +239,8 @@ async function main() {
 
   // Phase 2.5: Sync projects from portfolio registry
   migrateLegacyPortfolio({ legacyPath: LEGACY_PORTFOLIO, targetPath: PORTFOLIO });
-  await syncProjectsFromRegistry();
+  const syncResult = await syncProjectsFromRegistry();
+  syncWarnings = syncResult.skippedEntries || [];
 
   // Phase 3: Restore sessions
   restoreSessions(wireTerminalHandlers, deps);

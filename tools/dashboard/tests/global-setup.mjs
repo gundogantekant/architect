@@ -72,6 +72,7 @@ export const SPEC_FILES = [
   'progress-events',
   'dispatch-monitor',
   'drift-detection',
+  'portfolio-audit.contract',
 ];
 
 function getLiveDashboardPorts() {

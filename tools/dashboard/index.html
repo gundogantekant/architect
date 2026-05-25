@@ -49,6 +49,7 @@
   <div class="sidebar-settings" onclick="location.hash='#assets'"><span class="nav-icon">&#128196;</span> <span>Assets</span></div>
   <div class="sidebar-settings" onclick="location.hash='#time-report'"><span class="nav-icon">&#9202;</span> <span>Time Report</span></div>
   <div class="sidebar-settings" onclick="location.hash='#costs'"><span class="nav-icon">&#128176;</span> <span>Cost Report</span></div>
+  <div class="sidebar-settings" onclick="location.hash='#audit'"><span class="nav-icon">&#128269;</span> <span>Audit</span></div>
   <div class="sidebar-settings" onclick="location.hash='#settings'"><span class="nav-icon">&#9881;</span> <span>Settings</span></div>
   <a href="#" class="notes-toggle-btn sidebar-settings" data-notes-toggle title="Toggle notes panel" aria-label="Toggle notes panel">
     <span class="nav-icon">📝</span>
@@ -2843,6 +2844,10 @@ async function buildTree() {
       group.appendChild(list);
       tree.appendChild(group);
     } catch (err) {
+      if (err?.status === 404) {
+        console.debug('[buildTree] org not found, skipping:', org);
+        continue;
+      }
       console.error('[buildTree] org render failed', { org, err });
       const group = document.createElement('div');
       group.className = 'org-group org-degraded';
@@ -8481,6 +8486,59 @@ function renderAdrDetailView(adr) {
   `;
 }
 
+function renderAuditView(data) {
+  const { orphan_db_keys = [], orphan_portfolio = [], errors = [], generated_at } = data;
+  let html = '<div class="card"><h2>Portfolio Audit</h2>';
+  if (orphan_db_keys.length === 0 && orphan_portfolio.length === 0 && errors.length === 0) {
+    html += '<p style="color:var(--green)">Portfolio and backlog are in sync — no orphans detected.</p>';
+  } else {
+    if (orphan_db_keys.length > 0) {
+      html += '<h3 style="margin-top:16px">DB Keys Without Portfolio Profile</h3>';
+      html += '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>';
+      html += '<th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Project Key</th>';
+      html += '<th style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--border)">Items</th>';
+      html += '<th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Status Breakdown</th>';
+      html += '</tr></thead><tbody>';
+      for (const row of orphan_db_keys) {
+        const statuses = row.statuses || {};
+        const breakdown = Object.entries(statuses).map(([s, c]) => `${esc(s)}:${c}`).join(' ') || '—';
+        html += `<tr>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${esc(row.project_key)}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">${row.item_count}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-family:monospace">${breakdown}</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+    }
+    if (orphan_portfolio.length > 0) {
+      html += '<h3 style="margin-top:16px">Portfolio Profiles Without Backlog Items</h3>';
+      html += '<p style="font-size:12px;color:var(--text-light)">These portfolio profiles have no backlog items.</p>';
+      html += '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>';
+      html += '<th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Org</th>';
+      html += '<th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Project</th>';
+      html += '<th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Component</th>';
+      html += '</tr></thead><tbody>';
+      for (const row of orphan_portfolio) {
+        html += `<tr>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${esc(row.org)}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${esc(row.project)}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${esc(row.component)}</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+    }
+    if (errors.length > 0) {
+      html += '<h3 style="margin-top:16px;color:var(--red)">Scan Errors</h3>';
+      for (const e of errors) {
+        html += `<p style="font-size:12px;color:var(--red)">${esc(e.org)}: ${esc(e.reason)}</p>`;
+      }
+    }
+  }
+  html += `<p style="font-size:11px;color:#888;margin-top:16px">Last scanned: ${esc(new Date(generated_at).toLocaleString())}</p>`;
+  html += '</div>';
+  return html;
+}
+
 // --- Router ---
 async function route() {
   const hash = location.hash.slice(1);
@@ -8568,6 +8626,18 @@ async function route() {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading cost report: ${esc(String(e))}</p></div>`;
     }
     setActive('');
+    return;
+  }
+
+  if (parts[0] === 'audit') {
+    try {
+      const data = await api('portfolio/audit');
+      main.innerHTML = renderAuditView(data);
+    } catch (e) {
+      main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading audit: ${esc(String(e))}</p></div>`;
+    }
+    setActive('');
+    placeSessionPanels();
     return;
   }
 

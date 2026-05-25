@@ -1983,3 +1983,22 @@ export async function getCostSummary({ from, to, groupBy = 'model' } = {}) {
     trend: trendByDay(rawResult.rows),
   };
 }
+
+export async function getDistinctWorkItemProjectKeys() {
+  const r = await pool.query(
+    `SELECT project_key,
+            COUNT(*)::int AS item_count,
+            COALESCE(
+              json_object_agg(status, cnt) FILTER (WHERE status IS NOT NULL),
+              '{}'::json
+            ) AS statuses
+     FROM (
+       SELECT project_key, status, COUNT(*)::int AS cnt
+       FROM work_items
+       GROUP BY project_key, status
+     ) s
+     GROUP BY project_key
+     ORDER BY project_key`
+  );
+  return r.rows;
+}

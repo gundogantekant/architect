@@ -3,7 +3,7 @@ export default function serverMgmtRoutes(deps) {
     db, json, text, err, parseBody,
     port, ROOT, PORTFOLIO, WORK, LOG_FILE, PID_FILE, DASHCTL_PATH, SERVER_START_TIME,
     dispatches, terminals, cliSessions,
-    syncProjectsFromRegistry,
+    syncProjectsFromRegistry, getSyncWarnings,
     spawn, execFileSync, readFile, homedir, existsSync, join,
   } = deps;
   return [
@@ -14,8 +14,8 @@ export default function serverMgmtRoutes(deps) {
     }],
 
     [/^\/api\/projects\/sync$/, 'POST', async (_m, _req, res) => {
-      const count = await syncProjectsFromRegistry();
-      json(res, { synced: count });
+      const result = await syncProjectsFromRegistry();
+      json(res, { synced: result.count, skipped: result.skippedEntries });
     }],
 
     [/^\/api\/projects\/(.+)\/stats$/, 'GET', async (m, _req, res) => {
@@ -80,6 +80,7 @@ export default function serverMgmtRoutes(deps) {
           terminals_total: terminals.size,
           cli_sessions_total: cliSessions.size,
         },
+        sync_warnings: getSyncWarnings(),
       });
     }],
 

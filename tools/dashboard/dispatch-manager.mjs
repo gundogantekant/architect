@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { dispatches, terminals, cliSessions, saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession } from './state.mjs';
 import { applyRefinementSummary } from './lib/refine-apply.mjs';
+import { validateOrgName } from './lib/portfolio-validation.mjs';
 import { isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture, termEventLogPath, sleep } from './utils.mjs';
 import { PORTFOLIO, WORK, LOGS_DIR, TMUX_AVAILABLE, TIMEOUT_WARNING_RATIO, IDLE_THRESHOLD_MS, MAX_AUTO_EXTENDS, EXTEND_DURATION_MS, INPUT_NEEDED_SOURCE } from './constants.mjs';
 import * as db from './db.mjs';
@@ -14,11 +15,18 @@ import pty from 'node-pty';
 // --- Project sync from portfolio registry ---
 export async function syncProjectsFromRegistry() {
   const registryPath = join(PORTFOLIO, 'registry.json');
-  if (!existsSync(registryPath)) return 0;
+  if (!existsSync(registryPath)) return { count: 0, skippedEntries: [] };
   const registry = JSON.parse(readFileSync(registryPath, 'utf8'));
   let count = 0;
+  const skippedEntries = [];
   for (const [path, entry] of Object.entries(registry.entries || {})) {
     const key = `${entry.org}/${entry.project}/${entry.component}`;
+    const { ok, reason } = validateOrgName(entry.org);
+    if (!ok) {
+      console.error(`[syncProjectsFromRegistry] skipping registry entry — ${reason}:`, key);
+      skippedEntries.push({ key, reason });
+      continue;
+    }
     let role = '';
     try {
       const comp = JSON.parse(readFileSync(join(PORTFOLIO, entry.org, entry.project, `${entry.component}.json`), 'utf8'));
@@ -28,7 +36,7 @@ export async function syncProjectsFromRegistry() {
     count++;
   }
   if (count) console.log(`Synced ${count} projects from portfolio registry`);
-  return count;
+  return { count, skippedEntries };
 }
 
 // Broadcast a JSONL line to all dispatch WebSocket clients
