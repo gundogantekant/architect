@@ -51,6 +51,7 @@ See `docs/architecture.md` for layer boundaries and dependency rules.
 | Work item tracking | tracker | haiku |
 | Systematic refactoring | refactorer | sonnet |
 | Browser automation (E2E, visual, web tasks) | browser | sonnet |
+| Design-partner conversations about the project | discuss | sonnet |
 | Git operations (commit, push, PR, branch, worktree) | git-ops | haiku |
 | Tech review — SWE perspective | tech-reviewer-swe | sonnet |
 | Tech review — architecture (Clean Architecture) | tech-reviewer-arch | sonnet / opus* |

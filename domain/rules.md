@@ -927,7 +927,7 @@ Each agent receives only the context layers relevant to its role. This reduces t
 | Context Tier | Agents | Fields Included |
 |--------------|--------|-----------------|
 | none | git-ops | Branch name and project path only |
-| minimal | classifier, scout, tracker, dependency-manager, browser | `guidance.stack_summary`, `scout_report.language`, `scout_report.framework` |
+| minimal | classifier, scout, tracker, dependency-manager, browser, discuss | `guidance.stack_summary`, `scout_report.language`, `scout_report.framework` |
 | standard | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, coordinator, findings-coordinator, planner, debugger, documenter, api-designer, refactorer, strategist, profiler, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod | Minimal + `guidance.structure`, `guidance.conventions`, `custom_rules`, `agents.dispatch_notes`, `brief.purpose`, `brief.domain`, `brief.users`, `doc_paths`, `portfolio_guides` |
 | full | tester, reviewer, security-auditor, ci-cd, performance | Standard + `guidance.ci_cd`, `guidance.testing`, complete `brief` (all fields), `doc_paths` |
 
