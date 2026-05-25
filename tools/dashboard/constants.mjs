@@ -130,6 +130,8 @@ export const DISPATCH_TIMEOUT_MS = {
   large:   2 * 60 * 60 * 1000,
 };
 
+export const HEARTBEAT_INTERVAL_MS = parseInt(process.env.HEARTBEAT_INTERVAL_MS ?? '', 10) || 20 * 1000;
+
 export const MIGRATIONS_DIR = join(import.meta.dirname, 'migrations');
 export const BACKUP_DIR = join(ROOT, 'assets', 'backups');
 

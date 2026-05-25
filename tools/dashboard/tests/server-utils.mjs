@@ -154,12 +154,13 @@ function seedTestPortfolio(portfolioDir) {
   writeFileSync(join(portfolioDir, 'registry.json'), JSON.stringify({ entries: {} }));
 }
 
-export function spawnTestServer(port, workDir, dbName) {
+export function spawnTestServer(port, workDir, dbName, extraEnv = {}) {
   mkdirSync(workDir, { recursive: true });
   seedTestPortfolio(join(workDir, 'portfolio'));
 
   const env = {
     ...process.env,
+    ...extraEnv,
     PORT: String(port),
     WORK_DIR: workDir,
     PORTFOLIO_DIR: join(workDir, 'portfolio'),

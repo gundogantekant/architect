@@ -1,6 +1,6 @@
 import { existsSync, createReadStream } from 'node:fs';
 import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository, checkWorktreeReadiness } from '../worktree.mjs';
-import { AUTO_IMPLEMENTABLE_STATUSES, DISPATCH_TIMEOUT_MS, PIPELINE_STAGES, PORTFOLIO } from '../constants.mjs';
+import { AUTO_IMPLEMENTABLE_STATUSES, DISPATCH_TIMEOUT_MS, HEARTBEAT_INTERVAL_MS, PIPELINE_STAGES, PORTFOLIO } from '../constants.mjs';
 import { triggerMerge } from '../dispatch-manager.mjs';
 import { isMediumOrAbove } from '../utils/complexity.mjs';
 import { writePromptFile, deletePromptFile } from '../prompt-file.mjs';
@@ -626,6 +626,7 @@ export default function dispatchRoutes(deps) {
               res.write(`event: done\ndata: ${JSON.stringify({ status: msg.status })}\n\n`);
               res.end();
               dispatch.wsClients.delete(sseAdapter);
+              clearInterval(heartbeatId);
             }
           } catch {}
         },
@@ -635,8 +636,13 @@ export default function dispatchRoutes(deps) {
 
       dispatch.wsClients.add(sseAdapter);
 
+      const heartbeatId = setInterval(() => {
+        if (!res.writableEnded) res.write(': keep-alive\n\n');
+      }, HEARTBEAT_INTERVAL_MS);
+
       _req.on('close', () => {
         dispatch.wsClients.delete(sseAdapter);
+        clearInterval(heartbeatId);
       });
     }],
 

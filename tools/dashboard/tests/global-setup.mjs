@@ -67,6 +67,7 @@ export const SPEC_FILES = [
   'date-filter',
   'prompt-preview.contract',
   'work-item-assets',
+  'heartbeat',
 ];
 
 function getLiveDashboardPorts() {

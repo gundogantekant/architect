@@ -2,6 +2,7 @@ import { WebSocketServer } from 'ws';
 import { appendFileSync } from 'node:fs';
 import { dispatches, terminals } from './state.mjs';
 import { termEventLogPath } from './utils.mjs';
+import { HEARTBEAT_INTERVAL_MS } from './constants.mjs';
 
 export function setupWebSocket(server) {
   const wss = new WebSocketServer({ noServer: true });
@@ -128,6 +129,7 @@ export function setupWebSocket(server) {
         lastSeq: terminal.eventStream.headSeq,
         cols: dims.cols,
         rows: dims.rows,
+        pingIntervalId: null,
       });
 
       ws.on('message', (raw) => {
@@ -165,6 +167,9 @@ export function setupWebSocket(server) {
       });
 
       ws.on('close', () => {
+        // External tmux detach or kill closes the PTY → onExit → subscribers flushed → all WS connections closed. Intentional behavior.
+        const sub = terminal.eventStream.subscribers.get(clientId);
+        if (sub?.pingIntervalId) clearInterval(sub.pingIntervalId);
         terminal.eventStream.subscribers.delete(clientId);
 
         // Recompute PTY size to the max of remaining subscribers after disconnect
@@ -181,6 +186,13 @@ export function setupWebSocket(server) {
           }
         }
       });
+
+      // Arm ping interval after subscriber registration to avoid leaking on the early ws.close() path
+      const pingIntervalId = setInterval(() => {
+        try { ws.ping(); } catch {}
+      }, HEARTBEAT_INTERVAL_MS);
+      const sub = terminal.eventStream.subscribers.get(clientId);
+      if (sub) sub.pingIntervalId = pingIntervalId;
     });
   });
 }
