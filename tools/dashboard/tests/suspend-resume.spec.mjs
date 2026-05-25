@@ -215,3 +215,51 @@ test('SR-22: suspended terminal panel body shows placeholder text, not "Connecti
   expect(bodyText).toContain('Session suspended');
   expect(bodyText).not.toContain('Connecting');
 });
+
+// ============================================================
+// SR-23 to SR-28: Recent sessions (W-1218)
+// ============================================================
+
+test('SR-23: GET /api/terminal/recent returns 200 and an array', async ({ request }) => {
+  const resp = await request.get(`${getBase()}/api/terminal/recent`);
+  expect(resp.status()).toBe(200);
+  const list = await resp.json();
+  expect(Array.isArray(list)).toBe(true);
+});
+
+test('SR-24: GET /api/terminal/recent excludes terminals without claude_session_id', async ({ request }) => {
+  await seedTerminal({ status: 'killed', agentType: 'claude' }); // no session id
+  const resp = await request.get(`${getBase()}/api/terminal/recent`);
+  const list = await resp.json();
+  expect(list.every(t => t.claude_session_id)).toBe(true);
+});
+
+test('SR-25: GET /api/terminal/recent excludes running and suspended terminals', async ({ request }) => {
+  const running = await seedTerminal({ status: 'running', claude_session_id: 'sr25-running' });
+  const suspended = await seedTerminal({ status: 'suspended', claude_session_id: 'sr25-suspended' });
+  const resp = await request.get(`${getBase()}/api/terminal/recent`);
+  const list = await resp.json();
+  expect(list.find(t => t.id === running.id)).toBeUndefined();
+  expect(list.find(t => t.id === suspended.id)).toBeUndefined();
+});
+
+test('SR-26: GET /api/terminal/recent includes killed terminal with claude_session_id', async ({ request }) => {
+  const killed = await seedTerminal({ status: 'killed', claude_session_id: 'sr26-killed' });
+  const resp = await request.get(`${getBase()}/api/terminal/recent`);
+  const list = await resp.json();
+  expect(list.find(t => t.id === killed.id)).toBeDefined();
+});
+
+test('SR-27: POST /api/terminal/:id/resume on killed terminal with claude_session_id passes status guard (not 400)', async ({ request }) => {
+  const t = await seedTerminal({ status: 'killed', agentType: 'claude', claude_session_id: 'sr27-fake-session' });
+  const resp = await request.post(`${getBase()}/api/terminal/${t.id}/resume`);
+  // Status guard must not reject with 400; 200 (spawn ok) or 5xx (spawn failed, env limitation) both indicate guard passed
+  expect(resp.status()).not.toBe(400);
+});
+
+test('SR-28: GET /api/terminal/recent panel shows killed terminal with Resume button', async ({ page }) => {
+  const t = await seedTerminal({ status: 'killed', claude_session_id: 'sr28-killed' });
+  await page.goto('/');
+  await expect(page.locator('#recent-sessions')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator(`[data-recent-resume="${t.id}"]`)).toBeVisible({ timeout: 5000 });
+});

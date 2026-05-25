@@ -782,6 +782,7 @@ async function dismissAllCompleted() {
 
 let _placeTimer = null;
 let _suspendedContainer = null;
+let _recentContainer = null;
 // Off-DOM buffer for panels that don't match the active route's project context.
 // Never appended to document.body — panels move here non-destructively so their
 // DOM state (xterm, WebSocket, etc.) is preserved while hidden.
@@ -946,6 +947,11 @@ function _placeSessionPanelsNow() {
   // Re-anchor suspended-sessions panel after route changes clear main.innerHTML
   if (_suspendedContainer && _suspendedContainer.parentElement !== main) {
     main.insertBefore(_suspendedContainer, main.firstChild);
+  }
+
+  // Re-anchor recent-sessions panel (sits above suspended-sessions)
+  if (_recentContainer && _recentContainer.parentElement !== main) {
+    main.insertBefore(_recentContainer, main.firstChild);
   }
 
   // All containers are now in the document — safe to call loadDispatchContent
@@ -1646,6 +1652,7 @@ function finalizeTerminalPanel(terminalInfo) {
   syncSessionState();
   if (terminalInfo.status !== 'running' && terminalInfo.status !== 'suspended') {
     scheduleAutoDismiss('terminal', terminalInfo.id, terminalInfo);
+    refreshRecentSessions();
   }
 }
 
@@ -2623,6 +2630,78 @@ async function refreshSuspendedPanel() {
           syncSessionState();
         };
       }
+    }
+
+    const main = $('#main');
+    if (!container.parentElement || container.parentElement !== main) {
+      main.insertBefore(container, main.firstChild);
+    }
+  } catch {}
+}
+
+async function refreshRecentSessions() {
+  try {
+    const sessions = await api('terminal/recent');
+
+    let container = _recentContainer || document.getElementById('recent-sessions');
+    if (!sessions.length) {
+      if (container) container.remove();
+      _recentContainer = null;
+      return;
+    }
+
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'recent-sessions';
+      container.className = 'card';
+      container.style.marginBottom = '20px';
+    }
+    _recentContainer = container;
+
+    const statusDotClass = (status) => {
+      if (status === 'completed') return 'completed';
+      if (status === 'interrupted') return 'interrupted';
+      return 'failed';
+    };
+
+    let html = `<h3 style="margin:0 0 12px 0;font-size:15px;font-weight:600">Recent Sessions <span style="font-size:12px;font-weight:400;background:#ede9fe;color:#6d28d9;padding:2px 8px;border-radius:3px;margin-left:6px">${sessions.length}</span></h3>`;
+    html += '<div style="display:flex;flex-direction:column;gap:8px">';
+    for (const s of sessions) {
+      const keyParts = (s.project_key || '').split('/').filter(p => p && p !== '*');
+      const projectLabel = keyParts.length >= 2 ? `${esc(keyParts[0])} / ${esc(keyParts[1])}` : (keyParts[0] ? esc(keyParts[0]) : '');
+      const exitedAgo = s.exited_at ? `exited ${formatElapsed(s.exited_at)} ago` : 'exited';
+      html += `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-left:3px solid #7c3aed;border-radius:6px;flex-wrap:wrap">
+        <span class="status-dot ${statusDotClass(s.status)}" style="flex-shrink:0"></span>
+        <span style="font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${projectLabel || esc(s.title || s.id)}</span>
+        <span style="font-size:11px;color:var(--text-light);white-space:nowrap">${esc(exitedAgo)}</span>
+        <span class="suspended-badge" style="background:#ede9fe;color:#6d28d9">[${esc(s.status)}]</span>
+        <button class="resume-btn" data-recent-resume="${esc(s.id)}">Resume</button>
+      </div>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+
+    for (const s of sessions) {
+      const resumeBtn = container.querySelector(`[data-recent-resume="${CSS.escape(s.id)}"]`);
+      if (!resumeBtn) continue;
+      resumeBtn.onclick = async (e) => {
+        e.target.disabled = true;
+        try {
+          const resp = await fetch(`/api/terminal/${s.id}/resume`, { method: 'POST' });
+          if (resp.ok) {
+            await refreshRecentSessions();
+            await restoreTerminals();
+            syncSessionState();
+          } else {
+            const body = await resp.json().catch(() => ({}));
+            showToast(body.error || 'Resume failed', 'error');
+            e.target.disabled = false;
+          }
+        } catch {
+          showToast('Resume failed — network error', 'error');
+          e.target.disabled = false;
+        }
+      };
     }
 
     const main = $('#main');
@@ -8949,6 +9028,7 @@ const _restorePromise = Promise.all([
   restoreTerminals(),
   restoreCliSessions(),
   refreshSuspendedPanel(),
+  refreshRecentSessions(),
 ]);
 Promise.all([buildTree(), buildEpicTree()]).catch(err => { console.error('[startup] tree build failed:', err); }).then(async () => {
   startSessionsSidebarRefresh();
@@ -8965,6 +9045,7 @@ Promise.all([buildTree(), buildEpicTree()]).catch(err => { console.error('[start
   setInterval(restoreTerminals, 10000);
   setInterval(restoreCliSessions, 10000);
   setInterval(refreshSuspendedPanel, 10000);
+  setInterval(refreshRecentSessions, 10000);
   // Live countdown ticker: update timeout countdowns once per second for running dispatches
   setInterval(() => {
     for (const d of activeDispatches) {
