@@ -49,6 +49,15 @@ export function broadcastDispatchDone(dispatch) {
   dispatch.wsClients.clear();
 }
 
+// Append a ProgressEvent to dispatch output and broadcast to active SSE clients
+export function appendProgress(dispatch, event) {
+  const line = JSON.stringify(event);
+  dispatch.output.push(line);
+  dispatch.lastProgressPhase = event.phase;
+  broadcastDispatchLine(dispatch, line);
+  if (dispatch.logStream) dispatch.logStream.write(line + '\n');
+}
+
 // Tail a log file for a reconnected dispatch (PID alive but no process handle)
 export function tailLogFile(dispatch) {
   let offset = 0;

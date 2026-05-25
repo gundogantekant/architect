@@ -952,3 +952,20 @@ Stored in `portfolio/registry.json`.
   }
 }
 ```
+
+## ProgressEvent (Value Object)
+
+Emitted by dispatched agents at key milestones. Appended to the dispatch JSONL log.
+No identity — not stored in PostgreSQL. JSONL is the source of truth.
+
+```json
+{
+  "type": "progress",
+  "phase": "string — free-form label (investigation|planning|implementation|testing|review|commit)",
+  "message": "string — human-readable status, max 200 chars",
+  "ts": "string — ISO 8601 timestamp, server-generated"
+}
+```
+
+Rules: value object, no id field. phase is non-empty. message is non-empty and ≤200 chars.
+Agents emit via POST /api/dispatch/:id/progress. Monitor loop reads via GET /api/dispatch/:id/log?after=N.

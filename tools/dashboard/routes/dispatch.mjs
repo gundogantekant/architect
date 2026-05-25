@@ -1,7 +1,7 @@
 import { existsSync, createReadStream } from 'node:fs';
 import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository, checkWorktreeReadiness } from '../worktree.mjs';
 import { AUTO_IMPLEMENTABLE_STATUSES, DISPATCH_TIMEOUT_MS, EXTEND_DURATION_MS, HEARTBEAT_INTERVAL_MS, INPUT_NEEDED_SOURCE, PIPELINE_STAGES, PORTFOLIO } from '../constants.mjs';
-import { triggerMerge, scheduleDispatchTimeout } from '../dispatch-manager.mjs';
+import { triggerMerge, scheduleDispatchTimeout, appendProgress } from '../dispatch-manager.mjs';
 import { isMediumOrAbove } from '../utils/complexity.mjs';
 import { writePromptFile, deletePromptFile } from '../prompt-file.mjs';
 
@@ -563,14 +563,27 @@ export default function dispatchRoutes(deps) {
       json(res, { id, dispatch_id: id, status: 'running', worktree_path: dispatch.worktree_path });
     }],
 
-    // Stream dispatch output (SSE)
-    // Return raw JSONL log content as plain text (reliable, no SSE race)
-    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/log$/, 'GET', async (m, _req, res) => {
+    // Return raw JSONL log content as plain text; ?after=N skips first N lines (O(new_lines) tailing)
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/log$/, 'GET', async (m, req, res) => {
       const dispatch = dispatches.get(m[1]);
       if (!dispatch) return err(res, 'dispatch not found');
-      // Serve from memory — disk is only for restart recovery
+      const after = Math.max(0, parseInt(new URL(req.url, 'http://x').searchParams.get('after') ?? '0', 10) || 0);
       res.writeHead(200, { 'Content-Type': 'text/plain' });
-      res.end(dispatch.output.join('\n'));
+      res.end(dispatch.output.slice(after).join('\n'));
+    }],
+
+    // Agents emit progress milestones; appended to JSONL and broadcast to active SSE clients
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/progress$/, 'POST', async (m, req, res) => {
+      const dispatch = dispatches.get(m[1]);
+      if (!dispatch) return err(res, 'dispatch not found', 404);
+      const body = await parseBody(req);
+      const { phase, message } = body ?? {};
+      if (!phase || typeof phase !== 'string') return err(res, 'phase required', 400);
+      if (!message || typeof message !== 'string') return err(res, 'message required', 400);
+      if (message.length > 200) return err(res, 'message exceeds 200 chars', 400);
+      const event = { type: 'progress', phase, message, ts: new Date().toISOString() };
+      appendProgress(dispatch, event);
+      res.writeHead(204); res.end();
     }],
 
     // SSE stream — supports ?after=N to skip first N lines (used after HTTP log fetch)

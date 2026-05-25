@@ -69,6 +69,9 @@ export const SPEC_FILES = [
   'prompt-preview',
   'work-item-assets',
   'heartbeat',
+  'progress-events',
+  'dispatch-monitor',
+  'drift-detection',
 ];
 
 function getLiveDashboardPorts() {
