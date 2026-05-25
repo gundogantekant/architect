@@ -212,6 +212,101 @@ function createDispatchOverlay(opts) {
   return { overlay, close };
 }
 
+function openPromptPreview(templateId, variables, triggerEl) {
+  let abortCtrl = null;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.setAttribute('role', 'presentation');
+
+  const dialog = document.createElement('div');
+  dialog.className = 'modal modal-prompt-preview';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  dialog.setAttribute('aria-labelledby', 'prompt-preview-title');
+
+  dialog.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+      <h3 id="prompt-preview-title" style="margin:0">Prompt Preview <span style="font-size:0.75rem;font-weight:normal;color:var(--text-muted,#888)">(Read only)</span></h3>
+      <button id="prompt-preview-close" aria-label="Close preview" style="background:none;border:none;font-size:1.5rem;cursor:pointer;line-height:1">&times;</button>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:1rem;flex:1">
+      <div class="preview-col-tokens">
+        <h4 style="margin-top:0">Available tokens</h4>
+        <div id="prompt-preview-tokens" role="status">Loading…</div>
+      </div>
+      <div class="preview-col-rendered">
+        <pre id="prompt-preview-content" style="margin-top:0"><span role="status">Loading…</span></pre>
+        <div style="margin-top:0.5rem">
+          <button id="prompt-preview-copy" class="btn-secondary" style="font-size:0.8rem">Copy to clipboard</button>
+          <span id="prompt-preview-copied" aria-live="polite" style="margin-left:0.5rem;font-size:0.8rem;display:none">Copied!</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  let renderedText = '';
+
+  const close = () => {
+    if (abortCtrl) abortCtrl.abort();
+    overlay.remove();
+    if (triggerEl) triggerEl.focus();
+  };
+
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  dialog.querySelector('#prompt-preview-close').addEventListener('click', close);
+  const onEsc = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onEsc); } };
+  document.addEventListener('keydown', onEsc);
+
+  const firstFocusable = dialog.querySelector('button');
+  if (firstFocusable) firstFocusable.focus();
+
+  dialog.querySelector('#prompt-preview-copy').addEventListener('click', () => {
+    navigator.clipboard.writeText(renderedText).then(() => {
+      const copied = dialog.querySelector('#prompt-preview-copied');
+      copied.style.display = 'inline';
+      setTimeout(() => { copied.style.display = 'none'; }, 2000);
+    });
+  });
+
+  abortCtrl = new AbortController();
+  fetch('/api/prompts/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ template_id: templateId, variables }),
+    signal: abortCtrl.signal,
+  })
+    .then(r => r.json())
+    .then(data => {
+      renderedText = data.rendered || '';
+      const pre = dialog.querySelector('#prompt-preview-content');
+      pre.textContent = renderedText;
+
+      const sorted = (data.placeholders || []).slice().sort((a, b) => a.localeCompare(b, 'en'));
+      const tokensEl = dialog.querySelector('#prompt-preview-tokens');
+      if (sorted.length === 0) {
+        tokensEl.textContent = '(none)';
+      } else {
+        const ul = document.createElement('ul');
+        ul.style.cssText = 'margin:0;padding-left:1.2rem;font-size:0.8rem;font-family:monospace';
+        sorted.forEach(t => {
+          const li = document.createElement('li');
+          li.textContent = t;
+          ul.appendChild(li);
+        });
+        tokensEl.replaceChildren(ul);
+      }
+    })
+    .catch(err => {
+      if (err.name !== 'AbortError') {
+        dialog.querySelector('#prompt-preview-content').textContent = 'Failed to load preview.';
+        dialog.querySelector('#prompt-preview-tokens').textContent = '';
+      }
+    });
+}
 
 
 async function getBacklog() {
@@ -2112,6 +2207,18 @@ async function dispatchWorkItem(workItem, projectKey) {
       `,
       afterMount: (o) => {
         wireAgentTypeToggle(o, 'dispatch-agent-type', 'dispatch-perm-mode', 'dispatch-skip-perms');
+
+        const previewBtn = document.createElement('button');
+        previewBtn.type = 'button';
+        previewBtn.id = 'dispatch-preview-btn';
+        previewBtn.className = 'btn btn-secondary';
+        previewBtn.textContent = 'Preview prompt';
+        previewBtn.addEventListener('click', () => {
+          const [org, proj, comp] = (projectKey || '').split('/');
+          openPromptPreview('dispatch', { ORG: org || '', PROJECT: proj || '', COMPONENT: comp || '' }, previewBtn);
+        });
+        o.querySelector('.modal-actions').prepend(previewBtn);
+
         // Auto-populate contract fields from structured description
         if (workItem.description) {
           const desc = workItem.description;
@@ -4609,6 +4716,16 @@ async function showRefineProjectModal(org, proj, comp) {
         if (dryRunField) dryRunField.style.display = mode === 'terminal' ? 'none' : '';
       };
       radios.forEach(r => r.addEventListener('change', toggleDryRun));
+
+      const previewBtn = document.createElement('button');
+      previewBtn.type = 'button';
+      previewBtn.id = 'refine-preview-btn';
+      previewBtn.className = 'btn btn-secondary';
+      previewBtn.textContent = 'Preview prompt';
+      previewBtn.addEventListener('click', () => {
+        openPromptPreview('refinement', {}, previewBtn);
+      });
+      ov.querySelector('.modal-actions').prepend(previewBtn);
     },
     onSubmit: async (ov) => {
       const instructions = ov.querySelector('#refine-project-instructions')?.value || '';
