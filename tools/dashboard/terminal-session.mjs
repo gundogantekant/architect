@@ -150,9 +150,7 @@ export async function spawnTerminalSession(deps, params) {
   // Wire handlers BEFORE returning — required constraint
   wireTerminalHandlers(terminal);
 
-  // Fallback: inject prompt if readiness detection never fires.
-  // If injection fails, injectPrompt kills the session and emits session_status:failed —
-  // this path inherits that kill-on-failure behavior automatically; no separate handling needed.
+  // Fallback: inject prompt if readiness detection never fires
   const MAX_WAIT = tmuxName ? 8000 : 5000;
   setTimeout(() => {
     if (terminal._pendingPrompt && terminal.ptyProcess) {

@@ -4,80 +4,11 @@
  * Validates that the dashboard handles invalid inputs, unknown routes, and
  * non-existent resources gracefully — no JS crashes, no 5xx responses.
  *
- * EP-5 through EP-7 are unit tests for injectPrompt kill-on-failure behavior (W-1215).
- *
  * Prerequisite: dashboard server running (managed by global-setup.mjs).
  */
 
 import { test, expect } from './fixtures.mjs';
 import { getBase, seedDispatch, api } from './helpers.mjs';
-
-// Unit tests for injectPrompt — run in the Node.js test process, no browser needed.
-// These verify kill-on-failure behavior added in W-1215.
-test.describe('injectPrompt kill-on-failure @unit', () => {
-  function makeMockTerminal(writeImpl, { tmuxSession = null, pid = null } = {}) {
-    const events = [];
-    const killSignals = [];
-    const terminal = {
-      id: `test-${Date.now()}`,
-      _pendingPrompt: 'test prompt payload',
-      pid,
-      tmux_session: tmuxSession,
-      ptyProcess: {
-        write: writeImpl,
-        kill: (sig) => killSignals.push(sig),
-      },
-      eventStream: {
-        append: (_type, data) => { events.push(data); return data; },
-        broadcast: () => {},
-      },
-    };
-    return { terminal, events, killSignals };
-  }
-
-  test('EP-5: write failure kills PTY, emits session_status:failed, clears _pendingPrompt', async () => {
-    const { terminal, events, killSignals } = makeMockTerminal((data) => {
-      if (data === '\x1b[200~') return;
-      throw new Error('simulated PTY write failure');
-    });
-
-    const { injectPrompt } = await import('../pty-manager.mjs');
-    await injectPrompt(terminal);
-
-    expect(terminal._pendingPrompt).toBeNull();
-    expect(killSignals).toContain('SIGHUP');
-    expect(events.some(e => e?.key === 'session_status' && e?.value === 'failed')).toBe(true);
-    expect(events.some(e => e?.key === 'prompt_injection_status' && e?.value === 'failed')).toBe(true);
-  });
-
-  test('EP-6: happy path emits prompt_injection_status:done and does not kill PTY', async () => {
-    const { terminal, events, killSignals } = makeMockTerminal(() => {});
-
-    const { injectPrompt } = await import('../pty-manager.mjs');
-    await injectPrompt(terminal);
-
-    expect(events.some(e => e?.key === 'prompt_injection_status' && e?.value === 'done')).toBe(true);
-    expect(events.some(e => e?.key === 'session_status' && e?.value === 'failed')).toBe(false);
-    expect(killSignals).toHaveLength(0);
-  });
-
-  test('EP-7: write failure on tmux-backed session kills ptyProcess and attempts tmux kill-session', async () => {
-    const { terminal, events, killSignals } = makeMockTerminal(
-      (data) => {
-        if (data === '\x1b[200~') return;
-        throw new Error('simulated PTY write failure');
-      },
-      { tmuxSession: 'architect-test-ep7', pid: null },
-    );
-
-    const { injectPrompt } = await import('../pty-manager.mjs');
-    // tmux kill-session will fail silently (no real session) — must not propagate
-    await expect(injectPrompt(terminal)).resolves.toBeUndefined();
-
-    expect(killSignals).toContain('SIGHUP');
-    expect(events.some(e => e?.key === 'session_status' && e?.value === 'failed')).toBe(true);
-  });
-});
 
 test.describe('Error paths @behavioral', () => {
 

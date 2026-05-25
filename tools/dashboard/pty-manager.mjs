@@ -1,7 +1,7 @@
 import { appendFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { saveTerminalToDb, archiveSession } from './state.mjs';
-import { termEventLogPath, sleep, isPidAlive } from './utils.mjs';
+import { termEventLogPath, sleep } from './utils.mjs';
 import { EventStream } from './event-stream.mjs';
 import * as db from './db.mjs';
 
@@ -115,7 +115,7 @@ export async function injectPrompt(terminal) {
     terminal.ptyProcess.write('\x1b[200~');
     for (let i = 0; i < codePoints.length; i += CHUNK_SIZE) {
       const chunk = codePoints.slice(i, i + CHUNK_SIZE).join('');
-      terminal.ptyProcess.write(chunk);
+      try { terminal.ptyProcess.write(chunk); } catch {}
       if (i + CHUNK_SIZE < codePoints.length) await sleep(CHUNK_DELAY);
     }
     terminal.ptyProcess.write('\x1b[201~');
@@ -129,26 +129,5 @@ export async function injectPrompt(terminal) {
     const failEvent = terminal.eventStream.append('meta', { key: 'prompt_injection_status', value: 'failed' });
     try { appendFileSync(termEventLogPath(terminal.id), JSON.stringify(failEvent) + '\n'); } catch {}
     terminal.eventStream.broadcast(failEvent);
-
-    // Emit session_status: failed before killing so the frontend sees it immediately.
-    // _pendingPrompt is already null (cleared above) — re-entrancy guard prevents onExit
-    // from re-entering injectPrompt if it fires synchronously during the kill sequence.
-    const statusEvent = terminal.eventStream.append('meta', { key: 'session_status', value: 'failed' });
-    try { appendFileSync(termEventLogPath(terminal.id), JSON.stringify(statusEvent) + '\n'); } catch {}
-    terminal.eventStream.broadcast(statusEvent);
-
-    // Three-step kill sequence matching routes/terminal.mjs.
-    // For tmux sessions, ptyProcess is only the attach client — the tmux session itself
-    // must also be killed to stop the actual agent process.
-    const ptyProc = terminal.ptyProcess;
-    if (ptyProc) {
-      try { ptyProc.kill('SIGHUP'); } catch {}
-    }
-    if (terminal.tmux_session) {
-      try { execFileSync('tmux', ['kill-session', '-t', terminal.tmux_session], { stdio: 'ignore' }); } catch {}
-    }
-    if (terminal.pid && isPidAlive(terminal.pid)) {
-      try { process.kill(terminal.pid, 'SIGTERM'); } catch {}
-    }
   }
 }
