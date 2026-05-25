@@ -130,6 +130,11 @@ export const DISPATCH_TIMEOUT_MS = {
   large:   2 * 60 * 60 * 1000,
 };
 
+export const TIMEOUT_WARNING_RATIO = 0.8;
+export const IDLE_THRESHOLD_MS = 5 * 60 * 1000;
+export const MAX_AUTO_EXTENDS = 1;
+export const EXTEND_DURATION_MS = 30 * 60 * 1000;
+
 export const MIGRATIONS_DIR = join(import.meta.dirname, 'migrations');
 export const BACKUP_DIR = join(ROOT, 'assets', 'backups');
 
@@ -137,6 +142,7 @@ export const INPUT_NEEDED_SOURCE = Object.freeze({
   BRIDGE: 'agent_phase_bridge',
   USER: 'user',
   BLOCKING_QUESTIONS: 'blocking_questions',
+  TIMEOUT: 'timeout',
 });
 
 export const TMUX_AVAILABLE = (() => {

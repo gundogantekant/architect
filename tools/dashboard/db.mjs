@@ -179,7 +179,7 @@ export async function assertSchema() {
     work_item_logs: ['id', 'work_item_id', 'logged_at', 'summary'],
     epics: ['id', 'title', 'status', 'priority', 'description', 'acceptance_criteria', 'target_date', 'tags', 'created_at', 'updated_at'],
     epic_logs: ['id', 'epic_id', 'logged_at', 'summary'],
-    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'completion_summary_error', 'dry_run', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at', 'agent_phase', 'agent_phase_history', 'timeout_at', 'contract', 'exit_type', 'deleted_at'],
+    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'completion_summary_error', 'dry_run', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at', 'agent_phase', 'agent_phase_history', 'timeout_at', 'contract', 'exit_type', 'deleted_at', 'auto_extended'],
     terminals: ['id', 'type', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'exited_at', 'pid', 'tmux_session', 'claude_session_id', 'agent_type', 'head_seq', 'deleted_at'],
     cli_sessions: ['id', 'project_key', 'work_item_id', 'epic_id', 'title', 'pid', 'status', 'registered_at', 'exited_at'],
     preferences: ['key', 'value'],
@@ -508,30 +508,33 @@ export async function updateWorkItemRefinement(id, { description, status }) {
   );
 }
 
-export async function setInputNeeded(workItemId, active, source) {
+export async function setInputNeeded(workItemId, active, source, reason = null) {
   if (active) {
-    // Don't overwrite if already set by a non-bridge source (e.g. 'user')
+    // Don't overwrite if already set by a different source
     const current = await pool.query(
       'SELECT input_needed, input_needed_from FROM work_items WHERE id=$1',
       [workItemId]
     );
-    if (current.rows[0]?.input_needed && current.rows[0]?.input_needed_from !== 'agent_phase_bridge') return;
+    const existingFrom = current.rows[0]?.input_needed_from;
+    if (current.rows[0]?.input_needed && existingFrom !== source) return;
     const now = new Date().toISOString();
     await pool.query(
-      `UPDATE work_items SET input_needed=$1, input_needed_from=$2, input_needed_at=$3 WHERE id=$4`,
-      [true, source, now, workItemId]
+      `UPDATE work_items SET input_needed=$1, input_needed_from=$2, input_needed_reason=$3, input_needed_at=$4 WHERE id=$5`,
+      [true, source, reason, now, workItemId]
     );
   } else {
-    const remaining = await pool.query(
-      `SELECT COUNT(*) FROM dispatches WHERE work_item_id=$1 AND agent_phase='waiting_for_input' AND status IN ('running','pending')`,
-      [workItemId]
-    );
-    if (parseInt(remaining.rows[0].count, 10) > 0) return;
+    if (source === 'agent_phase_bridge') {
+      const remaining = await pool.query(
+        `SELECT COUNT(*) FROM dispatches WHERE work_item_id=$1 AND agent_phase='waiting_for_input' AND status IN ('running','pending')`,
+        [workItemId]
+      );
+      if (parseInt(remaining.rows[0].count, 10) > 0) return;
+    }
     const current = await pool.query(
       `SELECT input_needed_from FROM work_items WHERE id=$1`,
       [workItemId]
     );
-    if (!current.rows[0] || current.rows[0].input_needed_from !== 'agent_phase_bridge') return;
+    if (!current.rows[0] || current.rows[0].input_needed_from !== source) return;
     await pool.query(
       `UPDATE work_items SET input_needed=false, input_needed_from=NULL, input_needed_reason=NULL, input_needed_at=NULL WHERE id=$1`,
       [workItemId]
@@ -847,8 +850,8 @@ export async function getEpicProjectKeys(epicId) {
 
 export async function saveDispatch(d) {
   await pool.query(`
-    INSERT INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode, pipeline_stage, agent_phase, agent_phase_history, timeout_at, contract, exit_type, dry_run)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+    INSERT INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode, pipeline_stage, agent_phase, agent_phase_history, timeout_at, contract, exit_type, dry_run, auto_extended)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
     ON CONFLICT (id) DO UPDATE SET
       work_item_id = EXCLUDED.work_item_id,
       epic_id = EXCLUDED.epic_id,
@@ -873,7 +876,8 @@ export async function saveDispatch(d) {
       timeout_at = EXCLUDED.timeout_at,
       contract = EXCLUDED.contract,
       exit_type = EXCLUDED.exit_type,
-      dry_run = EXCLUDED.dry_run
+      dry_run = EXCLUDED.dry_run,
+      auto_extended = EXCLUDED.auto_extended
   `, [
     d.id, d.work_item_id || null, d.epic_id || null, d.project_key, d.project_path || '',
     d.title || '', d.permission_mode || 'acceptEdits', d.skip_permissions ?? false,
@@ -884,6 +888,7 @@ export async function saveDispatch(d) {
     d.contract !== undefined ? jsonb(d.contract) : null,
     d.exit_type || null,
     d.dry_run ?? false,
+    d.auto_extended ?? false,
   ]);
 }
 
@@ -1024,7 +1029,7 @@ export async function updateDispatchStatus(id, status, completed_at) {
   await pool.query('UPDATE dispatches SET status = $1, completed_at = $2 WHERE id = $3', [status, completed_at || null, id]);
 }
 
-// exit_type values: 'graceful', 'killed', 'interrupted', 'unknown'
+// exit_type values: 'graceful', 'killed', 'timeout', 'interrupted', 'unknown'
 export async function updateDispatchExitType(id, exitType) {
   await pool.query('UPDATE dispatches SET exit_type = $1 WHERE id = $2', [exitType, id]);
 }
