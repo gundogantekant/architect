@@ -54,7 +54,7 @@ export async function loadOrgContext(orgKey) {
 const AGENT_CONTEXT_TIERS = {
   'git-ops': 'none',
   classifier: 'minimal', scout: 'minimal', tracker: 'minimal',
-  'dependency-manager': 'minimal', browser: 'minimal',
+  'dependency-manager': 'minimal', browser: 'minimal', discuss: 'minimal',
   coder: 'standard', 'coder-frontend': 'standard', 'coder-backend': 'standard',
   'coder-mobile': 'standard', 'coder-infra': 'standard', coordinator: 'standard',
   planner: 'standard', debugger: 'standard', documenter: 'standard',
@@ -855,7 +855,7 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     '',
     'When dispatching sub-agents, apply role-scoped context injection per `domain/rules.md` → Role-Scoped Context Injection:',
     '- **none**: git-ops (branch + path only)',
-    '- **minimal**: classifier, scout, tracker, dependency-manager, browser (stack_summary, language, framework)',
+    '- **minimal**: classifier, scout, tracker, dependency-manager, browser, discuss (stack_summary, language, framework)',
     '- **standard**: coders, planner, coordinator, debugger, documenter, api-designer, refactorer, strategist, profiler (+ structure, conventions, brief subset, guides)',
     '- **full**: tester, reviewer, security-auditor, ci-cd, performance (complete context)',
     '',
