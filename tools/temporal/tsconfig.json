@@ -12,6 +12,7 @@
     "declaration": true
   },
   "include": [
+    "*.ts",
     "activities/**/*.ts",
     "workflows/**/*.ts",
     "workers/**/*.ts",

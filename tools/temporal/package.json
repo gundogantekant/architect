@@ -6,9 +6,12 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "worker": "npm run build && node dist/workers/main.js",
-    "demo": "npm run build && node dist/scripts/demo.js"
+    "session-worker": "npm run build && node dist/workers/session-worker.js",
+    "demo": "npm run build && node dist/scripts/demo.js",
+    "test:e2e": "npm run build && node dist/scripts/test-e2e.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.98.0",
     "@temporalio/activity": "^1.11.0",
     "@temporalio/client": "^1.11.0",
     "@temporalio/common": "^1.11.0",
