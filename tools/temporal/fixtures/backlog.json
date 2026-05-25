@@ -1,0 +1,10 @@
+{
+  "items": [
+    {
+      "id": "W-0001",
+      "title": "Example work item (fixture fallback — dashboard offline)",
+      "status": "open",
+      "project_key": "ticari/architect/main"
+    }
+  ]
+}
