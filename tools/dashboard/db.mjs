@@ -987,6 +987,25 @@ export async function getDeletedTerminals() {
   return pool.query('SELECT * FROM terminals WHERE deleted_at IS NOT NULL').then(r => r.rows);
 }
 
+export async function getRecentExitedTerminals(limit) {
+  return pool.query(
+    `SELECT * FROM terminals
+     WHERE claude_session_id IS NOT NULL
+       AND status NOT IN ('running', 'suspended')
+       AND deleted_at IS NULL
+     ORDER BY exited_at DESC NULLS LAST
+     LIMIT $1`,
+    [limit],
+  ).then(r => r.rows);
+}
+
+export async function getTerminalById(id) {
+  return pool.query(
+    'SELECT * FROM terminals WHERE id = $1 AND deleted_at IS NULL',
+    [id],
+  ).then(r => r.rows[0] || null);
+}
+
 // --- Sessions: CLI ---
 
 export async function saveCliSession(c) {
