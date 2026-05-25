@@ -129,3 +129,36 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 - Work item status is `done` (set only after successful merge)
 - Session log records the implementation summary and merge commit hash
 - User can run `/pr` explicitly if a GitHub pull request is needed
+
+## Orchestrator Monitor Rules
+
+After dispatching a work item via `POST /api/dispatch/auto-implement`, the orchestrator SHOULD arm a `/loop` that wakes every 10 minutes to monitor the dispatch.
+
+### Per-Poll Steps
+
+1. `GET /api/dispatch/active` — find dispatches with `work_item_id` matching the dispatched item
+2. Bootstrap cursor on first poll: `max(total_output_lines - 50, 0)` so only recent lines are read.
+   Advance cursor: `cursor = new_total_lines` after each poll
+3. `GET /api/dispatch/:id/log?after=<cursor>` — fetch only new lines (O(new_lines), not O(file))
+4. Emit structured 5-line summary:
+
+```
+[Monitor W-XXXX] <ISO timestamp>
+Status    : <running|done|failed|interrupted>
+Phase     : <dispatch.lastProgressPhase or "unknown">
+Last line : <last non-JSON output line, ≤120 chars>
+Idle since: <duration since dispatch.lastOutputAt or "active">
+Action    : <"none" | "input_needed — check dashboard" | "done — ready to review">
+```
+
+If `input_needed=true` on the work item: always set `Action = "input_needed — check dashboard"`.
+
+End the loop when all monitored dispatches reach terminal status (done|failed|killed|interrupted).
+
+### Known Limitations
+
+- **Session disconnect**: the `/loop` runs in the orchestrator session process. Session disconnect terminates the loop with no auto-recovery. Re-arm by re-running the orchestrator and checking dispatch status.
+- **Cursor not persistent**: cursor is an in-session variable; it is lost on session disconnect.
+- **SSE broadcast**: `broadcastDispatchLine` is best-effort for active SSE clients only. Progress events on completed dispatches (no `wsClients`) are appended to JSONL but not delivered via SSE.
+- **lastProgressPhase after restart**: in-memory only. Shows "unknown" after server restart even for active dispatches. JSONL is the source of truth; scan log to re-derive last phase if needed.
+- **Soft-timeout relationship**: `scheduleDispatchTimeout` fires at 80% idle window and sets `input_needed=true`. The monitor loop reads this output — it does not duplicate idle-detection logic. Do not modify `IDLE_THRESHOLD_MS`.

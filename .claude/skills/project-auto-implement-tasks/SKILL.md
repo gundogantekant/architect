@@ -43,3 +43,7 @@ Merge-back, worktree removal, and final status transition to `done` are handled 
 - List of dispatch IDs created, keyed by work item ID
 - Pointer to the dashboard for live progress and the pre-merge gate
 - Items rejected by the eligibility gate, with the rejection reason from the endpoint
+
+## Monitor Loop Limitation
+
+The `/loop`-based orchestrator monitor is tied to the session process. If the orchestrator session disconnects or is interrupted, the monitoring loop dies with no auto-recovery. To reconnect monitoring after a session restart, check dispatch status via `GET /api/dispatch/active` and re-arm `/loop` manually.
