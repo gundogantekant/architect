@@ -1,0 +1,48 @@
+# Temporal server configuration for tools/temporal
+#
+# W-1210 prerequisite (PostgreSQL multi-namespace setup) is not yet complete.
+# Until W-1210 is merged, start the server with embedded SQLite:
+#   temporal server start-dev
+#
+# Once W-1210 is complete, replace the persistence block below with the
+# shared Docker PostgreSQL instance to enable full durability:
+#
+# persistence:
+#   defaultStore: postgres-store
+#   stores:
+#     postgres-store:
+#       driver: sql
+#       sql:
+#         driver: postgres
+#         host: 127.0.0.1
+#         port: 5432
+#         database: temporal
+#         user: temporal
+#         password: temporal
+#
+# For now, the dev-mode SQLite server is sufficient for the PoC and spike evaluation.
+# See docs/adr/temporal-coordination-layer.md §4 for operational overhead assessment.
+
+log:
+  stdout: true
+  level: warn
+
+global:
+  membership:
+    maxJoinDuration: 30s
+
+persistence:
+  numHistoryShards: 1
+  defaultStore: cass-default
+  visibilityStore: cass-visibility
+
+clusterMetadata:
+  enableGlobalNamespace: false
+  failoverVersionIncrement: 10
+  masterClusterName: active
+  currentClusterName: active
+  clusterInformation:
+    active:
+      enabled: true
+      initialFailoverVersion: 1
+      rpcAddress: 127.0.0.1:7233
