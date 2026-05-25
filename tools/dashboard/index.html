@@ -165,6 +165,19 @@ function wireAgentTypeToggle(overlay, agentTypeId, permModeId, skipPermsId) {
   toggle(); // Set initial state
 }
 
+function wireInstructionCounter(overlay, textareaId) {
+  const textarea = overlay.querySelector('#' + textareaId);
+  const counter = overlay.querySelector('#' + textareaId + '-counter');
+  if (!textarea || !counter) return;
+  const update = () => {
+    const len = textarea.value.length;
+    counter.textContent = len === 0
+      ? '0 chars — No additional instructions; agent will follow work item description only'
+      : `${len} chars`;
+  };
+  textarea.addEventListener('input', update);
+}
+
 function createDispatchOverlay(opts) {
   const { title, buildFields, onSubmit, submitLabel = 'Dispatch', cancelId, submitId, afterMount, onClose } = opts;
 
@@ -2178,6 +2191,7 @@ async function dispatchWorkItem(workItem, projectKey) {
         <div class="field">
           <label>Additional Instructions</label>
           <textarea id="dispatch-instructions" placeholder="Optional: add context, constraints, or specific instructions for the agent..."></textarea>
+          <div id="dispatch-instructions-counter" style="font-size:11px;color:var(--text-light);margin-top:2px">0 chars — No additional instructions; agent will follow work item description only</div>
         </div>
         <details id="contract-details" style="margin-bottom:14px">
           <summary style="cursor:pointer;font-size:13px;font-weight:500;color:var(--text-secondary)">Dispatch Contract</summary>
@@ -2243,6 +2257,7 @@ async function dispatchWorkItem(workItem, projectKey) {
             o.querySelector('#contract-details').open = true;
           }
         }
+        wireInstructionCounter(o, 'dispatch-instructions');
       },
       onSubmit: async (overlay) => {
         const instructions = overlay.querySelector('#dispatch-instructions').value.trim();
@@ -6068,10 +6083,12 @@ async function showEpicDispatchModal(epicId) {
       <div class="field">
         <label>Additional Instructions</label>
         <textarea id="epic-dispatch-instructions" placeholder="Optional context..."></textarea>
+        <div id="epic-dispatch-instructions-counter" style="font-size:11px;color:var(--text-light);margin-top:2px">0 chars — No additional instructions; agent will follow work item description only</div>
       </div>
       ${permissionModeSelect('epic-dispatch-perm-mode')}
       ${skipPermissionsCheckbox('epic-dispatch-skip-perms')}
     `,
+    afterMount: (o) => wireInstructionCounter(o, 'epic-dispatch-instructions'),
     onSubmit: async (overlay) => {
       const modeSelect = overlay.querySelector('#epic-dispatch-mode');
       const projectSelect = overlay.querySelector('#epic-dispatch-project');
@@ -7223,6 +7240,7 @@ async function showQuickDispatchModal() {
       <div class="field">
         <label>Instructions</label>
         <textarea id="qd-instructions" placeholder="What should the agent do?"></textarea>
+        <div id="qd-instructions-counter" style="font-size:11px;color:var(--text-light);margin-top:2px">0 chars — No additional instructions; agent will follow work item description only</div>
       </div>
       <div class="field">
         <label for="qd-agent-type">Agent</label>
@@ -7240,7 +7258,10 @@ async function showQuickDispatchModal() {
       ${permissionModeSelect('qd-perm-mode')}
       ${skipPermissionsCheckbox('qd-skip-perms')}
     `,
-    afterMount: (o) => wireAgentTypeToggle(o, 'qd-agent-type', 'qd-perm-mode', 'qd-skip-perms'),
+    afterMount: (o) => {
+      wireAgentTypeToggle(o, 'qd-agent-type', 'qd-perm-mode', 'qd-skip-perms');
+      wireInstructionCounter(o, 'qd-instructions');
+    },
     onSubmit: async (overlay) => {
       const pk = overlay.querySelector('#qd-project').value;
       const wid = overlay.querySelector('#qd-work-item').value.trim() || null;
