@@ -791,6 +791,12 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     }
   }
 
+  // --- Dispatch Instructions (supplementary guidance beyond the contract) ---
+  // When workItem is absent, additionalInstructions routes into # Task above (asymmetric by design).
+  if (workItem && additionalInstructions) {
+    sections.push(`# Dispatch Instructions\n\n${additionalInstructions}`);
+  }
+
   // --- Layer 3: Epic Context (third — lightweight: title, status, progress, plan snippet, AC) ---
   if (epicContext) {
     const lines = ['# Epic Context', ''];
@@ -808,11 +814,6 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
       lines.push('', '**Plan (excerpt)**:', epicContext.plan_snippet);
     }
     sections.push(lines.join('\n'));
-  }
-
-  // --- Dispatch Instructions (supplementary guidance beyond the contract) ---
-  if (workItem && additionalInstructions) {
-    sections.push(`# Dispatch Instructions\n\n${additionalInstructions}`);
   }
 
   // --- Isolated Work Mandate (always present; full section for medium+, one-liner for trivial/small) ---

@@ -226,6 +226,10 @@ Work on backlog item W-999: Test work item
 - GET /api/test returns 200
 - POST /api/test creates record
 
+# Dispatch Instructions
+
+Focus on the auth module.
+
 # Epic Context
 
 - **Epic**: E-10 — Test epic
@@ -238,10 +242,6 @@ Work on backlog item W-999: Test work item
 
 **Plan (excerpt)**:
 Step 1: implement. Step 2: test.
-
-# Dispatch Instructions
-
-Focus on the auth module.
 
 # Isolated Work Mandate
 
