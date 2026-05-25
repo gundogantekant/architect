@@ -1,7 +1,7 @@
 import { existsSync, createReadStream } from 'node:fs';
 import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository, checkWorktreeReadiness } from '../worktree.mjs';
-import { AUTO_IMPLEMENTABLE_STATUSES, DISPATCH_TIMEOUT_MS, HEARTBEAT_INTERVAL_MS, PIPELINE_STAGES, PORTFOLIO } from '../constants.mjs';
-import { triggerMerge } from '../dispatch-manager.mjs';
+import { AUTO_IMPLEMENTABLE_STATUSES, DISPATCH_TIMEOUT_MS, EXTEND_DURATION_MS, HEARTBEAT_INTERVAL_MS, INPUT_NEEDED_SOURCE, PIPELINE_STAGES, PORTFOLIO } from '../constants.mjs';
+import { triggerMerge, scheduleDispatchTimeout } from '../dispatch-manager.mjs';
 import { isMediumOrAbove } from '../utils/complexity.mjs';
 import { writePromptFile, deletePromptFile } from '../prompt-file.mjs';
 
@@ -15,21 +15,6 @@ function complexityTierFromPriority(priority) {
   return 'small';
 }
 
-function armDispatchTimeout(dispatch, timeoutMs, saveDispatchToDb) {
-  dispatch.timeout_at = new Date(Date.now() + timeoutMs).toISOString();
-  dispatch._timeoutHandle = setTimeout(() => {
-    if (dispatch.status !== 'running') return;
-    console.log(`[timeout] dispatch ${dispatch.id} timed out after ${timeoutMs}ms`);
-    dispatch.status = 'failed';
-    dispatch.completed_at = new Date().toISOString();
-    if (dispatch.process) {
-      try { dispatch.process.kill('SIGTERM'); } catch {}
-      setTimeout(() => { try { dispatch.process?.kill('SIGKILL'); } catch {} }, 6000);
-    }
-    if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
-    saveDispatchToDb(dispatch).catch(e => console.error('[timeout] saveDispatchToDb:', e.message));
-  }, timeoutMs);
-}
 
 function validateContractForComplexity(workItem, contract) {
   if (!isMediumOrAbove(workItem)) return null;
@@ -397,7 +382,7 @@ export default function dispatchRoutes(deps) {
       wireDispatchHandlers(dispatch, proc);
 
       const tier = complexityTierFromPriority(effectiveWorkItem?.priority);
-      armDispatchTimeout(dispatch, DISPATCH_TIMEOUT_MS[tier] ?? DISPATCH_TIMEOUT_MS.medium, saveDispatchToDb);
+      scheduleDispatchTimeout(dispatch, DISPATCH_TIMEOUT_MS[tier] ?? DISPATCH_TIMEOUT_MS.medium, saveDispatchToDb);
 
       dispatches.set(id, dispatch);
       await saveDispatchToDb(dispatch);
@@ -562,7 +547,7 @@ export default function dispatchRoutes(deps) {
       wireDispatchHandlers(dispatch, proc);
 
       const autoTier = complexityTierFromPriority(effectiveWorkItem?.priority);
-      armDispatchTimeout(dispatch, DISPATCH_TIMEOUT_MS[autoTier] ?? DISPATCH_TIMEOUT_MS.medium, saveDispatchToDb);
+      scheduleDispatchTimeout(dispatch, DISPATCH_TIMEOUT_MS[autoTier] ?? DISPATCH_TIMEOUT_MS.medium, saveDispatchToDb);
 
       dispatches.set(id, dispatch);
       await saveDispatchToDb(dispatch);
@@ -687,6 +672,7 @@ export default function dispatchRoutes(deps) {
           _exitedWithoutSignal: d._exitedWithoutSignal || false,
           session_log: Array.isArray(d.session_log) ? d.session_log : [],
           timeout_at: d.timeout_at || null,
+          last_output_at: d.lastOutputAt ? new Date(d.lastOutputAt).toISOString() : null,
           exit_type: d.exit_type || null,
           deleted_at: null,
         };
@@ -870,6 +856,47 @@ export default function dispatchRoutes(deps) {
       json(res, { status: 'killed', id: m[1], deleted_at: deletedAt });
     }],
 
+    // Extend the timeout of a running dispatch (UI/human-only — depth 0 required)
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/extend$/, 'POST', async (m, req, res) => {
+      const depth = parseInt(req.headers['x-architect-session-depth'] || '0', 10);
+      if (depth !== 0) return err(res, 'POST /extend is UI/human-only (X-Architect-Session-Depth must be 0)', 403);
+      const dispatch = dispatches.get(m[1]);
+      if (!dispatch) return err(res, 'dispatch not found', 404);
+      if (dispatch.status !== 'running') return err(res, 'dispatch is not running', 400);
+
+      let body = null;
+      try { body = await parseBody(req); } catch {}
+      const extensionMs = (body?.duration_ms && Number.isFinite(body.duration_ms) && body.duration_ms > 0)
+        ? body.duration_ms
+        : EXTEND_DURATION_MS;
+
+      // Clear existing timeout timers
+      if (dispatch._timeoutHandle) { clearTimeout(dispatch._timeoutHandle); dispatch._timeoutHandle = null; }
+      if (dispatch._warningHandle) { clearTimeout(dispatch._warningHandle); dispatch._warningHandle = null; }
+
+      dispatch.timeout_at = new Date(Date.now() + extensionMs).toISOString();
+      dispatch._timeoutHandle = setTimeout(() => {
+        if (dispatch.status !== 'running') return;
+        dispatch._timedOut = true;
+        dispatch.status = 'failed';
+        dispatch.completed_at = new Date().toISOString();
+        if (dispatch.process) {
+          try { dispatch.process.kill('SIGTERM'); } catch {}
+          setTimeout(() => { try { dispatch.process?.kill('SIGKILL'); } catch {} }, 6000);
+        }
+        if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
+        saveDispatchToDb(dispatch).catch(e => console.error('[extend-timeout] saveDispatch:', e.message));
+      }, extensionMs);
+
+      // Clear input_needed if it was set by the timeout path
+      if (dispatch.work_item_id) {
+        db.setInputNeeded(dispatch.work_item_id, false, INPUT_NEEDED_SOURCE.TIMEOUT).catch(() => {});
+      }
+
+      await saveDispatchToDb(dispatch);
+      json(res, { timeout_at: dispatch.timeout_at });
+    }],
+
     // Cancel a pending merge (clears timer, keeps status as merge_pending)
     [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/merge\/cancel$/, 'POST', async (m, _req, res) => {
       const dispatch = dispatches.get(m[1]);
@@ -946,6 +973,8 @@ export default function dispatchRoutes(deps) {
       }
       dispatch.status = 'suspended';
       dispatch.completed_at = new Date().toISOString();
+      if (dispatch._timeoutHandle) { clearTimeout(dispatch._timeoutHandle); dispatch._timeoutHandle = null; }
+      if (dispatch._warningHandle) { clearTimeout(dispatch._warningHandle); dispatch._warningHandle = null; }
       if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
       if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
       archiveSession(dispatch, 'dispatch').catch(e => console.error('[suspend dispatch] archiveSession:', e.message));
@@ -1015,6 +1044,7 @@ export default function dispatchRoutes(deps) {
         wsClients: new Set(),
         started_at: new Date().toISOString(),
         completed_at: null,
+        _autoExtended: old.auto_extended ?? false,
       };
 
       const { workItem: freshWorkItem, portfolio } = await loadResumeContext({ work_item_id, project_key });
@@ -1043,7 +1073,7 @@ export default function dispatchRoutes(deps) {
       wireDispatchHandlers(dispatch, proc);
 
       const resumeTier = complexityTierFromPriority(freshWorkItem?.priority);
-      armDispatchTimeout(dispatch, DISPATCH_TIMEOUT_MS[resumeTier] ?? DISPATCH_TIMEOUT_MS.medium, saveDispatchToDb);
+      scheduleDispatchTimeout(dispatch, DISPATCH_TIMEOUT_MS[resumeTier] ?? DISPATCH_TIMEOUT_MS.medium, saveDispatchToDb);
 
       const prompt = buildResumePrompt({
         workItem: freshWorkItem,

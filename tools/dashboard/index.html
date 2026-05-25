@@ -17,8 +17,11 @@
 .alert-badge { font-size: 11px; padding: 1px 6px; border-radius: 3px; font-weight: 600; cursor: default; }
 .alert-cost  { background: #FEF3C7; color: #92400E; border: 1px solid #F59E0B; }
 .alert-scope { background: #FEE2E2; color: #991B1B; border: 1px solid #EF4444; }
-.timeout-countdown { font-size: 11px; color: var(--text-light, #888); margin-left: 6px; }
+.timeout-countdown { font-size: 11px; color: #D97706; margin-left: 6px; font-weight: 600; background: #FEF3C7; padding: 1px 5px; border-radius: 3px; }
+.timeout-countdown.timeout-urgent { color: #DC2626; background: #FEE2E2; }
 .timeout-badge.timeout-expired { font-size: 11px; background: #FEE2E2; color: #991B1B; padding: 1px 5px; border-radius: 3px; }
+.auto-extend-badge { font-size: 11px; color: #065F46; background: #D1FAE5; padding: 1px 5px; border-radius: 3px; margin-left: 4px; }
+.timeout-escalation-banner { background: #FEF3C7; color: #92400E; border: 1px solid #F59E0B; border-radius: 4px; padding: 6px 10px; margin: 4px 8px; font-size: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .dispatch-contract-summary { padding: 4px 16px; font-size: 0.85em; border-top: 1px solid var(--border); }
 .dispatch-contract-summary summary { cursor: pointer; color: var(--text-light, #888); user-select: none; }
 .contract-fields { padding: 4px 0; display: flex; flex-direction: column; gap: 3px; }
@@ -547,6 +550,59 @@ async function loadDispatchContent(dispatch) {
         dispatch.status = msg.status || 'completed';
         dispatch._ws = null;
         finalizeDispatchPanel(dispatch);
+      } else if (msg.type === 'timeout_warning') {
+        // Update local timeout_at from server so countdown badge is accurate
+        if (msg.timeout_at) dispatch.timeout_at = msg.timeout_at;
+        const panelEl = document.getElementById(`dispatch-${dispatch.id}`);
+        if (!panelEl) return;
+        if (msg.event === 'auto_extended') {
+          // Show brief auto-extended notice in the title area
+          const titleEl = panelEl.querySelector('.dispatch-title');
+          if (titleEl && !titleEl.querySelector('.auto-extend-badge')) {
+            titleEl.insertAdjacentHTML('beforeend', '<span class="auto-extend-badge" title="Timeout auto-extended 30 min">+30m</span>');
+            setTimeout(() => titleEl.querySelector('.auto-extend-badge')?.remove(), 10000);
+          }
+        } else if (msg.event === 'idle') {
+          // Show escalation banner with extend/kill options
+          if (!panelEl.querySelector('.timeout-escalation-banner')) {
+            const banner = document.createElement('div');
+            banner.className = 'timeout-escalation-banner';
+            banner.innerHTML = `
+              <span style="font-weight:600;">⏱ Idle at timeout threshold</span>
+              <span style="font-size:11px;opacity:0.8;margin-left:4px;">Agent appears inactive. Hard kill pending.</span>
+              <button class="btn-extend-30" data-extend-dispatch="${esc(dispatch.id)}" data-duration="1800000" style="font-size:11px;padding:2px 8px;border-radius:3px;border:1px solid #D97706;color:#92400E;background:transparent;cursor:pointer;">Extend 30m</button>
+              <button class="btn-extend-60" data-extend-dispatch="${esc(dispatch.id)}" data-duration="3600000" style="font-size:11px;padding:2px 8px;border-radius:3px;border:1px solid #D97706;color:#92400E;background:transparent;cursor:pointer;">Extend 60m</button>
+              <button class="btn-kill-now" data-kill-dispatch="${esc(dispatch.id)}" style="font-size:11px;padding:2px 8px;border-radius:3px;border:1px solid #EF4444;color:#DC2626;background:transparent;cursor:pointer;">Kill now</button>
+            `;
+            banner.querySelectorAll('[data-extend-dispatch]').forEach(btn => {
+              btn.onclick = async () => {
+                const durationMs = parseInt(btn.dataset.duration, 10);
+                try {
+                  const r = await fetch(`/api/dispatch/${dispatch.id}/extend`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ duration_ms: durationMs }),
+                  });
+                  if (r.ok) {
+                    const data = await r.json();
+                    if (data.timeout_at) dispatch.timeout_at = data.timeout_at;
+                    banner.remove();
+                  }
+                } catch {}
+              };
+            });
+            // Kill now button delegates to existing kill logic
+            banner.querySelector('[data-kill-dispatch]').onclick = async () => {
+              await fetch(`/api/dispatch/${dispatch.id}`, { method: 'DELETE' });
+              dispatch.status = 'killed';
+              banner.remove();
+              syncSessionState();
+            };
+            // Insert before the log element
+            const logInner = panelEl.querySelector(`#log-${dispatch.id}`);
+            if (logInner) logInner.before(banner);
+          }
+        }
       }
     } catch (err) { console.warn('[dispatch] ws message:', err); }
   };
@@ -1569,9 +1625,12 @@ function renderTimeoutCountdown(dispatch) {
   if (dispatch.status === 'running') {
     const remaining = new Date(dispatch.timeout_at).getTime() - Date.now();
     if (remaining <= 0) return '<span class="timeout-badge timeout-expired">Timed out</span>';
+    // Show countdown badge only when < 30 minutes remaining (proxy for ~20% of window)
+    if (remaining > 30 * 60 * 1000) return '';
     const mins = Math.floor(remaining / 60000);
     const secs = Math.floor((remaining % 60000) / 1000);
-    return `<span class="timeout-countdown" title="Auto-timeout in ${mins}m ${secs}s">⏱ ${mins}m${secs < 10 ? '0' : ''}${secs}s</span>`;
+    const urgentClass = remaining < 5 * 60 * 1000 ? ' timeout-urgent' : '';
+    return `<span class="timeout-countdown${urgentClass}" title="Auto-timeout in ${mins}m ${secs}s">⏱ ${mins}m${secs < 10 ? '0' : ''}${secs}s</span>`;
   }
   if (dispatch.status === 'failed' && dispatch.completed_at) {
     const diff = Math.abs(new Date(dispatch.completed_at).getTime() - new Date(dispatch.timeout_at).getTime());
