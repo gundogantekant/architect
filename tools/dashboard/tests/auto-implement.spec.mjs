@@ -245,6 +245,53 @@ test.describe('Auto-Implement Dispatch @fast', () => {
     }
   });
 
+  // --- Prompt preservation: additionalInstructions ---
+
+  test('AI-13: prompt with additionalInstructions preserves Dispatch Instructions before Auto-Implement Mode', async ({ request }) => {
+    const base = getBase();
+    const userText = 'Re-dispatch note: use the new approach for step 4.';
+    const resp = await request.post(`${base}/api/test/build-auto-implement-prompt`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        workItem: { id: 'W-AI13', title: 'AI-13 test', status: 'planned', priority: 'medium' },
+        projectKey: PROJECT_KEY,
+        projectPath: '/tmp/test-project',
+        additionalInstructions: userText,
+      },
+    });
+    expect(resp.ok()).toBe(true);
+    const { prompt } = await resp.json();
+    const diIdx = prompt.indexOf('# Dispatch Instructions');
+    const amIdx = prompt.indexOf('# Auto-Implement Mode');
+    const iwmIdx = prompt.indexOf('# Isolated Work Mandate');
+    expect(diIdx).toBeGreaterThan(-1);
+    expect(amIdx).toBeGreaterThan(-1);
+    expect(iwmIdx).toBeGreaterThan(-1);
+    expect(prompt).toContain(userText);
+    expect(diIdx).toBeLessThan(amIdx);
+    expect(amIdx).toBeLessThan(iwmIdx);
+  });
+
+  test('AI-14: prompt without additionalInstructions has Auto-Implement Mode before Isolated Work Mandate and no Dispatch Instructions', async ({ request }) => {
+    const base = getBase();
+    const resp = await request.post(`${base}/api/test/build-auto-implement-prompt`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        workItem: { id: 'W-AI14', title: 'AI-14 test', status: 'planned', priority: 'medium' },
+        projectKey: PROJECT_KEY,
+        projectPath: '/tmp/test-project',
+      },
+    });
+    expect(resp.ok()).toBe(true);
+    const { prompt } = await resp.json();
+    expect(prompt).not.toContain('# Dispatch Instructions');
+    const amIdx = prompt.indexOf('# Auto-Implement Mode');
+    const iwmIdx = prompt.indexOf('# Isolated Work Mandate');
+    expect(amIdx).toBeGreaterThan(-1);
+    expect(iwmIdx).toBeGreaterThan(-1);
+    expect(amIdx).toBeLessThan(iwmIdx);
+  });
+
   test('AI-12: worktree_mode "none" in portfolio entry is respected by auto-implement', async ({ request }) => {
     const base = getBase();
     // Get the server's root path (a known git repo)

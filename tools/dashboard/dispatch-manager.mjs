@@ -3,8 +3,10 @@ import { unlink as unlinkFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { dispatches, terminals, cliSessions, saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession } from './state.mjs';
+import { applyRefinementSummary } from './lib/refine-apply.mjs';
+import { validateOrgName } from './lib/portfolio-validation.mjs';
 import { isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture, termEventLogPath, sleep } from './utils.mjs';
-import { PORTFOLIO, WORK, LOGS_DIR, TMUX_AVAILABLE } from './constants.mjs';
+import { PORTFOLIO, WORK, LOGS_DIR, TMUX_AVAILABLE, TIMEOUT_WARNING_RATIO, IDLE_THRESHOLD_MS, MAX_AUTO_EXTENDS, EXTEND_DURATION_MS, INPUT_NEEDED_SOURCE } from './constants.mjs';
 import * as db from './db.mjs';
 import { EventStream } from './event-stream.mjs';
 import { getAdapter } from './adapters/index.mjs';
@@ -13,11 +15,18 @@ import pty from 'node-pty';
 // --- Project sync from portfolio registry ---
 export async function syncProjectsFromRegistry() {
   const registryPath = join(PORTFOLIO, 'registry.json');
-  if (!existsSync(registryPath)) return 0;
+  if (!existsSync(registryPath)) return { count: 0, skippedEntries: [] };
   const registry = JSON.parse(readFileSync(registryPath, 'utf8'));
   let count = 0;
+  const skippedEntries = [];
   for (const [path, entry] of Object.entries(registry.entries || {})) {
     const key = `${entry.org}/${entry.project}/${entry.component}`;
+    const { ok, reason } = validateOrgName(entry.org);
+    if (!ok) {
+      console.error(`[syncProjectsFromRegistry] skipping registry entry — ${reason}:`, key);
+      skippedEntries.push({ key, reason });
+      continue;
+    }
     let role = '';
     try {
       const comp = JSON.parse(readFileSync(join(PORTFOLIO, entry.org, entry.project, `${entry.component}.json`), 'utf8'));
@@ -27,11 +36,12 @@ export async function syncProjectsFromRegistry() {
     count++;
   }
   if (count) console.log(`Synced ${count} projects from portfolio registry`);
-  return count;
+  return { count, skippedEntries };
 }
 
 // Broadcast a JSONL line to all dispatch WebSocket clients
 export function broadcastDispatchLine(dispatch, line) {
+  dispatch.lastOutputAt = Date.now();
   const msg = JSON.stringify({ type: 'data', data: line });
   for (const ws of dispatch.wsClients) {
     try { ws.send(msg); } catch {}
@@ -45,6 +55,15 @@ export function broadcastDispatchDone(dispatch) {
     try { ws.send(msg); ws.close(); } catch {}
   }
   dispatch.wsClients.clear();
+}
+
+// Append a ProgressEvent to dispatch output and broadcast to active SSE clients
+export function appendProgress(dispatch, event) {
+  const line = JSON.stringify(event);
+  dispatch.output.push(line);
+  dispatch.lastProgressPhase = event.phase;
+  broadcastDispatchLine(dispatch, line);
+  if (dispatch.logStream) dispatch.logStream.write(line + '\n');
 }
 
 // Tail a log file for a reconnected dispatch (PID alive but no process handle)
@@ -151,8 +170,81 @@ export function tailLogFile(dispatch) {
   dispatch._tailInterval = interval;
 }
 
+// Hard-kill a running dispatch after its timeout window expires.
+function killOnTimeout(dispatch, saveDispatch) {
+  if (dispatch.status !== 'running') return;
+  console.log(`[timeout] dispatch ${dispatch.id} hard kill after timeout`);
+  dispatch._timedOut = true;
+  dispatch.status = 'failed';
+  dispatch.completed_at = new Date().toISOString();
+  if (dispatch.process) {
+    try { dispatch.process.kill('SIGTERM'); } catch {}
+    setTimeout(() => { try { dispatch.process?.kill('SIGKILL'); } catch {} }, 6000);
+  }
+  if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
+  saveDispatch(dispatch).catch(e => console.error('[timeout] saveDispatch:', e.message));
+}
+
+// Schedule the two-phase soft timeout for a new dispatch.
+// Phase 1 (at TIMEOUT_WARNING_RATIO of the window): auto-extend if active, set input_needed if idle.
+// Phase 2 (at 100% of original window, or EXTEND_DURATION_MS after auto-extend): hard kill.
+export function scheduleDispatchTimeout(dispatch, timeoutMs, saveDispatch) {
+  dispatch.timeout_at = new Date(Date.now() + timeoutMs).toISOString();
+
+  if (dispatch._autoExtended) {
+    // Already auto-extended once (loaded from persisted state after restart); arm hard-kill only.
+    dispatch._timeoutHandle = setTimeout(() => killOnTimeout(dispatch, saveDispatch), timeoutMs);
+    return;
+  }
+
+  const warningMs = Math.floor(timeoutMs * TIMEOUT_WARNING_RATIO);
+
+  dispatch._warningHandle = setTimeout(() => {
+    dispatch._warningHandle = null;
+    if (dispatch.status !== 'running') return;
+
+    const isActive = (
+      (dispatch.lastOutputAt && (Date.now() - dispatch.lastOutputAt) < IDLE_THRESHOLD_MS) ||
+      dispatch.agent_phase === 'tool_running'
+    );
+
+    if (isActive && !dispatch._autoExtended) {
+      dispatch._autoExtended = true;  // synchronous before any await
+
+      // Cancel original hard-kill timer, arm extended timer
+      if (dispatch._timeoutHandle) { clearTimeout(dispatch._timeoutHandle); dispatch._timeoutHandle = null; }
+      dispatch.timeout_at = new Date(Date.now() + EXTEND_DURATION_MS).toISOString();
+      dispatch._timeoutHandle = setTimeout(() => killOnTimeout(dispatch, saveDispatch), EXTEND_DURATION_MS);
+
+      saveDispatch(dispatch).catch(e => console.error('[timeout-extend] saveDispatch:', e.message));
+
+      const logEntry = { trigger: 'auto-extend', summary: `Auto-extended 30 min at 80%. New deadline: ${dispatch.timeout_at}`, detected_at: new Date().toISOString() };
+      dispatch.session_log = dispatch.session_log || [];
+      dispatch.session_log.push(logEntry);
+      console.log(`[timeout] dispatch ${dispatch.id} auto-extended 30 min (active)`);
+
+      const msg = JSON.stringify({ type: 'timeout_warning', event: 'auto_extended', timeout_at: dispatch.timeout_at, dispatch_id: dispatch.id });
+      for (const ws of dispatch.wsClients) { try { ws.send(msg); } catch {} }
+    } else {
+      // Idle path — set input_needed, let original timer run to hard-kill
+      if (dispatch.work_item_id) {
+        db.setInputNeeded(dispatch.work_item_id, true, INPUT_NEEDED_SOURCE.TIMEOUT, 'Approaching timeout — agent appears idle. Extend or kill from the dashboard.').catch(err =>
+          console.error('[timeout-idle] setInputNeeded:', err.message)
+        );
+      }
+      const msg = JSON.stringify({ type: 'timeout_warning', event: 'idle', timeout_at: dispatch.timeout_at, dispatch_id: dispatch.id });
+      for (const ws of dispatch.wsClients) { try { ws.send(msg); } catch {} }
+      console.log(`[timeout] dispatch ${dispatch.id} idle at 80% — input_needed set, hard kill pending`);
+    }
+  }, warningMs);
+
+  // Arm hard-kill at 100% of original window
+  dispatch._timeoutHandle = setTimeout(() => killOnTimeout(dispatch, saveDispatch), timeoutMs);
+}
+
 // Re-arm the auto-timeout for a reconnected running dispatch after server restart.
 // If timeout_at is already past, marks the dispatch as failed immediately.
+// On restart we cannot reconstruct the original window, so we always arm hard-kill only.
 function rearmDispatchTimeout(dispatch) {
   if (!dispatch.timeout_at) return;
   const remainingMs = new Date(dispatch.timeout_at).getTime() - Date.now();
@@ -164,9 +256,13 @@ function rearmDispatchTimeout(dispatch) {
   }
   dispatch._timeoutHandle = setTimeout(() => {
     if (dispatch.status !== 'running') return;
+    dispatch._timedOut = true;
     dispatch.status = 'failed';
     dispatch.completed_at = new Date().toISOString();
-    if (dispatch.process) { try { dispatch.process.kill('SIGTERM'); } catch {} }
+    if (dispatch.process) {
+      try { dispatch.process.kill('SIGTERM'); } catch {}
+      setTimeout(() => { try { dispatch.process?.kill('SIGKILL'); } catch {} }, 6000);
+    }
     saveDispatchToDb(dispatch).catch(() => {});
   }, remainingMs);
 }
@@ -481,6 +577,20 @@ export function wireDispatchHandlers(dispatch, proc) {
     }
   });
 
+  proc.stdout.on('end', () => {
+    if (buffer.trim()) {
+      try {
+        JSON.parse(buffer.trim()); // validate parseable before accepting
+        const rawLine = buffer.trim();
+        dispatch.output.push(rawLine);
+        if (dispatch.logStream) dispatch.logStream.write(rawLine + '\n');
+        broadcastDispatchLine(dispatch, rawLine);
+      } catch (e) {
+        // silently skip unparseable trailing content
+      }
+    }
+  });
+
   proc.stderr.on('data', (chunk) => {
     const line = JSON.stringify({ type: 'stderr', content: chunk.toString() });
     dispatch.output.push(line);
@@ -492,6 +602,10 @@ export function wireDispatchHandlers(dispatch, proc) {
     if (dispatch._timeoutHandle) {
       clearTimeout(dispatch._timeoutHandle);
       dispatch._timeoutHandle = null;
+    }
+    if (dispatch._warningHandle) {
+      clearTimeout(dispatch._warningHandle);
+      dispatch._warningHandle = null;
     }
     if (dispatch._mergeHandled) {
       // Agent called POST /complete before exiting — status already set to merge_pending.
@@ -505,8 +619,11 @@ export function wireDispatchHandlers(dispatch, proc) {
 
     // Classify exit type before overwriting status.
     // _killedIntentionally is set by the DELETE endpoint before sending SIGTERM.
+    // _timedOut is set by killOnTimeout before sending SIGTERM.
     if (dispatch._killedIntentionally) {
       dispatch.exit_type = 'killed';
+    } else if (dispatch._timedOut) {
+      dispatch.exit_type = 'timeout';
     } else if (code === 0) {
       dispatch.exit_type = 'graceful';
     } else {
@@ -595,12 +712,35 @@ export function wireDispatchHandlers(dispatch, proc) {
           const fullText = (dispatch.output || []).map(line => {
             try { return extractStreamText(JSON.parse(line)) || ''; } catch { return ''; }
           }).join('');
+
           const match = fullText.match(/# RefinementSummary\s*```json\s*([\s\S]*?)```/);
-          if (match) {
-            await db.updateDispatchMergeResult(dispatch.id, { completion_summary: match[1].trim() });
+          if (!match) {
+            const errMsg = 'RefinementSummary block not found in output';
+            dispatch.completion_summary_error = errMsg;
+            await db.updateDispatchMergeResult(dispatch.id, { completion_summary_error: errMsg });
+            return;
           }
-        } catch (err) {
-          console.error('Project refinement summary extraction failed:', err.message);
+
+          let summary;
+          try {
+            summary = JSON.parse(match[1]);
+          } catch (parseErr) {
+            const errMsg = `RefinementSummary parse failed: ${parseErr.message}`;
+            dispatch.completion_summary_error = errMsg;
+            await db.updateDispatchMergeResult(dispatch.id, { completion_summary_error: errMsg });
+            return;
+          }
+
+          if (dispatch.dry_run) return;
+
+          await applyRefinementSummary(dispatch.id, summary, { db });
+        } catch (handlerErr) {
+          console.error(`[project_refinement] close handler error for ${dispatch.id}:`, handlerErr);
+          const errMsg = 'Unhandled error in refinement close handler';
+          dispatch.completion_summary_error = errMsg;
+          try {
+            await db.updateDispatchMergeResult(dispatch.id, { completion_summary_error: errMsg });
+          } catch {}
         }
       })();
     }

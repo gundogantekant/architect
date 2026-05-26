@@ -1,6 +1,6 @@
 # Architecture Blueprint
 
-Nine Mermaid diagrams providing a visual reference for the architect system.
+Ten Mermaid diagrams providing a visual reference for the architect system.
 
 ---
 
@@ -594,3 +594,47 @@ Confirmed drift between `entities.md` definitions and actual PostgreSQL migratio
 | work_items | approval column | approval (JSON) | No approval JSON column; approval tracked via work_item_approvals table and boolean approval_active field — migration 001 | Corrected in ER diagram |
 | dispatches | columns | missing contract, timeout_at, agent_phase_history, contract_satisfied | All added by migrations 019–022 | Corrected in ER diagram |
 | work_items | missing column | done_at absent | done_at TIMESTAMPTZ added by migration 023 | Corrected in ER diagram — flagged, not fixed in entities.md |
+
+---
+
+## 10. Two-Gate Lifecycle
+
+Two-gate work item lifecycle: `open → [Plan Gate] → ready → in-progress → [Code Gate] → done`. The Plan Gate runs after the planner produces a plan; the Code Gate runs after tests pass, before commit. Both gates are read-only Review Board dispatches. Claude Code plan mode is an outer harness layer and does not substitute for either gate.
+
+```mermaid
+flowchart TB
+    User([User])
+
+    subgraph CCMode["Claude Code harness mode (outer)"]
+        direction TB
+        PlanMode["Plan Mode<br/>(read-only, writes plan file)"]
+        ImplMode["Implementation Mode<br/>(writes allowed)"]
+    end
+
+    subgraph Skill["Architect Skill (e.g., /implement)"]
+        direction TB
+        S1[Resolve target + load portfolio]
+        S2[Planner produces plan]
+        PG{{"Plan Gate<br/>Review Board + user approval"}}
+        S3[Coder + Tester]
+        CG{{"Code Gate<br/>Review Board + reviewer"}}
+        S4[git-ops commit / PR]
+    end
+
+    User -->|toggles| CCMode
+    User -->|invokes skill| Skill
+    PlanMode -.->|blocks writes inside skill| Skill
+    ImplMode -->|allows skill to complete| Skill
+
+    S1 --> S2 --> PG
+    PG -->|approve| S3
+    PG -->|block| S2
+    S3 --> CG
+    CG -->|approve| S4
+    CG -->|block| S3
+
+    classDef gate fill:#fff3cd,stroke:#8a6d3b,color:#000
+    class PG,CG gate
+```
+
+Source: `domain/rules.md` → Review Board Rules (Plan Gate / Code Gate triggers in `usecases/implement-work-item.md` steps 6 and 11).

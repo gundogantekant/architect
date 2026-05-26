@@ -108,6 +108,7 @@ These rules apply to ALL workflow patterns, not only `parallel-fan-out`:
 |----------|--------|-----------------|----------------|-----------------------|---------------|
 | Read-only | reviewer, security-auditor, performance, strategist, classifier, coordinator, findings-coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod | No | No | No | No (main tree) |
 | Interactive | browser | No | No | Yes | No |
+| Interactive | discuss | No | No | No | No |
 | Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer, git-ops | Yes | No | No | Yes (worktree) |
 | Onboarding | profiler | No (writes only CLAUDE.md to target project) | No | No | No |
 | Data-write | tracker | No | Yes (dashboard API for work items/epics; `work/epics/E-XXX/*.md`, `work/items/W-XXX/*.md` for artifacts) | No | No |
@@ -890,6 +891,7 @@ Static defaults defined in each agent's frontmatter. The orchestrator overrides 
 | refactorer | sonnet | implementation |
 | ci-cd | sonnet | implementation |
 | browser | sonnet | interactive |
+| discuss | sonnet | interactive |
 | profiler | sonnet | onboarding |
 | planner | opus | read-only |
 | strategist | opus | read-only |
@@ -925,7 +927,7 @@ Each agent receives only the context layers relevant to its role. This reduces t
 | Context Tier | Agents | Fields Included |
 |--------------|--------|-----------------|
 | none | git-ops | Branch name and project path only |
-| minimal | classifier, scout, tracker, dependency-manager, browser | `guidance.stack_summary`, `scout_report.language`, `scout_report.framework` |
+| minimal | classifier, scout, tracker, dependency-manager, browser, discuss | `guidance.stack_summary`, `scout_report.language`, `scout_report.framework` |
 | standard | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, coordinator, findings-coordinator, planner, debugger, documenter, api-designer, refactorer, strategist, profiler, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod | Minimal + `guidance.structure`, `guidance.conventions`, `custom_rules`, `agents.dispatch_notes`, `brief.purpose`, `brief.domain`, `brief.users`, `doc_paths`, `portfolio_guides` |
 | full | tester, reviewer, security-auditor, ci-cd, performance | Standard + `guidance.ci_cd`, `guidance.testing`, complete `brief` (all fields), `doc_paths` |
 
@@ -982,6 +984,19 @@ When the orchestrator holds UnstructuredFindings (raw output from any investigat
 ### Git Operations
 
 All git operations (commit, push, PR creation, branch management, worktree operations, merge) are delegated to the **git-ops** agent (haiku). The orchestrator does not run git commands directly except for read-only queries (status, log, diff for context).
+
+### Orchestrator Session Model (Operator Guidance)
+
+This guidance governs the model chosen for the **main-thread CLI session** itself. It is operator-applied at session start and is **not** enforced by architect dispatch or sub-agent overrides — the architect cannot select its own model at dispatch time.
+
+- **Default**: Sonnet. Suitable for the vast majority of orchestration work (triage, planning, dispatching, synthesis).
+- Escalation triggers — choose Opus when:
+  - Task complexity is `strategic` (per the Complexity-to-Model Mapping table above), or
+  - Task complexity is `large` AND the work involves architecture decisions or cross-system design.
+- See the Complexity-to-Model Mapping table for canonical complexity labels (trivial/small/medium/large/strategic).
+- **Limitation**: This is documentation-only guidance. The architect has no mechanism to verify or enforce the operator-selected session model at runtime, and recommendations may drift if not periodically reviewed.
+
+> Footnote: The orchestrator is intentionally absent from the Canonical Agent Default Models table because no architect process programmatically selects its model — that choice lives with the operator launching the CLI session.
 
 ## Session Scope Rules
 

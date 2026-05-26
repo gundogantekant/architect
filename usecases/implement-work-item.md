@@ -70,11 +70,28 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 
 10. **Run tests**: Dispatch tester agent in the worktree. Run existing test suite if available. Write new tests if new code warrants them and the project has test infrastructure. If contract tests were written in step 7, verify they now pass (green). If tests fail: dispatch coder to fix, then re-run tester (max 2 iterations). If no test framework is detected, skip and note it in the output. **Auto-Implement Mode**: report stage — `PUT /api/dispatch/${DISPATCH_ID}/stage` with `{"stage": "testing"}`.
 
+    The tester must emit a **structured Test Report** in this exact format before step 11 can begin:
+
+    ```
+    ## Test Report
+    **Overall**: PASS | FAIL
+    **Contract tests**: PASS | FAIL | SKIP (no contract tests written)
+    **E2E Scenarios**:
+    | Scenario | Status |
+    |----------|--------|
+    | <exact text of contract.e2e_test_criteria[0]> | PASS |
+    | <exact text of contract.e2e_test_criteria[1]> | FAIL — <one-line reason> |
+    ```
+
+    Omit the `E2E Scenarios` section when `contract.e2e_test_criteria` is null or absent. **No-partial-pass rule**: every named e2e scenario must pass — a single failing scenario blocks the Code Gate, regardless of overall suite result. If the report is malformed or missing required fields, re-dispatch the tester once with the format requirement restated; if still non-conforming, halt and mark the Code Gate as blocked.
+
 11. **Review Board — Code Gate** (for all non-trivial code changes per `domain/rules.md` → Review Board Rules): Assemble the review board using context-based composition rules. Dispatch all selected tech-reviewer-* agents **in parallel** with the implementation diff (artifact_type=diff), target project portfolio context, and the DispatchContract so reviewers can evaluate whether the implementation meets the stated goals and does not violate the stated constraints. When `success_criteria` is present in the contract, include it in each reviewer's prompt so they can evaluate whether the implementation satisfies the stated done conditions. Collect `TechReviewVerdict` from each. Apply aggregation rules:
     - Any `block` → dispatch coder to fix, re-review (max 2 cycles). If still blocked, escalate to user.
     - Any `revise` (no `block`) → present to user WITH revision concerns highlighted. User decides: accept, request fix, or override.
     - All `approve` → proceed to commit.
     **Auto-Implement Mode**: report stage — `PUT /api/dispatch/${DISPATCH_ID}/stage` with `{"stage": "code_review"}`.
+
+    **success_criteria coverage check**: After aggregation, when `contract.success_criteria` is non-null, scan each reviewer's verdict for an explicit response to each success criterion. If any criterion is unaddressed by every reviewer, re-dispatch the coder with a targeted note naming the unaddressed criteria, then re-run the Code Gate. This check shares the same 2-cycle budget as the `block` revision loop above; if the budget is exhausted, block the Code Gate and escalate. Skip this check entirely (do not emit a coverage section) when `contract.success_criteria` is null or absent.
 
 12. **Commit**: Dispatch git-ops to commit in the worktree. Message format: `<W-XXX>: <concise description of changes>`. Commit only relevant files. No Claude attribution per project rules. **Auto-Implement Mode**: report stage — `PUT /api/dispatch/${DISPATCH_ID}/stage` with `{"stage": "committing"}` before dispatching git-ops.
 
@@ -93,6 +110,15 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 
 14. **Merge-back confirmation**: Present a one-line summary: "Ready to merge <N> commit(s) from `<branch>` into `<originating_branch>`. Proceed?" Wait for user confirmation before continuing.
 
+    Before requesting confirmation, verify the **Merge-Back Checklist** — all 7 conditions are a hard gate; any unsatisfied condition blocks the merge:
+    1. Code Gate aggregate verdict is `approve` (no outstanding `block` or `revise`).
+    2. Full test suite is green.
+    3. Contract tests pass green (or were exempted per step 7).
+    4. Every entry in `contract.e2e_test_criteria` is individually reported as PASS in the step-10 Test Report.
+    5. When `contract.success_criteria` is non-null, each criterion is explicitly confirmed by the Code Gate board (per the coverage check in step 11).
+    6. The work item's `input_needed` flag is not set.
+    7. The worktree has no uncommitted changes.
+
 15. **Merge-back**: Dispatch git-ops to merge the worktree branch into the originating branch (fast-forward preferred, merge commit fallback). On success: remove the worktree, delete the branch, then proceed to step 16. On conflict: dispatch the coder agent to attempt resolution — it must (a) identify the conflicting hunks, (b) produce a resolution, and (c) provide an impact analysis (what changed semantically, risk level). If the coder agent's resolution is clean and low-risk, apply it, complete the merge, and proceed to step 16. If the conflict cannot be meaningfully resolved (risk too high, intent unclear, or multiple overlapping changes), run `git merge --abort`, preserve the worktree intact, report the conflicting files with a brief conflict summary, and offer two options: (a) run `/pr` to push a pull request instead, or (b) leave the worktree open for manual resolution. Do not proceed to step 16 on unresolved conflict.
 
 16. **Update status + present results**: Dispatch tracker to mark item `done`. If the item has an `epic_id`, tracker checks epic progress and suggests status transition. Log: `POST /api/work-items/<id>/log` with the merge commit hash and originating branch. Summarize: changes made, test results, merge commit hash, and target branch. Note: run `/pr` explicitly if a GitHub pull request is needed.
@@ -103,3 +129,36 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 - Work item status is `done` (set only after successful merge)
 - Session log records the implementation summary and merge commit hash
 - User can run `/pr` explicitly if a GitHub pull request is needed
+
+## Orchestrator Monitor Rules
+
+After dispatching a work item via `POST /api/dispatch/auto-implement`, the orchestrator SHOULD arm a `/loop` that wakes every 10 minutes to monitor the dispatch.
+
+### Per-Poll Steps
+
+1. `GET /api/dispatch/active` — find dispatches with `work_item_id` matching the dispatched item
+2. Bootstrap cursor on first poll: `max(total_output_lines - 50, 0)` so only recent lines are read.
+   Advance cursor: `cursor = new_total_lines` after each poll
+3. `GET /api/dispatch/:id/log?after=<cursor>` — fetch only new lines (O(new_lines), not O(file))
+4. Emit structured 5-line summary:
+
+```
+[Monitor W-XXXX] <ISO timestamp>
+Status    : <running|done|failed|interrupted>
+Phase     : <dispatch.lastProgressPhase or "unknown">
+Last line : <last non-JSON output line, ≤120 chars>
+Idle since: <duration since dispatch.lastOutputAt or "active">
+Action    : <"none" | "input_needed — check dashboard" | "done — ready to review">
+```
+
+If `input_needed=true` on the work item: always set `Action = "input_needed — check dashboard"`.
+
+End the loop when all monitored dispatches reach terminal status (done|failed|killed|interrupted).
+
+### Known Limitations
+
+- **Session disconnect**: the `/loop` runs in the orchestrator session process. Session disconnect terminates the loop with no auto-recovery. Re-arm by re-running the orchestrator and checking dispatch status.
+- **Cursor not persistent**: cursor is an in-session variable; it is lost on session disconnect.
+- **SSE broadcast**: `broadcastDispatchLine` is best-effort for active SSE clients only. Progress events on completed dispatches (no `wsClients`) are appended to JSONL but not delivered via SSE.
+- **lastProgressPhase after restart**: in-memory only. Shows "unknown" after server restart even for active dispatches. JSONL is the source of truth; scan log to re-derive last phase if needed.
+- **Soft-timeout relationship**: `scheduleDispatchTimeout` fires at 80% idle window and sets `input_needed=true`. The monitor loop reads this output — it does not duplicate idle-detection logic. Do not modify `IDLE_THRESHOLD_MS`.

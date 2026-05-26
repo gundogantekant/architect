@@ -63,6 +63,16 @@ export const SPEC_FILES = [
   'terminal-project-filter',
   'sanitisation',
   'pty-resize',
+  'fmt-timestamp',
+  'date-filter',
+  'prompt-preview.contract',
+  'prompt-preview',
+  'work-item-assets',
+  'heartbeat',
+  'progress-events',
+  'dispatch-monitor',
+  'drift-detection',
+  'portfolio-audit.contract',
 ];
 
 function getLiveDashboardPorts() {

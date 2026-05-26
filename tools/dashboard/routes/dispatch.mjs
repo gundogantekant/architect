@@ -1,9 +1,13 @@
-import { existsSync } from 'node:fs';
+import { existsSync, createReadStream } from 'node:fs';
 import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository, checkWorktreeReadiness } from '../worktree.mjs';
-import { AUTO_IMPLEMENTABLE_STATUSES, DISPATCH_TIMEOUT_MS, PIPELINE_STAGES, PORTFOLIO } from '../constants.mjs';
-import { triggerMerge } from '../dispatch-manager.mjs';
+import { AUTO_IMPLEMENTABLE_STATUSES, DISPATCH_TIMEOUT_MS, EXTEND_DURATION_MS, HEARTBEAT_INTERVAL_MS, INPUT_NEEDED_SOURCE, PIPELINE_STAGES, PORTFOLIO } from '../constants.mjs';
+import { triggerMerge, scheduleDispatchTimeout, appendProgress } from '../dispatch-manager.mjs';
 import { isMediumOrAbove } from '../utils/complexity.mjs';
 import { writePromptFile, deletePromptFile } from '../prompt-file.mjs';
+
+const SKILL_REGISTRY = {
+  'project-refine-tasks': (workItemId) => workItemId ? `/project-refine-tasks ${workItemId}` : '/project-refine-tasks',
+};
 
 function complexityTierFromPriority(priority) {
   if (priority === 'critical' || priority === 'high') return 'large';
@@ -11,21 +15,6 @@ function complexityTierFromPriority(priority) {
   return 'small';
 }
 
-function armDispatchTimeout(dispatch, timeoutMs, saveDispatchToDb) {
-  dispatch.timeout_at = new Date(Date.now() + timeoutMs).toISOString();
-  dispatch._timeoutHandle = setTimeout(() => {
-    if (dispatch.status !== 'running') return;
-    console.log(`[timeout] dispatch ${dispatch.id} timed out after ${timeoutMs}ms`);
-    dispatch.status = 'failed';
-    dispatch.completed_at = new Date().toISOString();
-    if (dispatch.process) {
-      try { dispatch.process.kill('SIGTERM'); } catch {}
-      setTimeout(() => { try { dispatch.process?.kill('SIGKILL'); } catch {} }, 6000);
-    }
-    if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
-    saveDispatchToDb(dispatch).catch(e => console.error('[timeout] saveDispatchToDb:', e.message));
-  }, timeoutMs);
-}
 
 function validateContractForComplexity(workItem, contract) {
   if (!isMediumOrAbove(workItem)) return null;
@@ -110,32 +99,23 @@ export default function dispatchRoutes(deps) {
         completed_at: null,
       };
 
-      // Verified flag: --append-system-prompt-file (claude --help → --bare description: --append-system-prompt[-file])
-      // Falls back to stdin for prompts > 512KB to avoid arg-size limits
+      // Prompt delivery: write to a per-session file under tmp/ (when small enough), then stream
+      // the file to the child's stdin. Streaming with backpressure addresses the buffer-truncation
+      // risk that motivated W-1141, while keeping the prompt as the user message that `-p` mode
+      // requires (--append-system-prompt-file only appends to the system prompt and leaves -p
+      // without input — regression seen in W-1184).
       const onboardPromptFile = await writePromptFile(prompt, id, TMP_DIR);
 
-      // Capture prompt for audit — must complete before spawn; failure logged but does not abort dispatch
       const MAX_PROMPT_CHARS = 1_048_576; // 1MB
       const onboardTruncated = prompt.length > MAX_PROMPT_CHARS;
       const onboardCapturedText = onboardTruncated ? prompt.slice(0, MAX_PROMPT_CHARS) : prompt;
-      await db.insertPromptRecord({
-        dispatch_id: id,
-        work_item_id: null,
-        project_key: null,
-        prompt_text: onboardCapturedText,
-        char_count: onboardCapturedText.length,
-        truncated: onboardTruncated,
-      }).catch(e => console.error('[prompt-capture] failed:', e.message));
 
       let proc;
       try {
-        const onboardArgs = ['-p', '--output-format', 'stream-json', '--verbose'];
-        if (onboardPromptFile) {
-          onboardArgs.push('--append-system-prompt-file', onboardPromptFile);
-        }
+        const onboardArgs = ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet'];
         proc = spawn(CLAUDE_BIN, onboardArgs, {
           cwd: ROOT,
-          stdio: onboardPromptFile ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
+          stdio: ['pipe', 'pipe', 'pipe'],
           env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
         });
       } catch (spawnErr) {
@@ -143,7 +123,11 @@ export default function dispatchRoutes(deps) {
         return json(res, { error: `Failed to spawn claude: ${spawnErr.message}` }, 500);
       }
 
-      if (!onboardPromptFile) {
+      if (onboardPromptFile) {
+        const stream = createReadStream(onboardPromptFile);
+        stream.on('error', e => console.error('[prompt-stream onboard]', e.message));
+        stream.pipe(proc.stdin);
+      } else {
         if (!proc.stdin.write(prompt)) {
           await new Promise(r => proc.stdin.once('drain', r));
         }
@@ -160,6 +144,15 @@ export default function dispatchRoutes(deps) {
 
       dispatches.set(id, dispatch);
       await saveDispatchToDb(dispatch);
+      // Capture prompt for audit — must run after saveDispatchToDb so the FK parent row exists
+      await db.insertPromptRecord({
+        dispatch_id: id,
+        work_item_id: null,
+        project_key: null,
+        prompt_text: onboardCapturedText,
+        char_count: onboardCapturedText.length,
+        truncated: onboardTruncated,
+      }).catch(e => console.error('[prompt-capture] failed:', e.message));
       json(res, { dispatch_id: id, status: 'running' });
     }],
 
@@ -168,7 +161,7 @@ export default function dispatchRoutes(deps) {
     // Create dispatch
     [/^\/api\/dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode, contract: rawContract, dispatch_mode: rawDispatchMode } = body;
+      const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode, contract: rawContract, dispatch_mode: rawDispatchMode, skill_id } = body;
       const dispatch_mode = rawDispatchMode || 'standard';
 
       // Strip empty-string contract fields per domain/rules.md → Dispatch Contract Rules
@@ -191,7 +184,10 @@ export default function dispatchRoutes(deps) {
       if (!project_key) {
         return err(res, 'project_key is required', 400);
       }
-      if (!work_item_id && !additional_instructions && dispatch_mode !== 'task_creation') {
+      if (skill_id !== undefined && !SKILL_REGISTRY[skill_id]) {
+        return err(res, `Unknown skill_id: ${skill_id}`, 400);
+      }
+      if (!work_item_id && !additional_instructions && dispatch_mode !== 'task_creation' && !skill_id) {
         return err(res, 'work_item_id or additional_instructions is required', 400);
       }
 
@@ -245,9 +241,12 @@ export default function dispatchRoutes(deps) {
 
       // Validate contract completeness for medium+ complexity before proceeding.
       // Runs on rawContract (pre-strip) so empty-string fields are caught as missing.
-      const contractViolations = validateContractForComplexity(effectiveWorkItem, rawContract);
-      if (contractViolations) {
-        return json(res, { error: 'Contract incomplete', violations: contractViolations }, 422);
+      // Skill dispatches bypass contract validation — the skill manages its own workflow.
+      if (!skill_id) {
+        const contractViolations = validateContractForComplexity(effectiveWorkItem, rawContract);
+        if (contractViolations) {
+          return json(res, { error: 'Contract incomplete', violations: contractViolations }, 422);
+        }
       }
 
       // Resolve permission mode and skip_permissions independently
@@ -260,7 +259,8 @@ export default function dispatchRoutes(deps) {
       let worktreeContext = null;
       let effectiveCwd = projectPath;
 
-      const willCreateWorktree = await shouldCreateWorktree({
+      // Skill dispatches run at project root — no worktree isolation needed.
+      const willCreateWorktree = !skill_id && await shouldCreateWorktree({
         permissionMode: resolvedPermMode,
         workItemId: work_item_id,
         portfolioEntry: rawEntry,
@@ -289,19 +289,21 @@ export default function dispatchRoutes(deps) {
         }
       }
 
-      const prompt = dispatch_mode === 'task_creation'
-        ? buildTaskCreationPrompt(project_key, additional_instructions || '')
-        : buildDispatchPrompt({
-            workItem: effectiveWorkItem,
-            projectKey: project_key,
-            projectPath,
-            additionalInstructions: additional_instructions,
-            portfolio,
-            epicContext,
-            relatedProjects,
-            worktreeContext,
-            contract: contract && Object.keys(contract).length ? contract : null,
-          });
+      const prompt = skill_id
+        ? SKILL_REGISTRY[skill_id](work_item_id || '')
+        : (dispatch_mode === 'task_creation'
+          ? buildTaskCreationPrompt(project_key, additional_instructions || '')
+          : buildDispatchPrompt({
+              workItem: effectiveWorkItem,
+              projectKey: project_key,
+              projectPath,
+              additionalInstructions: additional_instructions,
+              portfolio,
+              epicContext,
+              relatedProjects,
+              worktreeContext,
+              contract: contract && Object.keys(contract).length ? contract : null,
+            }));
 
       // Select sub-agents based on work item and portfolio context
       const agentDefs = await selectAgentsForDispatch({ workItem: effectiveWorkItem, portfolio });
@@ -315,7 +317,8 @@ export default function dispatchRoutes(deps) {
         title: title || work_item_id || '',
         permission_mode: resolvedPermMode,
         skip_permissions: resolvedSkipPerms,
-        dispatch_mode,
+        dispatch_mode: skill_id ? 'skill' : dispatch_mode,
+        skill_id: skill_id || null,
         status: 'running',
         agent_phase: 'generating',
         agent_phase_history: [],
@@ -331,26 +334,16 @@ export default function dispatchRoutes(deps) {
         completed_at: null,
       };
 
-      // Verified flag: --append-system-prompt-file (claude --help → --bare description: --append-system-prompt[-file])
-      // Falls back to stdin for prompts > 512KB to avoid arg-size limits
+      // Prompt delivery: see W-1184 comment in the onboard handler above.
       const standardPromptFile = await writePromptFile(prompt, id, TMP_DIR);
 
-      // Capture prompt for audit — must complete before spawn; failure logged but does not abort dispatch
       const MAX_PROMPT_CHARS = 1_048_576; // 1MB
       const standardTruncated = prompt.length > MAX_PROMPT_CHARS;
       const standardCapturedText = standardTruncated ? prompt.slice(0, MAX_PROMPT_CHARS) : prompt;
-      await db.insertPromptRecord({
-        dispatch_id: id,
-        work_item_id: work_item_id || null,
-        project_key: project_key || null,
-        prompt_text: standardCapturedText,
-        char_count: standardCapturedText.length,
-        truncated: standardTruncated,
-      }).catch(e => console.error('[prompt-capture] failed:', e.message));
 
       let proc;
       try {
-        const args = ['-p', '--output-format', 'stream-json', '--verbose'];
+        const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet'];
         args.push('--permission-mode', resolvedPermMode === 'plan' ? 'plan' : 'acceptEdits');
         if (resolvedSkipPerms) {
           args.push('--dangerously-skip-permissions');
@@ -359,12 +352,9 @@ export default function dispatchRoutes(deps) {
         if (agentDefs.length) {
           args.push('--agents', JSON.stringify(agentDefs));
         }
-        if (standardPromptFile) {
-          args.push('--append-system-prompt-file', standardPromptFile);
-        }
         proc = spawn(CLAUDE_BIN, args, {
           cwd: effectiveCwd,
-          stdio: standardPromptFile ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
+          stdio: ['pipe', 'pipe', 'pipe'],
           env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
         });
       } catch (spawnErr) {
@@ -372,7 +362,11 @@ export default function dispatchRoutes(deps) {
         return json(res, { error: `Failed to spawn claude: ${spawnErr.message}` }, 500);
       }
 
-      if (!standardPromptFile) {
+      if (standardPromptFile) {
+        const stream = createReadStream(standardPromptFile);
+        stream.on('error', e => console.error('[prompt-stream standard]', e.message));
+        stream.pipe(proc.stdin);
+      } else {
         if (!proc.stdin.write(prompt)) {
           await new Promise(r => proc.stdin.once('drain', r));
         }
@@ -388,10 +382,19 @@ export default function dispatchRoutes(deps) {
       wireDispatchHandlers(dispatch, proc);
 
       const tier = complexityTierFromPriority(effectiveWorkItem?.priority);
-      armDispatchTimeout(dispatch, DISPATCH_TIMEOUT_MS[tier] ?? DISPATCH_TIMEOUT_MS.medium, saveDispatchToDb);
+      scheduleDispatchTimeout(dispatch, DISPATCH_TIMEOUT_MS[tier] ?? DISPATCH_TIMEOUT_MS.medium, saveDispatchToDb);
 
       dispatches.set(id, dispatch);
       await saveDispatchToDb(dispatch);
+      // Capture prompt for audit — must run after saveDispatchToDb so the FK parent row exists
+      await db.insertPromptRecord({
+        dispatch_id: id,
+        work_item_id: work_item_id || null,
+        project_key: project_key || null,
+        prompt_text: standardCapturedText,
+        char_count: standardCapturedText.length,
+        truncated: standardTruncated,
+      }).catch(e => console.error('[prompt-capture] failed:', e.message));
       json(res, { dispatch_id: id, status: 'running' });
     }],
 
@@ -497,26 +500,16 @@ export default function dispatchRoutes(deps) {
         completed_at: null,
       };
 
-      // Verified flag: --append-system-prompt-file (claude --help → --bare description: --append-system-prompt[-file])
-      // Falls back to stdin for prompts > 512KB to avoid arg-size limits
+      // Prompt delivery: see W-1184 comment in the onboard handler above.
       const autoPromptFile = await writePromptFile(prompt, id, TMP_DIR);
 
-      // Capture prompt for audit — must complete before spawn; failure logged but does not abort dispatch
       const MAX_PROMPT_CHARS = 1_048_576; // 1MB
       const autoTruncated = prompt.length > MAX_PROMPT_CHARS;
       const autoCapturedText = autoTruncated ? prompt.slice(0, MAX_PROMPT_CHARS) : prompt;
-      await db.insertPromptRecord({
-        dispatch_id: id,
-        work_item_id: work_item_id || null,
-        project_key: project_key || null,
-        prompt_text: autoCapturedText,
-        char_count: autoCapturedText.length,
-        truncated: autoTruncated,
-      }).catch(e => console.error('[prompt-capture] failed:', e.message));
 
       let proc;
       try {
-        const args = ['-p', '--output-format', 'stream-json', '--verbose',
+        const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet',
           '--permission-mode', 'acceptEdits',
           '--dangerously-skip-permissions',
           '--add-dir', ROOT,
@@ -524,12 +517,9 @@ export default function dispatchRoutes(deps) {
         if (agentDefs.length) {
           args.push('--agents', JSON.stringify(agentDefs));
         }
-        if (autoPromptFile) {
-          args.push('--append-system-prompt-file', autoPromptFile);
-        }
         proc = spawn(CLAUDE_BIN, args, {
           cwd: effectiveCwd,
-          stdio: autoPromptFile ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
+          stdio: ['pipe', 'pipe', 'pipe'],
           env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
         });
       } catch (spawnErr) {
@@ -537,7 +527,11 @@ export default function dispatchRoutes(deps) {
         return json(res, { error: `Failed to spawn claude: ${spawnErr.message}` }, 500);
       }
 
-      if (!autoPromptFile) {
+      if (autoPromptFile) {
+        const stream = createReadStream(autoPromptFile);
+        stream.on('error', e => console.error('[prompt-stream auto]', e.message));
+        stream.pipe(proc.stdin);
+      } else {
         if (!proc.stdin.write(prompt)) {
           await new Promise(r => proc.stdin.once('drain', r));
         }
@@ -553,21 +547,43 @@ export default function dispatchRoutes(deps) {
       wireDispatchHandlers(dispatch, proc);
 
       const autoTier = complexityTierFromPriority(effectiveWorkItem?.priority);
-      armDispatchTimeout(dispatch, DISPATCH_TIMEOUT_MS[autoTier] ?? DISPATCH_TIMEOUT_MS.medium, saveDispatchToDb);
+      scheduleDispatchTimeout(dispatch, DISPATCH_TIMEOUT_MS[autoTier] ?? DISPATCH_TIMEOUT_MS.medium, saveDispatchToDb);
 
       dispatches.set(id, dispatch);
       await saveDispatchToDb(dispatch);
+      // Capture prompt for audit — must run after saveDispatchToDb so the FK parent row exists
+      await db.insertPromptRecord({
+        dispatch_id: id,
+        work_item_id: work_item_id || null,
+        project_key: project_key || null,
+        prompt_text: autoCapturedText,
+        char_count: autoCapturedText.length,
+        truncated: autoTruncated,
+      }).catch(e => console.error('[prompt-capture] failed:', e.message));
       json(res, { id, dispatch_id: id, status: 'running', worktree_path: dispatch.worktree_path });
     }],
 
-    // Stream dispatch output (SSE)
-    // Return raw JSONL log content as plain text (reliable, no SSE race)
-    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/log$/, 'GET', async (m, _req, res) => {
+    // Return raw JSONL log content as plain text; ?after=N skips first N lines (O(new_lines) tailing)
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/log$/, 'GET', async (m, req, res) => {
       const dispatch = dispatches.get(m[1]);
       if (!dispatch) return err(res, 'dispatch not found');
-      // Serve from memory — disk is only for restart recovery
+      const after = Math.max(0, parseInt(new URL(req.url, 'http://x').searchParams.get('after') ?? '0', 10) || 0);
       res.writeHead(200, { 'Content-Type': 'text/plain' });
-      res.end(dispatch.output.join('\n'));
+      res.end(dispatch.output.slice(after).join('\n'));
+    }],
+
+    // Agents emit progress milestones; appended to JSONL and broadcast to active SSE clients
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/progress$/, 'POST', async (m, req, res) => {
+      const dispatch = dispatches.get(m[1]);
+      if (!dispatch) return err(res, 'dispatch not found', 404);
+      const body = await parseBody(req);
+      const { phase, message } = body ?? {};
+      if (!phase || typeof phase !== 'string') return err(res, 'phase required', 400);
+      if (!message || typeof message !== 'string') return err(res, 'message required', 400);
+      if (message.length > 200) return err(res, 'message exceeds 200 chars', 400);
+      const event = { type: 'progress', phase, message, ts: new Date().toISOString() };
+      appendProgress(dispatch, event);
+      res.writeHead(204); res.end();
     }],
 
     // SSE stream — supports ?after=N to skip first N lines (used after HTTP log fetch)
@@ -608,6 +624,7 @@ export default function dispatchRoutes(deps) {
               res.write(`event: done\ndata: ${JSON.stringify({ status: msg.status })}\n\n`);
               res.end();
               dispatch.wsClients.delete(sseAdapter);
+              clearInterval(heartbeatId);
             }
           } catch {}
         },
@@ -617,8 +634,13 @@ export default function dispatchRoutes(deps) {
 
       dispatch.wsClients.add(sseAdapter);
 
+      const heartbeatId = setInterval(() => {
+        if (!res.writableEnded) res.write(': keep-alive\n\n');
+      }, HEARTBEAT_INTERVAL_MS);
+
       _req.on('close', () => {
         dispatch.wsClients.delete(sseAdapter);
+        clearInterval(heartbeatId);
       });
     }],
 
@@ -653,14 +675,17 @@ export default function dispatchRoutes(deps) {
           worktree_branch: d.worktree_branch || null,
           source_branch: d.source_branch || null,
           dispatch_mode: d.dispatch_mode || 'standard',
+          skill_id: d.skill_id || null,
           completion_sha: d.completion_sha || null,
           completion_summary: d.completion_summary || null,
+          completion_summary_error: d.completion_summary_error || null,
           merge_result: d.merge_result || null,
           pipeline_stage: d.pipeline_stage || null,
           contract: d.contract || null,
           _exitedWithoutSignal: d._exitedWithoutSignal || false,
           session_log: Array.isArray(d.session_log) ? d.session_log : [],
           timeout_at: d.timeout_at || null,
+          last_output_at: d.lastOutputAt ? new Date(d.lastOutputAt).toISOString() : null,
           exit_type: d.exit_type || null,
           deleted_at: null,
         };
@@ -699,6 +724,7 @@ export default function dispatchRoutes(deps) {
           dispatch_mode: d.dispatch_mode || 'standard',
           completion_sha: d.completion_sha || null,
           completion_summary: d.completion_summary || null,
+          completion_summary_error: d.completion_summary_error || null,
           merge_result: d.merge_result || null,
           pipeline_stage: d.pipeline_stage || null,
           contract: d.contract || null,
@@ -843,6 +869,47 @@ export default function dispatchRoutes(deps) {
       json(res, { status: 'killed', id: m[1], deleted_at: deletedAt });
     }],
 
+    // Extend the timeout of a running dispatch (UI/human-only — depth 0 required)
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/extend$/, 'POST', async (m, req, res) => {
+      const depth = parseInt(req.headers['x-architect-session-depth'] || '0', 10);
+      if (depth !== 0) return err(res, 'POST /extend is UI/human-only (X-Architect-Session-Depth must be 0)', 403);
+      const dispatch = dispatches.get(m[1]);
+      if (!dispatch) return err(res, 'dispatch not found', 404);
+      if (dispatch.status !== 'running') return err(res, 'dispatch is not running', 400);
+
+      let body = null;
+      try { body = await parseBody(req); } catch {}
+      const extensionMs = (body?.duration_ms && Number.isFinite(body.duration_ms) && body.duration_ms > 0)
+        ? body.duration_ms
+        : EXTEND_DURATION_MS;
+
+      // Clear existing timeout timers
+      if (dispatch._timeoutHandle) { clearTimeout(dispatch._timeoutHandle); dispatch._timeoutHandle = null; }
+      if (dispatch._warningHandle) { clearTimeout(dispatch._warningHandle); dispatch._warningHandle = null; }
+
+      dispatch.timeout_at = new Date(Date.now() + extensionMs).toISOString();
+      dispatch._timeoutHandle = setTimeout(() => {
+        if (dispatch.status !== 'running') return;
+        dispatch._timedOut = true;
+        dispatch.status = 'failed';
+        dispatch.completed_at = new Date().toISOString();
+        if (dispatch.process) {
+          try { dispatch.process.kill('SIGTERM'); } catch {}
+          setTimeout(() => { try { dispatch.process?.kill('SIGKILL'); } catch {} }, 6000);
+        }
+        if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
+        saveDispatchToDb(dispatch).catch(e => console.error('[extend-timeout] saveDispatch:', e.message));
+      }, extensionMs);
+
+      // Clear input_needed if it was set by the timeout path
+      if (dispatch.work_item_id) {
+        db.setInputNeeded(dispatch.work_item_id, false, INPUT_NEEDED_SOURCE.TIMEOUT).catch(() => {});
+      }
+
+      await saveDispatchToDb(dispatch);
+      json(res, { timeout_at: dispatch.timeout_at });
+    }],
+
     // Cancel a pending merge (clears timer, keeps status as merge_pending)
     [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/merge\/cancel$/, 'POST', async (m, _req, res) => {
       const dispatch = dispatches.get(m[1]);
@@ -919,6 +986,8 @@ export default function dispatchRoutes(deps) {
       }
       dispatch.status = 'suspended';
       dispatch.completed_at = new Date().toISOString();
+      if (dispatch._timeoutHandle) { clearTimeout(dispatch._timeoutHandle); dispatch._timeoutHandle = null; }
+      if (dispatch._warningHandle) { clearTimeout(dispatch._warningHandle); dispatch._warningHandle = null; }
       if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
       if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
       archiveSession(dispatch, 'dispatch').catch(e => console.error('[suspend dispatch] archiveSession:', e.message));
@@ -988,11 +1057,12 @@ export default function dispatchRoutes(deps) {
         wsClients: new Set(),
         started_at: new Date().toISOString(),
         completed_at: null,
+        _autoExtended: old.auto_extended ?? false,
       };
 
       const { workItem: freshWorkItem, portfolio } = await loadResumeContext({ work_item_id, project_key });
 
-      const args = ['-p', '--output-format', 'stream-json', '--verbose'];
+      const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet'];
       args.push('--resume', resumeSessionId);
       args.push('--permission-mode', resolvedPermMode === 'plan' ? 'plan' : 'acceptEdits');
       if (resolvedSkipPerms) args.push('--dangerously-skip-permissions');
@@ -1016,7 +1086,7 @@ export default function dispatchRoutes(deps) {
       wireDispatchHandlers(dispatch, proc);
 
       const resumeTier = complexityTierFromPriority(freshWorkItem?.priority);
-      armDispatchTimeout(dispatch, DISPATCH_TIMEOUT_MS[resumeTier] ?? DISPATCH_TIMEOUT_MS.medium, saveDispatchToDb);
+      scheduleDispatchTimeout(dispatch, DISPATCH_TIMEOUT_MS[resumeTier] ?? DISPATCH_TIMEOUT_MS.medium, saveDispatchToDb);
 
       const prompt = buildResumePrompt({
         workItem: freshWorkItem,

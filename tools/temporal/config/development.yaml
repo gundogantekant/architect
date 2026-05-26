@@ -1,0 +1,97 @@
+# Temporal server configuration — local development with PostgreSQL persistence
+#
+# This config targets the architect namespace's schema pair (architect_temporal,
+# architect_temporal_visibility). All Temporal namespaces registered via setup.sh
+# share this persistence store in the single-server dev setup.
+#
+# Per-namespace schema pairs (neuronic_temporal, new_project_temporal) are
+# pre-created by setup.sh for future separate server instances per project.
+# In local dev, one server instance serves all three namespaces.
+#
+# Start (full server with Postgres):
+#   source tools/temporal/config/.env
+#   temporal server start --config tools/temporal/config --env development
+#
+# Or (newer CLI, dev mode with Postgres):
+#   source tools/temporal/config/.env
+#   temporal server start-dev --config tools/temporal/config/development.yaml \
+#     --namespace architect --namespace neuronic-ai-team --namespace new-project
+
+log:
+  stdout: true
+  level: info
+
+persistence:
+  # WARNING: numHistoryShards is immutable after workflow history is written.
+  # Choose the production value (128 or 512) before any production traffic.
+  # 4 is correct for local development only.
+  numHistoryShards: 4
+  defaultStore: default
+  visibilityStore: visibility
+  datastores:
+    default:
+      sql:
+        pluginName: postgres12
+        databaseName: "${ARCHITECT_PG_DB}"
+        connectAddr: "${ARCHITECT_PG_HOST}:${ARCHITECT_PG_PORT}"
+        connectProtocol: tcp
+        user: "${ARCHITECT_PG_USER}"
+        password: "${ARCHITECT_PG_PASSWORD}"
+        maxConns: 20
+        maxIdleConns: 5
+        maxConnLifetime: "1h"
+        tls:
+          enabled: false
+        schemaName: architect_temporal
+    visibility:
+      sql:
+        pluginName: postgres12
+        databaseName: "${ARCHITECT_PG_DB}"
+        connectAddr: "${ARCHITECT_PG_HOST}:${ARCHITECT_PG_PORT}"
+        connectProtocol: tcp
+        user: "${ARCHITECT_PG_USER}"
+        password: "${ARCHITECT_PG_PASSWORD}"
+        maxConns: 10
+        maxIdleConns: 2
+        maxConnLifetime: "1h"
+        tls:
+          enabled: false
+        schemaName: architect_temporal_visibility
+
+global:
+  membership:
+    maxJoinDuration: 30s
+    broadcastAddress: "127.0.0.1"
+
+services:
+  frontend:
+    rpc:
+      grpcPort: 7233
+      membershipPort: 6933
+      bindOnLocalHost: true
+  matching:
+    rpc:
+      grpcPort: 7235
+      membershipPort: 6935
+      bindOnLocalHost: true
+  history:
+    rpc:
+      grpcPort: 7234
+      membershipPort: 6934
+      bindOnLocalHost: true
+  worker:
+    rpc:
+      grpcPort: 7239
+      membershipPort: 6939
+      bindOnLocalHost: true
+
+clusterMetadata:
+  enableGlobalNamespace: false
+  failoverVersionIncrement: 10
+  masterClusterName: active
+  currentClusterName: active
+  clusterInformation:
+    active:
+      enabled: true
+      initialFailoverVersion: 1
+      rpcAddress: 127.0.0.1:7233

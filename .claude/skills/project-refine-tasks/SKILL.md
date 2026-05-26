@@ -5,9 +5,11 @@ items, runs the three-gate refinement pipeline (pre-board → coordinator → Co
 post-board), and brings every eligible item to `planned` status with a complete,
 board-validated DispatchContract. No per-item user confirmation gates after session start.
 
-## Delegates to
+## Entry Point
 
-`.claude/prompt-bases/refine-project-session.md` — executed in full, steps 1–9.
+Dashboard-driven: `POST /api/projects/:org/:proj/:comp/refine` (background dispatch) or
+`POST /api/projects/:org/:proj/:comp/refine-terminal` (PTY session). The refinement flow
+is orchestrated by this skill from the CLI; the actual agent session runs via the dashboard.
 
 ## Depth Constraint
 
@@ -34,8 +36,9 @@ halt immediately: "project-refine-tasks must run at depth 0. Re-invoke from the 
    halt — "Start the dashboard first: `tools/dashboard/dashctl.sh start`". Do not proceed
    without a running dashboard.
 
-4. **Execute session**: Load `.claude/prompt-bases/refine-project-session.md` and execute
-   steps 1–9 in full. The session runs autonomously; the mandatory gates are:
+4. **Execute session**: Trigger `POST /api/projects/:org/:proj/:comp/refine` to launch the
+   background refinement agent. Monitor the dispatch panel; the session runs autonomously.
+   Mandatory gates:
    - Pre-Refinement Board (5a) per item
    - Contract Gate (5d) per item
    - Post-Refinement Board (5e) per item
@@ -49,6 +52,6 @@ halt immediately: "project-refine-tasks must run at depth 0. Re-invoke from the 
 
 ## Output
 
-- `# RefinementSummary` block (from refine-project-session.md Step 9)
+- `# RefinementSummary` block emitted by the refinement agent at session end
 - Session file at `work/refinement-sessions/<session-id>.json`
 - Items requiring input surfaced in Step 8 output

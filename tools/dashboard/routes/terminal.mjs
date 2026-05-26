@@ -412,6 +412,27 @@ export default function terminalRoutes(deps) {
       json(res, list.filter(Boolean));
     }],
 
+    // Recently exited terminals with a claude_session_id (resumable from DB)
+    [/^\/api\/terminal\/recent$/, 'GET', async (_m, _req, res) => {
+      const rows = await db.getRecentExitedTerminals(20);
+      json(res, rows.map(t => ({
+        id: t.id,
+        type: t.type || 'claude',
+        agent_type: t.agent_type || t.type || 'claude',
+        work_item_id: t.work_item_id || null,
+        project_key: t.project_key,
+        project_path: t.project_path || null,
+        org_key: t.org_key || null,
+        title: t.title,
+        status: t.status,
+        started_at: t.started_at,
+        exited_at: t.exited_at || null,
+        claude_session_id: t.claude_session_id,
+        permission_mode: t.permission_mode || 'acceptEdits',
+        skip_permissions: t.skip_permissions || false,
+      })));
+    }],
+
     // Kill all terminals (must be before :id route)
     [/^\/api\/terminal\/all$/, 'DELETE', async (_m, req, res) => {
       const workerId = req.headers['x-test-worker-id'];
@@ -499,18 +520,24 @@ export default function terminalRoutes(deps) {
       json(res, { status: 'suspended', id: m[1], claude_session_id: terminal.claude_session_id });
     }],
 
-    // Resume a suspended terminal
+    // Resume a terminal — supports suspended (in-memory) and exited sessions (DB fallback)
     [/^\/api\/terminal\/([A-Za-z0-9_-]+)\/resume$/, 'POST', async (m, req, res) => {
-      const old = terminals.get(m[1]);
-      if (!old) return err(res, 'terminal not found');
-      if (old.status !== 'suspended') return err(res, 'terminal is not suspended', 400);
+      const RESUMABLE_STATUSES = ['suspended', 'completed', 'killed', 'interrupted', 'failed'];
+      let old = terminals.get(m[1]);
+      if (!old) {
+        const row = await db.getTerminalById(m[1]);
+        if (!row) return err(res, 'terminal not found');
+        old = row;
+      }
+      if (!RESUMABLE_STATUSES.includes(old.status)) return err(res, 'terminal is not resumable', 400);
       if (!old.claude_session_id) return err(res, 'no session ID available for resume', 400);
+      if (!old.project_path) return err(res, 'terminal has no project path — cannot resume', 400);
 
-      const body = await parseBody(req);
+      await parseBody(req);
       const resumeSessionId = old.claude_session_id;
       const { work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions } = old;
 
-      // Remove old suspended record
+      // Remove old record (in-memory and DB)
       if (old.agents_file) unlinkFile(old.agents_file).catch(() => {});
       terminals.delete(m[1]);
       await db.deleteTerminal(m[1]);
@@ -524,6 +551,7 @@ export default function terminalRoutes(deps) {
       let tmuxName = null;
       try {
         const ptyArgs = ['--resume', resumeSessionId];
+        ptyArgs.push('--model', 'sonnet');
         if (resolvedSkipPerms) ptyArgs.push('--dangerously-skip-permissions');
         ptyArgs.push('--add-dir', ROOT);
 

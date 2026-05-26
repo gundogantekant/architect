@@ -154,15 +154,18 @@ function seedTestPortfolio(portfolioDir) {
   writeFileSync(join(portfolioDir, 'registry.json'), JSON.stringify({ entries: {} }));
 }
 
-export function spawnTestServer(port, workDir, dbName) {
+export function spawnTestServer(port, workDir, dbName, extraEnv = {}) {
   mkdirSync(workDir, { recursive: true });
   seedTestPortfolio(join(workDir, 'portfolio'));
 
   const env = {
     ...process.env,
+    ...extraEnv,
     PORT: String(port),
     WORK_DIR: workDir,
     PORTFOLIO_DIR: join(workDir, 'portfolio'),
+    // Isolated prompts dir per worker — starts absent to allow 503 contract testing
+    PROMPTS_DIR: join(workDir, 'prompts'),
     // Override the database name — host/port/user/password come from the
     // ambient environment, matching the real PostgreSQL instance.
     ARCHITECT_PG_DB: dbName,

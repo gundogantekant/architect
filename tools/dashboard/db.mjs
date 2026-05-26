@@ -2,8 +2,9 @@ import pg from 'pg';
 import { readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { execFile } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { mkdirSync, createWriteStream } from 'node:fs';
+import { rename, unlink } from 'node:fs/promises';
 
 // Return TIMESTAMPTZ values as ISO strings instead of Date objects.
 // OID 1114 = TIMESTAMP WITHOUT TIME ZONE, OID 1184 = TIMESTAMP WITH TIME ZONE.
@@ -39,7 +40,7 @@ function buildPoolConfig() {
     max: parseInt(process.env.PG_POOL_MAX ?? '10', 10),
     idleTimeoutMillis: parseInt(process.env.PG_POOL_IDLE_TIMEOUT_MS ?? '30000', 10),
     connectionTimeoutMillis: parseInt(process.env.PG_CONNECTION_TIMEOUT_MS ?? '5000', 10),
-    statementTimeout: parseInt(process.env.PG_STATEMENT_TIMEOUT_MS ?? '30000', 10),
+    statementTimeoutMs: parseInt(process.env.PG_STATEMENT_TIMEOUT_MS ?? '30000', 10),
   };
 }
 
@@ -78,23 +79,17 @@ export async function waitForPostgres(config, { maxAttempts = 10, baseDelayMs = 
   throw new Error(`PostgreSQL not reachable after ${maxAttempts} attempts: ${lastError?.message}`);
 }
 
-async function applyStatementTimeout(client, timeoutMs) {
-  await client.query(`SET statement_timeout = '${timeoutMs}ms'`);
-  await client.query(`SET idle_in_transaction_session_timeout = '${timeoutMs}ms'`);
-}
-
 export async function initDatabaseAsync(workDir, migrationsDir) {
   const config = buildPoolConfig();
   await waitForPostgres(config);
 
-  pool = new pg.Pool(config);
+  pool = new pg.Pool({
+    ...config,
+    options: `-c statement_timeout=${config.statementTimeoutMs} -c idle_in_transaction_session_timeout=${config.statementTimeoutMs}`,
+  });
 
   pool.on('error', (err) => {
     console.error(JSON.stringify({ type: 'pg_pool_error', message: err.message, code: err.code, timestamp: new Date().toISOString() }));
-  });
-
-  pool.on('connect', async (client) => {
-    await applyStatementTimeout(client, config.statementTimeout);
   });
 
   await runMigrations(migrationsDir);
@@ -184,7 +179,7 @@ export async function assertSchema() {
     work_item_logs: ['id', 'work_item_id', 'logged_at', 'summary'],
     epics: ['id', 'title', 'status', 'priority', 'description', 'acceptance_criteria', 'target_date', 'tags', 'created_at', 'updated_at'],
     epic_logs: ['id', 'epic_id', 'logged_at', 'summary'],
-    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at', 'agent_phase', 'agent_phase_history', 'timeout_at', 'contract', 'exit_type', 'deleted_at'],
+    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'completion_summary_error', 'dry_run', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at', 'agent_phase', 'agent_phase_history', 'timeout_at', 'contract', 'exit_type', 'deleted_at', 'auto_extended'],
     terminals: ['id', 'type', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'exited_at', 'pid', 'tmux_session', 'claude_session_id', 'agent_type', 'head_seq', 'deleted_at'],
     cli_sessions: ['id', 'project_key', 'work_item_id', 'epic_id', 'title', 'pid', 'status', 'registered_at', 'exited_at'],
     preferences: ['key', 'value'],
@@ -293,8 +288,7 @@ export async function closeDatabase() {
   return pool?.end();
 }
 
-// @internal - use named exports instead
-async function withTransaction(fn) {
+export async function withTransaction(fn) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -313,29 +307,44 @@ async function withTransaction(fn) {
 
 export async function backupDatabase(workDir, backupDir) {
   const config = buildPoolConfig();
+  const container = process.env.ARCHITECT_PG_CONTAINER ?? 'architect-postgres';
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const dest = join(backupDir, `architect-${timestamp}.dump`);
+  const tmpDest = dest + '.tmp';
 
   mkdirSync(backupDir, { recursive: true });
 
-  return new Promise((resolve, reject) => {
-    const args = [
-      '-h', config.host,
-      '-p', String(config.port),
-      '-U', config.user,
-      '-Fc',
-      '-f', dest,
-      config.database,
-    ];
-    const env = { ...process.env };
-    if (config.password) env.PGPASSWORD = config.password;
-
-    execFile('pg_dump', args, { env }, (err) => {
-      if (err) return reject(new Error(`pg_dump failed: ${err.message}`));
-      console.log(`Database backup: ${dest}`);
-      resolve(dest);
+  try {
+    await new Promise((resolve, reject) => {
+      const child = spawn('docker', [
+        'exec', container,
+        'pg_dump', '-U', config.user, '-Fc', config.database,
+      ]);
+      const out = createWriteStream(tmpDest);
+      let stderr = '';
+      child.stdout.pipe(out);
+      child.stderr.on('data', (d) => { stderr += d; });
+      child.on('error', (err) => { out.destroy(); reject(new Error(`Docker not available: ${err.message}`)); });
+      child.on('close', (code) => {
+        if (code !== 0) {
+          if (stderr.includes('No such container')) {
+            reject(new Error(`Container '${container}' not found. Set ARCHITECT_PG_CONTAINER env var.`));
+          } else {
+            reject(new Error(`pg_dump failed (exit ${code}): ${stderr.trim()}`));
+          }
+        } else {
+          out.end(() => resolve());
+        }
+      });
     });
-  });
+  } catch (err) {
+    await unlink(tmpDest).catch(() => {});
+    throw err;
+  }
+
+  await rename(tmpDest, dest);
+  console.log(`Database backup: ${dest}`);
+  return dest;
 }
 
 // --- Sequences (atomic UPDATE…RETURNING prevents races) ---
@@ -499,30 +508,33 @@ export async function updateWorkItemRefinement(id, { description, status }) {
   );
 }
 
-export async function setInputNeeded(workItemId, active, source) {
+export async function setInputNeeded(workItemId, active, source, reason = null) {
   if (active) {
-    // Don't overwrite if already set by a non-bridge source (e.g. 'user')
+    // Don't overwrite if already set by a different source
     const current = await pool.query(
       'SELECT input_needed, input_needed_from FROM work_items WHERE id=$1',
       [workItemId]
     );
-    if (current.rows[0]?.input_needed && current.rows[0]?.input_needed_from !== 'agent_phase_bridge') return;
+    const existingFrom = current.rows[0]?.input_needed_from;
+    if (current.rows[0]?.input_needed && existingFrom !== source) return;
     const now = new Date().toISOString();
     await pool.query(
-      `UPDATE work_items SET input_needed=$1, input_needed_from=$2, input_needed_at=$3 WHERE id=$4`,
-      [true, source, now, workItemId]
+      `UPDATE work_items SET input_needed=$1, input_needed_from=$2, input_needed_reason=$3, input_needed_at=$4 WHERE id=$5`,
+      [true, source, reason, now, workItemId]
     );
   } else {
-    const remaining = await pool.query(
-      `SELECT COUNT(*) FROM dispatches WHERE work_item_id=$1 AND agent_phase='waiting_for_input' AND status IN ('running','pending')`,
-      [workItemId]
-    );
-    if (parseInt(remaining.rows[0].count, 10) > 0) return;
+    if (source === 'agent_phase_bridge') {
+      const remaining = await pool.query(
+        `SELECT COUNT(*) FROM dispatches WHERE work_item_id=$1 AND agent_phase='waiting_for_input' AND status IN ('running','pending')`,
+        [workItemId]
+      );
+      if (parseInt(remaining.rows[0].count, 10) > 0) return;
+    }
     const current = await pool.query(
       `SELECT input_needed_from FROM work_items WHERE id=$1`,
       [workItemId]
     );
-    if (!current.rows[0] || current.rows[0].input_needed_from !== 'agent_phase_bridge') return;
+    if (!current.rows[0] || current.rows[0].input_needed_from !== source) return;
     await pool.query(
       `UPDATE work_items SET input_needed=false, input_needed_from=NULL, input_needed_reason=NULL, input_needed_at=NULL WHERE id=$1`,
       [workItemId]
@@ -838,8 +850,8 @@ export async function getEpicProjectKeys(epicId) {
 
 export async function saveDispatch(d) {
   await pool.query(`
-    INSERT INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode, pipeline_stage, agent_phase, agent_phase_history, timeout_at, contract, exit_type)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+    INSERT INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode, pipeline_stage, agent_phase, agent_phase_history, timeout_at, contract, exit_type, dry_run, auto_extended)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
     ON CONFLICT (id) DO UPDATE SET
       work_item_id = EXCLUDED.work_item_id,
       epic_id = EXCLUDED.epic_id,
@@ -863,7 +875,9 @@ export async function saveDispatch(d) {
       agent_phase_history = EXCLUDED.agent_phase_history,
       timeout_at = EXCLUDED.timeout_at,
       contract = EXCLUDED.contract,
-      exit_type = EXCLUDED.exit_type
+      exit_type = EXCLUDED.exit_type,
+      dry_run = EXCLUDED.dry_run,
+      auto_extended = EXCLUDED.auto_extended
   `, [
     d.id, d.work_item_id || null, d.epic_id || null, d.project_key, d.project_path || '',
     d.title || '', d.permission_mode || 'acceptEdits', d.skip_permissions ?? false,
@@ -873,6 +887,8 @@ export async function saveDispatch(d) {
     d.agent_phase ?? null, jsonb(d.agent_phase_history, []), d.timeout_at || null,
     d.contract !== undefined ? jsonb(d.contract) : null,
     d.exit_type || null,
+    d.dry_run ?? false,
+    d.auto_extended ?? false,
   ]);
 }
 
@@ -971,6 +987,25 @@ export async function getDeletedTerminals() {
   return pool.query('SELECT * FROM terminals WHERE deleted_at IS NOT NULL').then(r => r.rows);
 }
 
+export async function getRecentExitedTerminals(limit) {
+  return pool.query(
+    `SELECT * FROM terminals
+     WHERE claude_session_id IS NOT NULL
+       AND status NOT IN ('running', 'suspended')
+       AND deleted_at IS NULL
+     ORDER BY exited_at DESC NULLS LAST
+     LIMIT $1`,
+    [limit],
+  ).then(r => r.rows);
+}
+
+export async function getTerminalById(id) {
+  return pool.query(
+    'SELECT * FROM terminals WHERE id = $1 AND deleted_at IS NULL',
+    [id],
+  ).then(r => r.rows[0] || null);
+}
+
 // --- Sessions: CLI ---
 
 export async function saveCliSession(c) {
@@ -1013,12 +1048,12 @@ export async function updateDispatchStatus(id, status, completed_at) {
   await pool.query('UPDATE dispatches SET status = $1, completed_at = $2 WHERE id = $3', [status, completed_at || null, id]);
 }
 
-// exit_type values: 'graceful', 'killed', 'interrupted', 'unknown'
+// exit_type values: 'graceful', 'killed', 'timeout', 'interrupted', 'unknown'
 export async function updateDispatchExitType(id, exitType) {
   await pool.query('UPDATE dispatches SET exit_type = $1 WHERE id = $2', [exitType, id]);
 }
 
-export async function updateDispatchMergeResult(id, { status, completed_at, completion_sha, completion_summary, merge_result } = {}) {
+export async function updateDispatchMergeResult(id, { status, completed_at, completion_sha, completion_summary, completion_summary_error, merge_result } = {}) {
   const fields = [];
   const values = [];
   let paramIdx = 1;
@@ -1027,6 +1062,7 @@ export async function updateDispatchMergeResult(id, { status, completed_at, comp
   if (completed_at !== undefined) { fields.push(`completed_at = $${paramIdx++}`); values.push(completed_at); }
   if (completion_sha !== undefined) { fields.push(`completion_sha = $${paramIdx++}`); values.push(completion_sha); }
   if (completion_summary !== undefined) { fields.push(`completion_summary = $${paramIdx++}`); values.push(completion_summary); }
+  if (completion_summary_error !== undefined) { fields.push(`completion_summary_error = $${paramIdx++}`); values.push(completion_summary_error); }
   if (merge_result !== undefined) { fields.push(`merge_result = $${paramIdx++}`); values.push(merge_result); }
 
   if (!fields.length) return;
@@ -1074,17 +1110,25 @@ export async function getAllPreferences() {
 
 // --- Backlog reconstruction (legacy shape for API compat) ---
 
-export async function getBacklog(orgFilter, includeArchived = false) {
+export async function getBacklog(orgFilter, includeArchived = false, dateFilter = {}) {
   const archivedClause = includeArchived ? '' : " AND status != 'archived'";
-  let rows;
+  const params = [];
+  let where = `1=1${archivedClause}`;
+
   if (orgFilter) {
-    rows = await pool.query(
-      `SELECT * FROM work_items WHERE project_key LIKE $1${archivedClause}`,
-      [orgFilter.toLowerCase() + '/%']
-    ).then(r => r.rows);
-  } else {
-    rows = await pool.query(`SELECT * FROM work_items WHERE 1=1${archivedClause}`).then(r => r.rows);
+    params.push(orgFilter.toLowerCase() + '/%');
+    where = `project_key LIKE $${params.length}${archivedClause}`;
   }
+  if (dateFilter.from) {
+    params.push(dateFilter.from);
+    where += ` AND created_at >= $${params.length}::timestamptz`;
+  }
+  if (dateFilter.to) {
+    params.push(dateFilter.to);
+    where += ` AND created_at < ($${params.length}::date + INTERVAL '1 day')`;
+  }
+
+  const rows = await pool.query(`SELECT * FROM work_items WHERE ${where}`, params).then(r => r.rows);
 
   const hydratedItems = await hydrateWorkItemsBatch(rows);
   const statsMap = await getAllWorkItemStats();
@@ -1124,6 +1168,26 @@ export async function getBacklog(orgFilter, includeArchived = false) {
     projects,
     epics,
   };
+}
+
+export async function backdateWorkItem(id, createdAt) {
+  await pool.query(
+    `UPDATE work_items SET created_at = $1::timestamptz WHERE id = $2`,
+    [createdAt, id]
+  );
+}
+
+export async function purgeAllWorkItemsForTest() {
+  if (!process.env.WORK_DIR) {
+    throw new Error('purgeAllWorkItemsForTest refused: not in test mode');
+  }
+  await withTransaction(async (client) => {
+    await client.query('SET CONSTRAINTS ALL DEFERRED');
+    await client.query('DELETE FROM epic_logs');
+    await client.query('DELETE FROM work_items');
+    await client.query('DELETE FROM epics');
+    await client.query('DELETE FROM dispatches');
+  });
 }
 
 // --- Single work item with full details ---
@@ -1937,4 +2001,23 @@ export async function getCostSummary({ from, to, groupBy = 'model' } = {}) {
     })),
     trend: trendByDay(rawResult.rows),
   };
+}
+
+export async function getDistinctWorkItemProjectKeys() {
+  const r = await pool.query(
+    `SELECT project_key,
+            COUNT(*)::int AS item_count,
+            COALESCE(
+              json_object_agg(status, cnt) FILTER (WHERE status IS NOT NULL),
+              '{}'::json
+            ) AS statuses
+     FROM (
+       SELECT project_key, status, COUNT(*)::int AS cnt
+       FROM work_items
+       GROUP BY project_key, status
+     ) s
+     GROUP BY project_key
+     ORDER BY project_key`
+  );
+  return r.rows;
 }

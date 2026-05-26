@@ -38,10 +38,14 @@ import adrsRoutes from './routes/adrs.mjs';
 import projectsRoutes from './routes/projects.mjs';
 import costsRoutes from './routes/costs.mjs';
 import assetsRoutes from './routes/assets.mjs';
+import promptsRoutes from './routes/prompts.mjs';
+import workItemAssetsRoutes from './routes/work-item-assets.mjs';
 import testEndpointRoutes from './routes/test-endpoints.mjs';
 import { attemptMerge, isMergeLocked } from './merge.mjs';
 
 const TMP_DIR = join(ROOT, 'tmp');
+
+let syncWarnings = [];
 
 const deps = {
   db, json, text, err, safe, parseBody, readJson, listDirs, listFiles,
@@ -50,7 +54,7 @@ const deps = {
   dispatches, terminals, cliSessions,
   wireTerminalHandlers, wireDispatchHandlers, injectPrompt,
   buildDispatchPrompt, buildResumePrompt, buildAutoImplementPrompt, buildRefinementPrompt, buildTaskCreationPrompt, buildProjectRefinementPrompt, resolveProjectPath, resolveOrgPath, loadPortfolioContext, loadOrgContext, loadWorkItem, loadResumeContext, selectAgentsForDispatch, loadEpicPlanSnippet,
-  broadcastDispatchLine, broadcastDispatchDone, tailLogFile, killProcess, killProcessGraceful, extractStreamText, syncProjectsFromRegistry,
+  broadcastDispatchLine, broadcastDispatchDone, tailLogFile, killProcess, killProcessGraceful, extractStreamText, syncProjectsFromRegistry, getSyncWarnings: () => syncWarnings,
   saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession,
   restoreSessions,
   termEventLogPath, generateSeedContent, sleep, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture,
@@ -79,6 +83,8 @@ const routes = [
   ...projectsRoutes(deps),
   ...costsRoutes(deps),
   ...assetsRoutes(deps),
+  ...promptsRoutes(deps),
+  ...workItemAssetsRoutes(deps),
   ...(process.env.WORK_DIR ? testEndpointRoutes(deps) : []),
 ];
 
@@ -214,21 +220,27 @@ async function main() {
     await db.initDatabaseAsync(WORK, MIGRATIONS_DIR);
     console.log('PostgreSQL database ready');
   } catch (e) {
-    console.error('PostgreSQL unreachable. Ensure Docker is running: docker compose up -d');
-    console.error('Details:', e.message);
+    const connectionCodes = new Set(['ECONNREFUSED', 'ETIMEDOUT', '28P01', '3D000', '57P03']);
+    if (connectionCodes.has(e.code) || /not reachable|ECONNREFUSED|ETIMEDOUT/i.test(e.message)) {
+      console.error(`PostgreSQL unreachable. Ensure Docker is running: docker compose up -d\nDetails: ${e.message}`);
+    } else {
+      console.error(`Database initialization failed: ${e.message}`);
+    }
     process.exit(1);
   }
 
-  // Phase 2: Ensure logs directory and tmp directory
+  // Phase 2: Ensure logs directory, tmp directory, and work/assets directory
   await mkdir(LOGS_DIR, { recursive: true });
   await mkdir(TMP_DIR, { recursive: true });
+  await mkdir(join(WORK, 'assets'), { recursive: true });
 
   // On startup, sweep tmp/prompt-*.txt files older than 1 hour
   sweepOrphanedPromptFiles(TMP_DIR).catch(e => console.error('[startup] prompt file sweep:', e.message));
 
   // Phase 2.5: Sync projects from portfolio registry
   migrateLegacyPortfolio({ legacyPath: LEGACY_PORTFOLIO, targetPath: PORTFOLIO });
-  await syncProjectsFromRegistry();
+  const syncResult = await syncProjectsFromRegistry();
+  syncWarnings = syncResult.skippedEntries || [];
 
   // Phase 3: Restore sessions
   restoreSessions(wireTerminalHandlers, deps);

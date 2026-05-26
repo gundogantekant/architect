@@ -51,6 +51,7 @@ See `docs/architecture.md` for layer boundaries and dependency rules.
 | Work item tracking | tracker | haiku |
 | Systematic refactoring | refactorer | sonnet |
 | Browser automation (E2E, visual, web tasks) | browser | sonnet |
+| Design-partner conversations about the project | discuss | sonnet |
 | Git operations (commit, push, PR, branch, worktree) | git-ops | haiku |
 | Tech review — SWE perspective | tech-reviewer-swe | sonnet |
 | Tech review — architecture (Clean Architecture) | tech-reviewer-arch | sonnet / opus* |
@@ -66,6 +67,8 @@ See `docs/architecture.md` for layer boundaries and dependency rules.
 *Escalated to opus when dispatched for large or strategic artifacts.
 
 Default models are overridden dynamically by the orchestrator based on task complexity. See `domain/rules.md` → Model Selection Rules → Review Board Escalation.
+
+For the recommended orchestrator session model and escalation triggers, see `domain/rules.md` → Orchestrator Behavior Rules → Orchestrator Session Model (Operator Guidance).
 
 ### Orchestrator Behavior
 

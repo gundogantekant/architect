@@ -1,5 +1,5 @@
 export default function portfolioRoutes(deps) {
-  const { json, text, err, safe, readJson, listDirs, listFiles, readFile, PORTFOLIO, resolveProjectPath, execFileSync, join } = deps;
+  const { json, text, err, safe, readJson, listDirs, listFiles, readFile, PORTFOLIO, resolveProjectPath, execFileSync, join, db } = deps;
   return [
     // Registry
     [/^\/api\/registry$/, 'GET', async (_m, _req, res) => {
@@ -8,6 +8,39 @@ export default function portfolioRoutes(deps) {
         throw e;
       });
       json(res, data);
+    }],
+
+    [/^\/api\/portfolio\/audit$/, 'GET', async (_m, _req, res) => {
+      const errors = [];
+      const portfolioKeys = new Set();
+
+      const orgDirs = await listDirs(PORTFOLIO).catch(e => {
+        if (e.code === 'ENOENT') return [];
+        throw e;
+      });
+
+      for (const org of orgDirs) {
+        const projects = await listDirs(join(PORTFOLIO, org)).catch(e => {
+          errors.push({ org, reason: e.message });
+          return [];
+        });
+        for (const proj of projects) {
+          const files = await listFiles(join(PORTFOLIO, org, proj)).catch(() => []);
+          for (const f of files.filter(f => f.endsWith('.json') && f !== 'organization.json')) {
+            portfolioKeys.add(`${org}/${proj}/${f.replace(/\.json$/, '')}`);
+          }
+        }
+      }
+
+      const dbKeys = await db.getDistinctWorkItemProjectKeys();
+      const allDbKeys = new Set(dbKeys.map(r => r.project_key));
+
+      const orphan_db_keys = dbKeys.filter(r => !portfolioKeys.has(r.project_key));
+      const orphan_portfolio = [...portfolioKeys]
+        .filter(k => !allDbKeys.has(k))
+        .map(k => { const [org, project, component] = k.split('/'); return { org, project, component }; });
+
+      json(res, { orphan_db_keys, orphan_portfolio, errors, generated_at: new Date().toISOString() });
     }],
 
     // List orgs

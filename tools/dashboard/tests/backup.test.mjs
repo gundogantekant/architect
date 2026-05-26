@@ -1,9 +1,9 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readdirSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readdirSync, rmSync, existsSync, readFileSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { execFileSync, execFile } from 'node:child_process';
+import { execFileSync, execFile, spawnSync } from 'node:child_process';
 import pg from 'pg';
 import { backupDatabase, initDatabaseAsync, closeDatabase } from '../db.mjs';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +19,7 @@ function buildAdminConfig() {
     port: parseInt(process.env.ARCHITECT_PG_PORT ?? '3778', 10),
     database: 'postgres',
     user: process.env.ARCHITECT_PG_USER ?? 'architect',
-    password: process.env.ARCHITECT_PG_PASSWORD,
+    password: process.env.ARCHITECT_PG_PASSWORD ?? 'architect',
     connectionTimeoutMillis: 5000,
   };
 }
@@ -38,9 +38,13 @@ async function dropDb(name) {
   finally { await client.end(); }
 }
 
-function pgDumpAvailable() {
-  try { execFileSync('which', ['pg_dump']); return true; }
-  catch { return false; }
+function dockerContainerRunning(container) {
+  try {
+    const result = spawnSync('docker', ['inspect', '--format', '{{.State.Running}}', container], { encoding: 'utf8' });
+    return result.stdout.trim() === 'true';
+  } catch {
+    return false;
+  }
 }
 
 // ── Backup test suite ─────────────────────────────────────────────────────────
@@ -71,7 +75,7 @@ describe('backupDatabase', () => {
     const dest = await backupDatabase(tmpDir, backupDir);
 
     assert.ok(dest, 'should return the backup path');
-    assert.match(dest, /architect-[\dT\-]+\.dump$/);
+    assert.match(dest, /architect-[\dT\-Z]+\.dump$/);
     assert.ok(existsSync(dest), 'backup file should exist on disk');
 
     const files = readdirSync(backupDir);
@@ -79,7 +83,7 @@ describe('backupDatabase', () => {
     assert.match(files[0], /^architect-.*\.dump$/);
   });
 
-  it('creates a non-empty backup file', async () => {
+  it('creates a non-empty backup file with pg_dump magic bytes', async () => {
     const backupDir = join(tmpDir, 'backups2');
     const dest = await backupDatabase(tmpDir, backupDir);
     assert.ok(dest);
@@ -87,6 +91,13 @@ describe('backupDatabase', () => {
     const { statSync } = await import('node:fs');
     const stat = statSync(dest);
     assert.ok(stat.size > 0, 'backup file should be non-empty');
+
+    // Custom format dumps start with "PGDMP" magic bytes
+    const fd = openSync(dest, 'r');
+    const buf = Buffer.alloc(5);
+    readSync(fd, buf, 0, 5, 0);
+    closeSync(fd);
+    assert.equal(buf.toString('ascii'), 'PGDMP', 'dump file should start with pg_dump custom-format magic bytes');
   });
 
   it('creates the backup directory if it does not exist', async () => {
@@ -97,9 +108,10 @@ describe('backupDatabase', () => {
     assert.equal(readdirSync(backupDir).length, 1);
   });
 
-  it('can restore the backup to a fresh database', async () => {
-    if (!pgDumpAvailable()) {
-      console.log('  skip: pg_dump not available in PATH');
+  it('can restore the backup to a fresh database via docker exec', async () => {
+    const container = process.env.ARCHITECT_PG_CONTAINER ?? 'architect-postgres';
+    if (!dockerContainerRunning(container)) {
+      console.log(`  skip: container '${container}' not running`);
       return;
     }
 
@@ -112,17 +124,32 @@ describe('backupDatabase', () => {
 
     try {
       const adminCfg = buildAdminConfig();
-      const env = { ...process.env };
-      if (adminCfg.password) env.PGPASSWORD = adminCfg.password;
+
+      // Copy the dump file into the container, then pg_restore inside it.
+      // docker cp writes to the container filesystem; pg_restore reads from there.
+      const containerDumpPath = `/tmp/restore-test-${Date.now()}.dump`;
+      const cpResult = spawnSync('docker', ['cp', dest, `${container}:${containerDumpPath}`], { encoding: 'utf8' });
+      if (cpResult.status !== 0) {
+        throw new Error(`docker cp failed: ${cpResult.stderr}`);
+      }
 
       await new Promise((resolve, reject) => {
-        execFile(
-          'pg_restore',
-          ['-h', adminCfg.host, '-p', String(adminCfg.port), '-U', adminCfg.user, '-d', restoreDb, dest],
-          { env },
+        const child = execFile(
+          'docker',
+          [
+            'exec', container,
+            'pg_restore',
+            '-h', '127.0.0.1', '-p', '5432',
+            '-U', adminCfg.user,
+            '-d', restoreDb,
+            containerDumpPath,
+          ],
           (err) => (err ? reject(new Error(`pg_restore failed: ${err.message}`)) : resolve())
         );
       });
+
+      // Cleanup dump file inside container
+      spawnSync('docker', ['exec', container, 'rm', '-f', containerDumpPath]);
 
       // Verify schema_migrations exists in the restored DB.
       const verifyClient = new pg.Client({ ...adminCfg, database: restoreDb });

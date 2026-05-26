@@ -17,8 +17,11 @@
 .alert-badge { font-size: 11px; padding: 1px 6px; border-radius: 3px; font-weight: 600; cursor: default; }
 .alert-cost  { background: #FEF3C7; color: #92400E; border: 1px solid #F59E0B; }
 .alert-scope { background: #FEE2E2; color: #991B1B; border: 1px solid #EF4444; }
-.timeout-countdown { font-size: 11px; color: var(--text-light, #888); margin-left: 6px; }
+.timeout-countdown { font-size: 11px; color: #D97706; margin-left: 6px; font-weight: 600; background: #FEF3C7; padding: 1px 5px; border-radius: 3px; }
+.timeout-countdown.timeout-urgent { color: #DC2626; background: #FEE2E2; }
 .timeout-badge.timeout-expired { font-size: 11px; background: #FEE2E2; color: #991B1B; padding: 1px 5px; border-radius: 3px; }
+.auto-extend-badge { font-size: 11px; color: #065F46; background: #D1FAE5; padding: 1px 5px; border-radius: 3px; margin-left: 4px; }
+.timeout-escalation-banner { background: #FEF3C7; color: #92400E; border: 1px solid #F59E0B; border-radius: 4px; padding: 6px 10px; margin: 4px 8px; font-size: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .dispatch-contract-summary { padding: 4px 16px; font-size: 0.85em; border-top: 1px solid var(--border); }
 .dispatch-contract-summary summary { cursor: pointer; color: var(--text-light, #888); user-select: none; }
 .contract-fields { padding: 4px 0; display: flex; flex-direction: column; gap: 3px; }
@@ -26,6 +29,10 @@
 .pipeline-stage-bar { padding: 2px 16px; }
 .btn-refine { font-size: 11px; padding: 2px 7px; border-radius: 3px; border: 1px solid var(--accent, #7c3aed); color: var(--accent, #7c3aed); background: transparent; cursor: pointer; margin-left: 4px; }
 .btn-refine:hover { background: var(--accent, #7c3aed); color: #fff; }
+.btn-item-refine { font-size: 12px; padding: 3px 10px; border-radius: 4px; border: 1px solid var(--accent); color: var(--accent); background: transparent; cursor: pointer; margin-left: 4px; }
+.btn-item-refine:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.btn-item-refine:disabled { opacity: 0.6; cursor: not-allowed; }
+.split-btn-group .btn-item-refine { border-radius: 0; margin-left: 0; border-left: none; }
 .cost-badge { font-size: 11px; color: var(--text-light, #888); margin-left: 6px; font-variant-numeric: tabular-nums; }
 .cost-placeholder { font-size: 11px; color: var(--text-light, #888); margin-left: 6px; }
 </style>
@@ -42,6 +49,7 @@
   <div class="sidebar-settings" onclick="location.hash='#assets'"><span class="nav-icon">&#128196;</span> <span>Assets</span></div>
   <div class="sidebar-settings" onclick="location.hash='#time-report'"><span class="nav-icon">&#9202;</span> <span>Time Report</span></div>
   <div class="sidebar-settings" onclick="location.hash='#costs'"><span class="nav-icon">&#128176;</span> <span>Cost Report</span></div>
+  <div class="sidebar-settings" onclick="location.hash='#audit'"><span class="nav-icon">&#128269;</span> <span>Audit</span></div>
   <div class="sidebar-settings" onclick="location.hash='#settings'"><span class="nav-icon">&#9881;</span> <span>Settings</span></div>
   <a href="#" class="notes-toggle-btn sidebar-settings" data-notes-toggle title="Toggle notes panel" aria-label="Toggle notes panel">
     <span class="nav-icon">📝</span>
@@ -58,7 +66,7 @@
 
 <script type="module">
 import { api, apiText } from '/js/api.mjs';
-import { $, esc, ACTIVE_DOT_CLASSES, clearActiveDotClasses, fmtDate,
+import { $, esc, ACTIVE_DOT_CLASSES, clearActiveDotClasses, fmtDate, fmtTimestamp,
          getRouteTitle, updateTitle, topoSort, isBlockedByDeps, epicSignalColor } from '/js/utils.mjs';
 import {
   backlog, setBacklog,
@@ -157,8 +165,21 @@ function wireAgentTypeToggle(overlay, agentTypeId, permModeId, skipPermsId) {
   toggle(); // Set initial state
 }
 
+function wireInstructionCounter(overlay, textareaId) {
+  const textarea = overlay.querySelector('#' + textareaId);
+  const counter = overlay.querySelector('#' + textareaId + '-counter');
+  if (!textarea || !counter) return;
+  const update = () => {
+    const len = textarea.value.length;
+    counter.textContent = len === 0
+      ? '0 chars — No additional instructions; agent will follow work item description only'
+      : `${len} chars`;
+  };
+  textarea.addEventListener('input', update);
+}
+
 function createDispatchOverlay(opts) {
-  const { title, buildFields, onSubmit, submitLabel = 'Dispatch', cancelId, submitId, afterMount } = opts;
+  const { title, buildFields, onSubmit, submitLabel = 'Dispatch', cancelId, submitId, afterMount, onClose } = opts;
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -173,7 +194,7 @@ function createDispatchOverlay(opts) {
     </div>
   `;
 
-  const close = () => overlay.remove();
+  const close = () => { overlay.remove(); if (onClose) onClose(); };
 
   overlay.querySelector('[data-modal-cancel]').onclick = close;
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
@@ -205,6 +226,101 @@ function createDispatchOverlay(opts) {
   return { overlay, close };
 }
 
+function openPromptPreview(templateId, variables, triggerEl) {
+  let abortCtrl = null;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.setAttribute('role', 'presentation');
+
+  const dialog = document.createElement('div');
+  dialog.className = 'modal modal-prompt-preview';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  dialog.setAttribute('aria-labelledby', 'prompt-preview-title');
+
+  dialog.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+      <h3 id="prompt-preview-title" style="margin:0">Prompt Preview <span style="font-size:0.75rem;font-weight:normal;color:var(--text-muted,#888)">(Read only)</span></h3>
+      <button id="prompt-preview-close" aria-label="Close preview" style="background:none;border:none;font-size:1.5rem;cursor:pointer;line-height:1">&times;</button>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:1rem;flex:1">
+      <div class="preview-col-tokens">
+        <h4 style="margin-top:0">Available tokens</h4>
+        <div id="prompt-preview-tokens" role="status">Loading…</div>
+      </div>
+      <div class="preview-col-rendered">
+        <pre id="prompt-preview-content" style="margin-top:0"><span role="status">Loading…</span></pre>
+        <div style="margin-top:0.5rem">
+          <button id="prompt-preview-copy" class="btn-secondary" style="font-size:0.8rem">Copy to clipboard</button>
+          <span id="prompt-preview-copied" aria-live="polite" style="margin-left:0.5rem;font-size:0.8rem;display:none">Copied!</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  let renderedText = '';
+
+  const close = () => {
+    if (abortCtrl) abortCtrl.abort();
+    overlay.remove();
+    if (triggerEl) triggerEl.focus();
+  };
+
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  dialog.querySelector('#prompt-preview-close').addEventListener('click', close);
+  const onEsc = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onEsc); } };
+  document.addEventListener('keydown', onEsc);
+
+  const firstFocusable = dialog.querySelector('button');
+  if (firstFocusable) firstFocusable.focus();
+
+  dialog.querySelector('#prompt-preview-copy').addEventListener('click', () => {
+    navigator.clipboard.writeText(renderedText).then(() => {
+      const copied = dialog.querySelector('#prompt-preview-copied');
+      copied.style.display = 'inline';
+      setTimeout(() => { copied.style.display = 'none'; }, 2000);
+    });
+  });
+
+  abortCtrl = new AbortController();
+  fetch('/api/prompts/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ template_id: templateId, variables }),
+    signal: abortCtrl.signal,
+  })
+    .then(r => r.json())
+    .then(data => {
+      renderedText = data.rendered || '';
+      const pre = dialog.querySelector('#prompt-preview-content');
+      pre.textContent = renderedText;
+
+      const sorted = (data.placeholders || []).slice().sort((a, b) => a.localeCompare(b, 'en'));
+      const tokensEl = dialog.querySelector('#prompt-preview-tokens');
+      if (sorted.length === 0) {
+        tokensEl.textContent = '(none)';
+      } else {
+        const ul = document.createElement('ul');
+        ul.style.cssText = 'margin:0;padding-left:1.2rem;font-size:0.8rem;font-family:monospace';
+        sorted.forEach(t => {
+          const li = document.createElement('li');
+          li.textContent = t;
+          ul.appendChild(li);
+        });
+        tokensEl.replaceChildren(ul);
+      }
+    })
+    .catch(err => {
+      if (err.name !== 'AbortError') {
+        dialog.querySelector('#prompt-preview-content').textContent = 'Failed to load preview.';
+        dialog.querySelector('#prompt-preview-tokens').textContent = '';
+      }
+    });
+}
 
 
 async function getBacklog() {
@@ -543,6 +659,59 @@ async function loadDispatchContent(dispatch) {
         dispatch.status = msg.status || 'completed';
         dispatch._ws = null;
         finalizeDispatchPanel(dispatch);
+      } else if (msg.type === 'timeout_warning') {
+        // Update local timeout_at from server so countdown badge is accurate
+        if (msg.timeout_at) dispatch.timeout_at = msg.timeout_at;
+        const panelEl = document.getElementById(`dispatch-${dispatch.id}`);
+        if (!panelEl) return;
+        if (msg.event === 'auto_extended') {
+          // Show brief auto-extended notice in the title area
+          const titleEl = panelEl.querySelector('.dispatch-title');
+          if (titleEl && !titleEl.querySelector('.auto-extend-badge')) {
+            titleEl.insertAdjacentHTML('beforeend', '<span class="auto-extend-badge" title="Timeout auto-extended 30 min">+30m</span>');
+            setTimeout(() => titleEl.querySelector('.auto-extend-badge')?.remove(), 10000);
+          }
+        } else if (msg.event === 'idle') {
+          // Show escalation banner with extend/kill options
+          if (!panelEl.querySelector('.timeout-escalation-banner')) {
+            const banner = document.createElement('div');
+            banner.className = 'timeout-escalation-banner';
+            banner.innerHTML = `
+              <span style="font-weight:600;">⏱ Idle at timeout threshold</span>
+              <span style="font-size:11px;opacity:0.8;margin-left:4px;">Agent appears inactive. Hard kill pending.</span>
+              <button class="btn-extend-30" data-extend-dispatch="${esc(dispatch.id)}" data-duration="1800000" style="font-size:11px;padding:2px 8px;border-radius:3px;border:1px solid #D97706;color:#92400E;background:transparent;cursor:pointer;">Extend 30m</button>
+              <button class="btn-extend-60" data-extend-dispatch="${esc(dispatch.id)}" data-duration="3600000" style="font-size:11px;padding:2px 8px;border-radius:3px;border:1px solid #D97706;color:#92400E;background:transparent;cursor:pointer;">Extend 60m</button>
+              <button class="btn-kill-now" data-kill-dispatch="${esc(dispatch.id)}" style="font-size:11px;padding:2px 8px;border-radius:3px;border:1px solid #EF4444;color:#DC2626;background:transparent;cursor:pointer;">Kill now</button>
+            `;
+            banner.querySelectorAll('[data-extend-dispatch]').forEach(btn => {
+              btn.onclick = async () => {
+                const durationMs = parseInt(btn.dataset.duration, 10);
+                try {
+                  const r = await fetch(`/api/dispatch/${dispatch.id}/extend`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ duration_ms: durationMs }),
+                  });
+                  if (r.ok) {
+                    const data = await r.json();
+                    if (data.timeout_at) dispatch.timeout_at = data.timeout_at;
+                    banner.remove();
+                  }
+                } catch {}
+              };
+            });
+            // Kill now button delegates to existing kill logic
+            banner.querySelector('[data-kill-dispatch]').onclick = async () => {
+              await fetch(`/api/dispatch/${dispatch.id}`, { method: 'DELETE' });
+              dispatch.status = 'killed';
+              banner.remove();
+              syncSessionState();
+            };
+            // Insert before the log element
+            const logInner = panelEl.querySelector(`#log-${dispatch.id}`);
+            if (logInner) logInner.before(banner);
+          }
+        }
       }
     } catch (err) { console.warn('[dispatch] ws message:', err); }
   };
@@ -613,6 +782,7 @@ async function dismissAllCompleted() {
 
 let _placeTimer = null;
 let _suspendedContainer = null;
+let _recentContainer = null;
 // Off-DOM buffer for panels that don't match the active route's project context.
 // Never appended to document.body — panels move here non-destructively so their
 // DOM state (xterm, WebSocket, etc.) is preserved while hidden.
@@ -777,6 +947,11 @@ function _placeSessionPanelsNow() {
   // Re-anchor suspended-sessions panel after route changes clear main.innerHTML
   if (_suspendedContainer && _suspendedContainer.parentElement !== main) {
     main.insertBefore(_suspendedContainer, main.firstChild);
+  }
+
+  // Re-anchor recent-sessions panel (sits above suspended-sessions)
+  if (_recentContainer && _recentContainer.parentElement !== main) {
+    main.insertBefore(_recentContainer, main.firstChild);
   }
 
   // All containers are now in the document — safe to call loadDispatchContent
@@ -1477,6 +1652,7 @@ function finalizeTerminalPanel(terminalInfo) {
   syncSessionState();
   if (terminalInfo.status !== 'running' && terminalInfo.status !== 'suspended') {
     scheduleAutoDismiss('terminal', terminalInfo.id, terminalInfo);
+    refreshRecentSessions();
   }
 }
 
@@ -1565,9 +1741,12 @@ function renderTimeoutCountdown(dispatch) {
   if (dispatch.status === 'running') {
     const remaining = new Date(dispatch.timeout_at).getTime() - Date.now();
     if (remaining <= 0) return '<span class="timeout-badge timeout-expired">Timed out</span>';
+    // Show countdown badge only when < 30 minutes remaining (proxy for ~20% of window)
+    if (remaining > 30 * 60 * 1000) return '';
     const mins = Math.floor(remaining / 60000);
     const secs = Math.floor((remaining % 60000) / 1000);
-    return `<span class="timeout-countdown" title="Auto-timeout in ${mins}m ${secs}s">⏱ ${mins}m${secs < 10 ? '0' : ''}${secs}s</span>`;
+    const urgentClass = remaining < 5 * 60 * 1000 ? ' timeout-urgent' : '';
+    return `<span class="timeout-countdown${urgentClass}" title="Auto-timeout in ${mins}m ${secs}s">⏱ ${mins}m${secs < 10 ? '0' : ''}${secs}s</span>`;
   }
   if (dispatch.status === 'failed' && dispatch.completed_at) {
     const diff = Math.abs(new Date(dispatch.completed_at).getTime() - new Date(dispatch.timeout_at).getTime());
@@ -1618,7 +1797,7 @@ function createSessionPanel(type, info) {
       <div class="dispatch-header">
         <span class="status-dot ${isRunning ? (dispatch.agent_phase === 'waiting_for_input' ? 'needs-input' : dispatch.agent_phase === 'tool_running' ? 'tool-running' : 'generating') : dispatch.status}" title="${isRunning ? ({generating:'Thinking',tool_running:'Running tool',waiting_for_input:'Needs input'}[dispatch.agent_phase]||'') : ''}"></span>
         <span class="dispatch-title">${dispatchPathStr}${planBadge}${skipBadge}${suspendedBadge}${autoImplementBadge}${alertBadges}${timeoutBadge}</span>
-        <span class="dispatch-meta">${new Date(dispatch.started_at).toLocaleTimeString()}${costBadge}</span>
+        <span class="dispatch-meta">${fmtTimestamp(dispatch.started_at)}${costBadge}</span>
         <button class="focus-btn" data-focus-dispatch="${esc(id)}">Focus</button>
         <button class="minimize-btn" data-minimize-dispatch="${esc(id)}">▼</button>
         <button class="suspend-btn" data-suspend-dispatch="${esc(id)}" ${!isRunning ? 'style="display:none"' : ''}>Suspend</button>
@@ -1639,6 +1818,7 @@ function createSessionPanel(type, info) {
   </div>
 </details>` : ''}
       ${dispatch.work_item_input_needed ? '<div class="input-needed-banner" style="background:#FEF3C7;color:#92400E;padding:4px 8px;font-size:11px;border-radius:3px;margin-bottom:4px;">⚠ Waiting for input</div>' : ''}
+      ${dispatch.completion_summary_error ? `<div class="alert-badge alert-scope" style="margin:4px 8px;display:block;" title="${esc(dispatch.completion_summary_error)}">⚠ Refinement error: ${esc(dispatch.completion_summary_error)}</div>` : ''}
       ${dispatch.exit_type === 'interrupted' ? `
       <div class="recovery-banner" data-recovery-dispatch="${esc(id)}" style="background:#EDE9FE;color:#5B21B6;border:1px solid #8B5CF6;border-radius:4px;padding:6px 10px;margin:4px 8px;font-size:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <span style="font-weight:600;">Session interrupted — recover?</span>
@@ -1807,7 +1987,7 @@ function createSessionPanel(type, info) {
       <div class="terminal-header">
         <span class="status-dot ${isRunning ? 'running' : terminalInfo.status}"></span>
         <span class="terminal-title">${termPathStr}${shellBadge}${planBadge}${skipBadge}${suspendedBadge}</span>
-        <span class="terminal-meta">${new Date(terminalInfo.started_at).toLocaleTimeString()}<span class="cost-placeholder">—</span></span>
+        <span class="terminal-meta">${fmtTimestamp(terminalInfo.started_at)}<span class="cost-placeholder">—</span></span>
         <button class="focus-btn" data-focus-terminal="${esc(id)}">Focus</button>
         <button class="minimize-btn" data-minimize-terminal="${esc(id)}">▼</button>
         <button class="suspend-btn" data-suspend-terminal="${esc(id)}" ${(!isRunning || terminalInfo.agent_type !== 'claude') ? 'style="display:none"' : ''}>Suspend</button>
@@ -1912,12 +2092,11 @@ function createSessionPanel(type, info) {
     panel.className = 'cli-session-panel';
     panel.id = `cli-${id}`;
     const isRunning = session.status === 'running';
-    const elapsed = formatElapsed(session.registered_at);
     panel.innerHTML = `
       <div class="cli-session-header">
         <span class="status-dot ${isRunning ? 'running' : 'exited'}"></span>
         <span class="cli-title">${esc(session.title)}<span class="badge-cli">[CLI]</span></span>
-        <span class="cli-meta">${elapsed}</span>
+        <span class="cli-meta">${fmtTimestamp(session.registered_at)}</span>
         <button class="minimize-btn" data-minimize-cli="${esc(id)}">▼</button>
       </div>
       <div class="cli-session-body"></div>
@@ -1961,14 +2140,12 @@ async function restoreCliSessions() {
         sessionPanels.delete(key);
       }
     }
-    // Update status dots and elapsed times
+    // Update status dots
     for (const c of list) {
       const panel = document.getElementById(`cli-${c.id}`);
       if (panel) {
         const dot = panel.querySelector('.status-dot');
         if (dot) { dot.className = `status-dot ${c.status === 'running' ? 'running' : 'exited'}`; }
-        const meta = panel.querySelector('.cli-meta');
-        if (meta) { meta.textContent = formatElapsed(c.registered_at); }
       }
     }
     placeSessionPanels();
@@ -2021,6 +2198,7 @@ async function dispatchWorkItem(workItem, projectKey) {
         <div class="field">
           <label>Additional Instructions</label>
           <textarea id="dispatch-instructions" placeholder="Optional: add context, constraints, or specific instructions for the agent..."></textarea>
+          <div id="dispatch-instructions-counter" style="font-size:11px;color:var(--text-light);margin-top:2px">0 chars — No additional instructions; agent will follow work item description only</div>
         </div>
         <details id="contract-details" style="margin-bottom:14px">
           <summary style="cursor:pointer;font-size:13px;font-weight:500;color:var(--text-secondary)">Dispatch Contract</summary>
@@ -2051,6 +2229,18 @@ async function dispatchWorkItem(workItem, projectKey) {
       `,
       afterMount: (o) => {
         wireAgentTypeToggle(o, 'dispatch-agent-type', 'dispatch-perm-mode', 'dispatch-skip-perms');
+
+        const previewBtn = document.createElement('button');
+        previewBtn.type = 'button';
+        previewBtn.id = 'dispatch-preview-btn';
+        previewBtn.className = 'btn btn-secondary';
+        previewBtn.textContent = 'Preview prompt';
+        previewBtn.addEventListener('click', () => {
+          const [org, proj, comp] = (projectKey || '').split('/');
+          openPromptPreview('dispatch', { ORG: org || '', PROJECT: proj || '', COMPONENT: comp || '' }, previewBtn);
+        });
+        o.querySelector('.modal-actions').prepend(previewBtn);
+
         // Auto-populate contract fields from structured description
         if (workItem.description) {
           const desc = workItem.description;
@@ -2074,6 +2264,7 @@ async function dispatchWorkItem(workItem, projectKey) {
             o.querySelector('#contract-details').open = true;
           }
         }
+        wireInstructionCounter(o, 'dispatch-instructions');
       },
       onSubmit: async (overlay) => {
         const instructions = overlay.querySelector('#dispatch-instructions').value.trim();
@@ -2448,6 +2639,78 @@ async function refreshSuspendedPanel() {
   } catch {}
 }
 
+async function refreshRecentSessions() {
+  try {
+    const sessions = await api('terminal/recent');
+
+    let container = _recentContainer || document.getElementById('recent-sessions');
+    if (!sessions.length) {
+      if (container) container.remove();
+      _recentContainer = null;
+      return;
+    }
+
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'recent-sessions';
+      container.className = 'card';
+      container.style.marginBottom = '20px';
+    }
+    _recentContainer = container;
+
+    const statusDotClass = (status) => {
+      if (status === 'completed') return 'completed';
+      if (status === 'interrupted') return 'interrupted';
+      return 'failed';
+    };
+
+    let html = `<h3 style="margin:0 0 12px 0;font-size:15px;font-weight:600">Recent Sessions <span style="font-size:12px;font-weight:400;background:#ede9fe;color:#6d28d9;padding:2px 8px;border-radius:3px;margin-left:6px">${sessions.length}</span></h3>`;
+    html += '<div style="display:flex;flex-direction:column;gap:8px">';
+    for (const s of sessions) {
+      const keyParts = (s.project_key || '').split('/').filter(p => p && p !== '*');
+      const projectLabel = keyParts.length >= 2 ? `${esc(keyParts[0])} / ${esc(keyParts[1])}` : (keyParts[0] ? esc(keyParts[0]) : '');
+      const exitedAgo = s.exited_at ? `exited ${formatElapsed(s.exited_at)} ago` : 'exited';
+      html += `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-left:3px solid #7c3aed;border-radius:6px;flex-wrap:wrap">
+        <span class="status-dot ${statusDotClass(s.status)}" style="flex-shrink:0"></span>
+        <span style="font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${projectLabel || esc(s.title || s.id)}</span>
+        <span style="font-size:11px;color:var(--text-light);white-space:nowrap">${esc(exitedAgo)}</span>
+        <span class="suspended-badge" style="background:#ede9fe;color:#6d28d9">[${esc(s.status)}]</span>
+        <button class="resume-btn" data-recent-resume="${esc(s.id)}">Resume</button>
+      </div>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+
+    for (const s of sessions) {
+      const resumeBtn = container.querySelector(`[data-recent-resume="${CSS.escape(s.id)}"]`);
+      if (!resumeBtn) continue;
+      resumeBtn.onclick = async (e) => {
+        e.target.disabled = true;
+        try {
+          const resp = await fetch(`/api/terminal/${s.id}/resume`, { method: 'POST' });
+          if (resp.ok) {
+            await refreshRecentSessions();
+            await restoreTerminals();
+            syncSessionState();
+          } else {
+            const body = await resp.json().catch(() => ({}));
+            showToast(body.error || 'Resume failed', 'error');
+            e.target.disabled = false;
+          }
+        } catch {
+          showToast('Resume failed — network error', 'error');
+          e.target.disabled = false;
+        }
+      };
+    }
+
+    const main = $('#main');
+    if (!container.parentElement || container.parentElement !== main) {
+      main.insertBefore(container, main.firstChild);
+    }
+  } catch {}
+}
+
 // Restore active dispatches on page load
 async function restoreDispatches() {
   try {
@@ -2675,6 +2938,10 @@ async function buildTree() {
       group.appendChild(list);
       tree.appendChild(group);
     } catch (err) {
+      if (err?.status === 404) {
+        console.debug('[buildTree] org not found, skipping:', org);
+        continue;
+      }
       console.error('[buildTree] org render failed', { org, err });
       const group = document.createElement('div');
       group.className = 'org-group org-degraded';
@@ -3069,23 +3336,26 @@ function renderWorkItemsTable(items, allWorkItems, tableId) {
     html += `<td>${depHtml}</td>`;
     html += `<td>${w.epic_id ? `<span class="badge badge-epic" data-epic-nav="${esc(w.epic_id)}">${esc(w.epic_id)}</span>` : ''}</td>`;
     html += `<td>${(w.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</td>`;
-    html += `<td>${w.created_at ? new Date(w.created_at).toLocaleDateString() : '—'}</td>`;
-    html += `<td>${w.done_at ? new Date(w.done_at).toLocaleDateString() : '—'}</td>`;
+    html += `<td>${fmtTimestamp(w.created_at)}</td>`;
+    html += `<td>${fmtTimestamp(w.done_at)}</td>`;
     html += `<td><button class="expand-btn" data-wi="${idx}">details</button>`;
     html += `<button class="edit-btn" data-wi-edit="${idx}">edit</button>`;
-    if (w.status === 'draft') {
-      html += `<button class="btn-refine" onclick="refineWorkItem('${esc(w.id)}')" title="Ask coordinator to generate an implementation contract">Refine</button>`;
-    }
+    const canRefineSkill = ['draft','planned','blocked','in-progress'].includes(w.status);
     if (canDispatch) {
       const hasActiveDispatch = (window._activeDispatches || []).some(d => d.work_item_id === w.id && d.status === 'running');
       // Keep in sync with constants.mjs AUTO_IMPLEMENTABLE_STATUSES (frontend has no module loader).
       const isAutoEligible = !hasActiveDispatch && ['planned','in-progress'].includes(w.status);
       html += `<span class="split-btn-group" data-split-wi="${idx}">`;
       html += `<button class="dispatch-btn" data-wi-idx="${idx}">dispatch</button>`;
+      if (canRefineSkill) {
+        html += `<button class="btn-item-refine" data-refine-dispatch-wi="${esc(w.id)}">Refine</button>`;
+      }
       html += `<button class="dispatch-chevron" data-chevron-wi="${idx}" title="More dispatch options">▾</button>`;
       html += `<div class="dispatch-dropdown hidden" data-dropdown-wi="${idx}">`;
       html += `<button ${isAutoEligible ? '' : 'disabled'} data-auto-wi="${idx}" title="${hasActiveDispatch ? 'A dispatch is already running for this item' : (!isAutoEligible ? 'Item status not eligible' : '')}">Auto-implement</button>`;
       html += `</div></span>`;
+    } else if (canRefineSkill) {
+      html += `<button class="btn-item-refine" data-refine-dispatch-wi="${esc(w.id)}">Refine</button>`;
     }
     html += `<button class="delete-btn" data-wi-del="${idx}">delete</button>`;
     html += `</td></tr>`;
@@ -3204,7 +3474,7 @@ function renderComponentView(org, proj, comp, data, workItems, files, projectEpi
   html += `<button class="btn-add-wi" id="add-work-item">+ Add Task</button>`;
   html += `<button class="btn-add-wi" id="discuss-agent" style="background:var(--teal);margin-left:8px">Discuss with Agent</button>`;
   html += `<button class="btn-add-wi" id="review-prs" style="background:var(--blue);margin-left:8px">Review PRs</button>`;
-  html += `<button class="btn-add-wi" id="refine-project" style="background:var(--purple);margin-left:8px">Refine Project</button>`;
+  html += `<button class="btn-add-wi" id="refine-project" style="background:var(--accent);margin-left:8px">Refine Project</button>`;
   html += `<a href="#agents?project=${esc(currentProjectKey)}" style="margin-left:8px;font-size:12px;color:var(--accent)">View agents</a>`;
 
   // Board toggle bar (only if project has epic-linked items or epics exist)
@@ -3264,6 +3534,8 @@ function renderComponentView(org, proj, comp, data, workItems, files, projectEpi
     if (allTags.length) {
       html += `<input type="text" id="wi-filter-tags" placeholder="Filter by tag..." style="width:120px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;margin-left:8px" />`;
     }
+    html += `<select id="wi-filter-date-preset" style="margin-left:8px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"><option value="all">All dates</option><option value="today">Today</option><option value="7d">Last 7d</option><option value="30d">Last 30d</option><option value="custom">Custom</option></select>`;
+    html += `<span id="wi-date-custom-range" hidden style="display:inline-flex;align-items:center;gap:4px;margin-left:4px"><input type="date" id="wi-filter-date-from" style="padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" /><span style="color:var(--text-light)">–</span><input type="date" id="wi-filter-date-to" style="padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" /></span>`;
     html += `<span class="filter-count" id="wi-filter-count">${workItems.length} tasks</span>`;
     html += `<button class="filter-clear" id="wi-filter-clear" style="display:none">Clear filters</button>`;
     html += `</div>`;
@@ -3444,6 +3716,65 @@ function bindTabs() {
     };
   });
 
+  // Per-item Refine skill dispatch buttons
+  document.querySelectorAll('.btn-item-refine[data-refine-dispatch-wi]').forEach(btn => {
+    btn.onclick = async () => {
+      const wiId = btn.dataset.refineDispatchWi;
+      const activeRefine = (window._activeDispatches || []).find(d =>
+        d.work_item_id === wiId && d.skill_id === 'project-refine-tasks' && d.status === 'running'
+      );
+      if (activeRefine) {
+        showToast('A Refine dispatch is already active for this item', 'error');
+        return;
+      }
+      btn.disabled = true;
+      const origText = btn.textContent;
+      btn.textContent = '...';
+      try {
+        const resp = await fetch('/api/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_key: currentProjectKey,
+            work_item_id: wiId,
+            skill_id: 'project-refine-tasks',
+            additional_instructions: '',
+          }),
+        });
+        const result = await resp.json();
+        if (!resp.ok) {
+          showToast(result.error || 'Refine dispatch failed', 'error');
+        } else {
+          const wi = currentWorkItems.find(w => w.id === wiId);
+          const dispatch = {
+            id: result.dispatch_id,
+            work_item_id: wiId,
+            work_item_title: wi?.title || '',
+            project_key: currentProjectKey,
+            title: wi?.title || wiId,
+            permission_mode: 'acceptEdits',
+            skip_permissions: false,
+            dispatch_mode: 'skill',
+            skill_id: 'project-refine-tasks',
+            status: 'running',
+            agent_phase: 'generating',
+            claude_session_id: null,
+            started_at: new Date().toISOString(),
+          };
+          activeDispatches.push(dispatch);
+          syncSessionState();
+          createDispatchPanel(dispatch);
+          placeSessionPanels();
+          await loadDispatchContent(dispatch);
+        }
+      } catch {
+        showToast('Refine dispatch failed — network error', 'error');
+      }
+      btn.disabled = false;
+      btn.textContent = origText;
+    };
+  });
+
   // Split button chevron — toggle dropdown
   document.querySelectorAll('.dispatch-chevron[data-chevron-wi]').forEach(chevron => {
     chevron.onclick = (e) => {
@@ -3534,7 +3865,10 @@ function bindTabs() {
   const reviewBtn = document.getElementById('review-prs');
   if (reviewBtn) reviewBtn.onclick = () => showReviewModal(currentProjectKey);
   const refineProjectBtn = document.getElementById('refine-project');
-  if (refineProjectBtn) refineProjectBtn.onclick = () => showRefineProjectModal(org, proj, comp);
+  if (refineProjectBtn) refineProjectBtn.onclick = () => {
+    const [_org, _proj, _comp] = currentProjectKey.split('/');
+    showRefineProjectModal(_org, _proj, _comp);
+  };
 
   // Filter bar
   bindFilterBar();
@@ -3698,6 +4032,27 @@ async function loadAwaitingAction(projectKey) {
   } catch { widget.innerHTML = ''; }
 }
 
+// --- Date filter utilities ---
+
+function utcMidnightMs(daysBack) {
+  const now = new Date();
+  const y = now.getUTCFullYear(), m = now.getUTCMonth(), d = now.getUTCDate();
+  return new Date(Date.UTC(y, m, d - daysBack)).getTime();
+}
+
+function computeDateBounds(preset, dateFrom, dateTo) {
+  if (preset === 'all') return { fromMs: null, toMs: null };
+  if (preset === 'today') return { fromMs: utcMidnightMs(0), toMs: null };
+  if (preset === '7d') return { fromMs: utcMidnightMs(6), toMs: null };
+  if (preset === '30d') return { fromMs: utcMidnightMs(29), toMs: null };
+  if (preset === 'custom') {
+    const fromMs = dateFrom ? new Date(dateFrom + 'T00:00:00Z').getTime() : null;
+    const toMs = dateTo ? new Date(dateTo + 'T00:00:00Z').getTime() + 86400000 : null;
+    return { fromMs, toMs };
+  }
+  return { fromMs: null, toMs: null };
+}
+
 // --- Filter bar logic ---
 function bindFilterBar() {
   const bar = document.getElementById('wi-filter-bar');
@@ -3706,7 +4061,7 @@ function bindFilterBar() {
   // Exclusion model: unchecked = hidden. Default: done + cancelled + archived excluded.
   const excludedStatus = new Set(['done', 'cancelled', 'archived']);
   const excludedPriority = new Set();
-  const activeFilters = { epic: '', tags: '' };
+  const activeFilters = { epic: '', tags: '', datePreset: 'all', dateFrom: null, dateTo: null };
   const prefsKey = 'wi_filters';
 
   // Restore from server preferences (async, applies on load)
@@ -3722,6 +4077,9 @@ function bindFilterBar() {
         if (saved.excludedPriority) saved.excludedPriority.forEach(p => excludedPriority.add(p));
         activeFilters.epic = saved.epic || '';
         activeFilters.tags = saved.tags || '';
+        activeFilters.datePreset = saved.date_preset || 'all';
+        activeFilters.dateFrom = saved.date_from || null;
+        activeFilters.dateTo = saved.date_to || null;
         // Sync checkbox UI
         bar.querySelectorAll('input[data-wi-status]').forEach(cb => {
           cb.checked = !excludedStatus.has(cb.dataset.wiStatus);
@@ -3733,6 +4091,15 @@ function bindFilterBar() {
         if (epicSel && activeFilters.epic) epicSel.value = activeFilters.epic;
         const tagsInput = document.getElementById('wi-filter-tags');
         if (tagsInput && activeFilters.tags) tagsInput.value = activeFilters.tags;
+        // Sync date preset UI
+        const datePre = document.getElementById('wi-filter-date-preset');
+        if (datePre) datePre.value = activeFilters.datePreset;
+        const customRange = document.getElementById('wi-date-custom-range');
+        if (customRange) customRange.hidden = activeFilters.datePreset !== 'custom';
+        const dateFromInput = document.getElementById('wi-filter-date-from');
+        if (dateFromInput && activeFilters.dateFrom) dateFromInput.value = activeFilters.dateFrom;
+        const dateToInput = document.getElementById('wi-filter-date-to');
+        if (dateToInput && activeFilters.dateTo) dateToInput.value = activeFilters.dateTo;
         applyFilters();
       } else {
         applyFilters(); // apply defaults
@@ -3746,6 +4113,9 @@ function bindFilterBar() {
       excludedPriority: [...excludedPriority],
       epic: activeFilters.epic,
       tags: activeFilters.tags,
+      date_preset: activeFilters.datePreset,
+      date_from: activeFilters.dateFrom,
+      date_to: activeFilters.dateTo,
     });
     fetch('/api/settings/preferences', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -3757,7 +4127,9 @@ function bindFilterBar() {
     const rows = document.querySelectorAll('[data-wi-row]');
     let visible = 0;
     const total = rows.length;
-    const hasFilters = excludedStatus.size || excludedPriority.size || activeFilters.epic || activeFilters.tags;
+    const hasFilters = excludedStatus.size || excludedPriority.size || activeFilters.epic || activeFilters.tags || activeFilters.datePreset !== 'all';
+
+    const { fromMs: dateFromMs, toMs: dateToMs } = computeDateBounds(activeFilters.datePreset, activeFilters.dateFrom, activeFilters.dateTo);
 
     // Build set of work item IDs that have active sessions
     const wiIdsWithActiveSessions = new Set();
@@ -3772,6 +4144,11 @@ function bindFilterBar() {
       if (activeFilters.tags) {
         const rowTags = (row.dataset.wiTagsVal || '').toLowerCase();
         if (!rowTags.includes(activeFilters.tags.toLowerCase())) show = false;
+      }
+      if (dateFromMs !== null || dateToMs !== null) {
+        const createdAt = parseInt(row.dataset.wiCreatedatVal || '0', 10);
+        if (dateFromMs !== null && createdAt < dateFromMs) show = false;
+        if (dateToMs !== null && createdAt >= dateToMs) show = false;
       }
       // Force-show rows with active sessions even if filtered out
       const wiId = row.querySelector('code')?.textContent;
@@ -3830,6 +4207,33 @@ function bindFilterBar() {
   const tagsInput = document.getElementById('wi-filter-tags');
   if (tagsInput) tagsInput.oninput = () => { activeFilters.tags = tagsInput.value; applyFilters(); };
 
+  // Date preset selector
+  const datePresetSel = document.getElementById('wi-filter-date-preset');
+  const customDateRange = document.getElementById('wi-date-custom-range');
+  const dateFromInput = document.getElementById('wi-filter-date-from');
+  const dateToInput = document.getElementById('wi-filter-date-to');
+
+  if (datePresetSel) {
+    datePresetSel.onchange = () => {
+      activeFilters.datePreset = datePresetSel.value;
+      if (customDateRange) customDateRange.hidden = activeFilters.datePreset !== 'custom';
+      applyFilters();
+    };
+  }
+
+  // Custom date inputs — debounced 300ms wrapping both applyFilters and saveFilters as a unit
+  let dateDebounceTimer = null;
+  function onCustomDateChange() {
+    clearTimeout(dateDebounceTimer);
+    dateDebounceTimer = setTimeout(() => {
+      activeFilters.dateFrom = dateFromInput ? (dateFromInput.value || null) : null;
+      activeFilters.dateTo = dateToInput ? (dateToInput.value || null) : null;
+      applyFilters();
+    }, 300);
+  }
+  if (dateFromInput) dateFromInput.oninput = onCustomDateChange;
+  if (dateToInput) dateToInput.oninput = onCustomDateChange;
+
   // Clear button — resets to show all
   const clearBtn = document.getElementById('wi-filter-clear');
   if (clearBtn) clearBtn.onclick = () => {
@@ -3837,9 +4241,16 @@ function bindFilterBar() {
     excludedPriority.clear();
     activeFilters.epic = '';
     activeFilters.tags = '';
+    activeFilters.datePreset = 'all';
+    activeFilters.dateFrom = null;
+    activeFilters.dateTo = null;
     bar.querySelectorAll('input[data-wi-status], input[data-wi-priority]').forEach(cb => { cb.checked = true; });
     if (epicSel) epicSel.value = '';
     if (tagsInput) tagsInput.value = '';
+    if (datePresetSel) datePresetSel.value = 'all';
+    if (customDateRange) customDateRange.hidden = true;
+    if (dateFromInput) dateFromInput.value = '';
+    if (dateToInput) dateToInput.value = '';
     applyFilters();
   };
 
@@ -3940,7 +4351,7 @@ function showWorkItemModal(existingItem = null) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
-    <div class="modal">
+    <div class="modal modal-wide">
       <h3>${isEdit ? `Edit ${esc(existingItem.id)}` : 'New Task'}</h3>
       <div class="field">
         <label>Title *</label>
@@ -3959,16 +4370,39 @@ function showWorkItemModal(existingItem = null) {
         </select>
       </div>
       <div class="field">
-        <label>Description</label>
-        <textarea id="wi-description">${isEdit && existingItem.description ? esc(existingItem.description) : ''}</textarea>
-      </div>
-      <div class="field">
         <label>Tags (comma-separated)</label>
         <input type="text" id="wi-tags" value="${isEdit && existingItem.tags ? esc(existingItem.tags.join(', ')) : ''}" />
       </div>
       <div class="field">
         <label>Depends On (comma-separated W-XXX IDs)</label>
         <input type="text" id="wi-depends" value="${isEdit && existingItem.depends_on ? esc(existingItem.depends_on.join(', ')) : ''}" />
+      </div>
+      <div class="field">
+        <label>Description</label>
+        <div id="wi-attach-banner" class="attach-unavailable-banner" style="display:none">
+          Attachments unavailable — edit as plain text
+        </div>
+        <div class="editor-panes">
+          <div class="editor-input-pane">
+            <textarea id="wi-description" placeholder="Markdown supported...">${isEdit && existingItem.description ? esc(existingItem.description) : ''}</textarea>
+            <div id="wi-drop-zone" class="drop-zone">
+              <span class="drop-zone-text" id="wi-drop-text">Drop files here or click to browse</span>
+              <button type="button" class="btn-browse" id="wi-browse-btn">Browse</button>
+              <input type="file" id="wi-file-input" style="display:none" accept="image/*,.pdf,.txt,.md,.csv">
+            </div>
+            <div id="wi-upload-progress" class="upload-progress" style="display:none">
+              <div class="upload-progress-track">
+                <div class="upload-progress-fill" id="wi-progress-fill" style="width:0%"></div>
+              </div>
+              <span id="wi-progress-text">0%</span>
+            </div>
+            <div id="wi-upload-error" class="upload-error" style="display:none"></div>
+          </div>
+          <div class="editor-preview-pane">
+            <div class="editor-preview-label">Preview</div>
+            <div id="wi-preview" class="editor-preview-content"></div>
+          </div>
+        </div>
       </div>
       <div class="modal-actions">
         <button class="btn btn-cancel" id="wi-cancel">Cancel</button>
@@ -3977,6 +4411,122 @@ function showWorkItemModal(existingItem = null) {
     </div>
   `;
   document.body.appendChild(overlay);
+
+  const textarea    = overlay.querySelector('#wi-description');
+  const preview     = overlay.querySelector('#wi-preview');
+  const dropZone    = overlay.querySelector('#wi-drop-zone');
+  const dropText    = overlay.querySelector('#wi-drop-text');
+  const fileInput   = overlay.querySelector('#wi-file-input');
+  const browseBtn   = overlay.querySelector('#wi-browse-btn');
+  const progressEl  = overlay.querySelector('#wi-upload-progress');
+  const progressFill = overlay.querySelector('#wi-progress-fill');
+  const progressText = overlay.querySelector('#wi-progress-text');
+  const errorEl     = overlay.querySelector('#wi-upload-error');
+  const bannerEl    = overlay.querySelector('#wi-attach-banner');
+
+  function updatePreview() {
+    preview.innerHTML = renderMd(textarea.value || '');
+  }
+  textarea.addEventListener('input', updatePreview);
+  updatePreview();
+
+  fetch('/api/work-items/assets/probe').then(r => {
+    if (!r.ok) showAttachUnavailable();
+  }).catch(() => showAttachUnavailable());
+
+  function showAttachUnavailable() {
+    bannerEl.style.display = '';
+    dropZone.style.display = 'none';
+    progressEl.style.display = 'none';
+  }
+
+  function showUploadError(msg) {
+    errorEl.textContent = msg;
+    errorEl.style.display = '';
+  }
+
+  function insertAtCursorOrAppend(ta, text) {
+    const { selectionStart: start, selectionEnd: end } = ta;
+    const val = ta.value;
+    if (start !== end) {
+      ta.value = val.slice(0, start) + text + val.slice(end);
+      ta.setSelectionRange(start + text.length, start + text.length);
+    } else if (document.activeElement === ta) {
+      ta.value = val.slice(0, start) + text + val.slice(start);
+      ta.setSelectionRange(start + text.length, start + text.length);
+    } else {
+      ta.value = val + text;
+    }
+  }
+
+  function uploadFile(file) {
+    errorEl.style.display = 'none';
+    progressEl.style.display = '';
+    progressFill.style.width = '0%';
+    progressText.textContent = '0%';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/work-items/assets/upload');
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const pct = Math.round((e.loaded / e.total) * 100);
+        progressFill.style.width = `${pct}%`;
+        progressText.textContent = `${pct}%`;
+      }
+    };
+
+    xhr.onload = () => {
+      progressEl.style.display = 'none';
+      if (xhr.status >= 200 && xhr.status < 300) {
+        progressFill.style.width = '100%';
+        try {
+          const result = JSON.parse(xhr.responseText);
+          const url = `![${file.name}](/api/work-items/assets/${result.filename})`;
+          insertAtCursorOrAppend(textarea, url);
+          updatePreview();
+        } catch {
+          showUploadError('Upload failed — your text has not been changed');
+        }
+      } else {
+        showUploadError('Upload failed — your text has not been changed');
+      }
+    };
+
+    xhr.onerror = () => {
+      progressEl.style.display = 'none';
+      showUploadError('Upload failed — your text has not been changed');
+    };
+
+    xhr.send(formData);
+  }
+
+  dropZone.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drop-active');
+    dropText.textContent = 'Release to upload';
+  });
+  dropZone.addEventListener('dragover', (e) => { e.preventDefault(); });
+  dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('drop-active');
+    dropText.textContent = 'Drop files here or click to browse';
+  });
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drop-active');
+    dropText.textContent = 'Drop files here or click to browse';
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    if (files.length > 0) uploadFile(files[0]);
+  });
+
+  browseBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files.length > 0) uploadFile(fileInput.files[0]);
+    fileInput.value = '';
+  });
 
   overlay.querySelector('#wi-cancel').onclick = () => overlay.remove();
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
@@ -3993,7 +4543,7 @@ function showWorkItemModal(existingItem = null) {
       title,
       status: overlay.querySelector('#wi-status').value,
       priority: overlay.querySelector('#wi-priority').value,
-      description: overlay.querySelector('#wi-description').value.trim(),
+      description: textarea.value.trim(),
       tags: overlay.querySelector('#wi-tags').value.split(',').map(t => t.trim()).filter(Boolean),
       depends_on: overlay.querySelector('#wi-depends').value.split(',').map(t => t.trim()).filter(Boolean),
     };
@@ -4012,7 +4562,7 @@ function showWorkItemModal(existingItem = null) {
       if (!resp.ok) throw new Error(result.error || 'Failed');
 
       overlay.remove();
-      setBacklog(null); setEpicCache(null); // bust cache
+      setBacklog(null); setEpicCache(null);
       await Promise.all([buildTree(), buildEpicTree()]);
       route();
     } catch (e) {
@@ -4021,6 +4571,8 @@ function showWorkItemModal(existingItem = null) {
       alert('Error: ' + e.message);
     }
   };
+
+  overlay.querySelector('#wi-title').focus();
 }
 
 // --- Discuss Modal ---
@@ -4204,6 +4756,7 @@ function navigateToRefinementTemplate(org, proj, comp) {
 }
 
 async function showRefineProjectModal(org, proj, comp) {
+  const triggerEl = document.getElementById('refine-project');
   const projectKey = `${org}/${proj}/${comp}`;
   let inScopeItems = [];
   try {
@@ -4233,6 +4786,7 @@ async function showRefineProjectModal(org, proj, comp) {
     submitLabel: 'Confirm',
     cancelId: 'refine-project-cancel',
     submitId: 'refine-project-submit',
+    onClose: () => { if (triggerEl) triggerEl.focus(); },
     buildFields: () => `
       <div class="field">
         <label>In-scope items (${inScopeItems.length})</label>
@@ -4264,6 +4818,16 @@ async function showRefineProjectModal(org, proj, comp) {
         if (dryRunField) dryRunField.style.display = mode === 'terminal' ? 'none' : '';
       };
       radios.forEach(r => r.addEventListener('change', toggleDryRun));
+
+      const previewBtn = document.createElement('button');
+      previewBtn.type = 'button';
+      previewBtn.id = 'refine-preview-btn';
+      previewBtn.className = 'btn btn-secondary';
+      previewBtn.textContent = 'Preview prompt';
+      previewBtn.addEventListener('click', () => {
+        openPromptPreview('refinement', {}, previewBtn);
+      });
+      ov.querySelector('.modal-actions').prepend(previewBtn);
     },
     onSubmit: async (ov) => {
       const instructions = ov.querySelector('#refine-project-instructions')?.value || '';
@@ -4653,6 +5217,8 @@ async function renderEpicDetailView(epicId) {
       const checked = (s !== 'done' && s !== 'cancelled' && s !== 'archived') ? 'checked' : '';
       html += `<label class="filter-checkbox"><input type="checkbox" data-ef-status="${esc(s)}" ${checked} />${esc(s)}</label>`;
     }
+    html += `<select id="ef-filter-date-preset" style="margin-left:8px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"><option value="all">All dates</option><option value="today">Today</option><option value="7d">Last 7d</option><option value="30d">Last 30d</option><option value="custom">Custom</option></select>`;
+    html += `<span id="ef-date-custom-range" hidden style="display:inline-flex;align-items:center;gap:4px;margin-left:4px"><input type="date" id="ef-filter-date-from" style="padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" /><span style="color:var(--text-light)">–</span><input type="date" id="ef-filter-date-to" style="padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" /></span>`;
     html += `<span class="filter-count" id="epic-filter-count">${items.length} tasks</span>`;
     html += `<button class="filter-clear" id="epic-filter-clear" style="display:none">Clear filters</button>`;
     html += `</div>`;
@@ -4670,7 +5236,7 @@ async function renderEpicDetailView(epicId) {
       const depTooltip = depState.blocked ? ` title="Dependencies not yet complete: ${depState.pending.join(', ')}"` : '';
       const itemFlagHtml = (item.input_needed ? `<span class="flag-badge flag-input">input needed</span>` : '') +
                            (item.approval_active ? `<span class="flag-badge flag-approval">approval needed</span>` : '');
-      html += `<tr class="epic-task-row${rowClass}" data-ef-row data-ef-status-val="${esc(item.status)}"${depTooltip}>`;
+      html += `<tr class="epic-task-row${rowClass}" data-ef-row data-ef-status-val="${esc(item.status)}" data-ef-createdat-val="${new Date(item.created_at).getTime() || 0}"${depTooltip}>`;
       html += `<td><code>${esc(item.id)}</code></td>`;
       html += `<td>${esc(item.title)}</td>`;
       html += `<td><span class="badge badge-${sc}" data-status-click="${esc(item.id)}" data-current-status="${esc(item.status)}" style="cursor:pointer">${esc(item.status)}</span>${itemFlagHtml}</td>`;
@@ -4743,8 +5309,8 @@ async function renderEpicDetailView(epicId) {
   html += `<dt>Target Date</dt><dd>${epic.target_date || '—'}</dd>`;
   html += `<dt>Tags</dt><dd>${(epic.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('') || '—'}</dd>`;
   html += `<dt>Projects</dt><dd>${(epic.project_keys || []).map(k => `<span class="tag">${esc(k)}</span>`).join('') || '—'}</dd>`;
-  html += `<dt>Created</dt><dd>${epic.created_at ? new Date(epic.created_at).toLocaleDateString() : (epic.created || '—')}</dd>`;
-  html += `<dt>Updated</dt><dd>${epic.updated_at ? new Date(epic.updated_at).toLocaleDateString() : (epic.updated || '—')}</dd>`;
+  html += `<dt>Created</dt><dd>${epic.created_at ? fmtTimestamp(epic.created_at) : (epic.created || '—')}</dd>`;
+  html += `<dt>Updated</dt><dd>${epic.updated_at ? fmtTimestamp(epic.updated_at) : (epic.updated || '—')}</dd>`;
   html += `</dl>`;
   if (epic.description?.trim()) {
     html += `<h3>Description</h3><div class="md-inline">${renderMd(epic.description)}</div>`;
@@ -4781,11 +5347,35 @@ function bindEpicDetailEvents(epicId) {
   const efBar = document.getElementById('epic-filter-bar');
   if (efBar) {
     const excludedStatus = new Set(['done', 'cancelled']);
+    const efPrefsKey = 'ef_filters';
+    let efDatePreset = 'all';
+    let efDateFrom = null;
+    let efDateTo = null;
+
+    function saveEpicFilters() {
+      const payload = JSON.stringify({
+        epic_date_preset: efDatePreset,
+        epic_date_from: efDateFrom,
+        epic_date_to: efDateTo,
+      });
+      fetch('/api/settings/preferences', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [efPrefsKey]: payload }),
+      }).catch(() => {});
+    }
+
     function applyEpicFilters() {
       const rows = document.querySelectorAll('[data-ef-row]');
       let visible = 0;
+      const { fromMs: efFromMs, toMs: efToMs } = computeDateBounds(efDatePreset, efDateFrom, efDateTo);
+      const hasDateFilter = efDatePreset !== 'all';
       rows.forEach(row => {
-        const show = !excludedStatus.has(row.dataset.efStatusVal);
+        let show = !excludedStatus.has(row.dataset.efStatusVal);
+        if (show && (efFromMs !== null || efToMs !== null)) {
+          const createdAt = parseInt(row.dataset.efCreatedatVal || '0', 10);
+          if (efFromMs !== null && createdAt < efFromMs) show = false;
+          if (efToMs !== null && createdAt >= efToMs) show = false;
+        }
         row.style.display = show ? '' : 'none';
         // Hide associated detail and session rows
         const id = row.querySelector('code')?.textContent;
@@ -4799,10 +5389,36 @@ function bindEpicDetailEvents(epicId) {
       });
       const total = rows.length;
       const countEl = document.getElementById('epic-filter-count');
-      if (countEl) countEl.textContent = excludedStatus.size ? `${visible} of ${total} tasks` : `${total} tasks`;
+      const hasFilters = excludedStatus.size || hasDateFilter;
+      if (countEl) countEl.textContent = hasFilters ? `${visible} of ${total} tasks` : `${total} tasks`;
       const clearBtn = document.getElementById('epic-filter-clear');
-      if (clearBtn) clearBtn.style.display = excludedStatus.size ? '' : 'none';
+      if (clearBtn) clearBtn.style.display = hasFilters ? '' : 'none';
+      saveEpicFilters();
     }
+
+    // Restore epic date filter from preferences
+    (async () => {
+      try {
+        const res = await fetch('/api/settings/preferences');
+        const prefs = await res.json();
+        if (prefs[efPrefsKey]) {
+          const saved = JSON.parse(prefs[efPrefsKey]);
+          efDatePreset = saved.epic_date_preset || 'all';
+          efDateFrom = saved.epic_date_from || null;
+          efDateTo = saved.epic_date_to || null;
+          const efDateSel = document.getElementById('ef-filter-date-preset');
+          if (efDateSel) efDateSel.value = efDatePreset;
+          const efCustomRange = document.getElementById('ef-date-custom-range');
+          if (efCustomRange) efCustomRange.hidden = efDatePreset !== 'custom';
+          const efFromInput = document.getElementById('ef-filter-date-from');
+          if (efFromInput && efDateFrom) efFromInput.value = efDateFrom;
+          const efToInput = document.getElementById('ef-filter-date-to');
+          if (efToInput && efDateTo) efToInput.value = efDateTo;
+        }
+      } catch {}
+      applyEpicFilters();
+    })();
+
     efBar.querySelectorAll('input[data-ef-status]').forEach(cb => {
       cb.onchange = () => {
         if (cb.checked) excludedStatus.delete(cb.dataset.efStatus);
@@ -4810,13 +5426,47 @@ function bindEpicDetailEvents(epicId) {
         applyEpicFilters();
       };
     });
+
+    // Epic date preset selector
+    const efDateSel = document.getElementById('ef-filter-date-preset');
+    const efCustomRange = document.getElementById('ef-date-custom-range');
+    const efFromInput = document.getElementById('ef-filter-date-from');
+    const efToInput = document.getElementById('ef-filter-date-to');
+
+    if (efDateSel) {
+      efDateSel.onchange = () => {
+        efDatePreset = efDateSel.value;
+        if (efCustomRange) efCustomRange.hidden = efDatePreset !== 'custom';
+        applyEpicFilters();
+      };
+    }
+
+    // Epic custom date inputs — debounced 300ms
+    let efDateDebounceTimer = null;
+    function onEfCustomDateChange() {
+      clearTimeout(efDateDebounceTimer);
+      efDateDebounceTimer = setTimeout(() => {
+        efDateFrom = efFromInput ? (efFromInput.value || null) : null;
+        efDateTo = efToInput ? (efToInput.value || null) : null;
+        applyEpicFilters();
+      }, 300);
+    }
+    if (efFromInput) efFromInput.oninput = onEfCustomDateChange;
+    if (efToInput) efToInput.oninput = onEfCustomDateChange;
+
     const efClear = document.getElementById('epic-filter-clear');
     if (efClear) efClear.onclick = () => {
       excludedStatus.clear();
+      efDatePreset = 'all';
+      efDateFrom = null;
+      efDateTo = null;
       efBar.querySelectorAll('input[data-ef-status]').forEach(cb => { cb.checked = true; });
+      if (efDateSel) efDateSel.value = 'all';
+      if (efCustomRange) efCustomRange.hidden = true;
+      if (efFromInput) efFromInput.value = '';
+      if (efToInput) efToInput.value = '';
       applyEpicFilters();
     };
-    applyEpicFilters(); // apply defaults (hide done+cancelled)
   }
 
   // Unlink buttons
@@ -5512,10 +6162,12 @@ async function showEpicDispatchModal(epicId) {
       <div class="field">
         <label>Additional Instructions</label>
         <textarea id="epic-dispatch-instructions" placeholder="Optional context..."></textarea>
+        <div id="epic-dispatch-instructions-counter" style="font-size:11px;color:var(--text-light);margin-top:2px">0 chars — No additional instructions; agent will follow work item description only</div>
       </div>
       ${permissionModeSelect('epic-dispatch-perm-mode')}
       ${skipPermissionsCheckbox('epic-dispatch-skip-perms')}
     `,
+    afterMount: (o) => wireInstructionCounter(o, 'epic-dispatch-instructions'),
     onSubmit: async (overlay) => {
       const modeSelect = overlay.querySelector('#epic-dispatch-mode');
       const projectSelect = overlay.querySelector('#epic-dispatch-project');
@@ -6151,7 +6803,6 @@ function renderAgentTile(agent) {
   } else {
     dotClass = 'generating';
   }
-  const elapsed = formatElapsed(agent.started_at);
   const aKeyParts = (agent.project_key || '').split('/').filter(p => p && p !== '*');
   const aBreadcrumb = [];
   if (aKeyParts.length >= 2) aBreadcrumb.push(`${aKeyParts[0]} / ${aKeyParts[1]}`);
@@ -6187,7 +6838,7 @@ function renderAgentTile(agent) {
     <div class="agent-tile-header">
       <span class="status-dot ${dotClass}"></span>
       <span class="agent-tile-title">${esc(title)}</span>
-      <span class="agent-tile-elapsed" data-started="${agent.started_at}">${elapsed}</span>
+      <span class="agent-tile-elapsed" data-started="${agent.started_at}">${fmtTimestamp(agent.started_at)}</span>
     </div>
     <div class="agent-tile-badges">${badges}</div>
     <div class="agent-tile-preview">${esc(preview)}</div>
@@ -6305,6 +6956,9 @@ function renderAgentsView(agents, filters = {}) {
   const epicFilter = filters.epic || '';
   const projectFilter = filters.project || '';
   const autoOnly = filters.autoOnly || false;
+  const agentDatePreset = filters.agentDate || 'all';
+  const agentDateFrom = filters.agentDateFrom || '';
+  const agentDateTo = filters.agentDateTo || '';
 
   let filtered = agents;
   if (statusFilter === 'active') filtered = filtered.filter(a => a.status === 'running');
@@ -6313,6 +6967,15 @@ function renderAgentsView(agents, filters = {}) {
   if (epicFilter) filtered = filtered.filter(a => a.epic_id === epicFilter);
   if (projectFilter) filtered = filtered.filter(a => a.project_key === projectFilter);
   if (autoOnly) filtered = filtered.filter(a => a.dispatch_mode === 'auto_implement');
+  if (agentDatePreset !== 'all') {
+    const { fromMs, toMs } = computeDateBounds(agentDatePreset, agentDateFrom, agentDateTo);
+    filtered = filtered.filter(a => {
+      const t = a.started_at ? new Date(a.started_at).getTime() : 0;
+      if (fromMs !== null && t < fromMs) return false;
+      if (toMs !== null && t >= toMs) return false;
+      return true;
+    });
+  }
 
   // Collect unique epics/projects for dropdowns
   const allEpics = [...new Set(agents.map(a => a.epic_id).filter(Boolean))].sort();
@@ -6337,6 +7000,8 @@ function renderAgentsView(agents, filters = {}) {
   }
   html += `<button class="btn-add-wi" id="agents-quick-dispatch">+ Dispatch</button>`;
   html += `<label style="font-size:12px;display:inline-flex;align-items:center;gap:4px;margin-left:8px;cursor:pointer"><input type="checkbox" id="agents-auto-only"${filters.autoOnly ? ' checked' : ''}> Auto-implement only</label>`;
+  html += `<select id="agents-date-preset" style="margin-left:8px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"><option value="all"${agentDatePreset === 'all' ? ' selected' : ''}>All dates</option><option value="today"${agentDatePreset === 'today' ? ' selected' : ''}>Today</option><option value="7d"${agentDatePreset === '7d' ? ' selected' : ''}>Last 7d</option><option value="30d"${agentDatePreset === '30d' ? ' selected' : ''}>Last 30d</option><option value="custom"${agentDatePreset === 'custom' ? ' selected' : ''}>Custom</option></select>`;
+  html += `<span id="agents-date-custom-range"${agentDatePreset !== 'custom' ? ' hidden' : ''} style="display:inline-flex;align-items:center;gap:4px;margin-left:4px"><input type="date" id="agents-filter-date-from" value="${esc(agentDateFrom)}" style="padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" /><span style="color:var(--text-light)">–</span><input type="date" id="agents-filter-date-to" value="${esc(agentDateTo)}" style="padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" /></span>`;
   html += `</div>`;
 
   if (filtered.length) {
@@ -6530,6 +7195,37 @@ function bindAgentsEvents(agents, filters) {
     };
   }
 
+  // Date preset filter
+  const agentsDatePreset = document.getElementById('agents-date-preset');
+  if (agentsDatePreset) {
+    agentsDatePreset.onchange = () => {
+      const preset = agentsDatePreset.value;
+      const customRange = document.getElementById('agents-date-custom-range');
+      if (customRange) customRange.hidden = preset !== 'custom';
+      const hash = buildAgentsHash({ ...filters, agentDate: preset, agentDateFrom: filters.agentDateFrom || '', agentDateTo: filters.agentDateTo || '' });
+      location.hash = hash;
+    };
+  }
+
+  // Agents custom date inputs
+  let agentsDateDebounceTimer = null;
+  const agentsDateFrom = document.getElementById('agents-filter-date-from');
+  const agentsDateTo = document.getElementById('agents-filter-date-to');
+  function onAgentsCustomDateChange() {
+    clearTimeout(agentsDateDebounceTimer);
+    agentsDateDebounceTimer = setTimeout(() => {
+      const hash = buildAgentsHash({
+        ...filters,
+        agentDate: 'custom',
+        agentDateFrom: agentsDateFrom ? agentsDateFrom.value : '',
+        agentDateTo: agentsDateTo ? agentsDateTo.value : '',
+      });
+      location.hash = hash;
+    }, 300);
+  }
+  if (agentsDateFrom) agentsDateFrom.oninput = onAgentsCustomDateChange;
+  if (agentsDateTo) agentsDateTo.oninput = onAgentsCustomDateChange;
+
   // Quick dispatch button
   const quickDispatchBtn = document.getElementById('agents-quick-dispatch');
   if (quickDispatchBtn) quickDispatchBtn.onclick = () => showQuickDispatchModal();
@@ -6542,12 +7238,17 @@ function buildAgentsHash(filters) {
   if (filters.epic) params.push(`epic=${filters.epic}`);
   if (filters.project) params.push(`project=${filters.project}`);
   if (filters.autoOnly) params.push(`autoOnly=1`);
+  if (filters.agentDate && filters.agentDate !== 'all') params.push(`agent_date=${filters.agentDate}`);
+  if (filters.agentDate === 'custom') {
+    if (filters.agentDateFrom) params.push(`agent_date_from=${filters.agentDateFrom}`);
+    if (filters.agentDateTo) params.push(`agent_date_to=${filters.agentDateTo}`);
+  }
   if (params.length) hash += '?' + params.join('&');
   return hash;
 }
 
 function parseAgentsFilters(hash) {
-  const filters = { status: 'all', epic: '', project: '', autoOnly: false };
+  const filters = { status: 'all', epic: '', project: '', autoOnly: false, agentDate: 'all', agentDateFrom: '', agentDateTo: '' };
   const qIdx = hash.indexOf('?');
   if (qIdx === -1) return filters;
   const params = new URLSearchParams(hash.slice(qIdx + 1));
@@ -6555,17 +7256,14 @@ function parseAgentsFilters(hash) {
   if (params.get('epic')) filters.epic = params.get('epic');
   if (params.get('project')) filters.project = params.get('project');
   if (params.get('autoOnly') === '1') filters.autoOnly = true;
+  if (params.get('agent_date')) filters.agentDate = params.get('agent_date');
+  if (params.get('agent_date_from')) filters.agentDateFrom = params.get('agent_date_from');
+  if (params.get('agent_date_to')) filters.agentDateTo = params.get('agent_date_to');
   return filters;
 }
 
 function startAgentsTileRefresh(agents, filters) {
   stopAgentsTileRefresh();
-  // Update elapsed times every 3s
-  setAgentsTileInterval(setInterval(() => {
-    document.querySelectorAll('.agent-tile-elapsed[data-started]').forEach(el => {
-      el.textContent = formatElapsed(el.dataset.started);
-    });
-  }, 3000));
   // Full refresh every 15s
   setAgentsFullRefreshInterval(setInterval(async () => {
     if (!location.hash.startsWith('#agents')) { stopAgentsTileRefresh(); return; }
@@ -6621,6 +7319,7 @@ async function showQuickDispatchModal() {
       <div class="field">
         <label>Instructions</label>
         <textarea id="qd-instructions" placeholder="What should the agent do?"></textarea>
+        <div id="qd-instructions-counter" style="font-size:11px;color:var(--text-light);margin-top:2px">0 chars — No additional instructions; agent will follow work item description only</div>
       </div>
       <div class="field">
         <label for="qd-agent-type">Agent</label>
@@ -6638,7 +7337,10 @@ async function showQuickDispatchModal() {
       ${permissionModeSelect('qd-perm-mode')}
       ${skipPermissionsCheckbox('qd-skip-perms')}
     `,
-    afterMount: (o) => wireAgentTypeToggle(o, 'qd-agent-type', 'qd-perm-mode', 'qd-skip-perms'),
+    afterMount: (o) => {
+      wireAgentTypeToggle(o, 'qd-agent-type', 'qd-perm-mode', 'qd-skip-perms');
+      wireInstructionCounter(o, 'qd-instructions');
+    },
     onSubmit: async (overlay) => {
       const pk = overlay.querySelector('#qd-project').value;
       const wid = overlay.querySelector('#qd-work-item').value.trim() || null;
@@ -7610,7 +8312,7 @@ function renderAllSessionsView(dispatches, terminals, cliSessions, history) {
       <td>${esc(title || '—')}</td>
       <td>${esc(project || '—')}</td>
       <td><span class="badge badge-${esc(status || 'unknown')}">${esc(status || '—')}</span></td>
-      <td>${fmtDate(startedAt)}</td>
+      <td>${fmtTimestamp(startedAt)}</td>
       <td>${costStr}</td>
     </tr>`;
   }
@@ -7851,7 +8553,7 @@ function renderAdrsView(adrs) {
               <td>${esc(adr.title || '—')}</td>
               <td><span class="badge">${esc(adr.type || '—')}</span></td>
               <td>${(adr.repos || []).map(r => esc(r)).join(', ')}</td>
-              <td>${adr.created_at ? new Date(adr.created_at).toLocaleDateString() : '—'}</td>
+              <td>${adr.created_at ? fmtTimestamp(adr.created_at) : '—'}</td>
               <td><button class="btn btn-sm adr-detail" data-id="${esc(String(adr.id))}">View</button></td>
             </tr>
           `).join('')}
@@ -7877,11 +8579,64 @@ function renderAdrDetailView(adr) {
       </div>
       <dl class="kv">
         <dt>Repos</dt><dd>${(adr.repos || []).map(r => `<span class="tag">${esc(r)}</span>`).join(' ') || '—'}</dd>
-        <dt>Date</dt><dd>${adr.created_at ? new Date(adr.created_at).toLocaleDateString() : '—'}</dd>
+        <dt>Date</dt><dd>${adr.created_at ? fmtTimestamp(adr.created_at) : '—'}</dd>
         <dt>Detail Path</dt><dd><pre style="margin:0;font-size:12px">${esc(adr.detail_path || '—')}</pre></dd>
       </dl>
     </div>
   `;
+}
+
+function renderAuditView(data) {
+  const { orphan_db_keys = [], orphan_portfolio = [], errors = [], generated_at } = data;
+  let html = '<div class="card"><h2>Portfolio Audit</h2>';
+  if (orphan_db_keys.length === 0 && orphan_portfolio.length === 0 && errors.length === 0) {
+    html += '<p style="color:var(--green)">Portfolio and backlog are in sync — no orphans detected.</p>';
+  } else {
+    if (orphan_db_keys.length > 0) {
+      html += '<h3 style="margin-top:16px">DB Keys Without Portfolio Profile</h3>';
+      html += '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>';
+      html += '<th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Project Key</th>';
+      html += '<th style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--border)">Items</th>';
+      html += '<th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Status Breakdown</th>';
+      html += '</tr></thead><tbody>';
+      for (const row of orphan_db_keys) {
+        const statuses = row.statuses || {};
+        const breakdown = Object.entries(statuses).map(([s, c]) => `${esc(s)}:${c}`).join(' ') || '—';
+        html += `<tr>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${esc(row.project_key)}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">${row.item_count}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-family:monospace">${breakdown}</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+    }
+    if (orphan_portfolio.length > 0) {
+      html += '<h3 style="margin-top:16px">Portfolio Profiles Without Backlog Items</h3>';
+      html += '<p style="font-size:12px;color:var(--text-light)">These portfolio profiles have no backlog items.</p>';
+      html += '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>';
+      html += '<th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Org</th>';
+      html += '<th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Project</th>';
+      html += '<th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Component</th>';
+      html += '</tr></thead><tbody>';
+      for (const row of orphan_portfolio) {
+        html += `<tr>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${esc(row.org)}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${esc(row.project)}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${esc(row.component)}</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+    }
+    if (errors.length > 0) {
+      html += '<h3 style="margin-top:16px;color:var(--red)">Scan Errors</h3>';
+      for (const e of errors) {
+        html += `<p style="font-size:12px;color:var(--red)">${esc(e.org)}: ${esc(e.reason)}</p>`;
+      }
+    }
+  }
+  html += `<p style="font-size:11px;color:#888;margin-top:16px">Last scanned: ${esc(new Date(generated_at).toLocaleString())}</p>`;
+  html += '</div>';
+  return html;
 }
 
 // --- Router ---
@@ -7971,6 +8726,18 @@ async function route() {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading cost report: ${esc(String(e))}</p></div>`;
     }
     setActive('');
+    return;
+  }
+
+  if (parts[0] === 'audit') {
+    try {
+      const data = await api('portfolio/audit');
+      main.innerHTML = renderAuditView(data);
+    } catch (e) {
+      main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading audit: ${esc(String(e))}</p></div>`;
+    }
+    setActive('');
+    placeSessionPanels();
     return;
   }
 
@@ -8261,6 +9028,7 @@ const _restorePromise = Promise.all([
   restoreTerminals(),
   restoreCliSessions(),
   refreshSuspendedPanel(),
+  refreshRecentSessions(),
 ]);
 Promise.all([buildTree(), buildEpicTree()]).catch(err => { console.error('[startup] tree build failed:', err); }).then(async () => {
   startSessionsSidebarRefresh();
@@ -8277,6 +9045,7 @@ Promise.all([buildTree(), buildEpicTree()]).catch(err => { console.error('[start
   setInterval(restoreTerminals, 10000);
   setInterval(restoreCliSessions, 10000);
   setInterval(refreshSuspendedPanel, 10000);
+  setInterval(refreshRecentSessions, 10000);
   // Live countdown ticker: update timeout countdowns once per second for running dispatches
   setInterval(() => {
     for (const d of activeDispatches) {

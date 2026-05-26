@@ -90,8 +90,11 @@ export default function workItemRoutes(deps) {
       const orgFilter = reqUrl.searchParams.get('org');
       const view = reqUrl.searchParams.get('view');
       const awaitingAction = reqUrl.searchParams.get('awaiting_action') === 'true';
+      const from = reqUrl.searchParams.get('from') || null;
+      const to = reqUrl.searchParams.get('to') || null;
+      const dateFilter = (from || to) ? { from, to } : {};
       // Stakeholder view includes archived items (STAKEHOLDER_PROJECTION maps 'archived' → 'Archived')
-      let backlog = await db.getBacklog(orgFilter || null, view === 'stakeholder');
+      let backlog = await db.getBacklog(orgFilter || null, view === 'stakeholder', dateFilter);
       if (awaitingAction) backlog = filterAwaitingAction(backlog);
       backlog = projectBacklog(backlog, view);
       json(res, backlog);
@@ -395,7 +398,7 @@ export default function workItemRoutes(deps) {
 
       let proc;
       try {
-        proc = spawn(CLAUDE_BIN, ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'plan'], {
+        proc = spawn(CLAUDE_BIN, ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet', '--permission-mode', 'plan'], {
           cwd: ROOT,
           stdio: ['pipe', 'pipe', 'pipe'],
           env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },

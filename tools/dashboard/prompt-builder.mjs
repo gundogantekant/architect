@@ -54,7 +54,7 @@ export async function loadOrgContext(orgKey) {
 const AGENT_CONTEXT_TIERS = {
   'git-ops': 'none',
   classifier: 'minimal', scout: 'minimal', tracker: 'minimal',
-  'dependency-manager': 'minimal', browser: 'minimal',
+  'dependency-manager': 'minimal', browser: 'minimal', discuss: 'minimal',
   coder: 'standard', 'coder-frontend': 'standard', 'coder-backend': 'standard',
   'coder-mobile': 'standard', 'coder-infra': 'standard', coordinator: 'standard',
   planner: 'standard', debugger: 'standard', documenter: 'standard',
@@ -791,6 +791,12 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     }
   }
 
+  // --- Dispatch Instructions (supplementary guidance beyond the contract) ---
+  // When workItem is absent, additionalInstructions routes into # Task above (asymmetric by design).
+  if (workItem && additionalInstructions) {
+    sections.push(`# Dispatch Instructions\n\n${additionalInstructions}`);
+  }
+
   // --- Layer 3: Epic Context (third — lightweight: title, status, progress, plan snippet, AC) ---
   if (epicContext) {
     const lines = ['# Epic Context', ''];
@@ -808,11 +814,6 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
       lines.push('', '**Plan (excerpt)**:', epicContext.plan_snippet);
     }
     sections.push(lines.join('\n'));
-  }
-
-  // --- Dispatch Instructions (supplementary guidance beyond the contract) ---
-  if (workItem && additionalInstructions) {
-    sections.push(`# Dispatch Instructions\n\n${additionalInstructions}`);
   }
 
   // --- Isolated Work Mandate (always present; full section for medium+, one-liner for trivial/small) ---
@@ -855,7 +856,7 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     '',
     'When dispatching sub-agents, apply role-scoped context injection per `domain/rules.md` → Role-Scoped Context Injection:',
     '- **none**: git-ops (branch + path only)',
-    '- **minimal**: classifier, scout, tracker, dependency-manager, browser (stack_summary, language, framework)',
+    '- **minimal**: classifier, scout, tracker, dependency-manager, browser, discuss (stack_summary, language, framework)',
     '- **standard**: coders, planner, coordinator, debugger, documenter, api-designer, refactorer, strategist, profiler (+ structure, conventions, brief subset, guides)',
     '- **full**: tester, reviewer, security-auditor, ci-cd, performance (complete context)',
     '',
@@ -1029,14 +1030,16 @@ export function buildProjectRefinementPrompt({ projectKey, projectPath, template
 
 /**
  * Build an autonomous auto-implement dispatch prompt.
- * Delegates to buildDispatchPrompt for all standard sections, then replaces
- * the Dispatch Instructions section with the Auto-Implement Mode section.
+ * Delegates to buildDispatchPrompt for all standard sections, then inserts
+ * the Auto-Implement Mode section before # Isolated Work Mandate.
  */
 export function buildAutoImplementPrompt(args) {
   const base = buildDispatchPrompt(args);
   const autoSection = buildAutoImplementSection(args.workItem);
-  if (base.includes('# Dispatch Instructions')) {
-    return base.replace(/# Dispatch Instructions[\s\S]*?(?=\n# [A-Z]|$)/, autoSection);
+  const IWM = '\n# Isolated Work Mandate';
+  const idx = base.indexOf(IWM);
+  if (idx !== -1) {
+    return base.slice(0, idx) + '\n\n' + autoSection + base.slice(idx);
   }
   return base + '\n\n' + autoSection;
 }

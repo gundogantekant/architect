@@ -17,7 +17,7 @@ Canonical schemas for all structured data in the architect system. Agents and sk
 ```
 
 **Read-only agents**: reviewer, security-auditor, performance, strategist, classifier, coordinator, findings-coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod
-**Interactive agents**: browser (interacts with web via Playwright, no code/data writes)
+**Interactive agents**: browser (interacts with web via Playwright, no code/data writes); discuss (conversational agent; answers questions about the project, no code/data writes, no web interaction)
 **Implementation agents**: coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer, git-ops
 **Onboarding agents**: profiler (writes only CLAUDE.md to the target project)
 **Data-write agents**: tracker (uses dashboard API (http://127.0.0.1:3777/api/...) for work item and epic CRUD; writes work/epics/E-XXX/*.md and work/items/W-XXX/*.md for artifacts)
@@ -50,6 +50,20 @@ Full output of the classifier agent. Extends RequestClassification with dispatch
 ```
 
 **Rules**: When `needs_coordinator` is false, the orchestrator constructs a simple dispatch plan directly from this output. When true, the orchestrator dispatches the coordinator agent with this output as input.
+
+## UnstructuredFindings
+
+Value object capturing raw, unstructured output from an investigation agent (debugger, scout, security-auditor, etc.). The orchestrator routes findings of this shape through `usecases/synthesize-findings.md` (via the findings-coordinator agent) when follow-up dispatch is needed and no `ClassifierOutput` is in scope. No id, status, or lifecycle fields — instances are produced and consumed within a single orchestration turn.
+
+```json
+{
+  "source_agent": "string (agent name that produced the findings)",
+  "findings": "string (unstructured output text)",
+  "produced_at": "string | null (ISO 8601 timestamp, optional)"
+}
+```
+
+**Rules**: See `domain/rules.md` → Investigation Findings Routing — when the orchestrator holds an UnstructuredFindings (no ClassifierOutput), it follows the synthesize-findings workflow rather than triage-request.
 
 ## PreDispatchCheckResult
 
@@ -938,3 +952,20 @@ Stored in `portfolio/registry.json`.
   }
 }
 ```
+
+## ProgressEvent (Value Object)
+
+Emitted by dispatched agents at key milestones. Appended to the dispatch JSONL log.
+No identity — not stored in PostgreSQL. JSONL is the source of truth.
+
+```json
+{
+  "type": "progress",
+  "phase": "string — free-form label (investigation|planning|implementation|testing|review|commit)",
+  "message": "string — human-readable status, max 200 chars",
+  "ts": "string — ISO 8601 timestamp, server-generated"
+}
+```
+
+Rules: value object, no id field. phase is non-empty. message is non-empty and ≤200 chars.
+Agents emit via POST /api/dispatch/:id/progress. Monitor loop reads via GET /api/dispatch/:id/log?after=N.

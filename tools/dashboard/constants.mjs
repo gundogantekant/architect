@@ -16,6 +16,8 @@ export const LEGACY_PORTFOLIO = join(ROOT, 'portfolio');
 export const PORTFOLIO = process.env.PORTFOLIO_DIR || join(homedir(), '.architect', 'portfolio');
 export const WORK = process.env.WORK_DIR || join(ROOT, 'work');
 export const LOGS_DIR = join(WORK, 'logs');
+export const PROMPTS_DIR = process.env.PROMPTS_DIR || join(ROOT, 'tools', 'dashboard', 'prompts');
+export const TRUNCATION_LIMIT = 100 * 1024; // 100 KB — same threshold as MAX_CONTENT_BYTES in assets.mjs
 export const ARCHITECT_KEY = '\u2013/architect/\u2013';
 
 export const port = (() => {
@@ -128,6 +130,12 @@ export const DISPATCH_TIMEOUT_MS = {
   large:   2 * 60 * 60 * 1000,
 };
 
+export const HEARTBEAT_INTERVAL_MS = parseInt(process.env.HEARTBEAT_INTERVAL_MS ?? '', 10) || 20 * 1000;
+export const TIMEOUT_WARNING_RATIO = 0.8;
+export const IDLE_THRESHOLD_MS = 5 * 60 * 1000;
+export const MAX_AUTO_EXTENDS = 1;
+export const EXTEND_DURATION_MS = 30 * 60 * 1000;
+
 export const MIGRATIONS_DIR = join(import.meta.dirname, 'migrations');
 export const BACKUP_DIR = join(ROOT, 'assets', 'backups');
 
@@ -135,6 +143,7 @@ export const INPUT_NEEDED_SOURCE = Object.freeze({
   BRIDGE: 'agent_phase_bridge',
   USER: 'user',
   BLOCKING_QUESTIONS: 'blocking_questions',
+  TIMEOUT: 'timeout',
 });
 
 export const TMUX_AVAILABLE = (() => {

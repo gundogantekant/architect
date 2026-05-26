@@ -681,44 +681,61 @@ cmd_db_psql() {
 
 cmd_db_dump() {
   local BACKUP_DIR="$ROOT/assets/backups"
+  local CONTAINER="${ARCHITECT_PG_CONTAINER:-architect-postgres}"
   mkdir -p "$BACKUP_DIR"
   local TIMESTAMP
   TIMESTAMP="$(date -u +%Y-%m-%dT%H-%M-%S)"
   local DEST="$BACKUP_DIR/architect-${TIMESTAMP}.dump"
+  local TMP_DEST="${DEST}.tmp"
 
-  local PG_PASSWORD="${ARCHITECT_PG_PASSWORD:-}"
-  local args=(-h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -Fc -f "$DEST" "$PG_DB")
-
-  echo "Dumping $PG_DB to $DEST..."
-  if [ -n "$PG_PASSWORD" ]; then
-    PGPASSWORD="$PG_PASSWORD" pg_dump "${args[@]}"
-  else
-    pg_dump "${args[@]}"
+  if [ "$(docker inspect --format '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" != "true" ]; then
+    echo "Error: container '$CONTAINER' is not running. Start it with: dashctl.sh db:up"
+    exit 1
   fi
+
+  echo "Dumping $PG_DB to $DEST via $CONTAINER..."
+  docker exec "$CONTAINER" pg_dump -U "$PG_USER" -Fc "$PG_DB" > "$TMP_DEST"
+  mv "$TMP_DEST" "$DEST"
   echo "Backup complete: $DEST"
 }
 
 cmd_db_restore() {
   local FILE="${1:-}"
+  local BACKUP_DIR="$ROOT/assets/backups"
+  local CONTAINER="${ARCHITECT_PG_CONTAINER:-architect-postgres}"
+
   if [ -z "$FILE" ]; then
-    echo "Usage: dashctl.sh db:restore <file>"
-    exit 1
+    FILE="$(ls -t "$BACKUP_DIR"/*.dump 2>/dev/null | head -1)"
+    if [ -z "$FILE" ]; then
+      echo "Usage: dashctl.sh db:restore <file>"
+      echo "No .dump files found in $BACKUP_DIR"
+      exit 1
+    fi
+    echo "No file specified — using latest backup: $FILE"
   fi
+
   if [ ! -f "$FILE" ]; then
     echo "Error: file not found: $FILE"
     exit 1
   fi
 
-  local PG_PASSWORD="${ARCHITECT_PG_PASSWORD:-}"
-  local args=(-h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DB" "$FILE")
-
-  echo "Restoring $FILE into $PG_DB..."
-  if [ -n "$PG_PASSWORD" ]; then
-    PGPASSWORD="$PG_PASSWORD" pg_restore "${args[@]}"
-  else
-    pg_restore "${args[@]}"
+  if [ "$(docker inspect --format '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" != "true" ]; then
+    echo "Error: container '$CONTAINER' is not running. Start it with: dashctl.sh db:up"
+    exit 1
   fi
-  echo "Restore complete."
+
+  echo "Restoring $FILE into $PG_DB via $CONTAINER..."
+  set +e
+  docker exec -i "$CONTAINER" \
+    pg_restore -U "$PG_USER" -d "$PG_DB" --clean --if-exists \
+    < "$FILE"
+  local rc=$?
+  set -e
+  if [ $rc -ne 0 ]; then
+    echo "Warning: pg_restore exited $rc — non-fatal warnings may have occurred. Check output above."
+  else
+    echo "Restore complete."
+  fi
 }
 
 cmd_db_reset_confirmed() {
