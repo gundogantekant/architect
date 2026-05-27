@@ -50,7 +50,12 @@ export function wireTerminalHandlers(terminal) {
     if (terminal._pendingPrompt && !terminal._readyForPrompt && terminal._adapter) {
       if (terminal._adapter.detectReadiness(terminal._accumulated || '', data)) {
         terminal._readyForPrompt = true;
-        injectPrompt(terminal);
+        const delay = terminal._adapter.injectionDelay ?? 0;
+        if (delay > 0) {
+          setTimeout(() => injectPrompt(terminal), delay);
+        } else {
+          injectPrompt(terminal);
+        }
       }
     }
   });

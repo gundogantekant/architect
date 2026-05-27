@@ -6,9 +6,10 @@ import claudeAdapter from '../adapters/claude.mjs';
  * Plan Mode Unit Tests
  *
  * PM-1: CLI flag passed when plan mode selected
- * PM-2: Readiness waits for alternate screen entry
- * PM-3: Readiness fires on alternate screen entry
+ * PM-2: Readiness waits for bracketed paste enable
+ * PM-3: Readiness fires on bracketed paste enable
  * PM-5: Plan badge data available from adapter
+ * PM-6: Adapter injection delay
  */
 
 describe('PM-1: CLI flag passed when plan mode selected', () => {
@@ -44,39 +45,52 @@ describe('PM-1: CLI flag passed when plan mode selected', () => {
   });
 });
 
-describe('PM-2: Readiness waits for alternate screen entry', () => {
-  it('returns false on first byte of output (no alt screen yet)', () => {
+describe('PM-2: Readiness waits for bracketed paste enable', () => {
+  it('returns false on first byte of output (no bracketed paste yet)', () => {
     const result = claudeAdapter.detectReadiness('', 'x');
-    // After the fix, this should return false (waiting for \x1b[?1049h)
-    // Before the fix, this returns true (any chunk.length > 0)
-    // This test documents the EXPECTED behavior after the fix
     assert.equal(result, false, 'must not fire readiness on first byte');
   });
 
-  it('returns false on accumulated output without alt screen sequence', () => {
-    const accumulated = 'Some initial output from Claude CLI startup...';
-    const chunk = 'more output data';
+  it('returns false when only alternate screen is present, no bracketed paste', () => {
+    const accumulated = 'Some initial output \x1b[?1049h entering alt screen';
+    const chunk = 'more output without bracketed paste sequence';
     const result = claudeAdapter.detectReadiness(accumulated, chunk);
-    assert.equal(result, false, 'must not fire without \\x1b[?1049h');
+    assert.equal(result, false, 'must not fire on \\x1b[?1049h alone — bracketed paste not yet active');
   });
 });
 
-describe('PM-3: Readiness fires on alternate screen entry', () => {
-  it('returns true when chunk contains alt screen sequence', () => {
-    const result = claudeAdapter.detectReadiness('', '\x1b[?1049h');
-    assert.equal(result, true, 'must fire on alt screen entry');
+describe('PM-3: Readiness fires on bracketed paste enable', () => {
+  it('returns true when chunk contains bracketed paste sequence', () => {
+    const result = claudeAdapter.detectReadiness('', '\x1b[?2004h');
+    assert.equal(result, true, 'must fire when bracketed paste sequence is in chunk');
   });
 
-  it('returns true when accumulated contains alt screen sequence', () => {
-    const accumulated = 'startup output \x1b[?1049h more output';
+  it('returns true when accumulated contains bracketed paste sequence', () => {
+    const accumulated = 'startup output \x1b[?1049h render \x1b[?2004h more';
     const result = claudeAdapter.detectReadiness(accumulated, 'new chunk');
-    assert.equal(result, true, 'must fire when accumulated has alt screen');
+    assert.equal(result, true, 'must fire when bracketed paste is in accumulated');
   });
 
-  it('returns true when alt screen is split across accumulated and chunk', () => {
-    const accumulated = 'output \x1b[?104';
-    const chunk = '9h more data';
+  it('returns true when bracketed paste is split across accumulated and chunk', () => {
+    const accumulated = 'output \x1b[?200';
+    const chunk = '4h more data';
     const result = claudeAdapter.detectReadiness(accumulated, chunk);
-    assert.equal(result, true, 'must detect alt screen split across boundaries');
+    assert.equal(result, true, 'must detect bracketed paste split across boundaries');
+  });
+
+  it('returns false on alternate screen sequence alone (regression guard)', () => {
+    const result = claudeAdapter.detectReadiness('', '\x1b[?1049h');
+    assert.equal(result, false, 'must not regress to firing on alternate screen entry alone');
+  });
+});
+
+describe('PM-6: Adapter injection delay', () => {
+  it('exposes injectionDelay as a non-negative number', () => {
+    assert.equal(typeof claudeAdapter.injectionDelay, 'number', 'injectionDelay must be a number');
+    assert.ok(claudeAdapter.injectionDelay >= 0, 'injectionDelay must be non-negative');
+  });
+
+  it('injectionDelay is at least 200ms to allow Ink event loop to settle', () => {
+    assert.ok(claudeAdapter.injectionDelay >= 200, 'delay must be ≥200ms for Ink initialization');
   });
 });
