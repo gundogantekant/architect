@@ -350,6 +350,7 @@
   .terminal-header .status-dot.completed { background: var(--blue); }
   .terminal-header .status-dot.failed, .terminal-header .status-dot.killed { background: var(--red); }
   .terminal-header .terminal-title { font-size: 13px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text); }
+  .terminal-goal-badge { font-size: 11px; font-weight: 400; color: var(--text-light, #888); margin-left: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; display: inline-block; vertical-align: middle; }
   .terminal-header .terminal-meta { font-size: 11px; color: var(--text-light); }
   .terminal-container { height: 400px; background: #1e1e2e; overscroll-behavior: contain; overflow: hidden; position: relative; }
   .terminal-container.terminal-light { background: #f8f8f8; }

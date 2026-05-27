@@ -1675,6 +1675,33 @@ async function restoreTerminals() {
           existing.status = t.status;
           if (t.status !== 'running') finalizeTerminalPanel(existing);
         }
+        // Update goal title without re-rendering the panel
+        const panel = document.getElementById(`terminal-${t.id}`);
+        if (panel && panel.dataset.terminalTitle !== (t.title || '')) {
+          panel.dataset.terminalTitle = t.title || '';
+          existing.title = t.title || '';
+          const titleEl = panel.querySelector('.terminal-title');
+          if (titleEl) {
+            const hasContextLink = !!(t.work_item_id || t.epic_id);
+            if (hasContextLink) {
+              let badge = titleEl.querySelector('[data-goal]');
+              if (t.title) {
+                if (!badge) {
+                  badge = document.createElement('span');
+                  badge.className = 'terminal-goal-badge';
+                  badge.dataset.goal = '';
+                  titleEl.appendChild(badge);
+                }
+                badge.textContent = t.title;
+              } else if (badge) {
+                badge.remove();
+              }
+            } else {
+              const pathSpan = titleEl.querySelector('[data-path]');
+              if (pathSpan) pathSpan.textContent = t.title || 'Terminal';
+            }
+          }
+        }
         continue;
       }
       if (t.status === 'suspended') {
@@ -1979,14 +2006,21 @@ function createSessionPanel(type, info) {
         ? `${esc(terminalInfo.epic_id)}: ${esc(terminalInfo.epic_title)}`
         : esc(terminalInfo.epic_id));
     }
-    const termPathStr = tBreadcrumb.join(' · ') || esc(terminalInfo.title || 'Terminal');
+    const hasContextLink = !!(terminalInfo.work_item_id || terminalInfo.epic_id);
+    const goalBadgeHtml = (hasContextLink && terminalInfo.title)
+      ? `<span class="terminal-goal-badge" data-goal>${esc(terminalInfo.title)}</span>`
+      : '';
+    const termTitleContent = tBreadcrumb.length > 0
+      ? tBreadcrumb.join(' · ') + goalBadgeHtml
+      : `<span data-path>${esc(terminalInfo.title || 'Terminal')}</span>`;
+    panel.dataset.terminalTitle = terminalInfo.title || '';
     const termContainerBody = isSuspended
       ? '<div class="terminal-suspended-placeholder">Session suspended — click Resume to continue</div>'
       : '<div class="terminal-loading">Connecting</div>';
     panel.innerHTML = `
       <div class="terminal-header">
         <span class="status-dot ${isRunning ? 'running' : terminalInfo.status}"></span>
-        <span class="terminal-title">${termPathStr}${shellBadge}${planBadge}${skipBadge}${suspendedBadge}</span>
+        <span class="terminal-title">${termTitleContent}${shellBadge}${planBadge}${skipBadge}${suspendedBadge}</span>
         <span class="terminal-meta">${fmtTimestamp(terminalInfo.started_at)}<span class="cost-placeholder">—</span></span>
         <button class="focus-btn" data-focus-terminal="${esc(id)}">Focus</button>
         <button class="minimize-btn" data-minimize-terminal="${esc(id)}">▼</button>

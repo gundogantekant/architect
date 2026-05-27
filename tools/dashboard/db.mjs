@@ -975,6 +975,14 @@ export async function updateTerminalClaudeSessionId(id, sessionId) {
   await pool.query('UPDATE terminals SET claude_session_id = $1 WHERE id = $2', [sessionId, id]);
 }
 
+export async function updateTerminalTitle(id, title) {
+  const result = await pool.query(
+    `UPDATE terminals SET title = $1 WHERE id = $2`,
+    [title, id]
+  );
+  if (result.rowCount === 0) console.warn(`updateTerminalTitle: no terminal found for id=${id}`);
+}
+
 export async function deleteTerminal(id) {
   await pool.query('UPDATE terminals SET deleted_at = NOW() WHERE id = $1', [id]);
 }
