@@ -5,6 +5,7 @@ import { termEventLogPath } from './utils.mjs';
 import { HEARTBEAT_INTERVAL_MS } from './constants.mjs';
 import { summarizeGoal } from './lib/summarize-goal.mjs';
 import { updateTerminalTitle } from './db.mjs';
+import { stripAnsi } from './lib/ansi.mjs';
 
 export function setupWebSocket(server) {
   const wss = new WebSocketServer({ noServer: true });
@@ -140,7 +141,7 @@ export function setupWebSocket(server) {
           if (msg.type === 'input' && terminal.ptyProcess) {
             try { terminal.ptyProcess.write(msg.data); } catch {}
             if (!terminal._goalSummarized) {
-              const printable = msg.data
+              const printable = stripAnsi(msg.data)
                 .replace(/\x7f/g, '\x08')
                 .replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '');
               let buf = terminal._inputBuffer || '';

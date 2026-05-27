@@ -66,7 +66,7 @@
 
 <script type="module">
 import { api, apiText } from '/js/api.mjs';
-import { $, esc, ACTIVE_DOT_CLASSES, clearActiveDotClasses, fmtDate, fmtTimestamp,
+import { $, esc, stripAnsiForDisplay, ACTIVE_DOT_CLASSES, clearActiveDotClasses, fmtDate, fmtTimestamp,
          getRouteTitle, updateTitle, topoSort, isBlockedByDeps, epicSignalColor } from '/js/utils.mjs';
 import {
   backlog, setBacklog,
@@ -1699,13 +1699,13 @@ async function restoreTerminals() {
                   badge.dataset.goal = '';
                   titleEl.appendChild(badge);
                 }
-                badge.textContent = t.title;
+                badge.textContent = stripAnsiForDisplay(t.title);
               } else if (badge) {
                 badge.remove();
               }
             } else {
               const pathSpan = titleEl.querySelector('[data-path]');
-              if (pathSpan) pathSpan.textContent = t.title || 'Terminal';
+              if (pathSpan) pathSpan.textContent = stripAnsiForDisplay(t.title) || 'Terminal';
             }
           }
         }
@@ -2022,11 +2022,11 @@ function createSessionPanel(type, info) {
     }
     const hasContextLink = !!(terminalInfo.work_item_id || terminalInfo.epic_id);
     const goalBadgeHtml = (hasContextLink && terminalInfo.title)
-      ? `<span class="terminal-goal-badge" data-goal>${esc(terminalInfo.title)}</span>`
+      ? `<span class="terminal-goal-badge" data-goal>${esc(stripAnsiForDisplay(terminalInfo.title))}</span>`
       : '';
     const termTitleContent = tBreadcrumb.length > 0
       ? tBreadcrumb.join(' · ') + goalBadgeHtml
-      : `<span data-path>${esc(terminalInfo.title || 'Terminal')}</span>`;
+      : `<span data-path>${esc(stripAnsiForDisplay(terminalInfo.title) || 'Terminal')}</span>`;
     panel.dataset.terminalTitle = terminalInfo.title || '';
     const termContainerBody = isSuspended
       ? '<div class="terminal-suspended-placeholder">Session suspended — click Resume to continue</div>'
@@ -3075,7 +3075,7 @@ function renderOrgView(org, data, orgSessions) {
         const elapsed = formatElapsed(s.started_at);
         html += `<tr>`;
         html += `<td><span class="status-dot ${dotClass}" style="display:inline-block"></span></td>`;
-        html += `<td>${esc(s.title || s.id)}</td>`;
+        html += `<td>${esc(stripAnsiForDisplay(s.title) || s.id)}</td>`;
         html += `<td>${s.work_item_id ? `<code>${esc(s.work_item_id)}</code>` : '—'}</td>`;
         html += `<td><span class="badge badge-${s.status === 'running' ? 'open' : (s.status === 'completed' ? 'done' : 'medium')}">${esc(s.status)}</span></td>`;
         html += `<td>${elapsed}</td>`;
@@ -6616,7 +6616,7 @@ function openFocusPopup(type, id) {
     if (!terminalInfo) return;
     sourceEl = document.getElementById(`term-container-${id}`);
     parentEl = sourceEl?.parentElement;
-    title = terminalInfo.title || terminalInfo.id;
+    title = stripAnsiForDisplay(terminalInfo.title || terminalInfo.id);
     status = terminalInfo.status;
     startedAt = terminalInfo.started_at;
   }
@@ -6870,7 +6870,7 @@ function renderAgentTile(agent) {
       ? `${agent.epic_id}: ${agent.epic_title}`
       : agent.epic_id);
   }
-  const title = aBreadcrumb.join(' · ') || (agent.title || agent.id);
+  const title = aBreadcrumb.join(' · ') || stripAnsiForDisplay(agent.title || agent.id);
   const preview = isCli ? '(read-only — no output)' : ((agent.last_output || []).slice(-3).join('\n') || '(no output yet)');
   const typeLabel = isCli ? 'CLI (read-only)' : (agent.type === 'terminal' ? 'interactive' : 'non-interactive');
   const typeBadgeClass = isCli ? 'badge-cli' : (agent.type === 'terminal' ? 'badge-agent' : 'badge-open');

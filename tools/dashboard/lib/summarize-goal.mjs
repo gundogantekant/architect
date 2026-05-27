@@ -1,3 +1,5 @@
+import { stripAnsi } from './ansi.mjs';
+
 export async function summarizeGoal(rawInput) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return firstLineFallback(rawInput);
@@ -32,5 +34,5 @@ export async function summarizeGoal(rawInput) {
 }
 
 function firstLineFallback(text) {
-  return text.replace(/\r?\n.*/s, '').replace(/\s+/g, ' ').trim().substring(0, 60) || null;
+  return stripAnsi(text).replace(/\r?\n.*/s, '').replace(/\s+/g, ' ').trim().substring(0, 60) || null;
 }

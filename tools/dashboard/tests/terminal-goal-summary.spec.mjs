@@ -156,6 +156,38 @@ test('TGS-7: summarizeGoal falls back to first-line truncation without API key',
 });
 
 // ---------------------------------------------------------------------------
+// TGS-13: summarizeGoal with ANSI-contaminated input returns clean text
+// ---------------------------------------------------------------------------
+
+test('TGS-13: summarizeGoal with ANSI-contaminated input returns clean text (fallback path)', async () => {
+  const originalKey = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = '';
+
+  try {
+    // Simulate the exact DA + OSC responses xterm.js sends at startup, followed by
+    // a real user command — this is the string that was leaking into panel headers.
+    const contaminated = '\x1b[?1;2c\x1b[>0;276;0c\x1b]10;rgb:1e1e/1e1e/2e2e\x07git status';
+    const result = await summarizeGoal(contaminated);
+
+    expect(typeof result).toBe('string');
+    expect(result).not.toBeNull();
+    // No ANSI residue
+    expect(result).not.toMatch(/\x1b/);
+    expect(result).not.toMatch(/\[\?/);
+    expect(result).not.toMatch(/\]10;/);
+    expect(result).not.toMatch(/rgb:/);
+    // The real command text should be present
+    expect(result).toContain('git status');
+  } finally {
+    if (originalKey !== undefined) {
+      process.env.ANTHROPIC_API_KEY = originalKey;
+    } else {
+      delete process.env.ANTHROPIC_API_KEY;
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Helper: get base URL from env
 // ---------------------------------------------------------------------------
 
