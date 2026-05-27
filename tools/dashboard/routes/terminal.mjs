@@ -1,4 +1,5 @@
 import { spawnTerminalSession } from '../terminal-session.mjs';
+import { updateTerminalTitle } from '../db.mjs';
 
 export default function terminalRoutes(deps) {
   const {
@@ -206,6 +207,8 @@ export default function terminalRoutes(deps) {
         _permissionMode: resolvedTermPermMode,
         _skipPermissions: resolvedTermSkipPerms,
         _testWorkerId,
+        _goalSummarized: false,
+        _inputBuffer: '',
         started_at: new Date().toISOString(),
         exited_at: null,
       };
@@ -307,6 +310,8 @@ export default function terminalRoutes(deps) {
         _accumulated: '',
         _pendingPrompt: null,
         _readyForPrompt: true,
+        _goalSummarized: false,
+        _inputBuffer: '',
         started_at: new Date().toISOString(),
         exited_at: null,
       };
@@ -623,6 +628,8 @@ export default function terminalRoutes(deps) {
         _accumulated: '',
         _pendingPrompt: null,
         _readyForPrompt: true,
+        _goalSummarized: true,  // resumed session: title already populated, skip summarization
+        _inputBuffer: '',
         started_at: new Date().toISOString(),
         exited_at: null,
       };
@@ -650,6 +657,20 @@ export default function terminalRoutes(deps) {
         snapshot_seq: snapshotSeq,
         events: filtered,
       });
+    }],
+
+    // Update terminal goal title (derived from first user input)
+    [/^\/api\/terminal\/([A-Za-z0-9_-]+)\/title$/, 'PATCH', async (m, req, res) => {
+      const terminal = terminals.get(m[1]);
+      if (!terminal) return err(res, 'Not found', 404);
+      const body = await parseBody(req);
+      const { title } = body;
+      if (!title || typeof title !== 'string' || title.trim().length === 0)
+        return err(res, 'title required', 400);
+      const trimmed = title.trim().substring(0, 120);
+      terminal.title = trimmed;
+      await updateTerminalTitle(terminal.id, trimmed);
+      json(res, { ok: true, title: trimmed });
     }],
 
     // Inject a prompt into a running terminal

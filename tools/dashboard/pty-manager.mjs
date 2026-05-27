@@ -4,6 +4,7 @@ import { saveTerminalToDb, archiveSession } from './state.mjs';
 import { termEventLogPath, sleep, isPidAlive } from './utils.mjs';
 import { EventStream } from './event-stream.mjs';
 import * as db from './db.mjs';
+import { stripAnsi } from './lib/ansi.mjs';
 
 // Shared terminal handler wiring (used for fresh spawn and restore)
 export function wireTerminalHandlers(terminal) {
@@ -50,7 +51,12 @@ export function wireTerminalHandlers(terminal) {
     if (terminal._pendingPrompt && !terminal._readyForPrompt && terminal._adapter) {
       if (terminal._adapter.detectReadiness(terminal._accumulated || '', data)) {
         terminal._readyForPrompt = true;
-        injectPrompt(terminal);
+        const delay = terminal._adapter.injectionDelay ?? 0;
+        if (delay > 0) {
+          setTimeout(() => injectPrompt(terminal), delay);
+        } else {
+          injectPrompt(terminal);
+        }
       }
     }
   });
@@ -81,18 +87,10 @@ export function wireTerminalHandlers(terminal) {
   });
 }
 
-function sanitizePrompt(raw) {
-  // Strip ESC-led sequences (CSI, OSC, etc.) and standalone BEL/BS control codes.
-  // These are interpreted by the PTY terminal driver rather than inserted as text,
-  // causing character mangling around adjacent multibyte characters.
-  // Process longest sequences first so prefix matches don't leave residue.
-  return raw
-    .replace(/\x1b\[[\x20-\x3f]*[\x40-\x7e]/g, '')          // CSI: ESC[ params final-byte
-    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')       // OSC: ESC] content ST/BEL
-    .replace(/\x1b[\x20-\x7e]/g, '')                         // 2-char ESC sequences
-    .replace(/\x1b/g, '')                                    // any remaining lone ESC
-    .replace(/[\x07\x08]/g, '');                             // standalone BEL and BS
-}
+// Strip ESC-led sequences (CSI, OSC, etc.) and standalone BEL/BS control codes.
+// These are interpreted by the PTY terminal driver rather than inserted as text,
+// causing character mangling around adjacent multibyte characters.
+const sanitizePrompt = stripAnsi;
 
 export async function injectPrompt(terminal) {
   if (!terminal._pendingPrompt || !terminal.ptyProcess) return;

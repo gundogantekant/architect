@@ -3,6 +3,9 @@ import { appendFileSync } from 'node:fs';
 import { dispatches, terminals } from './state.mjs';
 import { termEventLogPath } from './utils.mjs';
 import { HEARTBEAT_INTERVAL_MS } from './constants.mjs';
+import { summarizeGoal } from './lib/summarize-goal.mjs';
+import { updateTerminalTitle } from './db.mjs';
+import { stripAnsi } from './lib/ansi.mjs';
 
 export function setupWebSocket(server) {
   const wss = new WebSocketServer({ noServer: true });
@@ -137,6 +140,30 @@ export function setupWebSocket(server) {
           const msg = JSON.parse(raw.toString());
           if (msg.type === 'input' && terminal.ptyProcess) {
             try { terminal.ptyProcess.write(msg.data); } catch {}
+            if (!terminal._goalSummarized) {
+              const printable = stripAnsi(msg.data)
+                .replace(/\x7f/g, '\x08')
+                .replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '');
+              let buf = terminal._inputBuffer || '';
+              for (const ch of printable) {
+                if (ch === '\x08') buf = buf.slice(0, -1);
+                else buf += ch;
+              }
+              terminal._inputBuffer = buf.substring(0, 500);
+              if (/[\r\n]/.test(msg.data)) {
+                terminal._goalSummarized = true;
+                const raw = terminal._inputBuffer.trim();
+                terminal._inputBuffer = '';
+                if (raw.length >= 5) {
+                  summarizeGoal(raw).then(async (summary) => {
+                    if (!summary) return;
+                    terminal.title = summary;
+                    updateTerminalTitle(terminal.id, summary)
+                      .catch(e => console.error('terminal title update failed:', e));
+                  });
+                }
+              }
+            }
           } else if (msg.type === 'resize' && msg.cols && msg.rows) {
             clearTimeout(terminal._resizeTimer);
             terminal._resizeTimer = setTimeout(() => {
