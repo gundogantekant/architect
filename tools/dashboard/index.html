@@ -1599,16 +1599,23 @@ function saveCollapseState() {
   try { sessionStorage.setItem('sessionCollapseState', JSON.stringify(Object.fromEntries(sessionCollapseState))); } catch {}
 }
 
+function isPanelCollapsedByDefault() {
+  return !window._testDefaultExpanded && (window._prefs?.default_panel_state || 'minimized') !== 'expanded';
+}
+
 function togglePanelCollapse(key, panel, btn) {
   const collapsed = !panel.classList.contains('collapsed');
   panel.classList.toggle('collapsed', collapsed);
   sessionCollapseState.set(key, collapsed);
   btn.textContent = collapsed ? '▶' : '▼';
   saveCollapseState();
-  // Re-fit xterm if expanding a terminal
+  // Re-fit xterm and lazy-init if expanding a terminal
   if (!collapsed && key.startsWith('terminal:')) {
     const tid = key.split(':')[1];
     const t = activeTerminals.find(x => x.id === tid);
+    if (t && (!t._wsManager || t._wsManager.state === 'IDLE')) {
+      initSession(t);
+    }
     const ss = t?._sessionState;
     if (ss?._fitAddon && ss._term) {
       requestAnimationFrame(() => {
@@ -1732,7 +1739,14 @@ async function restoreTerminals() {
     placeSessionPanels();
     // Wait for requestAnimationFrame so panels are in the DOM before connecting
     await new Promise(resolve => requestAnimationFrame(resolve));
-    for (const t of toConnect) await initSession(t);
+    for (const t of toConnect) {
+      const panelKey = `terminal:${t.id}`;
+      const isCollapsed = sessionCollapseState.has(panelKey)
+        ? sessionCollapseState.get(panelKey)
+        : isPanelCollapsedByDefault();
+      if (!isCollapsed) await initSession(t);
+      // else: deferred until expand or focus; poll guard (if (existing)) prevents re-init on next cycle
+    }
     syncSessionState();
   } catch {}
 }
@@ -1862,7 +1876,7 @@ function createSessionPanel(type, info) {
     bindSessionIdCopy(panel);
     const panelKey = `dispatch:${id}`;
     sessionPanels.set(panelKey, panel);
-    const defaultCollapsed = !window._testDefaultExpanded && (window._prefs?.default_panel_state || 'minimized') !== 'expanded';
+    const defaultCollapsed = isPanelCollapsedByDefault();
     const collapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : defaultCollapsed;
     if (collapsed) {
       panel.classList.add('collapsed');
@@ -2040,7 +2054,7 @@ function createSessionPanel(type, info) {
     bindSessionIdCopy(panel);
     const panelKey = `terminal:${id}`;
     sessionPanels.set(panelKey, panel);
-    const defaultCollapsed = !window._testDefaultExpanded && (window._prefs?.default_panel_state || 'minimized') !== 'expanded';
+    const defaultCollapsed = isPanelCollapsedByDefault();
     const collapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : defaultCollapsed;
     if (collapsed) {
       panel.classList.add('collapsed');
@@ -2137,7 +2151,7 @@ function createSessionPanel(type, info) {
     `;
     const panelKey = `cli:${id}`;
     sessionPanels.set(panelKey, panel);
-    const defaultCollapsed = !window._testDefaultExpanded && (window._prefs?.default_panel_state || 'minimized') !== 'expanded';
+    const defaultCollapsed = isPanelCollapsedByDefault();
     const collapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : defaultCollapsed;
     if (collapsed) {
       panel.classList.add('collapsed');
@@ -6754,6 +6768,11 @@ function openFocusPopup(type, id) {
   popup.appendChild(footer);
   overlay.appendChild(popup);
   document.body.appendChild(overlay);
+
+  // Lazy init: connect WS after overlay is in DOM so containerReadyPromise resolves correctly
+  if (type === 'terminal' && terminalInfo && (!terminalInfo._wsManager || terminalInfo._wsManager.state === 'IDLE')) {
+    initSession(terminalInfo);
+  }
 
   setActiveFocusPopup({ overlay, popup, type, id, sourceEl, parentEl });
 
