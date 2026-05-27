@@ -143,6 +143,8 @@ export async function spawnTerminalSession(deps, params) {
     _permissionMode: permissionMode,
     _skipPermissions: skipPermissions,
     _testWorkerId: testWorkerId,
+    _goalSummarized: false,
+    _inputBuffer: '',
     started_at: new Date().toISOString(),
     exited_at: null,
   };
