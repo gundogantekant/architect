@@ -1,7 +1,7 @@
 import { appendFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { saveTerminalToDb, archiveSession } from './state.mjs';
-import { termEventLogPath, sleep, isPidAlive } from './utils.mjs';
+import { termEventLogPath, isPidAlive } from './utils.mjs';
 import { EventStream } from './event-stream.mjs';
 import * as db from './db.mjs';
 import { stripAnsi } from './lib/ansi.mjs';
@@ -103,21 +103,23 @@ export async function injectPrompt(terminal) {
   terminal.eventStream.broadcast(startEvent);
 
   try {
-    // Bracketed paste mode chunked delivery.
-    // Sanitize first to strip ANSI sequences that the PTY would interpret as control codes.
+    // Bracketed paste delivery — zero-delay chunked writes.
+    //
+    // Sanitize first to strip ANSI sequences the PTY driver would interpret as control codes.
     // Chunk by Unicode code points (not UTF-16 code units) to prevent surrogate pair splits.
+    // CHUNK_SIZE=512 stays below the macOS PTY kernel buffer (1024 bytes), keeping each
+    // write() syscall kernel-atomic on Darwin. All writes are synchronous (no await),
+    // so the event loop never yields between chunks — Ink's input handler cannot interleave.
+    // W-1249: removing the 100ms inter-chunk delay was the root cause of prompt scattering.
     const sanitized = sanitizePrompt(prompt);
+    if (!sanitized) return;
     const codePoints = [...sanitized];
-    const CHUNK_SIZE = 1024;
-    const CHUNK_DELAY = 100;
+    const CHUNK_SIZE = 512;
     terminal.ptyProcess.write('\x1b[200~');
     for (let i = 0; i < codePoints.length; i += CHUNK_SIZE) {
-      const chunk = codePoints.slice(i, i + CHUNK_SIZE).join('');
-      terminal.ptyProcess.write(chunk);
-      if (i + CHUNK_SIZE < codePoints.length) await sleep(CHUNK_DELAY);
+      terminal.ptyProcess.write(codePoints.slice(i, i + CHUNK_SIZE).join(''));
     }
-    terminal.ptyProcess.write('\x1b[201~');
-    terminal.ptyProcess.write('\r');
+    terminal.ptyProcess.write('\x1b[201~\r');
 
     // Emit done meta event
     const doneEvent = terminal.eventStream.append('meta', { key: 'prompt_injection_status', value: 'done' });
