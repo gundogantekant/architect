@@ -607,19 +607,29 @@ function showAutoImplementToast(dispatch) {
 }
 
 const SCROLL_BOTTOM_THRESHOLD = 5;
+const SCROLL_SMOOTH_THRESHOLD = 60;
+const pendingSmooth = new WeakMap();
 
 function hasActiveSelection(scrollContainer) {
   const sel = window.getSelection();
   return sel && sel.type === 'Range' && sel.anchorNode != null && scrollContainer.contains(sel.anchorNode);
 }
 
-function scrollDispatchLog(logEl, forceBottom = false) {
+function scrollDispatchLog(logEl, forceBottom = false, smooth = false) {
   if (hasActiveSelection(logEl)) return;
-  if (forceBottom) {
-    logEl.scrollTop = logEl.scrollHeight;
+  const motionOk = smooth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const threshold = motionOk ? SCROLL_SMOOTH_THRESHOLD : SCROLL_BOTTOM_THRESHOLD;
+  const nearBottom = (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight) < threshold;
+  if (!forceBottom && !nearBottom) return;
+  if (motionOk) {
+    if (pendingSmooth.has(logEl)) return;
+    const id = requestAnimationFrame(() => {
+      pendingSmooth.delete(logEl);
+      logEl.scrollTo({ top: logEl.scrollHeight, behavior: 'smooth' });
+    });
+    pendingSmooth.set(logEl, id);
   } else {
-    const nearBottom = (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight) < SCROLL_BOTTOM_THRESHOLD;
-    if (nearBottom) logEl.scrollTop = logEl.scrollHeight;
+    logEl.scrollTop = logEl.scrollHeight;
   }
 }
 
@@ -647,9 +657,8 @@ async function loadDispatchContent(dispatch) {
       if (msg.type === 'data') {
         const text = extractStreamText(msg.data);
         if (text) {
-          const wasNearBottom = (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight) < SCROLL_BOTTOM_THRESHOLD;
           logEl.appendChild(document.createTextNode(text));
-          if (wasNearBottom) scrollDispatchLog(logEl, true);
+          scrollDispatchLog(logEl, false, true);
         }
       } else if (msg.type === 'replay-end') {
         dispatch._contentLoaded = true;
