@@ -387,6 +387,7 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
         terminals.set(t.id, {
           ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
           cols: t.cols || 80, rows: t.rows || 24,
+          _goalSummarized: !!t.title,  // title already in DB → skip re-summarization on next input
         });
         continue;
       }
@@ -408,6 +409,7 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
               rows: t.rows || 24,
               _adapter: getAdapter(t.agent_type || 'claude'),
               _accumulated: '',
+              _goalSummarized: !!t.title,  // title already in DB → skip re-summarization on next input
             };
             wireTerminalHandlers(terminal);
             terminals.set(t.id, terminal);
@@ -421,6 +423,7 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
             terminals.set(t.id, {
               ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
               cols: t.cols || 80, rows: t.rows || 24,
+              _goalSummarized: !!t.title,  // title already in DB → skip re-summarization on next input
             });
           }
         } else if (t.pid && isPidAlive(t.pid)) {
@@ -428,6 +431,7 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
           terminals.set(t.id, {
             ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
             alive_but_detached: true, cols: t.cols || 80, rows: t.rows || 24,
+            _goalSummarized: !!t.title,  // title already in DB → skip re-summarization on next input
           });
           console.log(`Terminal ${t.id}: PID ${t.pid} alive but no tmux — marked as detached`);
         } else {
@@ -439,12 +443,14 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
           terminals.set(t.id, {
             ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
             cols: t.cols || 80, rows: t.rows || 24,
+            _goalSummarized: !!t.title,  // title already in DB → skip re-summarization on next input
           });
         }
       } else {
         terminals.set(t.id, {
           ...t, ptyProcess: null, eventStream, wsClients: eventStream.subscribers,
           cols: t.cols || 80, rows: t.rows || 24,
+          _goalSummarized: !!t.title,  // title already in DB → skip re-summarization on next input
         });
       }
     }

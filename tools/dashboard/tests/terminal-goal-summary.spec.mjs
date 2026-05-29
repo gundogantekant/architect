@@ -188,6 +188,50 @@ test('TGS-13: summarizeGoal with ANSI-contaminated input returns clean text (fal
 });
 
 // ---------------------------------------------------------------------------
+// TGS-14: _goalSummarized guard — undefined (pre-fix) calls summarizeGoal; true (post-fix) skips it
+// ---------------------------------------------------------------------------
+
+test('TGS-14: _goalSummarized=undefined triggers summarizeGoal; _goalSummarized=true skips it', async () => {
+  // Replicate the summarization guard logic from ws-router.mjs lines 141–166.
+  // No real WS server is needed — the flag logic is self-contained.
+  function simulateWsInputHandler(terminal, inputData, summarizeGoalFn) {
+    if (inputData.type === 'input' && terminal.ptyProcess) {
+      if (!terminal._goalSummarized) {
+        const buf = inputData.data.replace(/\r?\n$/, '').trim();
+        if (/[\r\n]/.test(inputData.data)) {
+          terminal._goalSummarized = true;
+          if (buf.length >= 5) {
+            summarizeGoalFn(buf);
+          }
+        }
+      }
+    }
+  }
+
+  const inputData = { type: 'input', data: 'git status\n' };
+
+  // Pre-fix state: restored terminal has existing title but _goalSummarized=undefined (bug)
+  let summarizeCalled = false;
+  const preFixTerminal = {
+    title: 'Pre-existing goal',
+    _goalSummarized: undefined,
+    ptyProcess: {},  // truthy sentinel — no real pty needed
+  };
+  simulateWsInputHandler(preFixTerminal, inputData, () => { summarizeCalled = true; });
+  expect(summarizeCalled).toBe(true);  // confirms the bug: re-summarizes even with existing title
+
+  // Post-fix state: restored terminal has _goalSummarized=true (set via !!t.title in restoreSessions)
+  summarizeCalled = false;
+  const postFixTerminal = {
+    title: 'Pre-existing goal',
+    _goalSummarized: true,
+    ptyProcess: {},
+  };
+  simulateWsInputHandler(postFixTerminal, inputData, () => { summarizeCalled = true; });
+  expect(summarizeCalled).toBe(false);  // fix: title already in DB → skip summarization
+});
+
+// ---------------------------------------------------------------------------
 // Helper: get base URL from env
 // ---------------------------------------------------------------------------
 
