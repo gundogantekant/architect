@@ -92,7 +92,7 @@ export function wireTerminalHandlers(terminal) {
 // causing character mangling around adjacent multibyte characters.
 const sanitizePrompt = stripAnsi;
 
-export function injectPrompt(terminal) {
+export async function injectPrompt(terminal) {
   if (!terminal._pendingPrompt || !terminal.ptyProcess) return;
   const prompt = terminal._pendingPrompt;
   terminal._pendingPrompt = null;
