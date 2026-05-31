@@ -74,6 +74,7 @@ export const SPEC_FILES = [
   'drift-detection',
   'portfolio-audit.contract',
   'terminal-goal-summary',
+  'session-end-fix',
 ];
 
 function getLiveDashboardPorts() {

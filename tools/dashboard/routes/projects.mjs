@@ -203,7 +203,7 @@ export default function projectsRoutes(deps) {
             const pidAlive = t.pid ? (() => { try { process.kill(t.pid, 0); return true; } catch { return false; } })() : true;
             if (pidAlive) {
               terminals.delete(reservationKey);
-              return err(res, 'live terminal session already running for this project', 409);
+              return json(res, { error: 'live terminal session already running for this project', blocking_terminal_id: t.id, conflict_type: 'terminal' }, 409);
             }
           }
         }
@@ -215,7 +215,7 @@ export default function projectsRoutes(deps) {
             const pidConfirmedDead = d.pid && (() => { try { process.kill(d.pid, 0); return false; } catch { return true; } })();
             if (!pidConfirmedDead) {
               terminals.delete(reservationKey);
-              return err(res, 'live terminal session already running for this project', 409);
+              return json(res, { error: 'live terminal session already running for this project', blocking_dispatch_id: d.id, conflict_type: 'dispatch' }, 409);
             }
           }
         }
