@@ -418,7 +418,7 @@ export default function testEndpointRoutes(deps) {
     // Seed a terminal with EventStream content (no real PTY)
     [/^\/api\/test\/seed-terminal$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { scrollback, status, claude_session_id, lines, withFakeContent, withInjectionEvents, ansiColors, agentType: bodyAgentType, work_item_id, epic_id } = body;
+      const { scrollback, status, claude_session_id, lines, withFakeContent, withInjectionEvents, ansiColors, agentType: bodyAgentType, work_item_id, epic_id, project_key: bodyProjectKey } = body;
       const agentType = bodyAgentType || 'shell';
       const workerId = req.headers['x-test-worker-id'];
       const id = body.id || (workerId !== undefined ? `T-${Date.now()}-${workerId}` : `T-${Date.now()}`);
@@ -462,7 +462,7 @@ export default function testEndpointRoutes(deps) {
         agent_type: agentType,
         work_item_id: work_item_id || null,
         epic_id: epic_id || null,
-        project_key: 'test/test/main',
+        project_key: bodyProjectKey || 'test/test/main',
         project_path: ROOT,
         title: `Test terminal ${id}`,
         status: terminalStatus,

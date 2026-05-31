@@ -1897,7 +1897,12 @@ function createSessionPanel(type, info) {
       const btn = e.target;
       btn.disabled = true;
       try {
-        await fetch(`/api/dispatch/${id}`, { method: 'DELETE' });
+        const killResp = await fetch(`/api/dispatch/${id}`, { method: 'DELETE' });
+        if (!killResp.ok) {
+          btn.disabled = false;
+          showToast('Failed to kill session', 'error');
+          return;
+        }
         dispatch.status = 'killed';
         panel.className = panel.className.replace(/status-\w+/, 'status-killed');
         const dot = panel.querySelector('.status-dot');
@@ -1907,7 +1912,10 @@ function createSessionPanel(type, info) {
         if (dismissBtn) dismissBtn.style.display = '';
         syncSessionState();
         scheduleAutoDismiss('dispatch', id, dispatch);
-      } catch {}
+      } catch {
+        btn.disabled = false;
+        showToast('Failed to kill session', 'error');
+      }
     };
     panel.querySelector(`[data-suspend-dispatch="${id}"]`).onclick = (e) => {
       suspendSession(`/api/dispatch/${id}/suspend`, e.target, () => {
@@ -2075,16 +2083,25 @@ function createSessionPanel(type, info) {
       const btn = e.target;
       btn.disabled = true;
       try {
-        await fetch(`/api/terminal/${id}`, { method: 'DELETE' });
+        const killResp = await fetch(`/api/terminal/${id}`, { method: 'DELETE' });
+        if (!killResp.ok) {
+          btn.disabled = false;
+          showToast('Failed to kill session', 'error');
+          return;
+        }
         terminalInfo.status = 'killed';
+        panel.className = panel.className.replace(/status-\w+/, 'status-killed');
         const dot = panel.querySelector('.status-dot');
         clearActiveDotClasses(dot);
-        dot.classList.add('failed');
+        dot.classList.add('killed', 'failed');
         const dismissBtn = panel.querySelector(`[data-dismiss-terminal="${id}"]`);
         if (dismissBtn) dismissBtn.style.display = '';
         syncSessionState();
         scheduleAutoDismiss('terminal', id, terminalInfo);
-      } catch {}
+      } catch {
+        btn.disabled = false;
+        showToast('Failed to kill session', 'error');
+      }
     };
     panel.querySelector(`[data-suspend-terminal="${id}"]`).onclick = (e) => {
       suspendSession(`/api/terminal/${id}/suspend`, e.target, () => {
@@ -4894,7 +4911,47 @@ async function showRefineProjectModal(org, proj, comp) {
         throw new Error(result.error || 'No eligible items for refinement');
       }
       if (res.status === 409) {
-        throw new Error('A refinement session is already running for this project');
+        const modal = ov.closest('.modal') || ov.querySelector('.modal');
+        let errEl = modal.querySelector('._modal-error');
+        if (!errEl) {
+          errEl = document.createElement('p');
+          errEl.className = '_modal-error';
+          errEl.style.cssText = 'color:var(--danger,red);margin:8px 0 0;font-size:13px';
+          modal.querySelector('.modal-actions').before(errEl);
+        }
+        errEl.textContent = result.error || 'A refinement session is already running for this project';
+
+        const existingKillBtn = modal.querySelector('._conflict-kill-btn');
+        if (existingKillBtn) existingKillBtn.remove();
+
+        const killBtn = document.createElement('button');
+        killBtn.type = 'button';
+        killBtn.className = 'btn btn-secondary _conflict-kill-btn';
+        killBtn.style.marginTop = '8px';
+        killBtn.textContent = 'Stop existing session';
+        killBtn.onclick = async () => {
+          killBtn.disabled = true;
+          killBtn.textContent = 'Stopping…';
+          const deleteUrl = result.conflict_type === 'dispatch'
+            ? `/api/dispatch/${result.blocking_dispatch_id}`
+            : `/api/terminal/${result.blocking_terminal_id}`;
+          const killResp = await fetch(deleteUrl, { method: 'DELETE' });
+          if (killResp.ok) {
+            errEl.textContent = '';
+            killBtn.remove();
+            const submitBtn = ov.querySelector('[data-modal-submit]');
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              submitBtn.textContent = 'Confirm';
+            }
+          } else {
+            killBtn.disabled = false;
+            killBtn.textContent = 'Stop existing session';
+            errEl.textContent = 'Failed to stop existing session';
+          }
+        };
+        errEl.after(killBtn);
+        return;
       }
       if (!res.ok) throw new Error(result.error || 'Dispatch failed');
       if (result.terminal_id) {
@@ -6498,6 +6555,33 @@ function refreshSessionsSidebar() {
     const elapsed = formatElapsed(s.started_at);
     entry.innerHTML = `<span class="status-dot ${dotClass}" style="width:8px;height:8px"></span><span class="session-label">${esc(s.label)}</span><span class="session-meta">${elapsed}</span>`;
     entry.onclick = () => navigateToSession(s);
+
+    if (s.type !== 'cli') {
+      const killBtn = document.createElement('button');
+      killBtn.type = 'button';
+      killBtn.setAttribute('aria-label', 'End session');
+      killBtn.title = 'End this session';
+      killBtn.textContent = '✕';
+      killBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:0 2px;opacity:0.45;font-size:11px;line-height:1;flex-shrink:0';
+      killBtn.onmouseenter = () => { killBtn.style.opacity = '1'; };
+      killBtn.onmouseleave = () => { killBtn.style.opacity = '0.45'; };
+      killBtn.onclick = async (e) => {
+        e.stopPropagation();
+        const deleteUrl = s.type === 'terminal'
+          ? `/api/terminal/${s.id}`
+          : `/api/dispatch/${s.id}`;
+        const killResp = await fetch(deleteUrl, { method: 'DELETE' });
+        if (killResp.ok) {
+          entry.remove();
+          syncSessionState();
+        } else {
+          showToast('Failed to end session', 'error');
+        }
+      };
+      const metaEl = entry.querySelector('.session-meta');
+      metaEl.before(killBtn);
+    }
+
     return entry;
   }
 
