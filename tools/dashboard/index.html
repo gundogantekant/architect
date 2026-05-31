@@ -6582,6 +6582,13 @@ function refreshSessionsSidebar() {
         const killResp = await fetch(deleteUrl, { method: 'DELETE' });
         if (killResp.ok) {
           entry.remove();
+          if (s.type === 'terminal') {
+            const idx = activeTerminals.findIndex(t => t.id === s.id);
+            if (idx !== -1) activeTerminals.splice(idx, 1);
+          } else {
+            const idx = activeDispatches.findIndex(d => d.id === s.id);
+            if (idx !== -1) activeDispatches.splice(idx, 1);
+          }
           syncSessionState();
         } else {
           showToast('Failed to end session', 'error');
