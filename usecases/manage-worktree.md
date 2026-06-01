@@ -12,26 +12,27 @@ Core worktree lifecycle for isolating implementation agent work from the user's 
 
 ### Input
 - Target project path (from portfolio context `source_path`)
-- Ticket ID (W-XXX — from the work item; used as the branch and directory name)
+- Ticket ID (W-XXX — from the work item; used in the branch and directory name)
 - Portfolio entry (for `worktree_setup` hooks, optional)
 
 ### Steps
 
 1. Receive target project path and ticket ID (W-XXX format from the work item)
-2. Derive branch name: `W-<id>` (e.g., `W-933`)
-3. Compute worktree path: `<parent-of-project-dir>/W-<id>/` (sibling of the project folder, e.g., `/Users/user/NeuronicRepos/W-933/`)
-4. Capture originating branch: `git rev-parse --abbrev-ref HEAD` in the target project (store as `originating_branch`)
-5. Run `git worktree add <worktree-path> -b <branch-name>` from the target project
-6. If `worktree_setup.copy_paths` is defined in the portfolio entry: copy each path from source to worktree (e.g., `cp -r <source>/<path> <worktree>/<path>`)
-7. If `worktree_setup.post_commands` is defined: run each command in the worktree directory
-8. Return WorktreeContext (see `domain/entities.md` → WorktreeContext)
+2. **Verify cwd**: Before any git operation, confirm `git rev-parse --show-toplevel` run from `source_path` returns `source_path`. If it does not — or if your current directory is the architect project or any other unrelated project — `cd <source_path>` first. **Never run `git worktree add` from architect's directory for another project's work.** This is the single most common cause of worktrees ending up in the wrong git repository.
+3. Derive branch name: `<projectDirName>-<branchPrefix><id>-<slug>` (e.g., `light-app-W-933-add-feature`)
+4. Compute worktree path: `<parent-of-project-dir>/<projectDirName>-worktrees/<branchName>/` — grouped under a container sibling to the project folder (e.g., `/Users/user/repos/light-app-worktrees/light-app-W-933-add-feature/`). Create the container directory if it doesn't exist.
+5. Capture originating branch: `git rev-parse --abbrev-ref HEAD` in the target project (store as `originating_branch`)
+6. Run `git worktree add <worktree-path> -b <branch-name>` from the target project
+7. If `worktree_setup.copy_paths` is defined in the portfolio entry: copy each path from source to worktree (e.g., `cp -r <source>/<path> <worktree>/<path>`)
+8. If `worktree_setup.post_commands` is defined: run each command in the worktree directory
+9. Return WorktreeContext (see `domain/entities.md` → WorktreeContext)
 
 ### Output
 ```json
 {
-  "worktree_path": "/abs/path/to/parent/W-933",
-  "source_path": "/abs/path/to/parent/light-app/main",
-  "branch_name": "W-933",
+  "worktree_path": "/abs/path/to/parent/light-app-worktrees/light-app-W-933-add-feature",
+  "source_path": "/abs/path/to/parent/light-app",
+  "branch_name": "light-app-W-933-add-feature",
   "ticket_id": "W-933",
   "originating_branch": "main"
 }

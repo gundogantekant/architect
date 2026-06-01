@@ -16,7 +16,7 @@
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import { basename, dirname, join } from 'node:path';
-import { cpSync, existsSync, mkdirSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 const execFile = promisify(execFileCb);
@@ -69,13 +69,27 @@ async function countWorktrees(projectPath) {
  * @throws {Error} if worktree creation fails
  */
 export async function createWorktreeForDispatch({ projectPath, portfolioEntry, workItemId, workItemTitle, orgConventions }) {
-  // 1. Derive names
+  // 1. Verify projectPath is the root of its own git repository, not a sub-path or a
+  //    worktree that belongs to a different repo. This prevents silently creating a worktree
+  //    under architect when the caller's cwd was wrong (most common failure mode).
+  const { stdout: topLevelRaw } = await execFile('git', ['rev-parse', '--show-toplevel'], { cwd: projectPath });
+  const topLevel = topLevelRaw.trim();
+  let realProjectPath;
+  try { realProjectPath = realpathSync(projectPath); } catch { realProjectPath = projectPath; }
+  if (topLevel !== projectPath && topLevel !== realProjectPath) {
+    throw new Error(
+      `projectPath "${projectPath}" is not the root of its git repository (top-level is "${topLevel}"). ` +
+      `Worktree creation aborted — verify the portfolio entry's path is correct.`
+    );
+  }
+
+  // 2. Derive names
   const projectDirName = basename(projectPath);
   const branchPrefix = orgConventions?.conventions?.branch_prefix || '';
   const slug = slugify(workItemTitle || 'task');
   const baseBranchName = `${projectDirName}-${branchPrefix}${workItemId}-${slug}`;
 
-  // 2. Capture originating branch
+  // 3. Capture originating branch
   let sourceBranch;
   try {
     const { stdout } = await execFile('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: projectPath });
@@ -84,19 +98,23 @@ export async function createWorktreeForDispatch({ projectPath, portfolioEntry, w
     sourceBranch = 'HEAD'; // detached HEAD fallback
   }
 
-  // 3. Compute worktree path (sibling of project dir)
+  // 4. Compute worktree path — grouped under <project>-worktrees/ sibling directory.
+  //    All worktrees for a project land in one container, making them easy to find and prune.
+  //    Example: /repos/light-app-worktrees/light-app-W-933-add-feature/
   const parentDir = dirname(projectPath);
+  const worktreeContainer = join(parentDir, `${projectDirName}-worktrees`);
+  mkdirSync(worktreeContainer, { recursive: true });
   let branchName = baseBranchName;
-  let worktreePath = join(parentDir, branchName);
+  let worktreePath = join(worktreeContainer, branchName);
 
-  // 4. Create worktree — retry once with UUID suffix on collision
+  // 5. Create worktree — retry once with UUID suffix on collision
   try {
     await execFile('git', ['worktree', 'add', worktreePath, '-b', branchName], { cwd: projectPath });
   } catch (firstErr) {
     // Branch or path may already exist — retry with suffix
     const suffix = randomUUID().slice(0, 8);
     branchName = `${baseBranchName}-${suffix}`;
-    worktreePath = join(parentDir, branchName);
+    worktreePath = join(worktreeContainer, branchName);
     try {
       await execFile('git', ['worktree', 'add', worktreePath, '-b', branchName], { cwd: projectPath });
     } catch (retryErr) {
@@ -104,7 +122,7 @@ export async function createWorktreeForDispatch({ projectPath, portfolioEntry, w
     }
   }
 
-  // 5. Copy paths from source to worktree
+  // 6. Copy gitignored runtime files from source to worktree
   const copyPaths = portfolioEntry?.worktree_setup?.copy_paths || [];
   for (const relPath of copyPaths) {
     const src = join(projectPath, relPath);
@@ -116,7 +134,7 @@ export async function createWorktreeForDispatch({ projectPath, portfolioEntry, w
     }
   }
 
-  // 6. Run post_commands in worktree
+  // 7. Run post_commands in worktree
   const postCommands = portfolioEntry?.worktree_setup?.post_commands || [];
   for (const cmd of postCommands) {
     try {
@@ -130,7 +148,7 @@ export async function createWorktreeForDispatch({ projectPath, portfolioEntry, w
     }
   }
 
-  // 7. Log worktree count for disk pressure awareness
+  // 8. Log worktree count for disk pressure awareness
   const total = await countWorktrees(projectPath);
   if (total > 10) {
     console.warn(`[worktree] Project ${projectDirName} has ${total} worktrees — consider cleanup`);

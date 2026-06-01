@@ -192,10 +192,10 @@ export default function dispatchRoutes(deps) {
       }
 
       const resolvedPath = await resolveProjectPath(project_key);
-      const projectPath = resolvedPath || (dispatch_mode === 'task_creation' ? ROOT : null);
-      if (!projectPath) {
+      if (!resolvedPath && dispatch_mode !== 'task_creation') {
         return err(res, `Could not resolve path for project: ${project_key}`, 400);
       }
+      const projectPath = resolvedPath;
 
       const id = `D-${Date.now()}`;
 
