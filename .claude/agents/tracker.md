@@ -87,11 +87,22 @@ You will receive a command string. Parse and execute it:
 
 ### `plan <W-XXX> [--edit]`
 - Without `--edit`: `curl -s 'http://127.0.0.1:3777/api/work-items/<W-XXX>/plan'` — output contents (or "No plan yet." if empty/missing)
-- With `--edit`: `curl -s -X PUT 'http://127.0.0.1:3777/api/work-items/<W-XXX>/plan' -H 'Content-Type: application/json' -d '{"content": "<content>"}'`
+- With `--edit`: Write content to `/tmp/tracker-payload.md` using the Write tool, then send:
+  ```bash
+  node -e "const fs=require('fs');const c=fs.readFileSync('/tmp/tracker-payload.md','utf8');process.stdout.write(JSON.stringify({content:c}));" \
+    | curl -s -X PUT 'http://127.0.0.1:3777/api/work-items/<W-XXX>/plan' \
+           -H 'Content-Type: application/json' -d @-
+  ```
+  Never embed multi-line content directly in `-d '{"content": "..."}'` — shell expansion breaks JSON for any content containing newlines.
 
 ### `docs <W-XXX> [--edit]`
 - Without `--edit`: `curl -s 'http://127.0.0.1:3777/api/work-items/<W-XXX>/doc'` — output contents (or "No documentation yet." if empty/missing)
-- With `--edit`: `curl -s -X PUT 'http://127.0.0.1:3777/api/work-items/<W-XXX>/doc' -H 'Content-Type: application/json' -d '{"content": "<content>"}'`
+- With `--edit`: Write content to `/tmp/tracker-payload.md` using the Write tool, then send:
+  ```bash
+  node -e "const fs=require('fs');const c=fs.readFileSync('/tmp/tracker-payload.md','utf8');process.stdout.write(JSON.stringify({content:c}));" \
+    | curl -s -X PUT 'http://127.0.0.1:3777/api/work-items/<W-XXX>/doc' \
+           -H 'Content-Type: application/json' -d @-
+  ```
 
 ### `files <W-XXX>`
 - `curl -s 'http://127.0.0.1:3777/api/work-items/<W-XXX>/artifacts'`
@@ -101,7 +112,12 @@ You will receive a command string. Parse and execute it:
 ### `file <W-XXX> <filename> [--edit]`
 - `<filename>` must end with `.md`; reject other extensions
 - Without `--edit`: `curl -s 'http://127.0.0.1:3777/api/work-items/<W-XXX>/artifacts/<filename>'` — output contents (or "File not found." if missing)
-- With `--edit`: `curl -s -X PUT 'http://127.0.0.1:3777/api/work-items/<W-XXX>/artifacts/<filename>' -H 'Content-Type: application/json' -d '{"content": "<content>"}'`
+- With `--edit`: Write content to `/tmp/tracker-payload.md` using the Write tool, then send:
+  ```bash
+  node -e "const fs=require('fs');const c=fs.readFileSync('/tmp/tracker-payload.md','utf8');process.stdout.write(JSON.stringify({content:c}));" \
+    | curl -s -X PUT 'http://127.0.0.1:3777/api/work-items/<W-XXX>/artifacts/<filename>' \
+           -H 'Content-Type: application/json' -d @-
+  ```
 - To delete: `curl -s -X DELETE 'http://127.0.0.1:3777/api/work-items/<W-XXX>/artifacts/<filename>'`
 
 ## Epic Operations
@@ -147,11 +163,21 @@ You will receive a command string. Parse and execute it:
 
 ### `epic plan <E-XXX> [--edit]`
 - Without `--edit`: `curl -s 'http://127.0.0.1:3777/api/epics/<E-XXX>/plan'` — output contents (or "No plan yet." if empty/missing)
-- With `--edit`: `curl -s -X PUT 'http://127.0.0.1:3777/api/epics/<E-XXX>/plan' -H 'Content-Type: application/json' -d '{"content": "<content>"}'`
+- With `--edit`: Write content to `/tmp/tracker-payload.md` using the Write tool, then send:
+  ```bash
+  node -e "const fs=require('fs');const c=fs.readFileSync('/tmp/tracker-payload.md','utf8');process.stdout.write(JSON.stringify({content:c}));" \
+    | curl -s -X PUT 'http://127.0.0.1:3777/api/epics/<E-XXX>/plan' \
+           -H 'Content-Type: application/json' -d @-
+  ```
 
 ### `epic doc <E-XXX> [--edit]`
 - Without `--edit`: `curl -s 'http://127.0.0.1:3777/api/epics/<E-XXX>/doc'` — output contents (or "No documentation yet." if empty/missing)
-- With `--edit`: `curl -s -X PUT 'http://127.0.0.1:3777/api/epics/<E-XXX>/doc' -H 'Content-Type: application/json' -d '{"content": "<content>"}'`
+- With `--edit`: Write content to `/tmp/tracker-payload.md` using the Write tool, then send:
+  ```bash
+  node -e "const fs=require('fs');const c=fs.readFileSync('/tmp/tracker-payload.md','utf8');process.stdout.write(JSON.stringify({content:c}));" \
+    | curl -s -X PUT 'http://127.0.0.1:3777/api/epics/<E-XXX>/doc' \
+           -H 'Content-Type: application/json' -d @-
+  ```
 
 ## Helper: Recompute project_keys
 

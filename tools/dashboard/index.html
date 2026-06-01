@@ -490,7 +490,8 @@ function extractStreamText(line) {
       return `[stderr] ${evt.content}`;
     }
   } catch {
-    return line;
+    console.warn('[extractStreamText] malformed JSONL — skipping:', line?.slice?.(0, 80));
+    return null;
   }
   return null;
 }

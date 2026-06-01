@@ -9,6 +9,36 @@ import {
   isAdministrativeTransition,
 } from '../constants.mjs';
 
+/**
+ * Validate documentation content to reject one-char-per-line corruption.
+ * Applied to all doc, plan, and artifact PUT handlers.
+ *
+ * Heuristic: if the content has >= 20 lines and > 50% of those lines are a
+ * single alphabetic character, the content was likely corrupted during
+ * encoding (e.g., multi-line markdown passed through unsafe shell expansion).
+ * Only alphabetic characters are counted — markdown symbols (>, -, *, #)
+ * are valid single-char lines and are excluded to prevent false positives.
+ */
+export function validateDocContent(content) {
+  if (typeof content !== 'string') {
+    const e = new Error('content must be a string');
+    e.status = 400;
+    throw e;
+  }
+  const lines = content.split('\n');
+  if (lines.length >= 20) {
+    const singleAlphaLines = lines.filter(l => /^[a-zA-Z]$/.test(l.trim()));
+    if (singleAlphaLines.length / lines.length > 0.5) {
+      const e = new Error(
+        `content integrity check failed: ${singleAlphaLines.length}/${lines.length} lines are single alphabetic characters — content appears to be corrupted (one character per line)`
+      );
+      e.status = 422;
+      throw e;
+    }
+  }
+  return content;
+}
+
 function projectBacklog(backlog, view) {
   if (view !== 'stakeholder') return backlog;
   const projects = {};
@@ -293,7 +323,17 @@ export default function workItemRoutes(deps) {
     }],
 
     [/^\/api\/work-items\/(W-\d+)\/plan$/, 'PUT', async (m, req, res) => {
-      const body = await parseBody(req);
+      let body;
+      try {
+        body = await parseBody(req);
+      } catch {
+        return err(res, 'invalid JSON body', 400);
+      }
+      try {
+        validateDocContent(body.content);
+      } catch (e) {
+        return err(res, e.message, e.status ?? 422);
+      }
       const dir = join(WORK, 'items', m[1]);
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, 'plan.md'), body.content || '');
@@ -310,7 +350,17 @@ export default function workItemRoutes(deps) {
     }],
 
     [/^\/api\/work-items\/(W-\d+)\/doc$/, 'PUT', async (m, req, res) => {
-      const body = await parseBody(req);
+      let body;
+      try {
+        body = await parseBody(req);
+      } catch {
+        return err(res, 'invalid JSON body', 400);
+      }
+      try {
+        validateDocContent(body.content);
+      } catch (e) {
+        return err(res, e.message, e.status ?? 422);
+      }
       const dir = join(WORK, 'items', m[1]);
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, 'docs.md'), body.content || '');
@@ -336,7 +386,17 @@ export default function workItemRoutes(deps) {
     }],
 
     [/^\/api\/work-items\/(W-\d+)\/artifacts\/([a-zA-Z0-9_-]+\.md)$/, 'PUT', async (m, req, res) => {
-      const body = await parseBody(req);
+      let body;
+      try {
+        body = await parseBody(req);
+      } catch {
+        return err(res, 'invalid JSON body', 400);
+      }
+      try {
+        validateDocContent(body.content);
+      } catch (e) {
+        return err(res, e.message, e.status ?? 422);
+      }
       const dir = join(WORK, 'items', m[1]);
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, m[2]), body.content || '');
