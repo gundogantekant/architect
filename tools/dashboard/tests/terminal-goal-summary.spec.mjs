@@ -243,10 +243,10 @@ function getBase() {
 }
 
 // ---------------------------------------------------------------------------
-// TGS-8: Linked terminal — after PATCH, next poll shows goal badge
+// TGS-8: Linked terminal — after PATCH, next poll shows session summary in [data-main-title]
 // ---------------------------------------------------------------------------
 
-test('TGS-8: Linked terminal shows .terminal-goal-badge after title update', async ({ page }) => {
+test('TGS-8: Linked terminal shows session summary in [data-main-title] after title update', async ({ page }) => {
   const t = await seedTerminal({ status: 'running', work_item_id: 'W-001' });
 
   await page.goto('/');
@@ -257,26 +257,27 @@ test('TGS-8: Linked terminal shows .terminal-goal-badge after title update', asy
     body: JSON.stringify({ title: 'Auth fix' }),
   });
 
-  // Wait for restoreTerminals poll to pick up the change (polls every ~3s)
   await page.waitForFunction(
     (id) => {
       const panel = document.getElementById(`terminal-${id}`);
-      return panel?.querySelector('[data-goal]')?.textContent === 'Auth fix';
+      return panel?.querySelector('[data-main-title]')?.textContent === 'Auth fix';
     },
     t.id,
     { timeout: 15_000, polling: 500 },
   );
 
-  const badge = page.locator(`#terminal-${t.id} [data-goal]`);
-  await expect(badge).toBeVisible();
-  await expect(badge).toHaveText('Auth fix');
+  const mainTitle = page.locator(`#terminal-${t.id} [data-main-title]`);
+  await expect(mainTitle).toBeVisible();
+  await expect(mainTitle).toHaveText('Auth fix');
+  const contextBadge = page.locator(`#terminal-${t.id} .context-badge`);
+  await expect(contextBadge.first()).toBeVisible();
 });
 
 // ---------------------------------------------------------------------------
-// TGS-9: Terminal without work_item or epic — after PATCH, no .terminal-goal-badge
+// TGS-9: Terminal without work_item or epic — after PATCH, session summary in [data-main-title], only org/project badge
 // ---------------------------------------------------------------------------
 
-test('TGS-9: Terminal without work_item or epic shows no .terminal-goal-badge after PATCH', async ({ page }) => {
+test('TGS-9: Terminal without work_item or epic shows session summary in [data-main-title] after title update', async ({ page }) => {
   // Seeded terminals always have project_key but no work_item_id or epic_id by default
   const t = await seedTerminal({ status: 'running' });
 
@@ -295,9 +296,11 @@ test('TGS-9: Terminal without work_item or epic shows no .terminal-goal-badge af
     { timeout: 15_000, polling: 500 },
   );
 
-  // No goal badge should appear (terminal has project_key but no work_item/epic link)
-  const badge = page.locator(`#terminal-${t.id} .terminal-goal-badge`);
-  await expect(badge).toHaveCount(0);
+  const mainTitle = page.locator(`#terminal-${t.id} [data-main-title]`);
+  await expect(mainTitle).toHaveText('Debug memory leak');
+  // Seeded terminals have project_key — exactly one org/project context badge, no work_item or epic badges
+  const contextBadge = page.locator(`#terminal-${t.id} .context-badge`);
+  await expect(contextBadge).toHaveCount(1);
 });
 
 // ---------------------------------------------------------------------------
