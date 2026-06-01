@@ -22,3 +22,7 @@ export function getComplexityLevel(workItem) {
 export function isMediumOrAbove(workItem) {
   return ['medium', 'large'].includes(getComplexityLevel(workItem));
 }
+
+export function isLarge(workItem) {
+  return getComplexityLevel(workItem) === 'large';
+}

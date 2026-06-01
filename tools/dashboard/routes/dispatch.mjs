@@ -3,7 +3,9 @@ import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository, check
 import { AUTO_IMPLEMENTABLE_STATUSES, DISPATCH_TIMEOUT_MS, EXTEND_DURATION_MS, HEARTBEAT_INTERVAL_MS, INPUT_NEEDED_SOURCE, PIPELINE_STAGES, PORTFOLIO } from '../constants.mjs';
 import { triggerMerge, scheduleDispatchTimeout, appendProgress } from '../dispatch-manager.mjs';
 import { isMediumOrAbove } from '../utils/complexity.mjs';
+import { validateContract } from '../utils/contract-validation.mjs';
 import { writePromptFile, deletePromptFile } from '../prompt-file.mjs';
+import { deriveContractFromDescription } from '../prompt-builder.mjs';
 
 const SKILL_REGISTRY = {
   'project-refine-tasks': (workItemId) => workItemId ? `/project-refine-tasks ${workItemId}` : '/project-refine-tasks',
@@ -16,21 +18,6 @@ function complexityTierFromPriority(priority) {
 }
 
 
-function validateContractForComplexity(workItem, contract) {
-  if (!isMediumOrAbove(workItem)) return null;
-  const violations = [];
-  const coreFields = ['goal', 'constraints', 'expected_output', 'failure_conditions'];
-  for (const field of coreFields) {
-    if (!contract?.[field]?.trim()) {
-      violations.push({ field, message: `required for medium+ complexity` });
-    }
-  }
-  const criteria = contract?.e2e_test_criteria;
-  if (!criteria || criteria.length === 0) {
-    violations.push({ field: 'e2e_test_criteria', message: 'must have >= 1 entry for medium+ complexity' });
-  }
-  return violations.length > 0 ? violations : null;
-}
 
 /**
  * Find an active (running) dispatch for a given work item ID.
@@ -243,7 +230,7 @@ export default function dispatchRoutes(deps) {
       // Runs on rawContract (pre-strip) so empty-string fields are caught as missing.
       // Skill dispatches bypass contract validation — the skill manages its own workflow.
       if (!skill_id) {
-        const contractViolations = validateContractForComplexity(effectiveWorkItem, rawContract);
+        const contractViolations = validateContract(effectiveWorkItem, rawContract);
         if (contractViolations) {
           return json(res, { error: 'Contract incomplete', violations: contractViolations }, 422);
         }
@@ -272,6 +259,44 @@ export default function dispatchRoutes(deps) {
         : null;
       if (readinessWarning) {
         return json(res, readinessWarning);
+      }
+
+      // Validate derived contract completeness before worktree creation
+      if (!skill_id && (!rawContract || Object.keys(rawContract).length === 0)) {
+        if (isMediumOrAbove(effectiveWorkItem)) {
+          const derived = deriveContractFromDescription(effectiveWorkItem?.description ?? '');
+          if (derived) {
+            const derivedViolations = validateContract(effectiveWorkItem, derived);
+            if (derivedViolations) {
+              return json(res, {
+                error: 'Contract derived from description is incomplete for medium+ complexity',
+                violations: derivedViolations,
+                hint: 'Add structured **Goal**, **Constraints**, **Expected Output**, **Failure Conditions**, and **E2E Test Criteria** sections to the work item description, or supply an explicit contract.',
+              }, 422);
+            }
+          } else {
+            const coreViolations = ['goal', 'constraints', 'expected_output', 'failure_conditions'].map(f => ({
+              field: f, message: `required for medium+ complexity`,
+            }));
+            coreViolations.push({ field: 'e2e_test_criteria', message: 'required for medium+ complexity' });
+            return json(res, {
+              error: 'No contract provided and no structured contract sections found in description',
+              violations: coreViolations,
+              hint: 'Provide an explicit contract or add **Goal**, **Constraints**, **Expected Output**, **Failure Conditions**, **E2E Test Criteria** sections to the description.',
+            }, 422);
+          }
+        }
+      }
+
+      // Warn when worktree isolation is bypassed for medium+ complexity
+      const portfolioMode = rawEntry?.worktree_mode;
+      if (portfolioMode === 'explicit' && isMediumOrAbove(effectiveWorkItem)) {
+        if (!body.worktree_explicit_acknowledged) {
+          return json(res, {
+            warning: `Work item ${work_item_id} has medium+ complexity but project '${project_key}' has worktree_mode: "explicit" — isolation is bypassed. The domain Isolated Work Mandate requires worktree isolation for medium+ work. Pass worktree_explicit_acknowledged: true to proceed anyway.`,
+            require_confirm: true,
+          });
+        }
       }
 
       if (willCreateWorktree) {
@@ -574,6 +599,10 @@ export default function dispatchRoutes(deps) {
 
     // Agents emit progress milestones; appended to JSONL and broadcast to active SSE clients
     [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/progress$/, 'POST', async (m, req, res) => {
+      const sessionDepth = parseInt(req.headers['x-architect-session-depth'] ?? '0', 10);
+      if (sessionDepth < 1) {
+        return json(res, { error: 'progress endpoint is agent-only (requires X-Architect-Session-Depth >= 1)' }, 403);
+      }
       const dispatch = dispatches.get(m[1]);
       if (!dispatch) return err(res, 'dispatch not found', 404);
       const body = await parseBody(req);
@@ -581,6 +610,10 @@ export default function dispatchRoutes(deps) {
       if (!phase || typeof phase !== 'string') return err(res, 'phase required', 400);
       if (!message || typeof message !== 'string') return err(res, 'message required', 400);
       if (message.length > 200) return err(res, 'message exceeds 200 chars', 400);
+      if (phase === 'e2e_verified') {
+        await db.setContractSatisfied(dispatch.id);
+        dispatch.contract_satisfied = true;
+      }
       const event = { type: 'progress', phase, message, ts: new Date().toISOString() };
       appendProgress(dispatch, event);
       res.writeHead(204); res.end();
@@ -687,6 +720,8 @@ export default function dispatchRoutes(deps) {
           timeout_at: d.timeout_at || null,
           last_output_at: d.lastOutputAt ? new Date(d.lastOutputAt).toISOString() : null,
           exit_type: d.exit_type || null,
+          contract_satisfied: d.contract_satisfied ?? null,
+          scope_violation: d.scope_violation ?? false,
           deleted_at: null,
         };
       }));
@@ -963,6 +998,14 @@ export default function dispatchRoutes(deps) {
       await saveDispatchToDb(dispatch);
 
       const mergeGate = (await db.getPreference('merge_gate')) ?? 'confirm';
+
+      // Contract-satisfied auto-merge: all three conditions must hold to skip confirmation.
+      // Status is already merge_pending above, so a mid-merge restart recovers via restoreSessions.
+      if (dispatch.contract_satisfied && !dispatch.scope_violation && mergeGate === 'auto') {
+        setImmediate(() => triggerMerge(dispatch, deps).catch(e => console.error(`[auto-merge] error for ${m[1]}:`, e)));
+        return json(res, { status: 'merge_pending', message: 'Auto-merge triggered: contract satisfied and no scope violations' });
+      }
+
       if (mergeGate === 'auto') {
         dispatch._mergeTimer = setTimeout(() => {
           triggerMerge(dispatch, deps).catch(e => console.error(`[auto-merge] error for ${m[1]}:`, e));

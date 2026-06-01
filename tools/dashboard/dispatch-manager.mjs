@@ -670,27 +670,33 @@ export function wireDispatchHandlers(dispatch, proc) {
     // Scope boundary violation detection: flag dispatches that modified files outside
     // their contract's declared scope_boundary. Best-effort — skipped on any error.
     if (dispatch.worktree_path && dispatch.contract?.scope_boundary) {
-      try {
-        const sourceBranch = dispatch.source_branch || 'HEAD~1';
-        const diffOutput = execFileSync(
-          'git', ['diff', '--name-only', sourceBranch],
-          { cwd: dispatch.worktree_path, encoding: 'utf8', timeout: 5000 }
-        );
-        const changedFiles = diffOutput.split('\n').filter(Boolean);
-        const boundary = dispatch.contract.scope_boundary.replace(/\/$/, '');
-        const violating = changedFiles.filter(f => !f.startsWith(boundary + '/') && f !== boundary);
-        if (violating.length > 0) {
-          dispatch.session_log = dispatch.session_log || [];
-          dispatch.session_log.push({
-            trigger: 'scope-violation',
-            summary: `${violating.length} file(s) modified outside scope boundary '${boundary}': ${violating.slice(0, 3).join(', ')}${violating.length > 3 ? ` +${violating.length - 3} more` : ''}`,
-            related_items: [dispatch.id],
-            detected_at: new Date().toISOString(),
-          });
+      (async () => {
+        try {
+          const sourceBranch = dispatch.source_branch || 'HEAD~1';
+          const diffOutput = execFileSync(
+            'git', ['diff', '--name-only', sourceBranch],
+            { cwd: dispatch.worktree_path, encoding: 'utf8', timeout: 5000 }
+          );
+          const changedFiles = diffOutput.split('\n').filter(Boolean);
+          const boundary = dispatch.contract.scope_boundary.replace(/\/$/, '');
+          const violating = changedFiles.filter(f => !f.startsWith(boundary + '/') && f !== boundary);
+          if (violating.length > 0) {
+            dispatch.scope_violation = true;
+            dispatch.session_log = dispatch.session_log || [];
+            dispatch.session_log.push({
+              trigger: 'scope-violation',
+              summary: `${violating.length} file(s) modified outside scope boundary '${boundary}': ${violating.slice(0, 3).join(', ')}${violating.length > 3 ? ` +${violating.length - 3} more` : ''}`,
+              related_items: [dispatch.id],
+              detected_at: new Date().toISOString(),
+            });
+            await db.setScopeViolation(dispatch.id, true);
+          }
+        } catch (err) {
+          if (existsSync(dispatch.worktree_path)) {
+            console.warn(`[scope-check] git diff failed for dispatch ${dispatch.id}: ${err.message}`);
+          }
         }
-      } catch {
-        // worktree may be gone or git failed — skip silently
-      }
+      })();
     }
 
     if (dispatch.dispatch_mode === 'task_creation' && dispatch.status === 'completed') {
@@ -818,6 +824,10 @@ export async function triggerMerge(dispatch, deps) {
       completed_at: now,
       merge_result: 'success',
     });
+    await depsDb.query(
+      'UPDATE dispatches SET merged_at = NOW(), merge_target = $2 WHERE id = $1',
+      [dispatch.id, dispatch.source_branch]
+    );
     if (dispatch.work_item_id) {
       await depsDb.updateWorkItem(dispatch.work_item_id, { status: 'done' });
     }

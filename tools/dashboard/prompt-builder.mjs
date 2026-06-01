@@ -306,7 +306,7 @@ export async function selectAgentsForDispatch({ workItem, portfolio }) {
  * **Failure Conditions**:, **Scope Boundary**:, **Stop Conditions**:
  * Returns null if no recognized headers found.
  */
-function deriveContractFromDescription(description) {
+export function deriveContractFromDescription(description) {
   if (!description || typeof description !== 'string') return null;
 
   const fieldMap = {

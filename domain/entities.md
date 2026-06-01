@@ -550,6 +550,9 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "code_gate_passed_at": "string | null   // ISO 8601 timestamp when code gate resolved; null until then",
   "contract_satisfied": "boolean | null   // null until code gate; set true when all e2e_test_criteria confirmed passing",
   "contract_satisfied_at": "string | null // ISO 8601 timestamp when contract satisfaction was confirmed",
+  "scope_violation": "boolean — true when post-dispatch scope boundary check detected out-of-boundary file changes; surfaced as a pre-merge warning",
+  "merged_at": "string | null — ISO 8601 timestamp when the worktree branch was merged into the source branch",
+  "merge_target": "string | null — branch name the worktree was merged into",
   "deleted_at": "string (ISO 8601) | null — set to the kill timestamp when the record is soft-deleted via DELETE /api/dispatch/:id. null for all active, completed, and terminal-state records. Records with a non-null deleted_at are excluded from all default list queries and not restored to in-memory state on server restart. Set concurrently with status = 'killed' — never independently. Presence means the record is dismissed from active UI views; the status field independently records the operational outcome."
 }
 ```
@@ -819,7 +822,8 @@ Key-value pairs stored in the `preferences` table in PostgreSQL. Used for dashbo
 {
   "default_permission_mode": "plan|acceptEdits",
   "default_skip_permissions": "true|false",
-  "merge_gate": "'confirm'|'auto' (default: 'confirm') — pre-merge gate mode for auto-implement dispatches; confirm=human approves in UI, auto=merge after 10s delay"
+  "merge_gate": "'confirm'|'auto' (default: 'confirm') — pre-merge gate mode for auto-implement dispatches; confirm=human approves in UI, auto=merge after 10s delay",
+  "scope_violation_policy": "'warn'|'block' (default: 'warn') — 'warn' surfaces scope boundary violations as a pre-merge warning; 'block' is reserved for future enforcement"
 }
 ```
 
@@ -962,11 +966,14 @@ No identity — not stored in PostgreSQL. JSONL is the source of truth.
 ```json
 {
   "type": "progress",
-  "phase": "string — free-form label (investigation|planning|implementation|testing|review|commit)",
+  "phase": "string — free-form label (investigation|planning|implementation|testing|review|commit|e2e_verified)",
   "message": "string — human-readable status, max 200 chars",
   "ts": "string — ISO 8601 timestamp, server-generated"
 }
 ```
+
+Reserved phase values with server-side side effects:
+- `e2e_verified` — agent reports all e2e_test_criteria passed; server sets contract_satisfied = true
 
 Rules: value object, no id field. phase is non-empty. message is non-empty and ≤200 chars.
 Agents emit via POST /api/dispatch/:id/progress. Monitor loop reads via GET /api/dispatch/:id/log?after=N.
