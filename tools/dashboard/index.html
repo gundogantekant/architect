@@ -5110,8 +5110,43 @@ async function showRefineProjectModal(org, proj, comp) {
       }
       if (!res.ok) throw new Error(result.error || 'Dispatch failed');
       if (result.terminal_id) {
-        showToast('Refinement terminal starting…');
-        window.location.hash = `#terminal/${result.terminal_id}`;
+        let projectPath = null;
+        try {
+          const registry = await api('registry');
+          for (const [path, entry] of Object.entries(registry.entries)) {
+            if (`${entry.org}/${entry.project}/${entry.component}` === projectKey) {
+              projectPath = path;
+              break;
+            }
+          }
+        } catch {}
+
+        const terminalInfo = {
+          id: result.terminal_id,
+          agent_type: 'claude',
+          work_item_id: null,
+          project_key: projectKey,
+          project_path: projectPath,
+          title: `Refine: ${projectKey}`,
+          permission_mode: 'plan',
+          skip_permissions: false,
+          status: 'running',
+          started_at: new Date().toISOString(),
+        };
+        activeTerminals.push(terminalInfo);
+        syncSessionState();
+        createTerminalPanel(terminalInfo);
+        placeSessionPanels();
+        close();
+        try {
+          await initSession(terminalInfo);
+        } catch (err) {
+          showToast(err.message || 'Terminal failed to connect', 'error');
+        }
+        setTimeout(() => {
+          const panel = document.getElementById(`terminal-${result.terminal_id}`);
+          if (panel) panel.scrollIntoView({ behavior: 'smooth' });
+        }, 300);
         return;
       }
       setTimeout(() => {
