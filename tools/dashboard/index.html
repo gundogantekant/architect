@@ -1699,24 +1699,9 @@ async function restoreTerminals() {
           existing.title = t.title || '';
           const titleEl = panel.querySelector('.terminal-title');
           if (titleEl) {
-            const hasContextLink = !!(t.work_item_id || t.epic_id);
-            if (hasContextLink) {
-              let badge = titleEl.querySelector('[data-goal]');
-              if (t.title) {
-                if (!badge) {
-                  badge = document.createElement('span');
-                  badge.className = 'terminal-goal-badge';
-                  badge.dataset.goal = '';
-                  titleEl.appendChild(badge);
-                }
-                badge.textContent = stripAnsiForDisplay(t.title);
-              } else if (badge) {
-                badge.remove();
-              }
-            } else {
-              const pathSpan = titleEl.querySelector('[data-path]');
-              if (pathSpan) pathSpan.textContent = stripAnsiForDisplay(t.title) || 'Terminal';
-            }
+            const mainTitleSpan = titleEl.querySelector('[data-main-title]');
+            // Outer guard ensures t.title is non-empty at this point
+            if (mainTitleSpan) mainTitleSpan.textContent = stripAnsiForDisplay(t.title);
           }
         }
         continue;
@@ -2024,27 +2009,27 @@ function createSessionPanel(type, info) {
     const skipBadge = terminalInfo.skip_permissions ? '<span class="auto-badge">[skip-perms]</span>' : '';
     const planBadge = terminalInfo.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
     const suspendedBadge = isSuspended ? '<span class="suspended-badge">[suspended]</span>' : '';
+    // Context badges are creation-time-only; work_item_id/epic_id are immutable after dispatch.
     const tKeyParts = (terminalInfo.project_key || '').split('/').filter(p => p && p !== '*');
-    const tBreadcrumb = [];
-    if (tKeyParts.length >= 2) tBreadcrumb.push(`${esc(tKeyParts[0])} / ${esc(tKeyParts[1])}`);
-    else if (tKeyParts.length === 1) tBreadcrumb.push(esc(tKeyParts[0]));
+    const orgProjectLabel = tKeyParts.length >= 2
+      ? `${esc(tKeyParts[0])} / ${esc(tKeyParts[1])}`
+      : tKeyParts.length === 1 ? esc(tKeyParts[0]) : '';
+    const contextBadges = [];
+    if (orgProjectLabel) contextBadges.push(`<span class="context-badge" title="${orgProjectLabel}">${orgProjectLabel}</span>`);
     if (terminalInfo.work_item_id) {
-      tBreadcrumb.push(terminalInfo.work_item_title
+      const wiText = terminalInfo.work_item_title
         ? `${esc(terminalInfo.work_item_id)}: ${esc(terminalInfo.work_item_title)}`
-        : esc(terminalInfo.work_item_id));
+        : esc(terminalInfo.work_item_id);
+      contextBadges.push(`<span class="context-badge" title="${wiText}">${wiText}</span>`);
     }
     if (terminalInfo.epic_id) {
-      tBreadcrumb.push(terminalInfo.epic_title
+      const epicText = terminalInfo.epic_title
         ? `${esc(terminalInfo.epic_id)}: ${esc(terminalInfo.epic_title)}`
-        : esc(terminalInfo.epic_id));
+        : esc(terminalInfo.epic_id);
+      contextBadges.push(`<span class="context-badge" title="${epicText}">${epicText}</span>`);
     }
-    const hasContextLink = !!(terminalInfo.work_item_id || terminalInfo.epic_id);
-    const goalBadgeHtml = (hasContextLink && terminalInfo.title)
-      ? `<span class="terminal-goal-badge" data-goal>${esc(stripAnsiForDisplay(terminalInfo.title))}</span>`
-      : '';
-    const termTitleContent = tBreadcrumb.length > 0
-      ? tBreadcrumb.join(' · ') + goalBadgeHtml
-      : `<span data-path>${esc(stripAnsiForDisplay(terminalInfo.title) || 'Terminal')}</span>`;
+    const titleDisplayText = stripAnsiForDisplay(terminalInfo.title);
+    const termTitleContent = `<span class="terminal-main-title" data-main-title>${esc(titleDisplayText || 'Terminal')}</span>${contextBadges.join('')}`;
     panel.dataset.terminalTitle = terminalInfo.title || '';
     const termContainerBody = isSuspended
       ? '<div class="terminal-suspended-placeholder">Session suspended — click Resume to continue</div>'
