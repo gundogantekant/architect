@@ -75,6 +75,7 @@ export const SPEC_FILES = [
   'portfolio-audit.contract',
   'terminal-goal-summary',
   'session-end-fix',
+  'terminal-notes',
 ];
 
 function getLiveDashboardPorts() {

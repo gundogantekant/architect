@@ -596,7 +596,8 @@ Record for an interactive PTY terminal session spawned from the dashboard. Persi
   "pid": "number (OS process ID, optional — stored for restart survival)",
   "tmux_session": "string (tmux session name, optional — e.g. architect-T-xxx)",
   "claude_session_id": "string (Claude CLI session UUID — required for suspend/resume; only present when agent_type === 'claude'. Suspend is rejected if absent or if agent_type !== 'claude')",
-  "deleted_at": "string (ISO 8601) | null — set when the terminal is killed and removed via DELETE /api/terminal/:id. null for all live, suspended, and naturally exited terminals. Records with non-null deleted_at are filtered from the default active list and not loaded on server restart. Set concurrently with status = 'killed' — never independently."
+  "deleted_at": "string (ISO 8601) | null — set when the terminal is killed and removed via DELETE /api/terminal/:id. null for all live, suspended, and naturally exited terminals. Records with non-null deleted_at are filtered from the default active list and not loaded on server restart. Set concurrently with status = 'killed' — never independently.",
+  "note": "string | null (≤ 200 chars) — user-written free-form coordination note"
 }
 ```
 

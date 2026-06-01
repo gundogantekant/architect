@@ -1609,6 +1609,110 @@ function saveCollapseState() {
   try { sessionStorage.setItem('sessionCollapseState', JSON.stringify(Object.fromEntries(sessionCollapseState))); } catch {}
 }
 
+function truncateNote(str, max) {
+  return str.length > max ? str.slice(0, max) + '…' : str;
+}
+
+function renderNoteRow(row, note, terminalId) {
+  if (!row) return;
+  row.innerHTML = '';
+  if (note) {
+    const span = document.createElement('span');
+    span.className = 'terminal-note';
+    span.textContent = truncateNote(note, 40);
+    span.title = note;
+    row.appendChild(span);
+  } else {
+    const ph = document.createElement('span');
+    ph.className = 'terminal-note-empty';
+    ph.setAttribute('role', 'button');
+    ph.setAttribute('tabindex', '0');
+    ph.setAttribute('aria-label', 'Add note');
+    ph.textContent = '✎ add note';
+    row.appendChild(ph);
+  }
+}
+
+function activateNoteEdit(row, terminalId, currentNote) {
+  if (!row) return;
+  row.innerHTML = '';
+
+  let escaping = false;
+
+  const editRow = document.createElement('div');
+  editRow.className = 'terminal-note-edit-row';
+
+  const input = document.createElement('input');
+  input.className = 'terminal-note-input';
+  input.type = 'text';
+  input.maxLength = 200;
+  input.value = currentNote ?? '';
+  input.setAttribute('aria-label', 'Terminal note');
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'terminal-note-save-btn';
+  saveBtn.textContent = '✓';
+  saveBtn.setAttribute('aria-label', 'Save note');
+  saveBtn.addEventListener('mousedown', e => e.preventDefault());
+  saveBtn.addEventListener('click', () => commitNote(input.value));
+
+  const clearBtn = document.createElement('button');
+  clearBtn.className = 'terminal-note-clear-btn';
+  clearBtn.textContent = 'Clear';
+  clearBtn.setAttribute('aria-label', 'Clear note');
+  clearBtn.addEventListener('mousedown', e => e.preventDefault());
+  clearBtn.addEventListener('click', () => commitNote(null));
+
+  input.addEventListener('input', () => {
+    const remaining = 200 - input.value.length;
+    input.classList.toggle('near-limit', remaining <= 30 && remaining > 0);
+    input.classList.toggle('at-limit', remaining <= 0);
+  });
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      escaping = true;
+      cancelEdit();
+    } else if (e.key === 'Enter') {
+      commitNote(input.value);
+    }
+  });
+
+  input.addEventListener('blur', () => {
+    if (!escaping) commitNote(input.value);
+  });
+
+  editRow.append(input, saveBtn, clearBtn);
+  row.appendChild(editRow);
+  input.focus();
+
+  async function commitNote(value) {
+    const note = (value ?? '').trim() || null;
+    const liveRow = document.querySelector(`[data-note-panel="${CSS.escape(terminalId)}"]`);
+    if (!liveRow) return;
+    try {
+      const resp = await fetch(`/api/terminal/${encodeURIComponent(terminalId)}/note`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note }),
+      });
+      if (resp.ok) {
+        const liveTerminal = activeTerminals.find(t => t.id === terminalId);
+        if (liveTerminal) liveTerminal.note = note;
+        renderNoteRow(liveRow, note, terminalId);
+      }
+    } catch {
+      renderNoteRow(liveRow, currentNote, terminalId);
+    }
+  }
+
+  function cancelEdit() {
+    const liveRow = document.querySelector(`[data-note-panel="${CSS.escape(terminalId)}"]`);
+    if (liveRow) renderNoteRow(liveRow, currentNote, terminalId);
+  }
+}
+
 function isPanelCollapsedByDefault() {
   return !window._testDefaultExpanded && (window._prefs?.default_panel_state || 'minimized') !== 'expanded';
 }
@@ -1702,6 +1806,14 @@ async function restoreTerminals() {
             const mainTitleSpan = titleEl.querySelector('[data-main-title]');
             // Outer guard ensures t.title is non-empty at this point
             if (mainTitleSpan) mainTitleSpan.textContent = stripAnsiForDisplay(t.title);
+          }
+        }
+        const noteRow = panel && panel.querySelector('.terminal-note-row');
+        if (noteRow && !noteRow.querySelector('.terminal-note-input')) {
+          const liveNote = t.note ?? null;
+          if (existing.note !== liveNote) {
+            existing.note = liveNote;
+            renderNoteRow(noteRow, liveNote, t.id);
           }
         }
         continue;
@@ -2036,15 +2148,18 @@ function createSessionPanel(type, info) {
       : '<div class="terminal-loading">Connecting</div>';
     panel.innerHTML = `
       <div class="terminal-header">
-        <span class="status-dot ${isRunning ? 'running' : terminalInfo.status}"></span>
-        <span class="terminal-title">${termTitleContent}${shellBadge}${planBadge}${skipBadge}${suspendedBadge}</span>
-        <span class="terminal-meta">${fmtTimestamp(terminalInfo.started_at)}<span class="cost-placeholder">—</span></span>
-        <button class="focus-btn" data-focus-terminal="${esc(id)}">Focus</button>
-        <button class="minimize-btn" data-minimize-terminal="${esc(id)}">▼</button>
-        <button class="suspend-btn" data-suspend-terminal="${esc(id)}" ${(!isRunning || terminalInfo.agent_type !== 'claude') ? 'style="display:none"' : ''}>Suspend</button>
-        <button class="resume-btn" data-resume-terminal="${esc(id)}" ${!isSuspended ? 'style="display:none"' : ''}>Resume</button>
-        <button class="kill-btn" data-kill-terminal="${esc(id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
-        <button class="dismiss-btn" data-dismiss-terminal="${esc(id)}" ${isRunning ? 'style="display:none"' : ''}>✕</button>
+        <div class="terminal-header-row">
+          <span class="status-dot ${isRunning ? 'running' : terminalInfo.status}"></span>
+          <span class="terminal-title">${termTitleContent}${shellBadge}${planBadge}${skipBadge}${suspendedBadge}</span>
+          <span class="terminal-meta">${fmtTimestamp(terminalInfo.started_at)}<span class="cost-placeholder">—</span></span>
+          <button class="focus-btn" data-focus-terminal="${esc(id)}">Focus</button>
+          <button class="minimize-btn" data-minimize-terminal="${esc(id)}">▼</button>
+          <button class="suspend-btn" data-suspend-terminal="${esc(id)}" ${(!isRunning || terminalInfo.agent_type !== 'claude') ? 'style="display:none"' : ''}>Suspend</button>
+          <button class="resume-btn" data-resume-terminal="${esc(id)}" ${!isSuspended ? 'style="display:none"' : ''}>Resume</button>
+          <button class="kill-btn" data-kill-terminal="${esc(id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
+          <button class="dismiss-btn" data-dismiss-terminal="${esc(id)}" ${isRunning ? 'style="display:none"' : ''}>✕</button>
+        </div>
+        <div class="terminal-note-row" data-note-panel="${esc(id)}"></div>
       </div>
       <div class="terminal-container" id="term-container-${id}">${termContainerBody}</div>
       <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
@@ -2055,6 +2170,7 @@ function createSessionPanel(type, info) {
       </div>
     `;
     bindSessionIdCopy(panel);
+    renderNoteRow(panel.querySelector('.terminal-note-row'), terminalInfo.note ?? null, id);
     const panelKey = `terminal:${id}`;
     sessionPanels.set(panelKey, panel);
     const defaultCollapsed = isPanelCollapsedByDefault();
@@ -2068,9 +2184,24 @@ function createSessionPanel(type, info) {
       togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-terminal="${id}"]`));
     };
     panel.querySelector('.terminal-header').addEventListener('click', (e) => {
-      if (e.target.closest('button')) return;
+      if (e.target.closest('button') || e.target.closest('.terminal-note-row')) return;
       togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-terminal="${id}"]`));
     });
+    const noteRow = panel.querySelector('.terminal-note-row');
+    if (noteRow) {
+      noteRow.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const liveNote = activeTerminals.find(t => t.id === id)?.note ?? null;
+        activateNoteEdit(noteRow, id, liveNote);
+      });
+      noteRow.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.stopPropagation();
+          const liveNote = activeTerminals.find(t => t.id === id)?.note ?? null;
+          activateNoteEdit(noteRow, id, liveNote);
+        }
+      });
+    }
     panel.querySelector(`[data-focus-terminal="${id}"]`).onclick = () => openFocusPopup('terminal', id);
     const bottomFocusT = panel.querySelector(`[data-focus-terminal-bottom="${id}"]`);
     if (bottomFocusT) bottomFocusT.onclick = () => openFocusPopup('terminal', id);
