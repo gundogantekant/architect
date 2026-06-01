@@ -535,7 +535,7 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "claude_session_id": "string (Claude CLI session UUID, optional — captured from stream-json init event, used for resume)",
   "cost_usd": "number (total cost, optional)",
   "pid": "number (OS process ID, optional — stored for restart survival)",
-  "exit_type": "'graceful'|'killed'|'interrupted'|'unknown'|null — how the process exited. Set by close handler: 'graceful' for code 0, 'killed' for intentional kill, 'interrupted' for ungraceful termination (crash, SIGKILL, OOM). null for dispatches that were never classified (pre-W-1139 rows).",
+  "exit_type": "'graceful'|'killed'|'interrupted'|'timeout'|'unknown'|null — how the process exited. Set by close handler: 'graceful' for code 0, 'killed' for intentional kill, 'timeout' for auto-timeout kill, 'interrupted' for ungraceful termination (crash, SIGKILL, OOM) and for user-initiated graceful interrupt (_gracefulInterrupt=true). null for dispatches that were never classified (pre-W-1139 rows).",
   "agent_phase": "AgentPhase (ephemeral, in-memory only — not persisted to PostgreSQL, derived from live stream-json event parsing or log replay)",
   "worktree_path": "string (absolute path to worktree, null if no worktree — persisted to PostgreSQL)",
   "worktree_branch": "string (worktree branch name, null if no worktree — persisted to PostgreSQL)",
@@ -553,7 +553,9 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "scope_violation": "boolean — true when post-dispatch scope boundary check detected out-of-boundary file changes; surfaced as a pre-merge warning",
   "merged_at": "string | null — ISO 8601 timestamp when the worktree branch was merged into the source branch",
   "merge_target": "string | null — branch name the worktree was merged into",
-  "deleted_at": "string (ISO 8601) | null — set to the kill timestamp when the record is soft-deleted via DELETE /api/dispatch/:id. null for all active, completed, and terminal-state records. Records with a non-null deleted_at are excluded from all default list queries and not restored to in-memory state on server restart. Set concurrently with status = 'killed' — never independently. Presence means the record is dismissed from active UI views; the status field independently records the operational outcome."
+  "deleted_at": "string (ISO 8601) | null — set to the kill timestamp when the record is soft-deleted via DELETE /api/dispatch/:id. null for all active, completed, and terminal-state records. Records with a non-null deleted_at are excluded from all default list queries and not restored to in-memory state on server restart. Set concurrently with status = 'killed' — never independently. Presence means the record is dismissed from active UI views; the status field independently records the operational outcome.",
+  "revoked_at": "TIMESTAMPTZ | null — set by POST /api/dispatch/:id/revoke (atomic: WHERE revoked_at IS NULL) and by POST /api/dispatch/:id/restart on the original before spawning. Invariant: only settable when status ≠ 'running'. Terminal: once set, cannot be cleared (COALESCE in UPSERT prevents overwrite). Effect: blocks resume (409 session_revoked), restart (409 if in-memory; 404 via DB fallback). Does NOT change status, deleted_at, or claude_session_id. `interrupted` with non-null claude_session_id and null revoked_at is restartable via POST .../restart.",
+  "previous_dispatch_id": "TEXT | null — set on new dispatches created via restart; persisted in initial saveDispatch UPSERT. Points to the original dispatch this was restarted from. No FK constraint (soft-delete compatibility: referenced dispatch may be soft-deleted). Null for all original (non-restarted) dispatches. Forms a singly-linked restart chain traceable by walking previous_dispatch_id."
 }
 ```
 

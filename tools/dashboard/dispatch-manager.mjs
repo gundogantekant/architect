@@ -1,12 +1,13 @@
 import { readFileSync, existsSync, createWriteStream, appendFileSync } from 'node:fs';
 import { unlink as unlinkFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { dispatches, terminals, cliSessions, saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession } from './state.mjs';
 import { applyRefinementSummary } from './lib/refine-apply.mjs';
 import { validateOrgName } from './lib/portfolio-validation.mjs';
 import { isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture, termEventLogPath, sleep } from './utils.mjs';
-import { PORTFOLIO, WORK, LOGS_DIR, TMUX_AVAILABLE, TIMEOUT_WARNING_RATIO, IDLE_THRESHOLD_MS, MAX_AUTO_EXTENDS, EXTEND_DURATION_MS, INPUT_NEEDED_SOURCE } from './constants.mjs';
+import { CLAUDE_BIN, ROOT, PORTFOLIO, WORK, LOGS_DIR, TMUX_AVAILABLE, TIMEOUT_WARNING_RATIO, IDLE_THRESHOLD_MS, MAX_AUTO_EXTENDS, EXTEND_DURATION_MS, INPUT_NEEDED_SOURCE, DISPATCH_TIMEOUT_MS } from './constants.mjs';
+import { loadResumeContext, buildResumePrompt, selectAgentsForDispatch } from './prompt-builder.mjs';
 import * as db from './db.mjs';
 import { EventStream } from './event-stream.mjs';
 import { getAdapter } from './adapters/index.mjs';
@@ -623,6 +624,16 @@ export function wireDispatchHandlers(dispatch, proc) {
       return;
     }
 
+    // User initiated a graceful interrupt (POST /interrupt sent SIGINT).
+    // Classify exit_type explicitly for observability. Fall through to normal DB write path.
+    if (dispatch._gracefulInterrupt) {
+      dispatch.exit_type = 'interrupted';
+      if (dispatch._interruptTimers) {
+        dispatch._interruptTimers.forEach(clearTimeout);
+        dispatch._interruptTimers = null;
+      }
+    }
+
     // Classify exit type before overwriting status.
     // _killedIntentionally is set by the DELETE endpoint before sending SIGTERM.
     // _timedOut is set by killOnTimeout before sending SIGTERM.
@@ -640,7 +651,13 @@ export function wireDispatchHandlers(dispatch, proc) {
       console.error('[dispatch close] updateDispatchExitType:', e.message)
     );
 
-    dispatch.status = code === 0 ? 'completed' : 'failed';
+    // User-initiated interrupt: set status 'interrupted' so the session appears in the
+    // recovery surface and is restartable. Kill intent overrides (status = 'killed' below).
+    if (dispatch._gracefulInterrupt && !dispatch._killedIntentionally) {
+      dispatch.status = 'interrupted';
+    } else {
+      dispatch.status = code === 0 ? 'completed' : 'failed';
+    }
     if (code === 0 && dispatch.dispatch_mode === 'auto_implement') {
       dispatch._exitedWithoutSignal = true;
     }
@@ -845,4 +862,176 @@ export async function triggerMerge(dispatch, deps) {
     await saveDispatchToDb(dispatch);
     broadcastDispatchDone(dispatch);
   }
+}
+
+/**
+ * Gracefully interrupt a running dispatch: SIGINT → SIGTERM(10s) → SIGKILL(15s).
+ * Returns { claude_session_id } for the route to echo back.
+ * Throws { status, code, error } on failure for the route to return as an error response.
+ */
+export function interruptDispatch(id, inMemoryDispatches) {
+  const dispatch = inMemoryDispatches.get(id);
+  if (!dispatch) throw { status: 404, code: 'not_found', error: 'dispatch not found' };
+  if (dispatch.status !== 'running') throw { status: 400, code: 'not_running', error: 'dispatch is not running' };
+  if (dispatch._gracefulInterrupt) throw { status: 409, code: 'interrupt_in_progress', error: 'session is already being interrupted' };
+
+  dispatch._gracefulInterrupt = true;
+
+  const proc = dispatch.process;
+  const pid = dispatch.pid;
+
+  if (!proc && (!pid || !isPidAlive(pid))) {
+    dispatch._gracefulInterrupt = false;
+    return { claude_session_id: dispatch.claude_session_id };
+  }
+
+  try {
+    if (proc) {
+      proc.kill('SIGINT');
+    } else {
+      process.kill(pid, 'SIGINT');
+    }
+  } catch (e) {
+    if (e.code === 'ESRCH') {
+      console.warn('[interrupt] SIGINT ESRCH: dispatch', id, 'pid', pid, 'already gone');
+      dispatch._gracefulInterrupt = false;
+      return { claude_session_id: dispatch.claude_session_id };
+    }
+    throw e;
+  }
+
+  const sigterm = setTimeout(() => {
+    try { proc ? proc.kill('SIGTERM') : process.kill(pid, 'SIGTERM'); } catch {}
+  }, 10000);
+  const sigkill = setTimeout(() => {
+    try { proc ? proc.kill('SIGKILL') : process.kill(pid, 'SIGKILL'); } catch {}
+  }, 15000);
+
+  if (proc) {
+    proc.on('close', () => {
+      clearTimeout(sigterm);
+      clearTimeout(sigkill);
+    });
+  }
+
+  dispatch._interruptTimers = [sigterm, sigkill];
+  return { claude_session_id: dispatch.claude_session_id };
+}
+
+const RESTARTABLE_STATUSES = new Set(['interrupted', 'suspended', 'failed']);
+
+/**
+ * Restart a finished dispatch by re-spawning with --resume SESSION_ID from the same cwd.
+ * Atomically revokes the original before spawning to prevent concurrent double-restart.
+ * Returns the new dispatch object.
+ * Throws { status, code, error } on failure.
+ */
+export async function restartDispatch(id, opts, inMemoryDispatches, dbModule) {
+  const original = inMemoryDispatches.get(id) || await dbModule.getDispatchById(id);
+  if (!original) throw { status: 404, code: 'not_found', error: 'dispatch not found' };
+
+  if (!RESTARTABLE_STATUSES.has(original.status)) {
+    throw { status: 400, code: 'not_restartable', error: 'session is not restartable' };
+  }
+  if (!original.claude_session_id) {
+    throw { status: 400, code: 'no_session_id', error: 'no session ID available for restart' };
+  }
+  if (original.revoked_at) {
+    throw { status: 409, code: 'session_revoked', error: 'session is revoked' };
+  }
+
+  const { worktree_path, project_path } = original;
+  let effectiveCwd;
+  if (worktree_path) {
+    if (!existsSync(worktree_path)) {
+      throw { status: 400, code: 'worktree_missing', error: 'worktree was removed — re-dispatch to create a new one' };
+    }
+    effectiveCwd = worktree_path;
+  } else {
+    effectiveCwd = project_path;
+  }
+
+  const revoked = await dbModule.revokeDispatch(original.id);
+  if (!revoked) {
+    throw { status: 409, code: 'session_revoked', error: 'session was concurrently restarted or revoked' };
+  }
+  if (inMemoryDispatches.has(original.id)) {
+    inMemoryDispatches.get(original.id).revoked_at = new Date().toISOString();
+  }
+
+  const newId = `D-${Date.now()}`;
+  const { work_item_id, epic_id, project_key, title, permission_mode, skip_permissions, worktree_branch, source_branch, contract, dispatch_mode } = original;
+
+  const resolvedPermMode = permission_mode || 'acceptEdits';
+  const resolvedSkipPerms = skip_permissions === true || skip_permissions === 'true';
+
+  const dispatch = {
+    id: newId,
+    work_item_id: work_item_id || null,
+    epic_id: epic_id || null,
+    project_key: project_key || '',
+    project_path: project_path || '',
+    title: title || '',
+    permission_mode: resolvedPermMode,
+    skip_permissions: resolvedSkipPerms,
+    dispatch_mode: dispatch_mode || 'standard',
+    contract: contract || null,
+    worktree_path: worktree_path || null,
+    worktree_branch: worktree_branch || null,
+    source_branch: source_branch || null,
+    claude_session_id: original.claude_session_id,
+    previous_dispatch_id: original.id,
+    status: 'running',
+    agent_phase: 'generating',
+    agent_phase_history: [],
+    output: [],
+    lastLines: [],
+    wsClients: new Set(),
+    started_at: new Date().toISOString(),
+    completed_at: null,
+    _autoExtended: false,
+  };
+
+  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet',
+    '--resume', original.claude_session_id,
+    '--permission-mode', resolvedPermMode === 'plan' ? 'plan' : 'acceptEdits',
+  ];
+  if (resolvedSkipPerms) args.push('--dangerously-skip-permissions');
+  args.push('--add-dir', ROOT);
+
+  const { workItem, portfolio } = await loadResumeContext({ work_item_id, project_key });
+  const agentDefs = await selectAgentsForDispatch({ workItem, portfolio });
+  if (agentDefs.length) args.push('--agents', JSON.stringify(agentDefs));
+
+  let proc;
+  try {
+    proc = spawn(CLAUDE_BIN, args, {
+      cwd: effectiveCwd,
+      env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  } catch (e) {
+    console.error('[restart] spawn failed after revoke:', e.message, 'original id was', original.id);
+    throw { status: 500, code: 'spawn_failed', error: 'Spawn failed — original session is revoked. Re-dispatch to recover.' };
+  }
+
+  dispatch.process = proc;
+  dispatch.pid = proc.pid;
+  const logPath = join(LOGS_DIR, `${newId}.jsonl`);
+  dispatch.logPath = logPath;
+  dispatch.logStream = createWriteStream(logPath, { flags: 'a' });
+  wireDispatchHandlers(dispatch, proc);
+
+  const tier = work_item_id ? 'medium' : 'small';
+  scheduleDispatchTimeout(dispatch, DISPATCH_TIMEOUT_MS[tier] ?? DISPATCH_TIMEOUT_MS.medium, saveDispatchToDb);
+
+  if (opts?.additional_instructions) {
+    const prompt = buildResumePrompt({ workItem, contract: null, additionalInstructions: opts.additional_instructions });
+    proc.stdin.write(prompt + '\n');
+  }
+  proc.stdin.end();
+
+  inMemoryDispatches.set(newId, dispatch);
+  await saveDispatchToDb(dispatch);
+  return dispatch;
 }
