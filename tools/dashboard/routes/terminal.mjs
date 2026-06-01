@@ -676,6 +676,7 @@ export default function terminalRoutes(deps) {
     }],
 
     // Update terminal user note (free-text coordination annotation)
+    // UI label = domain field 'note' — intentional alias; no schema change needed.
     [/^\/api\/terminal\/([A-Za-z0-9_-]+)\/note$/, 'PATCH', async (m, req, res) => {
       const terminal = terminals.get(m[1]);
       if (!terminal) return err(res, 'Not found', 404);

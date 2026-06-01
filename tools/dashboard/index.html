@@ -1627,10 +1627,17 @@ function renderNoteRow(row, note, terminalId) {
     ph.className = 'terminal-note-empty';
     ph.setAttribute('role', 'button');
     ph.setAttribute('tabindex', '0');
-    ph.setAttribute('aria-label', 'Add note');
-    ph.textContent = '✎ add note';
+    ph.setAttribute('aria-label', 'Label this session');
+    ph.textContent = '✎ label session';
     row.appendChild(ph);
   }
+}
+
+function flashSaved(row) {
+  const el = row.querySelector('.terminal-note');
+  if (!el) return;
+  el.style.color = 'var(--green, #22c55e)';
+  setTimeout(() => { el.style.color = ''; }, 600);
 }
 
 function activateNoteEdit(row, terminalId, currentNote) {
@@ -1638,6 +1645,8 @@ function activateNoteEdit(row, terminalId, currentNote) {
   row.innerHTML = '';
 
   let escaping = false;
+  let commitAbort = null;
+  let btnDown = false; // set on button mousedown (always fires before blur)
 
   const editRow = document.createElement('div');
   editRow.className = 'terminal-note-edit-row';
@@ -1647,21 +1656,21 @@ function activateNoteEdit(row, terminalId, currentNote) {
   input.type = 'text';
   input.maxLength = 200;
   input.value = currentNote ?? '';
-  input.setAttribute('aria-label', 'Terminal note');
+  input.setAttribute('aria-label', 'Session label');
 
   const saveBtn = document.createElement('button');
   saveBtn.className = 'terminal-note-save-btn';
   saveBtn.textContent = '✓';
-  saveBtn.setAttribute('aria-label', 'Save note');
-  saveBtn.addEventListener('mousedown', e => e.preventDefault());
-  saveBtn.addEventListener('click', () => commitNote(input.value));
+  saveBtn.setAttribute('aria-label', 'Save label');
+  saveBtn.addEventListener('mousedown', () => { btnDown = true; });
+  saveBtn.addEventListener('click', () => { btnDown = false; commitNote(input.value); });
 
   const clearBtn = document.createElement('button');
   clearBtn.className = 'terminal-note-clear-btn';
   clearBtn.textContent = 'Clear';
-  clearBtn.setAttribute('aria-label', 'Clear note');
-  clearBtn.addEventListener('mousedown', e => e.preventDefault());
-  clearBtn.addEventListener('click', () => commitNote(null));
+  clearBtn.setAttribute('aria-label', 'Clear label');
+  clearBtn.addEventListener('mousedown', () => { btnDown = true; });
+  clearBtn.addEventListener('click', () => { btnDown = false; commitNote(null); });
 
   input.addEventListener('input', () => {
     const remaining = 200 - input.value.length;
@@ -1675,35 +1684,51 @@ function activateNoteEdit(row, terminalId, currentNote) {
       escaping = true;
       cancelEdit();
     } else if (e.key === 'Enter') {
+      e.stopPropagation(); // prevent noteRow keydown from re-calling activateNoteEdit
       commitNote(input.value);
     }
   });
 
+  // mousedown always fires before blur; btnDown guards against blur auto-saving
+  // when Save/Clear is clicked. isConnected guards against DOM-removal blur.
   input.addEventListener('blur', () => {
-    if (!escaping) commitNote(input.value);
+    if (btnDown) { btnDown = false; return; }
+    if (!escaping && input.isConnected) commitNote(input.value);
   });
 
   editRow.append(input, saveBtn, clearBtn);
   row.appendChild(editRow);
   input.focus();
 
+  // AbortController pattern: each commitNote cancels any pending save, so the
+  // last explicit caller wins (e.g. Clear button aborts a concurrent blur save).
   async function commitNote(value) {
+    if (commitAbort) commitAbort.abort();
+    commitAbort = new AbortController();
+    const { signal } = commitAbort;
+
     const note = (value ?? '').trim() || null;
     const liveRow = document.querySelector(`[data-note-panel="${CSS.escape(terminalId)}"]`);
-    if (!liveRow) return;
+    if (!liveRow) { commitAbort = null; return; }
     try {
       const resp = await fetch(`/api/terminal/${encodeURIComponent(terminalId)}/note`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ note }),
+        signal,
       });
+      if (signal.aborted || !liveRow.isConnected) return;
       if (resp.ok) {
         const liveTerminal = activeTerminals.find(t => t.id === terminalId);
         if (liveTerminal) liveTerminal.note = note;
         renderNoteRow(liveRow, note, terminalId);
+        flashSaved(liveRow);
       }
-    } catch {
-      renderNoteRow(liveRow, currentNote, terminalId);
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      if (liveRow.isConnected) renderNoteRow(liveRow, currentNote, terminalId);
+    } finally {
+      if (commitAbort?.signal === signal) commitAbort = null;
     }
   }
 
@@ -2190,11 +2215,15 @@ function createSessionPanel(type, info) {
     const noteRow = panel.querySelector('.terminal-note-row');
     if (noteRow) {
       noteRow.addEventListener('click', (e) => {
+        // Don't re-enter edit mode when clicking elements already inside the edit row
+        // (save/clear buttons); they handle their own actions via their own click listeners.
+        if (noteRow.querySelector('.terminal-note-input')) return;
         e.stopPropagation();
         const liveNote = activeTerminals.find(t => t.id === id)?.note ?? null;
         activateNoteEdit(noteRow, id, liveNote);
       });
       noteRow.addEventListener('keydown', (e) => {
+        if (noteRow.querySelector('.terminal-note-input')) return; // already in edit mode
         if (e.key === 'Enter' || e.key === ' ') {
           e.stopPropagation();
           const liveNote = activeTerminals.find(t => t.id === id)?.note ?? null;
