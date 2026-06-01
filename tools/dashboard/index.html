@@ -35,6 +35,16 @@
 .split-btn-group .btn-item-refine { border-radius: 0; margin-left: 0; border-left: none; }
 .cost-badge { font-size: 11px; color: var(--text-light, #888); margin-left: 6px; font-variant-numeric: tabular-nums; }
 .cost-placeholder { font-size: 11px; color: var(--text-light, #888); margin-left: 6px; }
+.btn-interrupt { font-size:11px; padding:2px 8px; border-radius:3px; border:1px solid #D97706; color:#92400E; background:transparent; cursor:pointer; }
+.btn-interrupt:hover { background:#FEF3C7; }
+.btn-restart  { font-size:11px; padding:2px 8px; border-radius:3px; border:1px solid #7C3AED; color:#7C3AED; background:transparent; cursor:pointer; }
+.btn-restart:hover  { background:#EDE9FE; }
+.btn-revoke   { font-size:11px; padding:2px 8px; border-radius:3px; border:1px solid #9CA3AF; color:#6B7280; background:transparent; cursor:pointer; }
+.btn-revoke:hover   { background:#F3F4F6; }
+.revoked-badge    { font-size:11px; background:#F3F4F6; color:#6B7280; padding:1px 5px; border-radius:3px; margin-left:4px; cursor:help; }
+.superseded-badge { font-size:11px; background:#EDE9FE; color:#7C3AED; padding:1px 5px; border-radius:3px; margin-left:4px; }
+.session-stopping { font-size:11px; color:#92400E; margin-left:6px; }
+.status-dot.interrupted { background: #F59E0B; }
 </style>
 </head>
 <body>
@@ -575,7 +585,10 @@ function finalizeDispatchPanel(dispatch) {
     const dot = panel.querySelector('.status-dot');
     if (dot) {
       clearActiveDotClasses(dot);
-      dot.classList.add(dispatch.status === 'completed' ? 'completed' : 'failed');
+      const terminalClass = dispatch.status === 'completed' ? 'completed'
+        : dispatch.status === 'interrupted' ? 'interrupted'
+        : 'failed';
+      dot.classList.add(terminalClass);
     }
     // Hide action buttons, show dismiss
     const killBtn = panel.querySelector(`[data-kill-dispatch="${dispatch.id}"]`);
@@ -1942,6 +1955,11 @@ function createSessionPanel(type, info) {
     panel.id = `dispatch-${id}`;
     const isRunning = dispatch.status === 'running';
     const isSuspended = dispatch.status === 'suspended';
+    const isRevoked     = !!dispatch.revoked_at;
+    const hasClaude     = !!dispatch.claude_session_id;
+    const isRestartable = ['interrupted', 'suspended', 'failed'].includes(dispatch.status) && hasClaude && !isRevoked;
+    const isRevokable   = ['interrupted', 'suspended', 'failed'].includes(dispatch.status) && hasClaude && !isRevoked;
+    const showInterrupt = dispatch.status === 'running';
     const skipBadge = dispatch.skip_permissions ? '<span class="auto-badge">[skip-perms]</span>' : '';
     const planBadge = dispatch.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
     const suspendedBadge = isSuspended ? '<span class="suspended-badge">[suspended]</span>' : '';
@@ -1969,12 +1987,15 @@ function createSessionPanel(type, info) {
     panel.innerHTML = `
       <div class="dispatch-header">
         <span class="status-dot ${isRunning ? (dispatch.agent_phase === 'waiting_for_input' ? 'needs-input' : dispatch.agent_phase === 'tool_running' ? 'tool-running' : 'generating') : dispatch.status}" title="${isRunning ? ({generating:'Thinking',tool_running:'Running tool',waiting_for_input:'Needs input'}[dispatch.agent_phase]||'') : ''}"></span>
-        <span class="dispatch-title">${dispatchPathStr}${planBadge}${skipBadge}${suspendedBadge}${autoImplementBadge}${alertBadges}${timeoutBadge}</span>
+        <span class="dispatch-title">${dispatchPathStr}${planBadge}${skipBadge}${suspendedBadge}${autoImplementBadge}${alertBadges}${timeoutBadge}${isRevoked ? '<span class="revoked-badge" title="This session has been revoked and cannot be resumed">[revoked]</span>' : ''}${dispatch.status === 'superseded' ? '<span class="superseded-badge">[superseded]</span>' : ''}</span>
         <span class="dispatch-meta">${fmtTimestamp(dispatch.started_at)}${costBadge}</span>
         <button class="focus-btn" data-focus-dispatch="${esc(id)}">Focus</button>
         <button class="minimize-btn" data-minimize-dispatch="${esc(id)}">▼</button>
         <button class="suspend-btn" data-suspend-dispatch="${esc(id)}" ${!isRunning ? 'style="display:none"' : ''}>Suspend</button>
         <button class="resume-btn" data-resume-dispatch="${esc(id)}" ${!isSuspended ? 'style="display:none"' : ''}>Resume</button>
+        <button class="btn-interrupt" data-interrupt-dispatch="${esc(id)}" ${!showInterrupt ? 'style="display:none"' : ''}>Interrupt</button>
+        <button class="btn-restart"   data-restart-dispatch="${esc(id)}"   ${!isRestartable ? 'style="display:none"' : ''}>Restart</button>
+        <button class="btn-revoke"    data-revoke-dispatch="${esc(id)}"    ${!isRevokable   ? 'style="display:none"' : ''}>Revoke</button>
         <button class="kill-btn" data-kill-dispatch="${esc(id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
         <button class="dismiss-btn" data-dismiss-dispatch="${esc(id)}" ${isRunning ? 'style="display:none"' : ''}>✕</button>
       </div>
@@ -1997,6 +2018,7 @@ function createSessionPanel(type, info) {
         <span style="font-weight:600;">Session interrupted — recover?</span>
         ${dispatch.claude_session_id ? `<span style="font-family:monospace;font-size:11px;opacity:0.8;">${esc(dispatch.claude_session_id)}</span>` : ''}
         <button class="btn-redispatch" data-redispatch="${esc(id)}" style="font-size:11px;padding:2px 8px;border-radius:3px;border:1px solid #7C3AED;color:#7C3AED;background:transparent;cursor:pointer;">Re-dispatch</button>
+        ${hasClaude && !isRevoked ? `<button class="btn-restart" data-restart-dispatch="${esc(id)}">Restart from saved state</button>` : ''}
         <button class="btn-dismiss-interrupted" data-dismiss-interrupted="${esc(id)}" style="font-size:11px;padding:2px 8px;border-radius:3px;border:1px solid #9CA3AF;color:#6B7280;background:transparent;cursor:pointer;">Dismiss</button>
       </div>` : ''}
       <div class="dispatch-log${resolveTermTheme() === 'light' ? ' log-light' : ''}" id="log-${id}"></div>
@@ -2133,6 +2155,114 @@ function createSessionPanel(type, info) {
             dispatch.exit_type = null;
           }
         } catch {}
+      };
+    }
+
+    const interruptBtn = panel.querySelector(`[data-interrupt-dispatch="${id}"]`);
+    if (interruptBtn) {
+      interruptBtn.onclick = (e) => {
+        if (!confirm(`Interrupt session ${id}?\n\nThe agent will receive SIGINT and stop. Session ID preserved for restart.`)) return;
+        const btn = e.target;
+        btn.disabled = true;
+        const stoppingSpan = document.createElement('span');
+        stoppingSpan.className = 'session-stopping';
+        stoppingSpan.textContent = 'Stopping…';
+        btn.insertAdjacentElement('afterend', stoppingSpan);
+        fetch(`/api/dispatch/${id}/interrupt`, { method: 'POST' })
+          .then(r => r.ok ? r.json() : r.json().then(e2 => Promise.reject(e2)))
+          .then(() => {
+            stoppingSpan.remove();
+            dispatch.status = 'interrupted';
+            finalizeDispatchPanel(dispatch);
+            btn.style.display = 'none';
+            if (dispatch.claude_session_id) {
+              panel.querySelector(`[data-restart-dispatch="${id}"]`)?.removeAttribute('style');
+              panel.querySelector(`[data-revoke-dispatch="${id}"]`)?.removeAttribute('style');
+            }
+            showToast('Session interrupted — session ID preserved for restart', 'info');
+          })
+          .catch(err => {
+            stoppingSpan.remove();
+            btn.disabled = false;
+            showToast(err.error || 'Failed to interrupt session', 'error');
+          });
+      };
+    }
+
+    const restartBtn = panel.querySelector(`[data-restart-dispatch="${id}"]`);
+    if (restartBtn) {
+      restartBtn.onclick = (e) => {
+        const btn = e.target;
+        btn.disabled = true;
+        fetch(`/api/dispatch/${id}/restart`, { method: 'POST' })
+          .then(r => r.ok ? r.json() : r.json().then(e2 => Promise.reject(e2)))
+          .then(result => {
+            dispatch.status = 'superseded';
+            dispatch.revoked_at = new Date().toISOString();
+            const titleEl = panel.querySelector('.dispatch-title');
+            if (titleEl && !titleEl.querySelector('.superseded-badge')) {
+              titleEl.insertAdjacentHTML('beforeend', '<span class="superseded-badge">[superseded]</span>');
+            }
+            panel.querySelector(`[data-restart-dispatch="${id}"]`)?.remove();
+            panel.querySelector(`[data-revoke-dispatch="${id}"]`)?.remove();
+            const newDispatch = {
+              id: result.dispatch_id,
+              work_item_id: dispatch.work_item_id,
+              work_item_title: dispatch.work_item_title,
+              epic_id: dispatch.epic_id,
+              project_key: dispatch.project_key,
+              permission_mode: dispatch.permission_mode,
+              skip_permissions: dispatch.skip_permissions,
+              dispatch_mode: dispatch.dispatch_mode,
+              title: dispatch.title,
+              claude_session_id: result.claude_session_id || null,
+              previous_dispatch_id: id,
+              status: 'running',
+              agent_phase: 'generating',
+              started_at: new Date().toISOString(),
+              revoked_at: null,
+            };
+            activeDispatches.push(newDispatch);
+            createSessionPanel(newDispatch);
+            placeSessionPanels();
+            loadDispatchContent(newDispatch);
+            syncSessionState();
+            showToast('Session restarted — original preserved as [superseded]', 'info');
+          })
+          .catch(err => {
+            btn.disabled = false;
+            if (err.code === 'worktree_missing' || err.error?.includes('worktree was removed')) {
+              showInlineErrorBanner(panel, (err.error || 'Worktree was removed') + ' — use Re-dispatch to create a new worktree.');
+            } else {
+              showToast(err.error || 'Failed to restart session', 'error');
+            }
+          });
+      };
+    }
+
+    const revokeBtn = panel.querySelector(`[data-revoke-dispatch="${id}"]`);
+    if (revokeBtn) {
+      revokeBtn.onclick = (e) => {
+        if (!confirm(`Revoke session ${id}?\n\nThis marks the session permanently non-resumable.`)) return;
+        const btn = e.target;
+        btn.disabled = true;
+        fetch(`/api/dispatch/${id}/revoke`, { method: 'POST' })
+          .then(r => r.ok ? r.json() : r.json().then(e2 => Promise.reject(e2)))
+          .then(() => {
+            dispatch.revoked_at = new Date().toISOString();
+            panel.querySelector(`[data-revoke-dispatch="${id}"]`)?.remove();
+            panel.querySelector(`[data-restart-dispatch="${id}"]`)?.remove();
+            const titleEl = panel.querySelector('.dispatch-title');
+            if (titleEl && !titleEl.querySelector('.revoked-badge')) {
+              titleEl.insertAdjacentHTML('beforeend',
+                '<span class="revoked-badge" title="This session has been revoked and cannot be resumed">[revoked]</span>');
+            }
+            showToast('Session revoked', 'info');
+          })
+          .catch(err => {
+            btn.disabled = false;
+            showToast(err.error || 'Failed to revoke session', 'error');
+          });
       };
     }
 
@@ -2616,6 +2746,17 @@ function showToast(message, type, linkText, linkDispatchId) {
   setTimeout(() => { if (toast.parentElement) toast.remove(); }, 10000);
 }
 
+function showInlineErrorBanner(panel, message) {
+  panel.querySelector('.inline-error-banner')?.remove();
+  const banner = document.createElement('div');
+  banner.className = 'inline-error-banner';
+  banner.style.cssText = 'background:#FEF2F2;border:1px solid #FCA5A5;border-radius:4px;padding:6px 10px;font-size:12px;color:#991B1B;margin:6px 0;';
+  banner.textContent = message;
+  const header = panel.querySelector('.panel-header');
+  if (header?.nextSibling) { panel.insertBefore(banner, header.nextSibling); }
+  else { panel.appendChild(banner); }
+}
+
 async function suspendSession(endpoint, btn, onSuccess) {
   btn.disabled = true;
   try {
@@ -2962,6 +3103,16 @@ async function restoreDispatches() {
           }
           if (!existing.work_item_input_needed) {
             panelEl.querySelector('.input-needed-banner')?.remove();
+          }
+          if (d.revoked_at && !existing.revoked_at) {
+            existing.revoked_at = d.revoked_at;
+            if (!panelEl.querySelector('.revoked-badge')) {
+              const titleEl = panelEl.querySelector('.dispatch-title');
+              titleEl?.insertAdjacentHTML('beforeend',
+                '<span class="revoked-badge" title="This session has been revoked and cannot be resumed">[revoked]</span>');
+              panelEl.querySelector(`[data-restart-dispatch]`)?.remove();
+              panelEl.querySelector(`[data-revoke-dispatch]`)?.remove();
+            }
           }
         }
         if (prevPhase !== 'waiting_for_input' && existing.agent_phase === 'waiting_for_input' && existing.project_key) {
