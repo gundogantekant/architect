@@ -307,6 +307,8 @@ export async function seedDispatch(opts = {}) {
     ...(opts.cost_usd !== undefined && { cost_usd: opts.cost_usd }),
     ...(opts.exit_type !== undefined && { exit_type: opts.exit_type }),
     ...(opts.started_at !== undefined && { started_at: opts.started_at }),
+    ...(opts.worktree_path !== undefined && { worktree_path: opts.worktree_path }),
+    ...(opts.project_path !== undefined && { project_path: opts.project_path }),
   };
   const res = await api('test/seed-dispatch', {
     method: 'POST',
