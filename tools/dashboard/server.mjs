@@ -229,6 +229,19 @@ async function main() {
     process.exit(1);
   }
 
+  // Data quality: log work items missing e2e_test_criteria that may fail stricter contract validation
+  const stale = await db.query(
+    `SELECT id, title FROM work_items
+     WHERE status IN ('open', 'ready', 'in-progress')
+       AND (contract->>'e2e_test_criteria' IS NULL
+            OR contract->>'e2e_test_criteria' = '[]'
+            OR contract->>'e2e_test_criteria' = 'null')`
+  );
+  if (stale.rows.length > 0) {
+    console.warn(`[contract-quality] ${stale.rows.length} active work item(s) have no e2e_test_criteria and may fail the updated contract validation gate:`);
+    for (const row of stale.rows) console.warn(`  ${row.id}: ${row.title}`);
+  }
+
   // Phase 2: Ensure logs directory, tmp directory, and work/assets directory
   await mkdir(LOGS_DIR, { recursive: true });
   await mkdir(TMP_DIR, { recursive: true });

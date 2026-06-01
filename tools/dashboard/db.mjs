@@ -179,7 +179,7 @@ export async function assertSchema() {
     work_item_logs: ['id', 'work_item_id', 'logged_at', 'summary'],
     epics: ['id', 'title', 'status', 'priority', 'description', 'acceptance_criteria', 'target_date', 'tags', 'created_at', 'updated_at'],
     epic_logs: ['id', 'epic_id', 'logged_at', 'summary'],
-    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'completion_summary_error', 'dry_run', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at', 'agent_phase', 'agent_phase_history', 'timeout_at', 'contract', 'exit_type', 'deleted_at', 'auto_extended'],
+    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'completion_summary_error', 'dry_run', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at', 'agent_phase', 'agent_phase_history', 'timeout_at', 'contract', 'exit_type', 'deleted_at', 'auto_extended', 'scope_violation', 'merged_at', 'merge_target'],
     terminals: ['id', 'type', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'exited_at', 'pid', 'tmux_session', 'claude_session_id', 'agent_type', 'head_seq', 'deleted_at', 'note'],
     cli_sessions: ['id', 'project_key', 'work_item_id', 'epic_id', 'title', 'pid', 'status', 'registered_at', 'exited_at'],
     preferences: ['key', 'value'],
@@ -282,6 +282,10 @@ export async function assertSchema() {
   if (!changeLogChecks.some(n => n.includes('classification'))) {
     console.warn('[db] schema warning: no CHECK constraint covering classification found on change_log_entries');
   }
+}
+
+export async function query(sql, params) {
+  return pool.query(sql, params);
 }
 
 export async function closeDatabase() {
@@ -850,8 +854,8 @@ export async function getEpicProjectKeys(epicId) {
 
 export async function saveDispatch(d) {
   await pool.query(`
-    INSERT INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode, pipeline_stage, agent_phase, agent_phase_history, timeout_at, contract, exit_type, dry_run, auto_extended)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+    INSERT INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode, pipeline_stage, agent_phase, agent_phase_history, timeout_at, contract, exit_type, dry_run, auto_extended, contract_satisfied, contract_satisfied_at, scope_violation, merged_at, merge_target)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
     ON CONFLICT (id) DO UPDATE SET
       work_item_id = EXCLUDED.work_item_id,
       epic_id = EXCLUDED.epic_id,
@@ -877,7 +881,12 @@ export async function saveDispatch(d) {
       contract = EXCLUDED.contract,
       exit_type = EXCLUDED.exit_type,
       dry_run = EXCLUDED.dry_run,
-      auto_extended = EXCLUDED.auto_extended
+      auto_extended = EXCLUDED.auto_extended,
+      contract_satisfied = EXCLUDED.contract_satisfied,
+      contract_satisfied_at = EXCLUDED.contract_satisfied_at,
+      scope_violation = EXCLUDED.scope_violation,
+      merged_at = EXCLUDED.merged_at,
+      merge_target = EXCLUDED.merge_target
   `, [
     d.id, d.work_item_id || null, d.epic_id || null, d.project_key, d.project_path || '',
     d.title || '', d.permission_mode || 'acceptEdits', d.skip_permissions ?? false,
@@ -889,7 +898,28 @@ export async function saveDispatch(d) {
     d.exit_type || null,
     d.dry_run ?? false,
     d.auto_extended ?? false,
+    d.contract_satisfied ?? null,
+    d.contract_satisfied_at ?? null,
+    d.scope_violation ?? false,
+    d.merged_at ?? null,
+    d.merge_target ?? null,
   ]);
+}
+
+export async function setContractSatisfied(id) {
+  await pool.query(
+    `UPDATE dispatches
+     SET contract_satisfied = TRUE, contract_satisfied_at = NOW()
+     WHERE id = $1 AND contract_satisfied IS NOT TRUE`,
+    [id]
+  );
+}
+
+export async function setScopeViolation(id, value) {
+  await pool.query(
+    `UPDATE dispatches SET scope_violation = $2 WHERE id = $1`,
+    [id, value]
+  );
 }
 
 export async function updateAgentPhase(id, phase, historyEntry) {

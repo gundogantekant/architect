@@ -60,7 +60,7 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
    - Any `block` → feed concerns back to planner for revision, re-review (max 2 cycles). If still blocked after 2 cycles, escalate to user.
    - Any `revise` (no `block`) → present plan to user WITH revision concerns highlighted. User decides: accept, revise, or override.
    - All `approve` → update work item status to `ready`. Proceed to user confirmation (step 5 already handles this).
-   Skip this step for trivial/small complexity or when the plan was provided by the user.
+   Skip this step for trivial/small complexity. User-provided plans for medium+ work items must still pass the Plan Gate — the board reviews the plan regardless of its origin.
 
 7. **Write contract tests** (if applicable per `domain/rules.md` → Contract-First Planning Rules): When the plan introduces new API endpoints, UI interactions, or dispatch flows, write E2E/integration tests that encode the expected behavior before implementation. When `contract.e2e_test_criteria` is present, use each entry directly as a test scenario description — each criterion becomes one test case. Verify all tests fail (red) before implementation. Trivial changes are exempt.
 
