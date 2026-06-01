@@ -180,7 +180,7 @@ export async function assertSchema() {
     epics: ['id', 'title', 'status', 'priority', 'description', 'acceptance_criteria', 'target_date', 'tags', 'created_at', 'updated_at'],
     epic_logs: ['id', 'epic_id', 'logged_at', 'summary'],
     dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'completion_summary_error', 'dry_run', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at', 'agent_phase', 'agent_phase_history', 'timeout_at', 'contract', 'exit_type', 'deleted_at', 'auto_extended'],
-    terminals: ['id', 'type', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'exited_at', 'pid', 'tmux_session', 'claude_session_id', 'agent_type', 'head_seq', 'deleted_at'],
+    terminals: ['id', 'type', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'exited_at', 'pid', 'tmux_session', 'claude_session_id', 'agent_type', 'head_seq', 'deleted_at', 'note'],
     cli_sessions: ['id', 'project_key', 'work_item_id', 'epic_id', 'title', 'pid', 'status', 'registered_at', 'exited_at'],
     preferences: ['key', 'value'],
     projects: ['key', 'org', 'project', 'component', 'path', 'role', 'synced_at'],
@@ -981,6 +981,14 @@ export async function updateTerminalTitle(id, title) {
     [title, id]
   );
   if (result.rowCount === 0) console.warn(`updateTerminalTitle: no terminal found for id=${id}`);
+}
+
+export async function updateTerminalNote(id, note) {
+  const result = await pool.query(
+    `UPDATE terminals SET note = $1 WHERE id = $2`,
+    [note || null, id]
+  );
+  if (result.rowCount === 0) console.warn(`updateTerminalNote: no terminal found for id=${id}`);
 }
 
 export async function deleteTerminal(id) {

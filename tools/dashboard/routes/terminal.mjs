@@ -1,5 +1,5 @@
 import { spawnTerminalSession } from '../terminal-session.mjs';
-import { updateTerminalTitle } from '../db.mjs';
+import { updateTerminalTitle, updateTerminalNote } from '../db.mjs';
 
 export default function terminalRoutes(deps) {
   const {
@@ -351,6 +351,7 @@ export default function terminalRoutes(deps) {
           claude_session_id: t.claude_session_id || null,
           head_seq: t.eventStream ? t.eventStream.headSeq : 0,
           deleted_at: null,
+          note: t.note ?? null,
         };
       }));
       const active = list.filter(Boolean);
@@ -383,6 +384,7 @@ export default function terminalRoutes(deps) {
           claude_session_id: t.claude_session_id || null,
           head_seq: 0,
           deleted_at: t.deleted_at,
+          note: t.note ?? null,
         }));
       json(res, [...active, ...deletedRows]);
     }],
@@ -671,6 +673,22 @@ export default function terminalRoutes(deps) {
       terminal.title = trimmed;
       await updateTerminalTitle(terminal.id, trimmed);
       json(res, { ok: true, title: trimmed });
+    }],
+
+    // Update terminal user note (free-text coordination annotation)
+    [/^\/api\/terminal\/([A-Za-z0-9_-]+)\/note$/, 'PATCH', async (m, req, res) => {
+      const terminal = terminals.get(m[1]);
+      if (!terminal) return err(res, 'Not found', 404);
+      const body = await parseBody(req);
+      const raw = body?.note ?? null;
+      if (raw !== null) {
+        if (typeof raw !== 'string') return err(res, 'note must be a string', 400);
+        if (raw.length > 200) return err(res, 'note exceeds 200-character limit', 400);
+      }
+      const note = (typeof raw === 'string' ? raw.trim() : null) || null;
+      await updateTerminalNote(terminal.id, note);
+      terminal.note = note;
+      json(res, { ok: true, note });
     }],
 
     // Inject a prompt into a running terminal
