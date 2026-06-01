@@ -941,8 +941,8 @@ export async function getDeletedDispatches() {
 
 export async function saveTerminal(t) {
   await pool.query(`
-    INSERT INTO terminals (id, type, work_item_id, epic_id, project_key, project_path, org_key, title, permission_mode, skip_permissions, status, started_at, exited_at, pid, tmux_session, claude_session_id, agent_type, head_seq)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+    INSERT INTO terminals (id, type, work_item_id, epic_id, project_key, project_path, org_key, title, permission_mode, skip_permissions, status, started_at, exited_at, pid, tmux_session, claude_session_id, agent_type, head_seq, note)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
     ON CONFLICT (id) DO UPDATE SET
       type = EXCLUDED.type,
       work_item_id = EXCLUDED.work_item_id,
@@ -960,14 +960,15 @@ export async function saveTerminal(t) {
       tmux_session = EXCLUDED.tmux_session,
       claude_session_id = EXCLUDED.claude_session_id,
       agent_type = EXCLUDED.agent_type,
-      head_seq = EXCLUDED.head_seq
+      head_seq = EXCLUDED.head_seq,
+      note = EXCLUDED.note
   `, [
     t.id, t.type || 'claude', t.work_item_id || null, t.epic_id || null,
     t.project_key || '', t.project_path || '', t.org_key || null, t.title || '',
     t.permission_mode || 'acceptEdits', t.skip_permissions ?? false,
     t.status, t.started_at, t.exited_at || null, t.pid || null,
     t.tmux_session || null, t.claude_session_id || null,
-    t.agent_type || 'claude', t.head_seq || 0,
+    t.agent_type || 'claude', t.head_seq || 0, t.note ?? null,
   ]);
 }
 

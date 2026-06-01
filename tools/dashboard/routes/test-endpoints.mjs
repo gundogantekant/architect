@@ -512,6 +512,14 @@ export default function testEndpointRoutes(deps) {
       json(res, { status: 'pumping', terminalId, linesPerSecond, duration });
     }],
 
+    // Force-flush in-memory terminal state to DB (exercises saveTerminalToDb directly)
+    [/^\/api\/test\/terminal\/([A-Za-z0-9_-]+)\/force-save$/, 'POST', async (m, _req, res) => {
+      const terminal = terminals.get(m[1]);
+      if (!terminal) return err(res, 'terminal not found', 404);
+      await saveTerminalToDb(terminal);
+      json(res, { ok: true, terminal_id: terminal.id, note: terminal.note ?? null });
+    }],
+
     // Return full EventStream state for a terminal (test inspection)
     [/^\/api\/test\/terminal\/([A-Za-z0-9_-]+)\/event-stream$/, 'GET', async (m, _req, res) => {
       const terminal = terminals.get(m[1]);

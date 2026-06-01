@@ -86,6 +86,19 @@ test.describe('Terminal notes API @fast', () => {
     expect(found.note).toBeNull();
   });
 
+  test('TN-10: note survives a saveTerminalToDb upsert cycle', async () => {
+    const t = await seedTerminal({ skip_seed: true });
+    await api(`terminal/${t.id}/note`, {
+      method: 'PATCH',
+      body: JSON.stringify({ note: 'survives-upsert' }),
+    });
+    // Force a full saveTerminalToDb call (the code path being fixed)
+    await api(`test/terminal/${t.id}/force-save`, { method: 'POST' });
+    const terminals = await api('terminal/active');
+    const found = terminals.find(x => x.id === t.id);
+    expect(found?.note).toBe('survives-upsert');
+  });
+
 });
 
 // ============================================================

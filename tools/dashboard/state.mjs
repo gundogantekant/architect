@@ -42,6 +42,7 @@ export async function saveTerminalToDb(t) {
     claude_session_id: t.claude_session_id || null,
     agent_type: t.agent_type || t.type || 'claude',
     head_seq: t.eventStream ? t.eventStream.headSeq : 0,
+    note: t.note ?? null,
   });
 }
 
