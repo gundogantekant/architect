@@ -1057,6 +1057,10 @@ This guidance governs the model chosen for the **main-thread CLI session** itsel
 
 > Footnote: The orchestrator is intentionally absent from the Canonical Agent Default Models table because no architect process programmatically selects its model — that choice lives with the operator launching the CLI session.
 
+### Plan Surfacing Gate
+
+6. **Plan Surfacing Gate**: When the orchestrator operates in plan mode (the session will exit via ExitPlanMode to present a plan to the user for approval), the Plan Gate board review MUST complete and board feedback MUST be incorporated into the plan file BEFORE the plan is surfaced to the user (i.e., before ExitPlanMode is called). The user must always see an already-reviewed plan. This rule applies to the orchestrator session only — dispatched agents in `usecases/implement-work-item.md` follow the Plan Gate step sequence at steps 5–6 of that usecase.
+
 ## Session Scope Rules
 
 Every session has a `SessionIdentity` (see `domain/entities.md`) that determines its permissions. These rules define what each session type may and may not do.
@@ -1347,7 +1351,7 @@ open → [Plan Gate] → ready → in-progress → [Code Gate] → done
 
 ### Integration Points
 
-1. `usecases/implement-work-item.md` step 6 — **Plan Gate**: after plan generation, before user confirmation. Runs for all complexity except T1. On approve → status `ready`.
+1. `usecases/implement-work-item.md` step 6 — **Plan Gate**: after plan generation, before plan is presented to user. Board verdicts must be collected before user sees the plan. Runs for all complexity except T1. On approve → status `ready`.
 2. `usecases/implement-work-item.md` step 11 — **Code Gate**: after tests pass, before commit. On approve → proceed to commit.
 3. `usecases/review-code.md` — Code Gate runs alongside the reviewer agent for detailed findings.
 4. `usecases/create-pr.md` — Code Gate runs before PR creation. Block verdicts warn the user.
@@ -1366,13 +1370,15 @@ These rules apply to all dispatches (except T1-tagged items) without exception. 
 4. **Code Gate required**: Every medium+ DispatchPlan must include a code-gate review step as the final pre-merge step. The code gate must verify contract satisfaction (each e2e_test_criteria item is implemented and passing). Board: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod, plus tech-reviewer-dba if DB changes present, tech-reviewer-security if auth/secrets present.
 5. **Base branch merge**: Merge always targets source_branch (the originating branch captured at worktree creation time). Never hardcode main as merge target.
 
-### Ticket Gate (Orchestrator Behavior Extension)
+### Ticket Gate (Orchestrator Behavior Extension — Coordinator Flow)
+
+This rule governs the orchestrator reading a coordinator DispatchPlan for medium+ complexity. For plan-mode (ExitPlanMode) sequencing, see Plan Surfacing Gate in Orchestrator Behavior Rules.
+
 For medium+ complexity, after the coordinator produces a DispatchPlan:
-1. Surface the plan to the user immediately (visibility is non-blocking).
-2. Simultaneously dispatch a Ticket Gate board review (same board as Plan Gate Board) as an async parallel step.
-3. Incorporate board feedback before proceeding to dispatch any implementation agent.
+1. Dispatch a Ticket Gate board review (same board as Plan Gate Board) immediately — before surfacing the plan to the user.
+2. After all board verdicts are collected, incorporate feedback into the plan.
+3. Surface the plan WITH board verdicts to the user. Implementation dispatch is gated on both board clearance and user approval.
 4. If board blocks, revise the plan (max 2 revision cycles) before dispatching.
-5. Override note: This extends the existing rule that surfaces coordinator output for user approval — plan is visible immediately but implementation dispatch is gated on board clearance.
 
 ### Recursion Guard
 Gate reviews (Ticket Gate, Plan Gate, Code Gate) are read-only, depth-1 dispatches. They do NOT trigger further gate reviews. Maximum gate recursion depth: 1.

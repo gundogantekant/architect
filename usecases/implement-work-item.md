@@ -54,12 +54,12 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 
 4. **Brief investigation**: Read relevant files based on work item description and portfolio context. Keep exploration to understanding the change surface — identify which files need changes, what patterns exist, any dependencies or constraints. Do not do a full codebase scan. **Auto-Implement Mode**: report stage — `PUT /api/dispatch/${DISPATCH_ID}/stage` with `{"stage": "investigating"}`.
 
-5. **Plan implementation**: Produce a bullet-point plan (max 5 points) covering: files to modify/create, approach summary, test strategy. If the work item has a stored `plan.md` artifact, use it as the basis instead of generating from scratch. Present to user for confirmation. If rejected, refine or abort.
+5. **Plan implementation**: Produce a bullet-point plan (max 5 points) covering: files to modify/create, approach summary, test strategy. If the work item has a stored `plan.md` artifact, use it as the basis instead of generating from scratch. Do NOT present to user yet — board review runs first in step 6.
 
 6. **Review Board — Plan Gate** (all complexity except T1-tagged items per `domain/rules.md` → Review Board Rules): Assemble the review board using context-based composition rules (3–10 agents). Dispatch all selected tech-reviewer-* agents **in parallel** with the plan text, artifact_type=plan, and target project portfolio context. Collect `TechReviewVerdict` from each. Apply aggregation rules:
    - Any `block` → feed concerns back to planner for revision, re-review (max 2 cycles). If still blocked after 2 cycles, escalate to user.
    - Any `revise` (no `block`) → present plan to user WITH revision concerns highlighted. User decides: accept, revise, or override.
-   - All `approve` → update work item status to `ready`. Proceed to user confirmation (step 5 already handles this).
+   - All `approve` → update work item status to `ready`. Present plan WITH board verdicts to user for confirmation. If rejected, refine or abort.
    This step runs for all dispatched complexity levels except T1-tagged items. For trivial/small, the board evaluates the inline plan produced in step 5 — no DispatchContract is required for the board to evaluate these plans. The board reviews any plan regardless of complexity or origin (user-provided or agent-generated).
 
 7. **Write contract tests** (if applicable per `domain/rules.md` → Contract-First Planning Rules): When the plan introduces new API endpoints, UI interactions, or dispatch flows, write E2E/integration tests that encode the expected behavior before implementation. When `contract.e2e_test_criteria` is present, use each entry directly as a test scenario description — each criterion becomes one test case. Verify all tests fail (red) before implementation. Trivial changes are exempt.
