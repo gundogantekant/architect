@@ -325,7 +325,9 @@ export default function terminalRoutes(deps) {
     // List active terminals
     [/^\/api\/terminal\/active$/, 'GET', async (_m, req, res) => {
       const workerId = req.headers['x-test-worker-id'];
-      const includeDeleted = new URL(req.url, 'http://x').searchParams.get('include_deleted') === 'true';
+      const reqUrl = new URL(req.url, 'http://x');
+      const includeDeleted = reqUrl.searchParams.get('include_deleted') === 'true';
+      const projectKey = reqUrl.searchParams.get('project_key') || null;
       const list = await Promise.all([...terminals].map(async ([id, t]) => {
         if (workerId !== undefined && t._testWorkerId !== workerId) return null;
         return {
@@ -354,13 +356,14 @@ export default function terminalRoutes(deps) {
           note: t.note ?? null,
         };
       }));
-      const active = list.filter(Boolean);
+      const active = list.filter(Boolean).filter(t => !projectKey || t.project_key === projectKey);
       if (!includeDeleted) {
         json(res, active);
         return;
       }
       const deleted = await db.getDeletedTerminals();
       const deletedRows = deleted
+        .filter(t => !projectKey || t.project_key === projectKey)
         .map(t => ({
           id: t.id,
           type: t.type || 'claude',

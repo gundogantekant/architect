@@ -39,10 +39,11 @@ export default function sessionRoutes(deps) {
     }],
 
     // List CLI sessions
-    [/^\/api\/sessions\/active$/, 'GET', async (_m, _req, res) => {
+    [/^\/api\/sessions\/active$/, 'GET', async (_m, req, res) => {
+      const projectKey = new URL(req.url, 'http://x').searchParams.get('project_key') || null;
       const list = [];
       for (const [, c] of cliSessions) {
-        list.push({ ...c });
+        if (!projectKey || c.project_key === projectKey) list.push({ ...c });
       }
       json(res, list);
     }],

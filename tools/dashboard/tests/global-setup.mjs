@@ -76,6 +76,7 @@ export const SPEC_FILES = [
   'terminal-goal-summary',
   'session-end-fix',
   'terminal-notes',
+  'project-key-filter',
 ];
 
 function getLiveDashboardPorts() {

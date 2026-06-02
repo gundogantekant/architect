@@ -50,7 +50,7 @@ export default function projectsRoutes(deps) {
         }
       }
 
-      const backlog = await db.getBacklog(org, false);
+      const backlog = await db.getBacklog({ orgFilter: org });
       const projectGroup = (backlog.projects || {})[projectKey] || { items: [] };
       const nonTerminalStatuses = new Set(['draft', 'planned', 'blocked']);
       const items = (projectGroup.items || [])
@@ -235,7 +235,7 @@ export default function projectsRoutes(deps) {
         try { template = await readFile(templatePath, 'utf8'); }
         catch { template = await readFile(defaultTemplatePath, 'utf8'); }
 
-        const backlog = await db.getBacklog(org, false);
+        const backlog = await db.getBacklog({ orgFilter: org });
         const projectGroup = (backlog.projects || {})[projectKey] || { items: [] };
         // Intentionally excludes blocked items (differs from /refine which includes blocked)
         const refinableItems = (projectGroup.items || [])

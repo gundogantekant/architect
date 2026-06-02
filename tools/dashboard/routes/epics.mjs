@@ -6,7 +6,8 @@ export default function epicRoutes(deps) {
     // --- Epic endpoints ---
 
     // List epics
-    [/^\/api\/epics$/, 'GET', async (_m, _req, res) => {
+    [/^\/api\/epics$/, 'GET', async (_m, req, res) => {
+      const projectKey = new URL(req.url, 'http://x').searchParams.get('project_key') || null;
       const epicList = await db.listEpics();
       const epics = await Promise.all(epicList.map(async epic => {
         const items = await db.getWorkItemsByEpic(epic.id);
@@ -19,7 +20,8 @@ export default function epicRoutes(deps) {
           progress: { done, total: items.length },
         };
       }));
-      json(res, epics);
+      // Semantic: returns epics that touch the project (at least one work item in it)
+      json(res, projectKey ? epics.filter(e => e.project_keys.includes(projectKey)) : epics);
     }],
 
     // Get epic detail

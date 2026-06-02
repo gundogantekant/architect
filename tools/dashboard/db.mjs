@@ -173,7 +173,7 @@ export async function assertSchema() {
       'tags', 'depends_on', 'created_at', 'updated_at', 'input_needed', 'input_needed_from',
       'input_needed_reason', 'input_needed_at', 'approval_active', 'approval_mode',
       'approval_requested_at', 'approval_resolved_at', 'released_at', 'released_version',
-      'done_at',
+      'done_at', 'contract',
     ],
     work_item_approvals: ['id', 'work_item_id', 'identity', 'status', 'sort_order', 'blocking_work_item_id', 'decided_at', 'reason', 'created_at'],
     work_item_logs: ['id', 'work_item_id', 'logged_at', 'summary'],
@@ -1157,12 +1157,15 @@ export async function getAllPreferences() {
 
 // --- Backlog reconstruction (legacy shape for API compat) ---
 
-export async function getBacklog(orgFilter, includeArchived = false, dateFilter = {}) {
+export async function getBacklog({ orgFilter, projectKey, includeArchived = false, dateFilter = {} } = {}) {
   const archivedClause = includeArchived ? '' : " AND status != 'archived'";
   const params = [];
   let where = `1=1${archivedClause}`;
 
-  if (orgFilter) {
+  if (projectKey) {
+    params.push(projectKey);
+    where = `project_key = $${params.length}${archivedClause}`;
+  } else if (orgFilter) {
     params.push(orgFilter.toLowerCase() + '/%');
     where = `project_key LIKE $${params.length}${archivedClause}`;
   }
@@ -1197,13 +1200,14 @@ export async function getBacklog(orgFilter, includeArchived = false, dateFilter 
   }
 
   const epicList = await listEpics();
-  const epics = await Promise.all(epicList.map(async epic => {
+  const allEpics = await Promise.all(epicList.map(async epic => {
     epic.work_item_ids = await getEpicWorkItemIds(epic.id);
     epic.project_keys = await getEpicProjectKeys(epic.id);
     const epicLogs = await getEpicLogs(epic.id);
     epic.session_log = epicLogs.map(l => ({ date: l.logged_at, summary: l.summary }));
     return epic;
   }));
+  const epics = projectKey ? allEpics.filter(e => e.project_keys.includes(projectKey)) : allEpics;
 
   const seqRows = await pool.query('SELECT name, next_val FROM sequences WHERE name = ANY($1)', [['work_item', 'epic']]).then(r => r.rows);
   const seqMap = {};

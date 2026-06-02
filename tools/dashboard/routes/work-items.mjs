@@ -118,13 +118,14 @@ export default function workItemRoutes(deps) {
     [/^\/api\/backlog$/, 'GET', async (_m, req, res) => {
       const reqUrl = new URL(req.url, 'http://localhost');
       const orgFilter = reqUrl.searchParams.get('org');
+      const projectKey = reqUrl.searchParams.get('project_key') || null;
       const view = reqUrl.searchParams.get('view');
       const awaitingAction = reqUrl.searchParams.get('awaiting_action') === 'true';
       const from = reqUrl.searchParams.get('from') || null;
       const to = reqUrl.searchParams.get('to') || null;
       const dateFilter = (from || to) ? { from, to } : {};
       // Stakeholder view includes archived items (STAKEHOLDER_PROJECTION maps 'archived' → 'Archived')
-      let backlog = await db.getBacklog(orgFilter || null, view === 'stakeholder', dateFilter);
+      let backlog = await db.getBacklog({ orgFilter: orgFilter || null, projectKey, includeArchived: view === 'stakeholder', dateFilter });
       if (awaitingAction) backlog = filterAwaitingAction(backlog);
       backlog = projectBacklog(backlog, view);
       json(res, backlog);
@@ -157,13 +158,15 @@ export default function workItemRoutes(deps) {
     [/^\/api\/work-items$/, 'GET', async (_m, req, res) => {
       const reqUrl = new URL(req.url, 'http://localhost');
       const approverPending = reqUrl.searchParams.get('approver_pending');
+      const projectKey = reqUrl.searchParams.get('project_key') || null;
       if (approverPending) {
         const rows = await db.getPendingApprovalsForIdentity(approverPending);
         const itemIds = [...new Set(rows.map(r => r.work_item_id))];
-        const items = (await Promise.all(itemIds.map(id => db.getWorkItemFull(id)))).filter(Boolean);
+        let items = (await Promise.all(itemIds.map(id => db.getWorkItemFull(id)))).filter(Boolean);
+        if (projectKey) items = items.filter(i => i.project_key === projectKey);
         return json(res, items);
       }
-      json(res, await db.getAllWorkItems());
+      json(res, projectKey ? await db.getWorkItemsByProject(projectKey) : await db.getAllWorkItems());
     }],
 
     [/^\/api\/work-items$/, 'POST', async (_m, req, res) => {

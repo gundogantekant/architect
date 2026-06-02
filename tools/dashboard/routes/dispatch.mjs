@@ -680,7 +680,9 @@ export default function dispatchRoutes(deps) {
     // List dispatches (returns all including completed/failed/interrupted)
     [/^\/api\/dispatch\/active$/, 'GET', async (_m, req, res) => {
       const workerId = req.headers['x-test-worker-id'];
-      const includeDeleted = new URL(req.url, 'http://x').searchParams.get('include_deleted') === 'true';
+      const reqUrl = new URL(req.url, 'http://x');
+      const includeDeleted = reqUrl.searchParams.get('include_deleted') === 'true';
+      const projectKey = reqUrl.searchParams.get('project_key') || null;
       const list = await Promise.all([...dispatches].map(async ([id, d]) => {
         if (workerId !== undefined && d._testWorkerId !== workerId) return null;
         return {
@@ -725,13 +727,14 @@ export default function dispatchRoutes(deps) {
           deleted_at: null,
         };
       }));
-      const active = list.filter(Boolean);
+      const active = list.filter(Boolean).filter(d => !projectKey || d.project_key === projectKey);
       if (!includeDeleted) {
         json(res, active);
         return;
       }
       const deleted = await db.getDeletedDispatches();
       const deletedRows = deleted
+        .filter(d => !projectKey || d.project_key === projectKey)
         .map(d => ({
           id: d.id,
           title: d.title || null,
