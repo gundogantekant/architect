@@ -1,7 +1,7 @@
 import { existsSync, createReadStream } from 'node:fs';
 import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository, checkWorktreeReadiness } from '../worktree.mjs';
 import { AUTO_IMPLEMENTABLE_STATUSES, DISPATCH_TIMEOUT_MS, EXTEND_DURATION_MS, HEARTBEAT_INTERVAL_MS, INPUT_NEEDED_SOURCE, PIPELINE_STAGES, PORTFOLIO } from '../constants.mjs';
-import { triggerMerge, scheduleDispatchTimeout, appendProgress } from '../dispatch-manager.mjs';
+import { triggerMerge, scheduleDispatchTimeout, appendProgress, interruptDispatch, restartDispatch } from '../dispatch-manager.mjs';
 import { isMediumOrAbove } from '../utils/complexity.mjs';
 import { validateContract } from '../utils/contract-validation.mjs';
 import { writePromptFile, deletePromptFile } from '../prompt-file.mjs';
@@ -725,6 +725,8 @@ export default function dispatchRoutes(deps) {
           contract_satisfied: d.contract_satisfied ?? null,
           scope_violation: d.scope_violation ?? false,
           deleted_at: null,
+          revoked_at: d.revoked_at || null,
+          previous_dispatch_id: d.previous_dispatch_id || null,
         };
       }));
       const active = list.filter(Boolean).filter(d => !projectKey || d.project_key === projectKey);
@@ -1054,12 +1056,61 @@ export default function dispatchRoutes(deps) {
       json(res, { status: 'dismissed', id: m[1] });
     }],
 
+    // Interrupt a running dispatch: SIGINT → SIGTERM(10s) → SIGKILL(15s)
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/interrupt$/, 'POST', async (m, _req, res) => {
+      try {
+        const result = interruptDispatch(m[1], dispatches);
+        json(res, { dispatch_id: m[1], status: 'interrupted', claude_session_id: result.claude_session_id });
+      } catch (e) {
+        if (e.status) return json(res, { error: e.error, code: e.code }, e.status);
+        throw e;
+      }
+    }],
+
+    // Restart a finished dispatch by re-spawning with --resume SESSION_ID from same cwd
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/restart$/, 'POST', async (m, req, res) => {
+      let body = {};
+      try { body = await parseBody(req); } catch {}
+      try {
+        const result = await restartDispatch(m[1], { additional_instructions: body?.additional_instructions }, dispatches, db);
+        json(res, { dispatch_id: result.id, status: 'running', restarted_from: m[1], claude_session_id: result.claude_session_id });
+      } catch (e) {
+        if (e.status) return json(res, { error: e.error, code: e.code }, e.status);
+        throw e;
+      }
+    }],
+
+    // Revoke a non-running dispatch: marks it permanently non-resumable
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/revoke$/, 'POST', async (m, _req, res) => {
+      const id = m[1];
+      const inMemory = dispatches.get(id);
+
+      // Two-step lookup: in-memory first for running guard, raw DB for 404 vs 409 disambiguation
+      if (!inMemory) {
+        const raw = await db.getRawDispatchForRevoke(id);
+        if (!raw) return err(res, 'dispatch not found', 404);
+        if (raw.revoked_at) return json(res, { error: 'session is already revoked', code: 'session_revoked' }, 409);
+        if (raw.status === 'running') return json(res, { error: 'cannot revoke a running session — interrupt it first', code: 'session_running' }, 400);
+      } else {
+        if (inMemory.revoked_at) return json(res, { error: 'session is already revoked', code: 'session_revoked' }, 409);
+        if (inMemory.status === 'running') return json(res, { error: 'cannot revoke a running session — interrupt it first', code: 'session_running' }, 400);
+      }
+
+      const revoked = await db.revokeDispatch(id);
+      if (!revoked) return json(res, { error: 'session was concurrently revoked', code: 'session_revoked' }, 409);
+
+      const revokedAt = new Date().toISOString();
+      if (inMemory) inMemory.revoked_at = revokedAt;
+      json(res, { dispatch_id: id, status: 'revoked', revoked_at: revokedAt });
+    }],
+
     // Resume a suspended dispatch
     [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/resume$/, 'POST', async (m, req, res) => {
       const old = dispatches.get(m[1]);
       if (!old) return err(res, 'dispatch not found');
       if (old.status !== 'suspended') return err(res, 'dispatch is not suspended', 400);
       if (!old.claude_session_id) return err(res, 'no session ID available for resume', 400);
+      if (old.revoked_at) return json(res, { error: 'cannot resume a revoked session — use restart instead', code: 'session_revoked' }, 409);
 
       let body = {};
       try { body = await parseBody(req); } catch {}

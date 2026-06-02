@@ -77,6 +77,7 @@ export const SPEC_FILES = [
   'session-end-fix',
   'terminal-notes',
   'project-key-filter',
+  'dispatch-lifecycle',
 ];
 
 function getLiveDashboardPorts() {

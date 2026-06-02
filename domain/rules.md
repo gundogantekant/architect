@@ -778,6 +778,63 @@ When a `stop_conditions` entry matches the current situation:
 
 Stop conditions complement (not replace) orchestrator-level escalation triggers (stale, blocked-chain, epic-stall, cost-anomaly, dispatch-loop defined in PM Behavior Rules). Stop conditions are agent-self-enforced during execution; orchestrator triggers are detected after execution.
 
+## Session Lifecycle Operations
+
+Operations for managing the lifecycle of cloud-dispatched sessions (D-XXX) beyond the standard run/suspend/resume cycle.
+
+### Interrupt
+
+`POST /api/dispatch/:id/interrupt` — SIGINT → SIGTERM(10s) → SIGKILL(15s).
+- Running sessions only (400 not_running; 409 interrupt_in_progress if already being interrupted).
+- PID fallback: if dispatch.process is null (reconnected-via-tail), uses process.kill(pid, signal).
+- If process already gone at call time: returns 200 without scheduling timers.
+- `_gracefulInterrupt` flag classifies exit_type='interrupted' in close handler; close handler is sole DB writer.
+- Does NOT set deleted_at — session stays visible and restartable.
+- Returns 200 immediately; DB writes happen when process closes.
+
+### Restart
+
+`POST /api/dispatch/:id/restart` — re-spawns using `--resume SESSION_ID` from same cwd.
+- Status allowlist: {interrupted, suspended, failed}. completed/killed/dismissed/merge_pending not restartable.
+- CRITICAL cwd constraint: spawn in worktree_path (if on disk) else project_path — cloud session ID is directory-scoped.
+- Atomic revoke-before-spawn: WHERE revoked_at IS NULL; rowCount=0 → 409 session_revoked.
+- On spawn failure: original remains revoked with no successor; user must re-dispatch.
+- previous_dispatch_id set on new dispatch, persisted in initial saveDispatch UPSERT.
+- Auto-binding: new dispatch inherits work_item_id, project_key, epic_id from original.
+- Returns 200 (not 201) — consistent with other sub-resource actions.
+
+### Revoke
+
+`POST /api/dispatch/:id/revoke` — marks session permanently non-resumable.
+- Non-running sessions only (400 session_running).
+- Atomic: WHERE revoked_at IS NULL; 409 on concurrent race.
+- Blocks: resume (409 session_revoked), restart (409 if in-memory; 404 via DB fallback).
+- Does not change status, deleted_at, or claude_session_id.
+- State is terminal: revoked_at cannot be cleared once set.
+
+### Button visibility state machine
+
+| status | revoked_at | Interrupt | Restart | Revoke |
+|--------|-----------|-----------|---------|--------|
+| running | null | yes | — | — |
+| interrupted / suspended / failed | null | — | yes (has session_id) | yes |
+| completed / merge_pending / killed / dismissed | null | — | — | — |
+| any | set | — | — | — |
+
+### Comparison table
+
+| Operation | Signal | status after | deleted_at | claude_session_id | Restartable |
+|-----------|--------|-------------|------------|-------------------|-------------|
+| DELETE /kill | SIGTERM→SIGKILL | killed | NOW() | preserved | no (deleted) |
+| POST /suspend | SIGTERM→SIGKILL | suspended | null | preserved | yes (/resume or /restart) |
+| POST /interrupt | SIGINT→SIGTERM→SIGKILL | interrupted | null | preserved | yes (/restart) |
+| POST /revoke | none | unchanged | null | preserved | no |
+| POST /restart | (new spawn via --resume) | running (new) | null | new session | — |
+
+### Error codes
+
+All error responses: `{ error: string, code: string }`. Codes: `session_revoked`, `session_running`, `not_running`, `interrupt_in_progress`, `not_restartable`, `no_session_id`, `worktree_missing`, `spawn_failed`.
+
 ## Git Standards
 
 Shared git rules enforced by all implementation agents.
