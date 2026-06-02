@@ -189,7 +189,7 @@ test.describe('Dispatch Mandate @fast', () => {
         confirm_worktree_warning: true,
       },
     });
-    // No 422 — trivial items skip contract validation
+    // No 422 — trivial items skip contract validation (this test only checks contract validation, not prompt content)
     expect(resp.status()).not.toBe(422);
   });
 
@@ -214,6 +214,29 @@ test.describe('Dispatch Mandate @fast', () => {
       'utf8'
     );
     expect(rulesContent).toContain('Isolated Work Mandate');
+  });
+
+  test('DM-9: buildDispatchPrompt for a trivial work item includes plan-first + board review instructions', async ({ request }) => {
+    const base = getBase();
+    const resp = await request.post(`${base}/api/test/build-prompt`, {
+      data: {
+        workItem: {
+          id: 'W-dm9',
+          title: 'Fix typo DM-9',
+          status: 'draft',
+          priority: 'low',
+          tags: ['trivial'],
+        },
+        projectKey: 'ticari/architect/main',
+        projectPath: '/tmp/test-project',
+      },
+    });
+    expect(resp.ok()).toBe(true);
+    const { prompt } = await resp.json();
+    expect(prompt).toContain('# Isolated Work Mandate');
+    expect(prompt).toContain('Plan-First + Board Review required');
+    expect(prompt).toContain('inline plan');
+    expect(prompt).toContain('Plan Gate board');
   });
 
 });

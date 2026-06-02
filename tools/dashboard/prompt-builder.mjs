@@ -406,7 +406,17 @@ function buildAdrSection(syncContext) {
 
 function buildMandateSection(complexity) {
   if (!['medium', 'large'].includes(complexity)) {
-    return '> This dispatch follows the Isolated Work Mandate defined in `domain/rules.md` → Isolated Work Mandate.';
+    return [
+      '> **Plan-First + Board Review required for this dispatch.**',
+      '>',
+      '> Before taking any implementation action:',
+      '> 1. Produce a brief inline plan (1–3 bullet points) covering: what files change, the approach, and the test strategy.',
+      '> 2. Submit the plan to the Plan Gate board (dispatch tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx in parallel with the plan text, artifact_type=plan).',
+      '> 3. Do not dispatch any coder agent or modify any file until the board approves.',
+      '>',
+      '> No DispatchContract is required — the board evaluates the plan\'s stated intent and approach.',
+      '> This dispatch follows the Isolated Work Mandate defined in `domain/rules.md` → Isolated Work Mandate.',
+    ].join('\n');
   }
   try {
     const rulesPath = join(ROOT, 'domain', 'rules.md');
@@ -447,7 +457,7 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     '',
     '| Condition | Workflow |',
     '|-----------|----------|',
-    '| Trivial tasks | direct — dispatch a single coder agent |',
+    '| Trivial tasks | plan-then-direct — agent produces brief inline plan, Plan Gate board reviews, then coder dispatched |',
     '| Small features | sequential — scout → planner → coder → tester → reviewer |',
     '| Full-stack work (independent FE/BE/infra) | parallel-fan-out — split then converge at tester → reviewer |',
     '| Medium/large features | plan-then-execute — planner decomposes, then dispatch coders per task |',
@@ -460,7 +470,7 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     '|-------|-------------|',
     '| scout | No portfolio entry exists for the target project |',
     '| strategist | Large/vague/strategic requests, build-vs-buy decisions |',
-    '| planner | Medium+ complexity (skip for small/trivial) |',
+    '| planner | Medium+ complexity. For trivial/small: dispatched agent produces a brief inline plan (1–3 bullet points) directly — no planner agent required. |',
     '| tester | All code changes except trivial |',
     '| reviewer | All code changes except trivial |',
     '| security-auditor | Auth, secrets, input validation, or external data involved |',
@@ -479,11 +489,12 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     '',
     '1. Assess complexity (trivial / small / medium / large / strategic)',
     '2. Select workflow from the table above',
-    '3. Plan if needed (medium+ complexity)',
-    '4. Dispatch agents per the workflow',
-    '5. Test (dispatch tester for all non-trivial code changes)',
-    '6. Review (dispatch reviewer)',
-    '7. Log results via the dashboard API',
+    '3. Plan (always — produce an inline plan for trivial/small; dispatch planner agent for medium+)',
+    '4. Board review on plan (always, except T1 — Plan Gate before any implementation agent)',
+    '5. Dispatch implementation agents per the workflow',
+    '6. Test (dispatch tester for all non-trivial code changes)',
+    '7. Review (dispatch reviewer)',
+    '8. Log results via the dashboard API',
   ].join('\n'));
 
   // --- Available Skills ---

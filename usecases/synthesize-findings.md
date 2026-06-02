@@ -35,7 +35,7 @@ Translate unstructured investigation findings into an executable DispatchPlan.
 
 4. **Validate output**:
    - If the response is an error object (`{ "error": "target_project required", ... }`): fix the missing fields and re-dispatch.
-   - If complexity is medium+: confirm `execution_plan.steps` includes a plan-gate step and a code-gate step. If either is missing, reject and re-dispatch with explicit instruction: "You must include plan-gate and code-gate steps for medium+ complexity."
+   - Confirm (for all complexity except T1-tagged items): `execution_plan.steps` includes a plan-gate step and a code-gate step. If either is missing, reject and re-dispatch with explicit instruction: "You must include plan-gate and code-gate steps for all dispatches except T1-tagged items."
    - For each step in `execution_plan.steps` that uses an implementation agent (coder-*, coder, coder-backend, coder-frontend, etc.): verify the step carries a complete contract with all 4 core fields (`goal`, `constraints`, `expected_output`, `failure_conditions`) and a non-empty `e2e_test_criteria` array (≥1 entry for medium, ≥3 for large complexity). If any implementation step has an incomplete contract, reject and re-dispatch with the specific missing fields listed.
    - If `clarifications_needed` is non-empty and no steps are present: surface clarifications to the user before proceeding.
 
