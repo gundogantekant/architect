@@ -804,6 +804,7 @@ async function dismissAllCompleted() {
 }
 
 let _placeTimer = null;
+let _appReady = false; // set once on boot after route(); never cleared
 let _suspendedContainer = null;
 let _recentContainer = null;
 // Off-DOM buffer for panels that don't match the active route's project context.
@@ -812,6 +813,7 @@ let _recentContainer = null;
 const _hiddenPanelBuffer = document.createElement('div');
 
 function placeSessionPanels() {
+  if (!_appReady) return;
   if (_placeTimer) return;
   _placeTimer = requestAnimationFrame(() => { _placeTimer = null; _placeSessionPanelsNow(); });
 }
@@ -840,6 +842,8 @@ function _isProjectMatch(sessionProjectKey, activeProjectKey) {
 }
 
 function _placeSessionPanelsNow() {
+  const sidebarTarget = window._sidebarTargetSession || null;
+  window._sidebarTargetSession = null;
   // 1. Ensure global fallback container exists
   let globalContainer = document.getElementById('dispatch-panels');
   if (!globalContainer) {
@@ -983,9 +987,8 @@ function _placeSessionPanelsNow() {
     loadDispatchContent(dispatch);
   }
 
-  // 5. Context-aware expand/collapse: expand relevant panels, collapse others.
-  // Guards on previousProjectKey to prevent cross-project navigation from folding
-  // sessions that belong to a project the user is navigating away from.
+  // 5. Context-aware fold: fold arriving project's sessions (fold-by-default); preserve
+  // user state on same-project refresh; fold off-project sessions always.
   const hash = location.hash || '';
   let viewProjectKey = '';
   let viewEpicId = '';
@@ -994,28 +997,31 @@ function _placeSessionPanelsNow() {
   const epicMatch = hash.match(/^#epic\/(.+)$/);
   if (epicMatch) viewEpicId = epicMatch[1];
 
-  // Skip auto-fold when navigating to a different project than was previously shown.
-  const isCrossProjectNav = viewProjectKey && previousProjectKey && viewProjectKey !== previousProjectKey;
+  const isArrivingAtProject = viewProjectKey && viewProjectKey !== previousProjectKey;
 
-  if (!isCrossProjectNav && (viewProjectKey || viewEpicId)) {
+  if (viewProjectKey || viewEpicId) {
     for (const session of allSessions) {
-      let isRelevant = true;
-      if (viewProjectKey) {
-        isRelevant = session.project_key === viewProjectKey;
-      } else if (viewEpicId) {
-        isRelevant = session.epic_id === viewEpicId;
-      }
+      const isRelevant = viewProjectKey
+        ? session.project_key === viewProjectKey
+        : session.epic_id === viewEpicId;
       const panel = sessionPanels.get(session.key);
       if (!panel) continue;
       const minBtn = panel.querySelector('[data-minimize-dispatch], [data-minimize-terminal], [data-minimize-cli]');
-      if (isRelevant && panel.classList.contains('collapsed')) {
-        panel.classList.remove('collapsed');
-        if (minBtn) minBtn.textContent = '\u25bc';
+      if (isRelevant && isArrivingAtProject) {
+        // Fresh project arrival: fold all sessions; expand only sidebar-targeted one.
+        const expand = sidebarTarget === session.key;
+        panel.classList.toggle('collapsed', !expand);
+        sessionCollapseState.set(session.key, !expand); // in-memory only; not persisted
+        if (minBtn) minBtn.textContent = expand ? '\u25bc' : '\u25b6';
       } else if (!isRelevant && !panel.classList.contains('collapsed')) {
+        // Off-project/epic session: fold it (CSS only).
         panel.classList.add('collapsed');
         if (minBtn) minBtn.textContent = '\u25b6';
       }
+      // isRelevant + same project: preserve user's manual state (no action).
     }
+    // saveCollapseState() not called here \u2014 arrival folds are navigation-scoped, not
+    // user preferences; isTerminalCollapsedByDefault() handles the next page load.
   }
 
   // 6. Fit only terminals that were actually moved to a new slot (preserve scroll)
@@ -6879,6 +6885,7 @@ function scrollToSessionPanel(session) {
 }
 
 function navigateToSession(session) {
+  window._sidebarTargetSession = `${session.type}:${session.id}`;
   if (session.work_item_id && session.project_key) {
     const [org, proj, comp] = session.project_key.split('/');
     if (org && proj && comp) {
@@ -9567,6 +9574,7 @@ Promise.all([buildTree(), buildEpicTree()]).catch(err => { console.error('[start
   // Synchronous placement after route completes — bypasses rAF debounce entirely
   // to guarantee context-aware expand/collapse fires with all panels + correct hash.
   _placeSessionPanelsNow();
+  _appReady = true;
   refreshSessionsSidebar();
   // Periodic session refresh (every 10s) — sync with server-side auto-cleanup
   setInterval(restoreDispatches, 10000);
