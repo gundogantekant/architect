@@ -4,9 +4,9 @@
 # architect_temporal_visibility). All Temporal namespaces registered via setup.sh
 # share this persistence store in the single-server dev setup.
 #
-# Per-namespace schema pairs (neuronic_temporal, new_project_temporal) are
+# Per-namespace schema pairs (new_project_temporal) are
 # pre-created by setup.sh for future separate server instances per project.
-# In local dev, one server instance serves all three namespaces.
+# In local dev, one server instance serves both namespaces.
 #
 # Start (full server with Postgres):
 #   source tools/temporal/config/.env
@@ -15,7 +15,7 @@
 # Or (newer CLI, dev mode with Postgres):
 #   source tools/temporal/config/.env
 #   temporal server start-dev --config tools/temporal/config/development.yaml \
-#     --namespace architect --namespace neuronic-ai-team --namespace new-project
+#     --namespace architect --namespace new-project
 
 log:
   stdout: true

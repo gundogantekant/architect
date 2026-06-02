@@ -20,8 +20,6 @@ PostgreSQL database: architect
 ├── ai_chat                      ← chat feature (untouched)
 ├── architect_temporal           ← namespace: architect
 ├── architect_temporal_visibility
-├── neuronic_temporal            ← namespace: neuronic-ai-team
-├── neuronic_temporal_visibility
 ├── new_project_temporal         ← namespace: new-project (placeholder)
 └── new_project_temporal_visibility
 ```
@@ -31,11 +29,10 @@ PostgreSQL database: architect
 | Temporal namespace | Schema pair |
 |---|---|
 | `architect` | `architect_temporal`, `architect_temporal_visibility` |
-| `neuronic-ai-team` | `neuronic_temporal`, `neuronic_temporal_visibility` |
 | `new-project` | `new_project_temporal`, `new_project_temporal_visibility` |
 | `--namespace my-app` | `my_app_temporal`, `my_app_temporal_visibility` |
 
-In the single-server development setup, all three namespaces share the `architect_temporal` defaultStore — Temporal handles namespace isolation at the application level. The `neuronic_temporal` and `new_project_temporal` schema pairs are pre-created for future separate server instances per project (production isolation model).
+In the single-server development setup, all namespaces share the `architect_temporal` defaultStore — Temporal handles namespace isolation at the application level. The `new_project_temporal` schema pair is pre-created as a placeholder for future additional projects.
 
 ---
 
@@ -74,7 +71,7 @@ In the single-server development setup, all three namespaces share the `architec
 This script:
 1. Checks PostgreSQL connectivity (exits with instructions if not running)
 2. Checks `temporal-sql-tool` is installed (exits with install instructions if not)
-3. Creates the six schema pairs (idempotent — safe to re-run)
+3. Creates the four schema pairs (idempotent — safe to re-run)
 4. Runs `temporal-sql-tool create-initial-schema` for each schema (skips if already migrated)
 5. Registers namespaces in a running Temporal server (or prints instructions if server not running)
 
@@ -86,14 +83,12 @@ source tools/temporal/config/.env
 # Option A: full server with PostgreSQL persistence (recommended for dev + production)
 temporal server start --config tools/temporal/config --env development \
   --namespace architect \
-  --namespace neuronic-ai-team \
   --namespace new-project
 
 # Option B: dev mode with PostgreSQL config (newer temporal CLI v1.0+)
 temporal server start-dev \
   --config tools/temporal/config/development.yaml \
   --namespace architect \
-  --namespace neuronic-ai-team \
   --namespace new-project
 ```
 
@@ -102,9 +97,8 @@ The `--namespace` flags pre-register namespaces on server start, complementing t
 ### Step 3 — Verify
 
 ```bash
-# All three should return an empty list (not an error)
+# Both should return an empty list (not an error)
 temporal workflow list --namespace architect
-temporal workflow list --namespace neuronic-ai-team
 temporal workflow list --namespace new-project
 
 # Or list all registered namespaces
@@ -127,6 +121,8 @@ This creates `my_new_project_temporal` and `my_new_project_temporal_visibility` 
 
 To make it permanent in the default list, add the namespace name and its schema prefix to `setup.sh`'s `schema_prefix` function and `ALL_NAMESPACES` array. See the comments at the top of the script.
 
+**PostgreSQL connection budget**: The architect Temporal server's default pool consumes ~30 connections (`maxConns: 20` + `maxConns: 10` for visibility). The shared Docker Postgres instance defaults to `max_connections = 100`. If you run additional Temporal servers (e.g., for other projects) against the same PostgreSQL, verify headroom with `SHOW max_connections;` and raise the limit in `tools/dashboard/docker-compose.yml` if needed before adding more server instances.
+
 ---
 
 ## Idempotency
@@ -148,7 +144,7 @@ For `--namespace` additions, non-alphanumeric characters are replaced with under
 - `my-project` → `my_project_temporal`
 - `team.platform` → `team_platform_temporal`
 
-The three hardcoded defaults use custom short prefixes (`neuronic` for `neuronic-ai-team`, `new_project` for `new-project`) to keep schema names readable.
+The `new-project` default uses a custom short prefix (`new_project`) to keep schema names readable. For `--namespace` additions, the generic underscore substitution applies.
 
 ---
 
