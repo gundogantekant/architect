@@ -29,6 +29,7 @@ export const SPEC_FILES = [
   'worktree-dispatch',
   'dispatch-contract',
   'time-tracking',
+  'time-report-dates',
   'suspend-resume',
   'state-transitions',
   'auto-implement',

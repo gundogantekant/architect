@@ -8,8 +8,10 @@ import { rename, unlink } from 'node:fs/promises';
 
 // Return TIMESTAMPTZ values as ISO strings instead of Date objects.
 // OID 1114 = TIMESTAMP WITHOUT TIME ZONE, OID 1184 = TIMESTAMP WITH TIME ZONE.
+// OID 1082 = DATE — all date/period columns return plain 'YYYY-MM-DD' strings.
 pg.types.setTypeParser(1114, (val) => val);
 pg.types.setTypeParser(1184, (val) => val);
+pg.types.setTypeParser(1082, (val) => val);
 
 // Return INT8/BIGSERIAL (OID 20) as JavaScript numbers. These are auto-increment IDs
 // that will never exceed Number.MAX_SAFE_INTEGER in this system.
@@ -1489,7 +1491,7 @@ export async function getTimeReportDaily(days = 14) {
   const since = new Date(Date.now() - days * 86400000).toISOString();
   return pool.query(`
     SELECT sh.project_key, p.org, p.project, p.component,
-      (sh.ended_at::timestamptz)::date AS day,
+      TO_CHAR((sh.ended_at::timestamptz)::date, 'YYYY-MM-DD') AS day,
       COALESCE(SUM(sh.duration_seconds), 0) AS time_seconds,
       COALESCE(SUM(sh.cost_usd), 0) AS cost_usd
     FROM session_history sh JOIN projects p ON sh.project_key = p.key
@@ -1539,7 +1541,7 @@ export async function getTimeReportDailyByOrg(days = 14) {
   const since = new Date(Date.now() - days * 86400000).toISOString();
   return pool.query(`
     SELECT p.org, p.org AS project_key,
-      (sh.ended_at::timestamptz)::date AS day,
+      TO_CHAR((sh.ended_at::timestamptz)::date, 'YYYY-MM-DD') AS day,
       COALESCE(SUM(sh.duration_seconds), 0) AS time_seconds,
       COALESCE(SUM(sh.cost_usd), 0) AS cost_usd
     FROM session_history sh JOIN projects p ON sh.project_key = p.key
