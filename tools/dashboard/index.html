@@ -1622,6 +1622,23 @@ function saveCollapseState() {
   try { sessionStorage.setItem('sessionCollapseState', JSON.stringify(Object.fromEntries(sessionCollapseState))); } catch {}
 }
 
+let _reviewState = null;
+function loadReviewState() {
+  if (_reviewState) return _reviewState;
+  try { _reviewState = JSON.parse(localStorage.getItem('termReviewState') || '{}'); } catch { _reviewState = {}; }
+  return _reviewState;
+}
+function saveReviewState(id, field, value) {
+  const state = loadReviewState();
+  if (!state[id]) state[id] = {};
+  state[id][field] = value;
+  try { localStorage.setItem('termReviewState', JSON.stringify(state)); } catch {}
+}
+function getReviewState(id) {
+  const state = loadReviewState();
+  return { boardReviewed: false, humanReviewed: false, ...(state[id] || {}) };
+}
+
 function truncateNote(str, max) {
   return str.length > max ? str.slice(0, max) + '…' : str;
 }
@@ -1651,6 +1668,30 @@ function flashSaved(row) {
   if (!el) return;
   el.style.color = 'var(--green, #22c55e)';
   setTimeout(() => { el.style.color = ''; }, 600);
+}
+
+function renderReviewRow(row, id) {
+  if (!row) return;
+  row.innerHTML = '';
+  const { boardReviewed, humanReviewed } = getReviewState(id);
+  const checks = [
+    { key: 'boardReviewed', label: 'board reviewed', checked: boardReviewed },
+    { key: 'humanReviewed', label: 'human reviewed', checked: humanReviewed },
+  ];
+  checks.forEach(({ key, label, checked }) => {
+    const lbl = document.createElement('label');
+    lbl.className = 'review-checkbox-label';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = checked;
+    cb.setAttribute('aria-label', label);
+    cb.addEventListener('change', () => {
+      saveReviewState(id, key, cb.checked);
+    });
+    lbl.appendChild(cb);
+    lbl.appendChild(document.createTextNode(label));
+    row.appendChild(lbl);
+  });
 }
 
 function activateNoteEdit(row, terminalId, currentNote) {
@@ -2315,6 +2356,7 @@ function createSessionPanel(type, info) {
           <button class="dismiss-btn" data-dismiss-terminal="${esc(id)}" ${isRunning ? 'style="display:none"' : ''}>✕</button>
         </div>
         <div class="terminal-note-row" data-note-panel="${esc(id)}"></div>
+        <div class="terminal-review-row" data-review-panel="${esc(id)}"></div>
       </div>
       <div class="terminal-container" id="term-container-${id}">${termContainerBody}</div>
       <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
@@ -2326,6 +2368,7 @@ function createSessionPanel(type, info) {
     `;
     bindSessionIdCopy(panel);
     renderNoteRow(panel.querySelector('.terminal-note-row'), terminalInfo.note ?? null, id);
+    renderReviewRow(panel.querySelector('.terminal-review-row'), id);
     const panelKey = `terminal:${id}`;
     sessionPanels.set(panelKey, panel);
     const defaultCollapsed = isPanelCollapsedByDefault();
@@ -2339,7 +2382,7 @@ function createSessionPanel(type, info) {
       togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-terminal="${id}"]`));
     };
     panel.querySelector('.terminal-header').addEventListener('click', (e) => {
-      if (e.target.closest('button') || e.target.closest('.terminal-note-row')) return;
+      if (e.target.closest('button') || e.target.closest('.terminal-note-row') || e.target.closest('.terminal-review-row')) return;
       togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-terminal="${id}"]`));
     });
     const noteRow = panel.querySelector('.terminal-note-row');
