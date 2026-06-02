@@ -79,6 +79,7 @@ export const SPEC_FILES = [
   'terminal-notes',
   'project-key-filter',
   'dispatch-lifecycle',
+  'review-checkboxes',
 ];
 
 function getLiveDashboardPorts() {

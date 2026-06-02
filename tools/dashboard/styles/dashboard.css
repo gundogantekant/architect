@@ -358,6 +358,32 @@
   .terminal-note { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; color: var(--text); font-style: normal; font-weight: 500; }
   .terminal-note-empty { opacity: 0.55; transition: opacity 0.15s; user-select: none; pointer-events: none; }
   .terminal-header:hover .terminal-note-empty { opacity: 1; pointer-events: auto; }
+  .terminal-review-row {
+    display: flex;
+    gap: 12px;
+    padding: 2px 16px 6px;
+  }
+  .review-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--text-muted, #9ca3af);
+    cursor: pointer;
+    user-select: none;
+    opacity: 0.55;
+    transition: opacity 0.15s;
+  }
+  .review-checkbox-label:has(input:checked) {
+    opacity: 1;
+    color: var(--text, #e5e7eb);
+  }
+  .review-checkbox-label input[type="checkbox"] {
+    width: 11px;
+    height: 11px;
+    cursor: pointer;
+    accent-color: var(--accent, #6366f1);
+  }
   .terminal-note-edit-row { display: flex; align-items: center; gap: 4px; }
   .terminal-note-input { font-size: 11px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 1px 5px; width: min(100%, 320px); background: var(--bg-card); color: var(--text); }
   .terminal-note-input:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 2px var(--accent-glow); }
