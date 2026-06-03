@@ -156,8 +156,10 @@ export default function workItemRoutes(deps) {
       json(res, backlog);
     }],
 
-    [/^\/api\/sequences\/next$/, 'GET', async (_m, _req, res) => {
-      json(res, await db.peekNextIds());
+    [/^\/api\/sequences\/next$/, 'GET', async (_m, req, res) => {
+      const reqUrl = new URL(req.url, 'http://localhost');
+      const projectKey = reqUrl.searchParams.get('project_key') || undefined;
+      json(res, await db.peekNextIds(projectKey));
     }],
 
     // NOTE: This route MUST stay before the /:id catch-all below to avoid
@@ -416,7 +418,7 @@ export default function workItemRoutes(deps) {
       json(res, await db.getWorkItemFull(itemId));
     }],
 
-    [/^\/api\/work-items\/(W-\d+)\/plan$/, 'GET', async (m, _req, res) => {
+    [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/plan$/, 'GET', async (m, _req, res) => {
       try {
         const content = await readFile(join(WORK, 'items', m[1], 'plan.md'), 'utf8');
         text(res, content);
@@ -425,7 +427,7 @@ export default function workItemRoutes(deps) {
       }
     }],
 
-    [/^\/api\/work-items\/(W-\d+)\/plan$/, 'PUT', async (m, req, res) => {
+    [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/plan$/, 'PUT', async (m, req, res) => {
       let body;
       try {
         body = await parseBody(req);
@@ -443,7 +445,7 @@ export default function workItemRoutes(deps) {
       json(res, { saved: true });
     }],
 
-    [/^\/api\/work-items\/(W-\d+)\/doc$/, 'GET', async (m, _req, res) => {
+    [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/doc$/, 'GET', async (m, _req, res) => {
       try {
         const content = await readFile(join(WORK, 'items', m[1], 'docs.md'), 'utf8');
         text(res, content);
@@ -452,7 +454,7 @@ export default function workItemRoutes(deps) {
       }
     }],
 
-    [/^\/api\/work-items\/(W-\d+)\/doc$/, 'PUT', async (m, req, res) => {
+    [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/doc$/, 'PUT', async (m, req, res) => {
       let body;
       try {
         body = await parseBody(req);
@@ -470,7 +472,7 @@ export default function workItemRoutes(deps) {
       json(res, { saved: true });
     }],
 
-    [/^\/api\/work-items\/(W-\d+)\/artifacts$/, 'GET', async (m, _req, res) => {
+    [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/artifacts$/, 'GET', async (m, _req, res) => {
       try {
         const files = await readdir(join(WORK, 'items', m[1]));
         json(res, { files });
@@ -479,7 +481,7 @@ export default function workItemRoutes(deps) {
       }
     }],
 
-    [/^\/api\/work-items\/(W-\d+)\/artifacts\/([a-zA-Z0-9_-]+\.md)$/, 'GET', async (m, _req, res) => {
+    [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/artifacts\/([a-zA-Z0-9_-]+\.md)$/, 'GET', async (m, _req, res) => {
       try {
         const content = await readFile(join(WORK, 'items', m[1], m[2]), 'utf8');
         text(res, content);
@@ -488,7 +490,7 @@ export default function workItemRoutes(deps) {
       }
     }],
 
-    [/^\/api\/work-items\/(W-\d+)\/artifacts\/([a-zA-Z0-9_-]+\.md)$/, 'PUT', async (m, req, res) => {
+    [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/artifacts\/([a-zA-Z0-9_-]+\.md)$/, 'PUT', async (m, req, res) => {
       let body;
       try {
         body = await parseBody(req);
@@ -506,7 +508,7 @@ export default function workItemRoutes(deps) {
       json(res, { saved: true });
     }],
 
-    [/^\/api\/work-items\/(W-\d+)\/artifacts\/([a-zA-Z0-9_-]+\.md)$/, 'DELETE', async (m, _req, res) => {
+    [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/artifacts\/([a-zA-Z0-9_-]+\.md)$/, 'DELETE', async (m, _req, res) => {
       try {
         await unlinkFile(join(WORK, 'items', m[1], m[2]));
         json(res, { deleted: m[2] });
@@ -515,7 +517,7 @@ export default function workItemRoutes(deps) {
       }
     }],
 
-    [/^\/api\/work-items\/(W-\d+)\/prompt-history$/, 'GET', async (m, _req, res) => {
+    [/^\/api\/work-items\/([A-Za-z0-9_-]+)\/prompt-history$/, 'GET', async (m, _req, res) => {
       const rows = await db.getPromptsByWorkItem(m[1]);
       json(res, rows);
     }],

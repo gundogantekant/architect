@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { spawn, execFileSync } from 'node:child_process';
 import pty from 'node-pty';
 import * as db from './db.mjs';
+import { buildPrefixCache } from './portfolio-config.mjs';
 import { EventStream } from './event-stream.mjs';
 import { getAdapter } from './adapters/index.mjs';
 
@@ -64,6 +65,7 @@ const deps = {
   spawn, execFileSync, readFile, writeFile, readFileSync, writeFileSync, appendFileSync, existsSync, createWriteStream,
   mkdir, stat, join, extname, dirname, homedir, rename, unlinkFile, renameSync, readdir,
   __dirname: import.meta.dirname,
+  buildPrefixCache,
 };
 
 const routes = [
@@ -252,6 +254,8 @@ async function main() {
 
   // Phase 2.5: Sync projects from portfolio registry
   migrateLegacyPortfolio({ legacyPath: LEGACY_PORTFOLIO, targetPath: PORTFOLIO });
+  const prefixMap = await buildPrefixCache(PORTFOLIO);
+  db.configurePrefixMap(prefixMap);
   const syncResult = await syncProjectsFromRegistry();
   syncWarnings = syncResult.skippedEntries || [];
 
