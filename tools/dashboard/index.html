@@ -333,6 +333,151 @@ function openPromptPreview(templateId, variables, triggerEl) {
 }
 
 
+function openDynamicPromptPreview(dynamicBody, triggerEl) {
+  let abortCtrl = null;
+  let elapsedTimer = null;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.setAttribute('role', 'presentation');
+
+  const dialog = document.createElement('div');
+  dialog.className = 'modal modal-prompt-preview';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  dialog.setAttribute('aria-labelledby', 'dyn-preview-title');
+
+  dialog.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+      <h3 id="dyn-preview-title" style="margin:0">Prompt Preview <span style="font-size:0.75rem;font-weight:normal;color:var(--text-muted,#888)">(Read only — live portfolio context)</span></h3>
+      <button id="dyn-preview-close" aria-label="Close preview" style="background:none;border:none;font-size:1.5rem;cursor:pointer;line-height:1">&times;</button>
+    </div>
+    <div id="dyn-preview-loading" style="font-size:0.85rem;color:var(--text-muted,#888);margin-bottom:0.5rem">Loading… <span id="dyn-preview-elapsed">0s</span></div>
+    <div id="dyn-preview-slow-warn" style="display:none;font-size:0.8rem;color:#b45309;margin-bottom:0.5rem">Loading portfolio files — this may take a moment</div>
+    <div style="display:flex;flex-wrap:wrap;gap:1rem;flex:1">
+      <div class="preview-col-tokens" id="dyn-preview-nav" style="min-width:160px;max-width:200px">
+        <h4 style="margin-top:0">Sections</h4>
+        <div id="dyn-preview-section-list" style="font-size:0.8rem;overflow-y:auto;max-height:60vh">(loading)</div>
+      </div>
+      <div class="preview-col-rendered" style="flex:1">
+        <pre id="dyn-preview-content" style="margin-top:0"><span role="status">Loading…</span></pre>
+        <div style="margin-top:0.5rem">
+          <button id="dyn-preview-copy" class="btn-secondary" style="font-size:0.8rem">Copy to clipboard</button>
+          <span id="dyn-preview-char-count" style="margin-left:0.75rem;font-size:0.8rem;color:var(--text-muted,#888)"></span>
+          <span id="dyn-preview-copied" aria-live="polite" style="margin-left:0.5rem;font-size:0.8rem;display:none">Copied!</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  let renderedText = '';
+  const startTime = Date.now();
+
+  elapsedTimer = setInterval(() => {
+    const el = dialog.querySelector('#dyn-preview-elapsed');
+    if (el) {
+      const secs = Math.floor((Date.now() - startTime) / 1000);
+      el.textContent = `${secs}s`;
+    }
+    if (Date.now() - startTime > 5000) {
+      const warn = dialog.querySelector('#dyn-preview-slow-warn');
+      if (warn) warn.style.display = '';
+    }
+  }, 1000);
+
+  const close = () => {
+    if (abortCtrl) abortCtrl.abort();
+    if (elapsedTimer) clearInterval(elapsedTimer);
+    overlay.remove();
+    if (triggerEl) triggerEl.focus();
+  };
+
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  dialog.querySelector('#dyn-preview-close').addEventListener('click', close);
+  const onEsc = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onEsc); } };
+  document.addEventListener('keydown', onEsc);
+
+  dialog.querySelector('#dyn-preview-copy').addEventListener('click', () => {
+    navigator.clipboard.writeText(renderedText).then(() => {
+      const copied = dialog.querySelector('#dyn-preview-copied');
+      copied.style.display = 'inline';
+      setTimeout(() => { copied.style.display = 'none'; }, 2000);
+    });
+  });
+
+  abortCtrl = new AbortController();
+
+  const fetchPromise = dynamicBody._prerendered !== undefined
+    ? Promise.resolve({ rendered: dynamicBody._prerendered, truncated: false, char_count: dynamicBody._prerendered.length })
+    : fetch('/api/prompts/preview-dynamic', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dynamicBody),
+        signal: abortCtrl.signal,
+      }).then(r => r.json());
+
+  fetchPromise
+    .then(data => {
+      if (elapsedTimer) clearInterval(elapsedTimer);
+      const loading = dialog.querySelector('#dyn-preview-loading');
+      if (loading) loading.style.display = 'none';
+
+      renderedText = data.rendered || '';
+      const pre = dialog.querySelector('#dyn-preview-content');
+      pre.textContent = renderedText;
+
+      const charCount = dialog.querySelector('#dyn-preview-char-count');
+      if (charCount) charCount.textContent = `${(data.char_count || renderedText.length).toLocaleString()} chars${data.truncated ? ' (truncated)' : ''}`;
+
+      const lines = renderedText.split('\n');
+      const headings = lines
+        .map((line, i) => ({ line, i }))
+        .filter(({ line }) => line.startsWith('# '))
+        .map(({ line, i }) => ({ title: line.replace(/^# /, ''), lineIndex: i }));
+
+      const sectionList = dialog.querySelector('#dyn-preview-section-list');
+      if (headings.length === 0) {
+        sectionList.textContent = '(none)';
+      } else {
+        const ul = document.createElement('ul');
+        ul.style.cssText = 'margin:0;padding-left:1rem;list-style:none';
+        headings.forEach(({ title, lineIndex }) => {
+          const li = document.createElement('li');
+          li.style.cssText = 'margin-bottom:4px';
+          const a = document.createElement('a');
+          a.href = '#';
+          a.textContent = title;
+          a.style.cssText = 'font-size:0.78rem;color:var(--link,#2563eb);text-decoration:none';
+          a.addEventListener('click', (e) => {
+            e.preventDefault();
+            const linesUpTo = lines.slice(0, lineIndex).join('\n').length;
+            pre.scrollTop = pre.scrollTop + pre.querySelector('span')?.getBoundingClientRect().top || 0;
+            const charOffset = linesUpTo;
+            const avgCharWidth = 8;
+            const lineHeight = 18;
+            const approxTop = lineIndex * lineHeight;
+            pre.scrollTop = approxTop;
+          });
+          li.appendChild(a);
+          ul.appendChild(li);
+        });
+        sectionList.replaceChildren(ul);
+      }
+    })
+    .catch(err => {
+      if (elapsedTimer) clearInterval(elapsedTimer);
+      if (err.name !== 'AbortError') {
+        dialog.querySelector('#dyn-preview-content').textContent = 'Failed to load preview.';
+        const loading = dialog.querySelector('#dyn-preview-loading');
+        if (loading) loading.style.display = 'none';
+      }
+    });
+}
+
+
 async function getBacklog() {
   if (!backlog) setBacklog(await api('backlog'));
   return backlog;
@@ -2081,6 +2226,7 @@ function createSessionPanel(type, info) {
       <div class="dispatch-log${resolveTermTheme() === 'light' ? ' log-light' : ''}" id="log-${id}"></div>
       <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
         <button class="focus-btn" data-focus-dispatch-bottom="${esc(id)}">Focus</button>
+        <button class="btn-view-prompt" data-view-prompt-dispatch="${esc(id)}" style="font-size:11px;padding:2px 8px;border-radius:3px;border:1px solid var(--border);background:transparent;cursor:pointer;color:var(--text-secondary)">View Prompt</button>
         ${sessionIdTag(dispatch.claude_session_id)}
       </div>
     `;
@@ -2104,6 +2250,23 @@ function createSessionPanel(type, info) {
     panel.querySelector(`[data-focus-dispatch="${id}"]`).onclick = () => openFocusPopup('dispatch', id);
     const bottomFocusD = panel.querySelector(`[data-focus-dispatch-bottom="${id}"]`);
     if (bottomFocusD) bottomFocusD.onclick = () => openFocusPopup('dispatch', id);
+    const viewPromptBtn = panel.querySelector(`[data-view-prompt-dispatch="${id}"]`);
+    if (viewPromptBtn) {
+      viewPromptBtn.onclick = async () => {
+        viewPromptBtn.disabled = true;
+        try {
+          const r = await fetch(`/api/dispatch/${id}/prompt`);
+          if (!r.ok) { showToast('No prompt recorded for this dispatch', 'error'); return; }
+          const record = await r.json();
+          const promptText = record.prompt_text || '';
+          openDynamicPromptPreview({ _prerendered: promptText }, viewPromptBtn);
+        } catch {
+          showToast('Failed to load prompt', 'error');
+        } finally {
+          viewPromptBtn.disabled = false;
+        }
+      };
+    }
     panel.querySelector(`[data-kill-dispatch="${id}"]`).onclick = async (e) => {
       const btn = e.target;
       btn.disabled = true;
@@ -2618,6 +2781,8 @@ async function dispatchWorkItem(workItem, projectKey) {
             <div class="field"><label for="contract-failure-conditions">Failure Conditions</label><textarea id="contract-failure-conditions" rows="2" placeholder="What makes output unacceptable"></textarea></div>
             <div class="field"><label for="contract-scope-boundary">Scope Boundary</label><textarea id="contract-scope-boundary" rows="1" placeholder="Files/dirs the agent must NOT modify"></textarea></div>
             <div class="field"><label for="contract-stop-conditions">Stop Conditions</label><textarea id="contract-stop-conditions" rows="2" placeholder="One per line: conditions to halt and report"></textarea></div>
+            <div class="contract-field field"><label>Success Criteria</label><textarea id="dispatch-success-criteria" rows="1" placeholder="User-visible done conditions"></textarea></div>
+            <div class="contract-field field"><label>E2E Test Criteria</label><textarea id="dispatch-e2e-test-criteria" rows="2" placeholder="One scenario per line"></textarea></div>
           </div>
         </details>
         <div class="field">
@@ -2645,8 +2810,23 @@ async function dispatchWorkItem(workItem, projectKey) {
         previewBtn.className = 'btn btn-secondary';
         previewBtn.textContent = 'Preview prompt';
         previewBtn.addEventListener('click', () => {
-          const [org, proj, comp] = (projectKey || '').split('/');
-          openPromptPreview('dispatch', { ORG: org || '', PROJECT: proj || '', COMPONENT: comp || '' }, previewBtn);
+          const modalEl = previewBtn.closest('.modal') || document;
+          const dynamicBody = {
+            project_key: projectKey || '',
+            work_item_id: workItem?.id || undefined,
+            additional_instructions: modalEl.querySelector('#dispatch-instructions')?.value || '',
+            contract: {
+              goal: modalEl.querySelector('#contract-goal')?.value || '',
+              constraints: modalEl.querySelector('#contract-constraints')?.value || '',
+              expected_output: modalEl.querySelector('#contract-expected-output')?.value || '',
+              failure_conditions: modalEl.querySelector('#contract-failure-conditions')?.value || '',
+              scope_boundary: modalEl.querySelector('#contract-scope-boundary')?.value || '',
+              stop_conditions: (modalEl.querySelector('#contract-stop-conditions')?.value || '').split('\n').filter(Boolean),
+              success_criteria: modalEl.querySelector('#dispatch-success-criteria')?.value || '',
+              e2e_test_criteria: (modalEl.querySelector('#dispatch-e2e-test-criteria')?.value || '').split('\n').filter(Boolean),
+            },
+          };
+          openDynamicPromptPreview(dynamicBody, previewBtn);
         });
         o.querySelector('.modal-actions').prepend(previewBtn);
 
@@ -2654,22 +2834,28 @@ async function dispatchWorkItem(workItem, projectKey) {
         if (workItem.description) {
           const desc = workItem.description;
           const extract = (header) => { const m = desc.match(new RegExp(`\\*\\*${header}\\*\\*:\\s*(.+)`, 'i')); return m ? m[1].trim() : ''; };
+          const extractMultiline = (header) => {
+            const m = desc.match(new RegExp(`\\*\\*${header}\\*\\*:\\s*\\n([\\s\\S]*?)(?=\\n\\*\\*[A-Z]|\\n##|\\s*$)`, 'i'));
+            return m ? m[1].split('\n').map(l => l.replace(/^[-*]\s*/, '').trim()).filter(Boolean).join('\n') : '';
+          };
           const goal = extract('Goal');
           const constraints = extract('Constraints');
           const expectedOutput = extract('Expected Output');
           const failureConditions = extract('Failure Conditions');
           const scopeBoundary = extract('Scope Boundary');
-          // Stop conditions: multi-line after header
-          const scMatch = desc.match(/\*\*Stop Conditions\*\*:\s*\n([\s\S]*?)(?=\n\*\*[A-Z]|\n##|\s*$)/i);
-          const stopConditions = scMatch ? scMatch[1].split('\n').map(l => l.replace(/^[-*]\s*/, '').trim()).filter(Boolean).join('\n') : '';
+          const successCriteria = extract('Success Criteria');
+          const stopConditions = extractMultiline('Stop Conditions');
+          const e2eTestCriteria = extractMultiline('E2E Test Criteria');
           if (goal) o.querySelector('#contract-goal').value = goal;
           if (constraints) o.querySelector('#contract-constraints').value = constraints;
           if (expectedOutput) o.querySelector('#contract-expected-output').value = expectedOutput;
           if (failureConditions) o.querySelector('#contract-failure-conditions').value = failureConditions;
           if (scopeBoundary) o.querySelector('#contract-scope-boundary').value = scopeBoundary;
           if (stopConditions) o.querySelector('#contract-stop-conditions').value = stopConditions;
+          if (successCriteria) o.querySelector('#dispatch-success-criteria').value = successCriteria;
+          if (e2eTestCriteria) o.querySelector('#dispatch-e2e-test-criteria').value = e2eTestCriteria;
           // Auto-expand if any field was populated
-          if (goal || constraints || expectedOutput || failureConditions || scopeBoundary || stopConditions) {
+          if (goal || constraints || expectedOutput || failureConditions || scopeBoundary || stopConditions || successCriteria || e2eTestCriteria) {
             o.querySelector('#contract-details').open = true;
           }
         }
@@ -2690,6 +2876,9 @@ async function dispatchWorkItem(workItem, projectKey) {
         const contractScopeBoundary = overlay.querySelector('#contract-scope-boundary')?.value?.trim() || '';
         const contractStopConditionsRaw = overlay.querySelector('#contract-stop-conditions')?.value?.trim() || '';
         const contractStopConditions = contractStopConditionsRaw ? contractStopConditionsRaw.split('\n').map(s => s.trim()).filter(Boolean) : [];
+        const contractSuccessCriteria = overlay.querySelector('#dispatch-success-criteria')?.value?.trim() || '';
+        const contractE2eTestCriteriaRaw = overlay.querySelector('#dispatch-e2e-test-criteria')?.value?.trim() || '';
+        const contractE2eTestCriteria = contractE2eTestCriteriaRaw ? contractE2eTestCriteriaRaw.split('\n').map(s => s.trim()).filter(Boolean) : [];
 
         const contract = {};
         if (contractGoal) contract.goal = contractGoal;
@@ -2698,6 +2887,8 @@ async function dispatchWorkItem(workItem, projectKey) {
         if (contractFailureConditions) contract.failure_conditions = contractFailureConditions;
         if (contractScopeBoundary) contract.scope_boundary = contractScopeBoundary;
         if (contractStopConditions.length) contract.stop_conditions = contractStopConditions;
+        if (contractSuccessCriteria) contract.success_criteria = contractSuccessCriteria;
+        if (contractE2eTestCriteria.length) contract.e2e_test_criteria = contractE2eTestCriteria;
 
         const endpoint = plainTerminal ? '/api/terminal/shell' : '/api/terminal';
         const body = plainTerminal

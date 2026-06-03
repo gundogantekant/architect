@@ -33,7 +33,7 @@ test.describe('API contracts @fast', () => {
   });
 
   test('AC-4: PATCH /api/work-items/:id updates status', async () => {
-    const item = await seedWorkItem({ title: 'PATCH test' });
+    const item = await seedWorkItem({ title: 'PATCH test', tags: ['trivial'] });
     await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'planned' }) });
     await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'in-progress' }) });
     await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'in-review' }) });

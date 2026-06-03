@@ -154,7 +154,7 @@ Full coordinator output. References RequestClassification and WorkflowPattern.
         "agent": "string (agent name)",
         "purpose": "string",
         "parallel_with": ["string (agent names)"],
-        "contract": { "$ref": "DispatchContract (required for medium+ complexity, optional for trivial/small)" }
+        "contract": { "$ref": "DispatchContract (required for small+ complexity, optional for trivial)" }
       }
     ]
   },
@@ -168,7 +168,7 @@ Full coordinator output. References RequestClassification and WorkflowPattern.
 }
 ```
 
-**Rules**: `suggested_work_item` only for medium+ complexity. `skip_reason` mutually exclusive with `execution_plan.steps`. `contract` is required on all steps when classification complexity is `medium` or `large`; optional for `trivial` and `small`. When present, `purpose` serves as a one-line summary; `contract` provides the full success criteria. Steps without `contract` (legacy or trivial) remain valid.
+**Rules**: `suggested_work_item` only for medium+ complexity. `skip_reason` mutually exclusive with `execution_plan.steps`. `contract` is required on all steps when classification complexity is `small`, `medium`, or `large`; optional for `trivial`. When present, `purpose` serves as a one-line summary; `contract` provides the full success criteria. Steps without `contract` (legacy or trivial) remain valid.
 
 ## DispatchContract (Value Object)
 
@@ -180,14 +180,14 @@ Defines the success criteria for a single dispatch step. Immutable, compared by 
   "constraints": "string — hard boundaries that must not be crossed (1-3 sentences)",
   "expected_output": "string — the specific artifact or structure the agent must produce (1-3 sentences)",
   "failure_conditions": "string — what makes the output unacceptable (1-3 sentences)",
-  "scope_boundary": "string | null — files/directories the agent must NOT modify; null for trivial/small",
-  "stop_conditions": "string[] | null — conditions requiring the agent to halt and report; null for trivial/small",
-  "success_criteria": "string | null — user-visible conditions defining done (1–3 sentences); required for medium+, null for trivial/small",
-  "e2e_test_criteria": "string[] | null — specific E2E test scenarios the agent must implement; required for medium+ (3+ for large), null for trivial/small"
+  "scope_boundary": "string | null — files/directories the agent must NOT modify; null for trivial; optional for small; required for large",
+  "stop_conditions": "string[] | null — conditions requiring the agent to halt and report; null for trivial; optional for small; required for large",
+  "success_criteria": "string | null — user-visible conditions defining done (1–3 sentences); required for small+, null for trivial",
+  "e2e_test_criteria": "string[] | null — specific E2E test scenarios the agent must implement; required for small+ (1+ for small and medium, 3+ for large), null for trivial"
 }
 ```
 
-**Rules**: All four core fields (goal, constraints, expected_output, failure_conditions) are required when the contract is present. `scope_boundary` is required for large complexity, optional for medium, absent for trivial/small. `stop_conditions` is required for large complexity (3+ conditions), optional for medium, absent for trivial/small. `success_criteria` is required for medium+, null for trivial/small. `e2e_test_criteria` is required for medium+ (3+ entries for large), null for trivial/small. Each string field should be 1–3 sentences. Empty strings are treated as absent (see `domain/rules.md` → Dispatch Contract Rules). The coordinator produces contracts as part of the DispatchPlan; the prompt-builder renders them in the dispatch prompt.
+**Rules**: All four core fields (goal, constraints, expected_output, failure_conditions) are required when the contract is present for small+ complexity. `scope_boundary` is required for large complexity, optional for small/medium, absent for trivial. `stop_conditions` is required for large complexity (3+ conditions), optional for small/medium, absent for trivial. `success_criteria` is required for small+, null for trivial. `e2e_test_criteria` is required for small+ (1+ entries for small/medium, 3+ for large), null for trivial. Each string field should be 1–3 sentences. Empty strings are treated as absent (see `domain/rules.md` → Dispatch Contract Rules). The coordinator produces contracts as part of the DispatchPlan; the prompt-builder renders them in the dispatch prompt.
 
 ## ScoutReport
 
@@ -564,8 +564,9 @@ Status semantics for terminal states:
 - `superseded` — session was replaced by a re-dispatch. Treated same as dismissed in UI.
 
 CompleteDispatchRequest validation:
-- For medium+ complexity dispatches: reject completion if code_gate_passed !== true
-- For trivial/small dispatches: gate fields may be null (backward compatible; no rejection)
+- `test_suite_passed` and `build_verified` are required for all complexity including trivial; `test_framework_absent: true` satisfies the test gate; no `guidance.build_command` satisfies the build gate.
+- `contract_satisfied` is required only for small+ complexity dispatches.
+- For trivial dispatches: test and build gates apply; contract gate is waived.
 - Complexity is determined by getComplexityLevel(workItem) — see Isolated Work Mandate
 
 ## AutonomousCompletionPayload (Value Object)

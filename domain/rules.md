@@ -45,7 +45,7 @@ All three terms refer to the same entity. The dashboard UI uses "task" for brevi
 | Condition | Workflow |
 |-----------|----------|
 | Trivial tasks | plan-then-direct — agent produces brief inline plan (1–3 bullets), Plan Gate board reviews, then coder dispatched |
-| Small features | sequential — scout → planner → coder → tester → reviewer |
+| Small features | sequential — scout → planner → coder → tester → reviewer. Implementation uses a worktree-isolated dispatch per Isolated Work Mandate Rule 1. |
 | Full-stack work (independent frontend/backend/infra) | parallel-fan-out — split then converge at tester → reviewer |
 | Medium/large features | plan-then-execute — planner decomposes, then dispatch coders per task |
 | Bugfixes | investigate-then-fix — debugger/scout → coder → tester |
@@ -267,7 +267,7 @@ When PM's classification confidence is below **0.6**, always include clarificati
 - New items default to status `draft`
 - Statuses: `draft` → `planned` → `in-progress` → `done` (or `blocked`, `cancelled`); see State Transition Table for full map
 - `archived` is reachable only from `done` or `cancelled` — archived items are hidden from the active backlog
-- **Contract-gated planned transition**: The `draft → planned` transition requires a valid contract. At minimum, a non-empty `goal` field must be present (from structured description sections, coordinator DispatchPlan, or manual input). For medium+ complexity: all 4 core contract fields must be populated. For large complexity: `scope_boundary` and `stop_conditions` (3+) must also be populated. The plan gate (Review Board) evaluates the contract alongside the plan for medium+ complexity. Dashboard dispatch is restricted to `planned`+ status items.
+- **Contract-gated planned transition**: The `draft → planned` transition requires a valid contract. Trivial items: non-empty `goal` only. Small+: all 4 core contract fields + `success_criteria` + at least one `e2e_test_criteria` entry must be populated. For large complexity: `scope_boundary` and `stop_conditions` (3+) must also be populated. The plan gate (Review Board) evaluates the contract alongside the plan for small+ complexity. Dashboard dispatch is restricted to `planned`+ status items.
 - Session log is append-only
 - `list` supports `--org <name>` to filter by organization prefix
 - `list` supports `--project` with comma-separated values for multi-project filtering
@@ -302,8 +302,8 @@ Forward transitions are rejected when `input_needed = 1` OR `approval.active = 1
 ### Draft → Planned Contract Gate (W-236 preserved)
 
 `draft → planned` requires a valid DispatchContract attached to the work item:
-- Minimum (any complexity): non-empty `goal`
-- Medium+: all four core fields (`goal`, `constraints`, `expected_output`, `failure_conditions`)
+- Trivial: non-empty `goal` only
+- Small+: all four core fields (`goal`, `constraints`, `expected_output`, `failure_conditions`) + `success_criteria` + at least one `e2e_test_criteria` entry must be populated
 - Large: also `scope_boundary` and `stop_conditions` (3+ entries)
 
 The contract gate operates independently of the `approval` flag — both must be satisfied when approval is required.
@@ -584,7 +584,7 @@ Every dispatch step for medium+ complexity work must carry a DispatchContract (s
 | Complexity | Contract Required |
 |------------|-------------------|
 | trivial | No — `purpose` field suffices |
-| small | No — `purpose` field suffices |
+| small | Yes — 4 core fields (1-sentence each), success_criteria required, 1 e2e_test_criteria entry minimum |
 | medium | Yes — all four core fields must be populated |
 | large | Yes — all four core fields must be populated |
 
@@ -593,7 +593,7 @@ Every dispatch step for medium+ complexity work must carry a DispatchContract (s
 | Complexity | Core Fields (4) | scope_boundary | stop_conditions | success_criteria | e2e_test_criteria |
 |------------|-----------------|----------------|-----------------|-----------------|-------------------|
 | trivial | None | None | None | None | None |
-| small | None | None | None | None | None |
+| small | Required (1-sentence each) | Optional | Optional | Required (1-sentence) | Required (1+) |
 | medium | Required, 1-2 sentences each | Optional | Optional | Required | Required |
 | large | Required, 2-3 sentences with measurable criteria | Required | Required (3+) | Required | Required (3+) |
 
@@ -625,7 +625,7 @@ Empty strings are treated as absent. The prompt-builder strips empty fields and 
 
 ### Backward Compatibility
 
-Steps without a `contract` field (from pre-existing plans or trivial/small dispatches) remain valid. The prompt-builder gracefully no-ops when the contract is missing or incomplete. No migration is needed for existing DispatchPlans.
+Steps without a `contract` field (from pre-existing plans or trivial dispatches) remain valid. The prompt-builder gracefully no-ops when the contract is missing or incomplete. No migration is needed for existing DispatchPlans. The new small+ baseline replaces the previous medium+ baseline for worktree and contract requirements; trivial items retain their prior behaviour.
 
 ### Refine Dispatch (AI Orchestrator Guidance)
 
@@ -1366,11 +1366,14 @@ These rules apply to all dispatches (except T1-tagged items) without exception. 
 
 ### Core Rules
 0. **Plan-First required**: Every dispatch must begin by producing a written plan before any implementation action. For medium+ items the planner agent produces the plan; for trivial/small the dispatched agent produces a brief inline plan (1–3 bullet points) as its first output. No file edits, no coder-agent dispatches, no implementation steps may occur before the plan exists and has cleared the Plan Gate board.
-1. **Worktree required**: Every medium+ dispatch must execute in an isolated git worktree. The worktree branches off the currently checked-out branch at dispatch time (source_branch). Never branch off main by default.
-2. **Complete contract required**: Every medium+ dispatch must have a complete DispatchContract with all four core fields (goal, constraints, expected_output, failure_conditions) plus `success_criteria` (user-visible done conditions, required for medium+) and `e2e_test_criteria` (minimum 1 entry for medium, 3+ for large complexity).
+1. **Worktree required**: Every small+ dispatch must execute in an isolated git worktree. The worktree branches off the currently checked-out branch at dispatch time (source_branch). Never branch off main by default. Trivial items (T1-tagged) are exempt from worktree isolation per the T1 Fast Path rule.
+2. **Complete contract required**: Every small+ dispatch must have a complete DispatchContract with all four core fields (goal, constraints, expected_output, failure_conditions) plus `success_criteria` (user-visible done conditions, required for small+) and `e2e_test_criteria` (minimum 1 entry for small and medium, 3+ for large complexity). Trivial items require only a non-empty goal. Test suite and build verification are required for all complexity including T1 — see Rule 5.
 3. **Plan Gate required**: Every DispatchPlan must include a plan-gate review step (Review Board) before any implementation agent runs. Applies to all complexity except T1. For trivial/small, the board reviews the inline plan produced per Rule 0.
-4. **Code Gate required**: Every medium+ DispatchPlan must include a code-gate review step as the final pre-merge step. The code gate must verify contract satisfaction (each e2e_test_criteria item is implemented and passing). Board: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod, plus tech-reviewer-dba if DB changes present, tech-reviewer-security if auth/secrets present.
-5. **Base branch merge**: Merge always targets source_branch (the originating branch captured at worktree creation time). Never hardcode main as merge target.
+4. **Code Gate required**: Every small+ DispatchPlan must include a code-gate review step as the final pre-merge step. The code gate must verify contract satisfaction (each e2e_test_criteria item is implemented and passing). For small: lightweight board (swe + arch only). Trivial items skip the code gate board but are subject to Rule 5. Board for medium+: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod, plus tech-reviewer-dba if DB changes present, security-auditor if auth/secrets present.
+5. **Test + Build Gate required (all complexity including T1)**: Every dispatch regardless of complexity must report `test_suite_passed` and `build_verified` signals in the `POST /api/dispatch/:id/complete` payload before the merge path opens. The `/merge` handler reads these values from the dispatch record (set at `/complete` time). If no test framework is detected, the agent reports `test_framework_absent: true` (treated as gate satisfied with an informational note in the session log). If the portfolio entry has no `guidance.build_command`, build verification is a no-op (gate satisfied). When a regression is detected, the agent self-corrects within the same dispatch session (same process, extended turns — no new dispatch created), re-runs the suite, then reports. Maximum 2 self-correction cycles per the agent's `maxTurns` config; on second failure, agent halts and reports `tests_not_passed` with a blocking note.
+6. **Base branch merge**: Merge always targets source_branch (the originating branch captured at worktree creation time). Never hardcode main as merge target.
+
+> **Backward Compatibility**: The small+ baseline replaces the previous medium+ baseline for worktree and contract requirements. Existing trivial items and T1-tagged dispatches retain their prior behaviour.
 
 ### Ticket Gate (Orchestrator Behavior Extension — Coordinator Flow)
 
@@ -1388,7 +1391,7 @@ Gate reviews (Ticket Gate, Plan Gate, Code Gate) are read-only, depth-1 dispatch
 ### Named Board Compositions
 - **Ticket Gate Board** (identical to Plan Gate Board): tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx
 - **Plan Gate Board**: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx
-- **Code Gate Board**: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod; add tech-reviewer-dba if DB schema changes present; add tech-reviewer-security if authentication, secrets, or external data involved
+- **Code Gate Board**: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod; add tech-reviewer-dba if DB schema changes present; add security-auditor if authentication, secrets, or external data involved
 
 ## External Action Rules
 

@@ -42,7 +42,7 @@ test.describe('Worktree Readiness Check @fast', () => {
         entry: { worktree_mode: 'auto' },
       }),
     });
-    const wi = await seedWorkItem({ title: 'WR-1 test', status: 'planned', project_key: TEST_PROJECT_KEY });
+    const wi = await seedWorkItem({ title: 'WR-1 test', status: 'planned', project_key: TEST_PROJECT_KEY, tags: ['trivial'] });
 
     const resp = await fetch(`${base}/api/dispatch`, {
       method: 'POST',

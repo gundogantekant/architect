@@ -242,7 +242,7 @@ test.describe('Worktree dispatch contracts @fast', () => {
       headers: { 'Content-Type': 'application/json' },
       data: { project_key: fakeKey, project_path: '/var/tmp' },
     });
-    const wi = await seedWorkItem({ title: 'WD-15 test', status: 'planned' });
+    const wi = await seedWorkItem({ title: 'WD-15 test', status: 'planned', tags: ['trivial'] });
     const resp = await request.post(`${base}/api/dispatch`, {
       headers: { 'Content-Type': 'application/json' },
       data: {
