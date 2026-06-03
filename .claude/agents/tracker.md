@@ -66,6 +66,8 @@ You will receive a command string. Parse and execute it:
 - If the item has an `epic_id`, check epic progress and suggest status transition if appropriate (but do not auto-change)
 - Output confirmation
 
+> **Contract gate**: For work items with complexity `small` or higher, all four core contract fields (`goal`, `constraints`, `expected_output`, `failure_conditions`) + `success_criteria` + at least one `e2e_test_criteria` entry are required before the item can advance to `planned` status. The API returns HTTP 422 with `error: "contract_required"` and a `violations` array if these are missing. Tracker must surface this error and instruct the user to populate the contract fields before retrying the status update.
+
 ### `log <W-XXX> <message>`
 - `curl -s -X POST 'http://127.0.0.1:3777/api/work-items/<W-XXX>/log' -H 'Content-Type: application/json' -d '{"message": "<message>"}'`
 - Output confirmation

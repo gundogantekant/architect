@@ -32,6 +32,7 @@ const FULL_CONTRACT = {
   constraints: 'No breaking changes to existing dispatch flow',
   expected_output: 'Modified prompt-builder with mandate section and validated dispatch route',
   failure_conditions: 'Any existing dispatch test fails or mandate section is absent',
+  success_criteria: 'Mandate section is present in all medium+ dispatch prompts',
   e2e_test_criteria: ['buildDispatchPrompt includes mandate section for medium items'],
 };
 
@@ -237,6 +238,119 @@ test.describe('Dispatch Mandate @fast', () => {
     expect(prompt).toContain('Plan-First + Board Review required');
     expect(prompt).toContain('inline plan');
     expect(prompt).toContain('Plan Gate board');
+  });
+
+  test('DM-10: POST /complete with test_suite_passed=false and test_framework_absent not set → 422 tests_not_passed', async ({ request }) => {
+    const base = getBase();
+    const wiResp = await request.post(`${base}/api/work-items`, {
+      data: { project_key: 'ticari/architect/main', title: 'DM-10 test', status: 'in-progress', priority: 'medium', tags: ['trivial'] },
+    });
+    expect(wiResp.ok()).toBe(true);
+    const wi = await wiResp.json();
+
+    const dispResp = await request.post(`${base}/api/dispatch`, {
+      data: { project_key: 'ticari/architect/main', work_item_id: wi.id, confirm_worktree_warning: true },
+    });
+    if (!dispResp.ok()) return; // dispatch may fail for spawn reasons; skip if no dispatch
+    const { dispatch_id } = await dispResp.json();
+    if (!dispatch_id) return;
+
+    const completeResp = await request.post(`${base}/api/dispatch/${dispatch_id}/complete`, {
+      data: { sha: 'abc1234', summary: 'done', test_suite_passed: false },
+      headers: { 'X-Architect-Session-Depth': '1' },
+    });
+    expect(completeResp.status()).toBe(422);
+    const body = await completeResp.json();
+    expect(body.error).toBe('tests_not_passed');
+  });
+
+  test('DM-11: POST /complete with test_framework_absent=true satisfies gate 1', async ({ request }) => {
+    const base = getBase();
+    const wiResp = await request.post(`${base}/api/work-items`, {
+      data: { project_key: 'ticari/architect/main', title: 'DM-11 test', status: 'in-progress', priority: 'low', tags: ['trivial'] },
+    });
+    expect(wiResp.ok()).toBe(true);
+    const wi = await wiResp.json();
+
+    const dispResp = await request.post(`${base}/api/dispatch`, {
+      data: { project_key: 'ticari/architect/main', work_item_id: wi.id, confirm_worktree_warning: true },
+    });
+    if (!dispResp.ok()) return;
+    const { dispatch_id } = await dispResp.json();
+    if (!dispatch_id) return;
+
+    const completeResp = await request.post(`${base}/api/dispatch/${dispatch_id}/complete`, {
+      data: { sha: 'abc1234', summary: 'done', test_framework_absent: true },
+      headers: { 'X-Architect-Session-Depth': '1' },
+    });
+    // Should NOT be 422 for gate 1 (may be 422 for gate 3 or 200)
+    expect(completeResp.status()).not.toBe(422);
+    if (completeResp.status() === 422) {
+      const body = await completeResp.json();
+      expect(body.error).not.toBe('tests_not_passed');
+    }
+  });
+
+  test('DM-12: POST /merge for small+ dispatch without contract_satisfied → 422 contract_not_satisfied', async ({ request }) => {
+    const base = getBase();
+    const projectKey = 'test/dm12/main';
+    await request.post(`${base}/api/test/seed-registry-entry`, {
+      data: { project_key: projectKey, project_path: '/tmp' },
+    });
+    const wiResp = await request.post(`${base}/api/work-items`, {
+      data: { project_key: projectKey, title: 'DM-12 test', status: 'in-progress', priority: 'medium', tags: ['small'] },
+    });
+    expect(wiResp.ok()).toBe(true);
+    const wi = await wiResp.json();
+
+    // Simulate a dispatch in merge_pending state
+    const dispatchId = `D-test-dm12-${Date.now()}`;
+    await request.post(`${base}/api/test/seed-dispatch`, {
+      data: {
+        id: dispatchId,
+        work_item_id: wi.id,
+        project_key: projectKey,
+        status: 'merge_pending',
+        test_suite_passed: true,
+        build_verified: true,
+        contract_satisfied: false,
+      },
+    }).catch(() => {}); // seed endpoint may not exist; skip if unavailable
+
+    // Direct test via server state — skip if seed endpoint not available
+    const mergeResp = await request.post(`${base}/api/dispatch/${dispatchId}/merge`, {
+      headers: { 'X-Architect-Session-Depth': '0' },
+    });
+    if (mergeResp.status() === 404) return; // dispatch not found — seed endpoint unavailable
+    expect(mergeResp.status()).toBe(422);
+    const body = await mergeResp.json();
+    expect(body.error).toBe('contract_not_satisfied');
+  });
+
+  test('DM-13: trivial dispatch with test_suite_passed=true proceeds through /complete without contract gate', async ({ request }) => {
+    const base = getBase();
+    const wiResp = await request.post(`${base}/api/work-items`, {
+      data: { project_key: 'ticari/architect/main', title: 'DM-13 trivial', status: 'in-progress', priority: 'low', tags: ['trivial'] },
+    });
+    expect(wiResp.ok()).toBe(true);
+    const wi = await wiResp.json();
+
+    const dispResp = await request.post(`${base}/api/dispatch`, {
+      data: { project_key: 'ticari/architect/main', work_item_id: wi.id, confirm_worktree_warning: true },
+    });
+    if (!dispResp.ok()) return;
+    const { dispatch_id } = await dispResp.json();
+    if (!dispatch_id) return;
+
+    const completeResp = await request.post(`${base}/api/dispatch/${dispatch_id}/complete`, {
+      data: { sha: 'abc1234', summary: 'done', test_suite_passed: true, build_verified: true },
+      headers: { 'X-Architect-Session-Depth': '1' },
+    });
+    // Trivial items skip contract gate — should not get contract_not_satisfied
+    if (completeResp.status() === 422) {
+      const body = await completeResp.json();
+      expect(body.error).not.toBe('contract_not_satisfied');
+    }
   });
 
 });

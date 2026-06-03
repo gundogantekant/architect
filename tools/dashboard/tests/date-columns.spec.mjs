@@ -49,7 +49,7 @@ test.describe('Work item date columns @fast', () => {
 
   // DC-2: done_at is set when status transitions to 'done'
   test('DC-2: done_at is a non-null ISO timestamp after status transitions to done', async () => {
-    const item = await seedWorkItem({ title: 'DC-2 done_at set' });
+    const item = await seedWorkItem({ title: 'DC-2 done_at set', tags: ['trivial'] });
     await walkToDone(item.id);
     const fetched = await api(`work-items/${item.id}`);
     expect(fetched.status).toBe('done');
@@ -61,7 +61,7 @@ test.describe('Work item date columns @fast', () => {
 
   // DC-3: done_at is idempotent — persists after further status changes (e.g. archiving)
   test('DC-3: done_at persists after transitioning from done to archived', async () => {
-    const item = await seedWorkItem({ title: 'DC-3 idempotent done_at' });
+    const item = await seedWorkItem({ title: 'DC-3 idempotent done_at', tags: ['trivial'] });
 
     // Walk to done
     await walkToDone(item.id);
@@ -92,8 +92,8 @@ test.describe('Work item date columns @fast', () => {
 
   // DC-5: Work item list endpoint returns done_at and created_at per item
   test('DC-5: list endpoint returns created_at on all items and done_at non-null only on done items', async () => {
-    const itemA = await seedWorkItem({ title: 'DC-5 non-done item' });
-    const itemB = await seedWorkItem({ title: 'DC-5 done item' });
+    const itemA = await seedWorkItem({ title: 'DC-5 non-done item', tags: ['trivial'] });
+    const itemB = await seedWorkItem({ title: 'DC-5 done item', tags: ['trivial'] });
 
     // Walk itemB to done
     await walkToDone(itemB.id);

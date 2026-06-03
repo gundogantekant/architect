@@ -34,7 +34,7 @@ export default function testEndpointRoutes(deps) {
 
     [/^\/api\/test\/seed-dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { id, status, project_key, title, work_item_id, epic_id: seedEpicId, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch, pid: seedPid, dispatch_mode, agent_phase: seedAgentPhase, agent_phase_history: seedHistory, cost_usd: seedCostUsd, exit_type: seedExitType, timeout_at: seedTimeoutAt } = body;
+      const { id, status, project_key, title, work_item_id, epic_id: seedEpicId, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch, pid: seedPid, dispatch_mode, agent_phase: seedAgentPhase, agent_phase_history: seedHistory, cost_usd: seedCostUsd, exit_type: seedExitType, timeout_at: seedTimeoutAt, test_suite_passed: seedTestSuitePassed, build_verified: seedBuildVerified, contract_satisfied: seedContractSatisfied } = body;
       if (!id) return err(res, 'id is required', 400);
       const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
 
@@ -78,6 +78,9 @@ export default function testEndpointRoutes(deps) {
         cost_usd: seedCostUsd !== undefined ? seedCostUsd : null,
         exit_type: seedExitType || null,
         timeout_at: seedTimeoutAt || null,
+        test_suite_passed: seedTestSuitePassed !== undefined ? seedTestSuitePassed : null,
+        build_verified: seedBuildVerified !== undefined ? seedBuildVerified : null,
+        contract_satisfied: seedContractSatisfied !== undefined ? seedContractSatisfied : null,
         output,
         lastLines: [],
         wsClients: new Set(),

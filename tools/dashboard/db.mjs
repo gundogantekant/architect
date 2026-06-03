@@ -479,13 +479,13 @@ export async function updateWorkItem(id, fields) {
     'title', 'status', 'priority', 'description', 'tags', 'depends_on', 'epic_id',
     'input_needed', 'input_needed_from', 'input_needed_reason', 'input_needed_at',
     'approval_active', 'approval_mode', 'approval_requested_at', 'approval_resolved_at',
-    'released_at', 'released_version',
+    'released_at', 'released_version', 'contract',
   ];
   const sets = [];
   const values = [];
   let paramIdx = 1;
 
-  const WORK_ITEM_JSONB = new Set(['tags', 'depends_on']);
+  const WORK_ITEM_JSONB = new Set(['tags', 'depends_on', 'contract']);
   for (const key of allowed) {
     if (key in fields) {
       sets.push(`${key} = $${paramIdx++}`);
@@ -1344,6 +1344,7 @@ function hydrateWorkItem(row, approvals = []) {
     },
     released_at: row.released_at || '',
     released_version: row.released_version || '',
+    contract: row.contract ?? null,
   };
 }
 
@@ -1989,6 +1990,14 @@ export async function getPromptsByWorkItem(workItemId) {
     [workItemId]
   );
   return r.rows;
+}
+
+export async function getPromptByDispatchId(dispatchId) {
+  const r = await pool.query(
+    'SELECT * FROM dispatch_prompts WHERE dispatch_id = $1 ORDER BY created_at DESC LIMIT 1',
+    [dispatchId]
+  );
+  return r.rows[0] ?? null;
 }
 
 // --- Cost summary ---

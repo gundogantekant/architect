@@ -9,6 +9,8 @@ import {
   isAdministrativeTransition,
 } from '../constants.mjs';
 import { validateWorkItemTitle } from '../lib/work-item-validation.mjs';
+import { isSmallOrAbove, getComplexityLevel } from '../utils/complexity.mjs';
+import { validateContract } from '../utils/contract-validation.mjs';
 
 /**
  * Validate documentation content to reject one-char-per-line corruption.
@@ -207,6 +209,13 @@ export default function workItemRoutes(deps) {
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify(validation.body));
           return;
+        }
+        if (existing.status === 'draft' && body.status === 'planned' && isSmallOrAbove(getComplexityLevel(existing))) {
+          const contractToValidate = body.contract ?? existing.contract;
+          const contractError = validateContract(existing, contractToValidate);
+          if (contractError) {
+            return json(res, { error: 'contract_required', message: 'Small+ items require a complete contract before advancing to planned', violations: contractError }, 422);
+          }
         }
       }
       if (body.priority && !VALID_PRIORITIES.has(body.priority)) {

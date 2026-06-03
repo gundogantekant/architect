@@ -154,4 +154,50 @@ test.describe.serial('Prompt Preview API @fast', () => {
     expect(source).toContain('POST used because request body carries portfolio context');
   });
 
+  test('PP-10: POST /api/prompts/preview-dynamic with valid project_key returns {rendered, truncated, char_count}', async ({ request }) => {
+    const resp = await request.post(`${getBase()}/api/prompts/preview-dynamic`, {
+      data: {
+        project_key: 'ticari/architect/main',
+        additional_instructions: '',
+        contract: {},
+      },
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(resp.status()).toBe(200);
+    const body = await resp.json();
+    expect(typeof body.rendered).toBe('string');
+    expect(body.rendered.length).toBeGreaterThan(0);
+    expect(typeof body.truncated).toBe('boolean');
+    expect(typeof body.char_count).toBe('number');
+    expect(body.char_count).toBeGreaterThan(0);
+  });
+
+  test('PP-11: Two identical POST /api/prompts/preview-dynamic calls return identical output (idempotent)', async ({ request }) => {
+    const body = {
+      project_key: 'ticari/architect/main',
+      additional_instructions: 'test idempotency',
+      contract: { goal: 'test goal', constraints: 'none', expected_output: 'output', failure_conditions: 'fails' },
+    };
+    const [resp1, resp2] = await Promise.all([
+      request.post(`${getBase()}/api/prompts/preview-dynamic`, { data: body, headers: { 'Content-Type': 'application/json' } }),
+      request.post(`${getBase()}/api/prompts/preview-dynamic`, { data: body, headers: { 'Content-Type': 'application/json' } }),
+    ]);
+    expect(resp1.status()).toBe(200);
+    expect(resp2.status()).toBe(200);
+    const [d1, d2] = await Promise.all([resp1.json(), resp2.json()]);
+    expect(d1.rendered).toBe(d2.rendered);
+  });
+
+  test('PP-12: preview-dynamic response shape matches existing /preview endpoint', async ({ request }) => {
+    const resp = await request.post(`${getBase()}/api/prompts/preview-dynamic`, {
+      data: { project_key: 'ticari/architect/main' },
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(resp.status()).toBe(200);
+    const body = await resp.json();
+    expect('rendered' in body).toBe(true);
+    expect('truncated' in body).toBe(true);
+    expect('char_count' in body).toBe(true);
+  });
+
 });
