@@ -210,6 +210,22 @@ If none of these provide a clear target, the orchestrator must ask the user whic
 they intend to work on before proceeding. This applies to all modes: plan mode, PM dispatch,
 direct agent invocation, slash commands, and trivial tasks.
 
+### Session Project Context (Sticky Scope)
+
+Once the orchestrator resolves a target project (via any Resolution source), that project key becomes the **session's current project context** — the default scope for all subsequent work-item commands until a different project is resolved or the session ends.
+
+**Carry-forward behavior**: When the user issues a work-item command (e.g. "find the draft tickets", "/work list") without specifying a project, the orchestrator uses the current session project context as the scope and passes it explicitly to the tracker dispatch: `--project <project_key>`.
+
+**Eviction / update model**: When the orchestrator resolves a new target project (because the user references a different project by name, or coordinator dispatches for a different project), the session project context updates to the new project. The orchestrator emits a one-line acknowledgment: `Session focus shifted to <new-project-key>.` Mid-session project switches are never silent.
+
+**Cold-start gap**: If no session project context has been set and the user issues a work-item command before any project has been resolved in the session, the orchestrator asks: "Which project are you focused on?" It does not silently return all-project results. Epic commands are exempt — epics are always cross-project and do not require a project scope.
+
+**Override signals**: Natural-language phrases that express cross-project intent ("show all tickets", "across all projects", "global backlog", "everything") override the sticky context for that single operation. The orchestrator translates these to a cross-project query and informs the tracker to skip the project filter. Sticky context is not cleared.
+
+**Cortex ↔ Architect exception**: When the session is focused on either `neuronic/cortex/main` or `ticari/architect/main`, cross-access to the other project's tickets is permitted when explicitly mentioned (e.g., "find the architect ticket for this", "link this to a Cortex work item"). The orchestrator treats an explicit project name reference as a single-operation scope override without abandoning the current sticky context.
+
+**Proactive discoverability**: When the orchestrator resolves a project for the first time in a session and no session scope has been set, it acknowledges the resolved context: "Session focus set to `<project_key>`. Subsequent work commands will scope to this project."
+
 ### Plan File Requirement
 
 When the orchestrator operates in plan mode and produces a plan file, the plan must

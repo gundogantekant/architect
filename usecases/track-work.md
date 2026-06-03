@@ -21,11 +21,13 @@ Manage persistent work items and epics across sessions. Items are grouped by pro
    - If `--project` flag provided with comma-separated values, include items from all listed project keys
    - `--org` and `--project` can be combined (org narrows first, then project filters within)
    - If `--project` provided (single value), use as project key
-   - If no `--project` and no `--org` and cwd is inside a known project, auto-resolve via `portfolio/registry.json` to get the `org/project/component` key
-   - For `list` without project context: show cross-project summary (all projects)
+   - If a session project context is active (see `domain/rules.md` → Session Project Context), use it as the default project key when no explicit `--project` or `--org` flag is provided
+   - If no explicit flag and no session project context: check cwd against `portfolio/registry.json`; if matched, use that project key
+   - If no project scope can be determined (no flag, no session context, no cwd match) and the command is not an explicit cross-project request: ask the user "Which project are you focused on?" before querying
+   - Cross-project override: if the user's phrasing expresses global intent ("all tickets", "across all projects", "global backlog"), skip all scope filtering
    - Epic commands do not require project scope (epics are cross-project)
 3. For `remove`: show item title and confirm with user before dispatching
-4. Dispatch tracker agent with parsed command, resolved project scope, and today's date
+4. Dispatch tracker agent with: parsed command, resolved project scope (include `--project <key>` if session project context is active), and today's date
 5. Display tracker output
 
 ## Flag Management

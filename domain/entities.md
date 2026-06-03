@@ -124,6 +124,21 @@ Session type semantics:
 
 See `domain/rules.md` → Session Scope Rules for permission tiers per session type.
 
+## SessionProjectContext
+
+The orchestrator's in-session record of which portfolio project is currently the focus. Set when the orchestrator resolves a target project and used as the default scope for all subsequent work-item commands until updated or the session ends. Storage is in-context only — this entity is never persisted to a file or database.
+
+```json
+{
+  "project_key": "string (org/project/component, e.g. neuronic/cortex/main)",
+  "set_at_turn": "number (conversation turn index, for eviction display only)",
+  "source": "explicit | inferred"
+}
+```
+
+- `source: explicit` — user explicitly named this project (e.g. "/work scope neuronic/cortex/main" or "let's work on Cortex")
+- `source: inferred` — orchestrator resolved the project via portfolio-aware disambiguation or coordinator dispatch
+
 ## WorkflowPattern
 
 ```
@@ -486,6 +501,21 @@ Backed by PostgreSQL (Docker, `tools/dashboard/docker-compose.yml`). Migrations 
       "items": [{ "$ref": "WorkItem" }]
     }
   }
+}
+```
+
+## BacklogResponse
+
+The shape of the `GET /api/backlog` API response. Both the tracker agent and the dashboard UI must implement against this canonical schema.
+
+Note: `scoped` and `scope` are not yet returned by the server. They describe the intended future shape (Solution C of the context-leakage fix). `projects` and `epics` are current.
+
+```json
+{
+  "scoped": "boolean (true if a project_key or org filter was applied, false if returning all projects)",
+  "scope": "string | null (the project_key or org value used to filter, null if unscoped)",
+  "projects": "{ [project_key: string]: { items: WorkItem[] } }",
+  "epics": "Epic[]"
 }
 ```
 
