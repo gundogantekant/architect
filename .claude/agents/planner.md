@@ -63,7 +63,9 @@ Numbered list of implementation tasks, each specifying:
 - Which agent should handle it (coder, coder-frontend, coder-backend, coder-mobile, coder-infra)
 - Key files to create or modify
 - Dependencies on other tasks (reference by ID)
-- **Success criteria** (goal, constraints, expected output, failure conditions) — the coordinator uses these to build DispatchContracts per `domain/entities.md` → DispatchContract
+- **Contract fields** (medium+ only): goal, constraints, expected output, and failure conditions — the coordinator uses these to build DispatchContracts per `domain/entities.md` → DispatchContract
+- **Acceptance criteria** (required for medium+): 1–3 sentences stating what must be observably true when the task is complete, written from the user's perspective (e.g. "Done when X can Y without Z"). Maps to the `success_criteria` contract field.
+- **E2E test scenarios** (required for medium+; 3+ for large): specific behaviors to validate end-to-end, each listed as a named scenario (e.g. "User creates an item → it appears in the list"). Maps to the `e2e_test_criteria` contract field.
 - **Session governance hints** (medium+ only): scope boundary (files/dirs the agent should stay within), potential stop conditions (situations that should halt execution). The coordinator formalizes these into `scope_boundary` and `stop_conditions` contract fields per `domain/rules.md` → Complexity-Scaled Contract Detail.
 
 ### Parallel Batches

@@ -39,19 +39,21 @@ Produce a full DispatchPlan for medium+ complexity work. You receive a Classifie
 3. Validate and potentially adjust the classifier's complexity and workflow assessment
 4. Determine if clarifications are needed (see `domain/rules.md` → Clarification Triggers)
 5. Build an ordered dispatch plan. For each step, evaluate independence against every other step using `domain/rules.md` → Parallelization Rules. Populate `parallel_with` for every step that can run concurrently with another.
-6. For each step (medium+ complexity), define a DispatchContract with six fields (see `domain/entities.md` → DispatchContract):
+6. For each step (medium+ complexity), define a DispatchContract with all eight fields (see `domain/entities.md` → DispatchContract):
    - **goal**: the exact success condition (1-3 sentences)
    - **constraints**: hard boundaries that must not be crossed (1-3 sentences)
    - **expected_output**: the specific artifact or structure the agent must produce (1-3 sentences)
    - **failure_conditions**: what makes the output unacceptable (1-3 sentences)
    - **scope_boundary**: files/directories the agent must NOT modify (required for large, optional for medium)
    - **stop_conditions**: conditions requiring the agent to halt and report (required for large with 3+, optional for medium). Examples: "Schema migration required beyond planned scope", "More than 5 files need changes not mentioned in the plan", "Security-sensitive code encountered outside plan scope", "Test infrastructure does not exist for the affected module"
+   - **success_criteria**: user-visible conditions defining "done" (1–3 sentences; required for medium+). Write from the user's perspective — what they can observe or do when the work is complete. Example: "Users can toggle dark mode from Settings, and the preference persists across sessions."
+   - **e2e_test_criteria**: specific E2E test scenarios the agent must implement (required for medium+; minimum 1 entry for medium, 3+ for large). Each entry is one named scenario that becomes a test case. Example: `["User clicks dark mode toggle → theme switches immediately", "Close app and reopen → dark mode setting retained"]`.
    Derive contracts from the work item description, epic context, and portfolio context. If the work item description already contains Goal/Constraints/Expected Output/Failure Conditions sections, extract and formalize them. See `domain/rules.md` → Complexity-Scaled Contract Detail for field requirements per complexity level.
 7. Return a structured JSON execution plan (see `domain/entities.md` → DispatchPlan)
 
 ## Output Format
 
-Return a single JSON block matching the DispatchPlan schema in `domain/entities.md`. Key fields: `target_project` (all five fields), `classification`, `execution_plan` (workflow, steps with `parallel_with` and `contract`), optional `clarifications_needed`, optional `suggested_work_item` (medium+ only), optional `skip_reason`. Each step must include a `contract` field (with `goal`, `constraints`, `expected_output`, `failure_conditions`) when classification complexity is medium or large. See `domain/entities.md` → DispatchContract.
+Return a single JSON block matching the DispatchPlan schema in `domain/entities.md`. Key fields: `target_project` (all five fields), `classification`, `execution_plan` (workflow, steps with `parallel_with` and `contract`), optional `clarifications_needed`, optional `suggested_work_item` (medium+ only), optional `skip_reason`. Each step must include a `contract` field (with `goal`, `constraints`, `expected_output`, `failure_conditions`, `success_criteria`, and `e2e_test_criteria`) when classification complexity is medium or large. See `domain/entities.md` → DispatchContract for all eight fields and nullability rules.
 
 ## Isolated Work Mandate — Gate Steps (all complexity except T1 required)
 
