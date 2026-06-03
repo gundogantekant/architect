@@ -130,6 +130,7 @@ export default function workItemRoutes(deps) {
 
       const statusValues = reqUrl.searchParams.getAll('status');
       const priorityValues = reqUrl.searchParams.getAll('priority');
+      const tagsValues = reqUrl.searchParams.getAll('tags').map(t => t.trim()).filter(Boolean);
       const epicId = reqUrl.searchParams.get('epic_id') || null;
 
       for (const s of statusValues) {
@@ -147,6 +148,7 @@ export default function workItemRoutes(deps) {
         dateFilter,
         statusFilter: statusValues.length ? statusValues : null,
         priorityFilter: priorityValues.length ? priorityValues : null,
+        tagsFilter: tagsValues.length ? tagsValues : null,
         epicId,
       });
       if (awaitingAction) backlog = filterAwaitingAction(backlog);
@@ -193,6 +195,7 @@ export default function workItemRoutes(deps) {
 
       const statusValues = reqUrl.searchParams.getAll('status');
       const priorityValues = reqUrl.searchParams.getAll('priority');
+      const tagsValues = reqUrl.searchParams.getAll('tags').map(t => t.trim()).filter(Boolean);
       const epicId = reqUrl.searchParams.get('epic_id') || null;
       const orgFilter = reqUrl.searchParams.get('org') || null;
       const rawSort = (reqUrl.searchParams.get('sort_by') || 'created_at').toLowerCase();
@@ -225,6 +228,7 @@ export default function workItemRoutes(deps) {
         projectKey,
         statusFilter: statusValues.length ? statusValues : null,
         priorityFilter: priorityValues.length ? priorityValues : null,
+        tagsFilter: tagsValues.length ? tagsValues : null,
         epicId,
         limit,
         offset: parsedOffset,
@@ -242,6 +246,7 @@ export default function workItemRoutes(deps) {
           filters: {
             status: statusValues.length ? statusValues : null,
             priority: priorityValues.length ? priorityValues : null,
+            tags: tagsValues.length ? tagsValues : null,
             epic_id: epicId,
             org: orgFilter,
             project_key: projectKey,

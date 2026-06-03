@@ -1191,7 +1191,7 @@ export async function getAllPreferences() {
 
 // --- Backlog reconstruction (legacy shape for API compat) ---
 
-export async function getBacklog({ orgFilter, projectKey, includeArchived = false, dateFilter = {}, statusFilter, priorityFilter, epicId } = {}) {
+export async function getBacklog({ orgFilter, projectKey, includeArchived = false, dateFilter = {}, statusFilter, priorityFilter, tagsFilter, epicId } = {}) {
   const conditions = [];
   const params = [];
 
@@ -1220,6 +1220,10 @@ export async function getBacklog({ orgFilter, projectKey, includeArchived = fals
   if (priorityFilter?.length) {
     params.push(priorityFilter);
     conditions.push(`priority = ANY($${params.length}::text[])`);
+  }
+  if (tagsFilter?.length) {
+    params.push(tagsFilter);
+    conditions.push(`tags ?| $${params.length}::text[]`);
   }
   if (epicId) {
     params.push(epicId);
@@ -1279,7 +1283,7 @@ const ALLOWED_SORT_COLS = Object.freeze({
 });
 
 export async function getWorkItemsFiltered({
-  orgFilter, projectKey, statusFilter, priorityFilter, epicId,
+  orgFilter, projectKey, statusFilter, priorityFilter, tagsFilter, epicId,
   limit = 200, offset = 0, sortBy = 'created_at', sortDir = 'asc',
 } = {}) {
   const conditions = [];
@@ -1302,6 +1306,10 @@ export async function getWorkItemsFiltered({
   if (priorityFilter?.length) {
     params.push(priorityFilter);
     conditions.push(`priority = ANY($${params.length}::text[])`);
+  }
+  if (tagsFilter?.length) {
+    params.push(tagsFilter);
+    conditions.push(`tags ?| $${params.length}::text[]`);
   }
   if (epicId) {
     params.push(epicId);
