@@ -263,3 +263,53 @@ test('SR-28: GET /api/terminal/recent panel shows killed terminal with Resume bu
   await expect(page.locator('#recent-sessions')).toBeVisible({ timeout: 5000 });
   await expect(page.locator(`[data-recent-resume="${t.id}"]`)).toBeVisible({ timeout: 5000 });
 });
+
+// ============================================================
+// SR-29 to SR-31: dismissAllCompleted + eager suspended-panel refresh (W-1333)
+// ============================================================
+
+test('SR-29: dismissAllCompleted preserves a suspended dispatch panel', async ({ page }) => {
+  const { dispatch_id: completedId } = await seedDispatch({ status: 'completed' });
+  const { dispatch_id: suspendedId } = await seedDispatch({ status: 'suspended', claude_session_id: 'fake-sr29' });
+  await page.goto('/');
+  await expect(page.locator(`#dispatch-${completedId}`)).toBeVisible({ timeout: 5000 });
+  await expect(page.locator(`#dispatch-${suspendedId}`)).toBeVisible({ timeout: 5000 });
+
+  await page.locator('.dismiss-all-btn').click();
+
+  // Completed panel must be removed; suspended must survive with correct class
+  await page.waitForSelector(`#dispatch-${completedId}`, { state: 'detached', timeout: 5000 });
+  await expect(page.locator(`#dispatch-${suspendedId}`)).toBeVisible();
+  await expect(page.locator(`#dispatch-${suspendedId}`)).toHaveClass(/status-suspended/);
+});
+
+test('SR-30: dismissAllCompleted preserves a suspended terminal panel', async ({ page }) => {
+  const { id: completedId } = await seedTerminal({ status: 'completed', withFakeContent: true, lines: 3 });
+  const { id: suspendedId } = await seedTerminal({ status: 'suspended', agentType: 'claude', claude_session_id: 'fake-sr30' });
+  await page.goto('/');
+  await expect(page.locator(`#terminal-${completedId}`)).toBeVisible({ timeout: 5000 });
+  await expect(page.locator(`#terminal-${suspendedId}`)).toBeVisible({ timeout: 5000 });
+
+  await page.locator('.dismiss-all-btn').click();
+
+  // Completed terminal must be removed; suspended must survive
+  await page.waitForSelector(`#terminal-${completedId}`, { state: 'detached', timeout: 5000 });
+  await expect(page.locator(`#terminal-${suspendedId}`)).toBeVisible();
+  await expect(page.locator(`#terminal-${suspendedId}`)).toHaveClass(/status-suspended/);
+});
+
+test('SR-31: #suspended-sessions card appears immediately after route navigation without polling delay', async ({ page }) => {
+  // Load with no suspended sessions so startup refresh sets _suspendedContainer = null
+  await page.goto('/');
+  await page.waitForLoadState('networkidle');
+
+  // Seed a suspended dispatch via API after page is idle (not in activeDispatches yet)
+  await seedDispatch({ status: 'suspended', claude_session_id: 'fake-sr31' });
+
+  // Navigate to a different route — triggers hashchange → route() → placeSessionPanels()
+  // → _placeSessionPanelsNow() → if (!_suspendedContainer) refreshSuspendedPanel()
+  await page.evaluate(() => { location.hash = '#epics'; });
+
+  // Card must appear well within the 10s polling interval — 5s is safe for eager-refresh path
+  await expect(page.locator('#suspended-sessions')).toBeVisible({ timeout: 5000 });
+});
