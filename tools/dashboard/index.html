@@ -45,6 +45,10 @@
 .superseded-badge { font-size:11px; background:#EDE9FE; color:#7C3AED; padding:1px 5px; border-radius:3px; margin-left:4px; }
 .session-stopping { font-size:11px; color:#92400E; margin-left:6px; }
 .status-dot.interrupted { background: #F59E0B; }
+.ws-reconnect-banner { font-size:12px; color:#92400E; background:#FEF3C7; border:1px solid #FDE68A; border-radius:4px; padding:4px 10px; margin:4px 0; display:flex; align-items:center; gap:8px; }
+.ws-reconnect-banner.ws-reconnect-failed { color:#7C2D12; background:#FEE2E2; border-color:#FECACA; }
+.ws-reconnect-banner button { font-size:11px; padding:2px 8px; border:1px solid #D97706; border-radius:3px; background:#FFF; cursor:pointer; }
+.ws-reconnect-banner button:hover { background:#FEF3C7; }
 </style>
 </head>
 <body>
@@ -765,6 +769,43 @@ function showAutoImplementToast(dispatch) {
   }
 }
 
+const WS_MAX_RETRIES = 3;
+const WS_RETRY_DELAYS_MS = [2000, 3000, 5000];
+
+function showDispatchReconnecting(dispatch, attempt, max) {
+  const panelEl = document.getElementById(`dispatch-${dispatch.id}`);
+  if (!panelEl) return;
+  let banner = panelEl.querySelector('.ws-reconnect-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.className = 'ws-reconnect-banner';
+    const logEl = panelEl.querySelector(`#log-${dispatch.id}`);
+    if (logEl) logEl.before(banner);
+  }
+  banner.textContent = `Reconnecting… (attempt ${attempt}/${max})`;
+}
+
+function showDispatchReconnectFailed(dispatch) {
+  const panelEl = document.getElementById(`dispatch-${dispatch.id}`);
+  if (!panelEl) return;
+  let banner = panelEl.querySelector('.ws-reconnect-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.className = 'ws-reconnect-banner ws-reconnect-failed';
+    const logEl = panelEl.querySelector(`#log-${dispatch.id}`);
+    if (logEl) logEl.before(banner);
+  }
+  banner.innerHTML = 'Live output paused. <button onclick="retryDispatchWS(this)">Reconnect</button>';
+  banner.dataset.dispatchId = dispatch.id;
+}
+
+function retryDispatchWS(btn) {
+  const banner = btn.closest('.ws-reconnect-banner');
+  const id = banner?.dataset?.dispatchId;
+  const dispatch = activeDispatches.find(d => d.id === id);
+  if (dispatch) { dispatch._wsRetries = 0; loadDispatchContent(dispatch); }
+}
+
 const SCROLL_BOTTOM_THRESHOLD = 5;
 const SCROLL_SMOOTH_THRESHOLD = 60;
 const pendingSmooth = new WeakMap();
@@ -821,6 +862,7 @@ async function loadDispatchContent(dispatch) {
         }
       } else if (msg.type === 'replay-end') {
         dispatch._contentLoaded = true;
+        dispatch._wsRetries = 0;
         scrollDispatchLog(logEl, true);
         logEl.dataset.replayDone = '1';
       } else if (msg.type === 'done') {
@@ -884,12 +926,31 @@ async function loadDispatchContent(dispatch) {
     } catch (err) { console.warn('[dispatch] ws message:', err); }
   };
 
+  ws.onopen = () => {
+    dispatch._wsRetries = 0;
+    document.querySelector(`#dispatch-${dispatch.id} .ws-reconnect-banner`)?.remove();
+  };
+
   ws.onclose = () => {
-    dispatch._ws = null;
+    if (dispatch._ws === ws) dispatch._ws = null;
+    if (dispatch._wsRetryTimer) { clearTimeout(dispatch._wsRetryTimer); dispatch._wsRetryTimer = null; }
+
     if (dispatch.status === 'running' && !dispatch._contentLoaded) {
-      // WS closed before replay-end was received — treat as connection failure
-      dispatch.status = 'failed';
-      finalizeDispatchPanel(dispatch);
+      // WS dropped during log replay — agent may still be running. Retry before giving up.
+      dispatch._wsRetries = (dispatch._wsRetries || 0) + 1;
+      if (dispatch._wsRetries <= WS_MAX_RETRIES) {
+        const delay = WS_RETRY_DELAYS_MS[dispatch._wsRetries - 1] ?? 5000;
+        showDispatchReconnecting(dispatch, dispatch._wsRetries, WS_MAX_RETRIES);
+        dispatch._wsRetryTimer = setTimeout(() => {
+          dispatch._wsRetryTimer = null;
+          loadDispatchContent(dispatch);
+        }, delay);
+      } else {
+        // All retries exhausted — fetch real server state; show manual reconnect affordance.
+        dispatch._wsRetries = 0;
+        restoreDispatches();
+        showDispatchReconnectFailed(dispatch);
+      }
     } else {
       // Either done message was received (status != 'running') or WS dropped after
       // successful connect — sync badge so kills/completions via WS are reflected
