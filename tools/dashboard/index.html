@@ -804,7 +804,7 @@ async function dismissAllCompleted() {
 }
 
 let _placeTimer = null;
-let _appReady = false; // set once on boot after route(); never cleared
+let _pendingProjectArrival = ''; // set by routing on project change; consumed once in _placeSessionPanelsNow
 let _suspendedContainer = null;
 let _recentContainer = null;
 // Off-DOM buffer for panels that don't match the active route's project context.
@@ -813,7 +813,6 @@ let _recentContainer = null;
 const _hiddenPanelBuffer = document.createElement('div');
 
 function placeSessionPanels() {
-  if (!_appReady) return;
   if (_placeTimer) return;
   _placeTimer = requestAnimationFrame(() => { _placeTimer = null; _placeSessionPanelsNow(); });
 }
@@ -844,6 +843,8 @@ function _isProjectMatch(sessionProjectKey, activeProjectKey) {
 function _placeSessionPanelsNow() {
   const sidebarTarget = window._sidebarTargetSession || null;
   window._sidebarTargetSession = null;
+  const arrivalProject = _pendingProjectArrival;
+  _pendingProjectArrival = '';
   // 1. Ensure global fallback container exists
   let globalContainer = document.getElementById('dispatch-panels');
   if (!globalContainer) {
@@ -997,7 +998,7 @@ function _placeSessionPanelsNow() {
   const epicMatch = hash.match(/^#epic\/(.+)$/);
   if (epicMatch) viewEpicId = epicMatch[1];
 
-  const isArrivingAtProject = viewProjectKey && viewProjectKey !== previousProjectKey;
+  const isArrivingAtProject = arrivalProject && arrivalProject === viewProjectKey;
 
   if (viewProjectKey || viewEpicId) {
     for (const session of allSessions) {
@@ -1013,12 +1014,17 @@ function _placeSessionPanelsNow() {
         panel.classList.toggle('collapsed', !expand);
         sessionCollapseState.set(session.key, !expand); // in-memory only; not persisted
         if (minBtn) minBtn.textContent = expand ? '\u25bc' : '\u25b6';
+      } else if (isRelevant && !isArrivingAtProject && sidebarTarget === session.key) {
+        // Same-project sidebar click: expand only the target, preserve all other states.
+        panel.classList.remove('collapsed');
+        sessionCollapseState.set(session.key, false);
+        if (minBtn) minBtn.textContent = '\u25bc';
       } else if (!isRelevant && !panel.classList.contains('collapsed')) {
         // Off-project/epic session: fold it (CSS only).
         panel.classList.add('collapsed');
         if (minBtn) minBtn.textContent = '\u25b6';
       }
-      // isRelevant + same project: preserve user's manual state (no action).
+      // isRelevant + same project + not sidebar target: preserve user's manual state.
     }
     // saveCollapseState() not called here \u2014 arrival folds are navigation-scoped, not
     // user preferences; isTerminalCollapsedByDefault() handles the next page load.
@@ -1802,6 +1808,10 @@ function isPanelCollapsedByDefault() {
   return !window._testDefaultExpanded && (window._prefs?.default_panel_state || 'minimized') !== 'expanded';
 }
 
+function isTerminalCollapsedByDefault() {
+  return !window._testDefaultExpanded && (window._prefs?.default_terminal_panel_state || 'minimized') !== 'expanded';
+}
+
 function togglePanelCollapse(key, panel, btn) {
   const collapsed = !panel.classList.contains('collapsed');
   panel.classList.toggle('collapsed', collapsed);
@@ -1935,7 +1945,7 @@ async function restoreTerminals() {
       const panelKey = `terminal:${t.id}`;
       const isCollapsed = sessionCollapseState.has(panelKey)
         ? sessionCollapseState.get(panelKey)
-        : isPanelCollapsedByDefault();
+        : isTerminalCollapsedByDefault();
       if (!isCollapsed) await initSession(t);
       // else: deferred until expand or focus; poll guard (if (existing)) prevents re-init on next cycle
     }
@@ -2377,7 +2387,7 @@ function createSessionPanel(type, info) {
     renderReviewRow(panel.querySelector('.terminal-review-row'), id);
     const panelKey = `terminal:${id}`;
     sessionPanels.set(panelKey, panel);
-    const defaultCollapsed = isPanelCollapsedByDefault();
+    const defaultCollapsed = isTerminalCollapsedByDefault();
     const collapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : defaultCollapsed;
     if (collapsed) {
       panel.classList.add('collapsed');
@@ -3866,7 +3876,9 @@ function renderEpicGroupedBoard(workItems, epics, projectKey) {
 function renderComponentView(org, proj, comp, data, workItems, files, projectEpics) {
   currentWorkItems = workItems;
   previousProjectKey = currentProjectKey;
-  currentProjectKey = `${org}/${proj}/${comp}`;
+  const newKey = `${org}/${proj}/${comp}`;
+  if (currentProjectKey !== newKey) _pendingProjectArrival = newKey;
+  currentProjectKey = newKey;
 
   const tabs = ['Board', 'Overview', 'Docs'];
   let html = `<div class="card"><h2>${esc(data.name || (comp === 'main' ? proj : `${proj}/${comp}`))}</h2>`;
@@ -6886,6 +6898,20 @@ function scrollToSessionPanel(session) {
 
 function navigateToSession(session) {
   window._sidebarTargetSession = `${session.type}:${session.id}`;
+  // Same-project: expand directly — hash won't change so no hashchange/route fires.
+  // Hash guard ensures currentProjectKey is not stale from a prior non-component view.
+  if (session.project_key && session.project_key === currentProjectKey
+      && location.hash.startsWith('#component/')) {
+    const panelKey = `${session.type}:${session.id}`;
+    const panel = sessionPanels.get(panelKey);
+    if (panel && panel.classList.contains('collapsed')) {
+      const minBtn = panel.querySelector('[data-minimize-dispatch],[data-minimize-terminal],[data-minimize-cli]');
+      togglePanelCollapse(panelKey, panel, minBtn);
+    }
+    window._sidebarTargetSession = null;
+    setTimeout(() => scrollToSessionPanel(session), 50);
+    return;
+  }
   if (session.work_item_id && session.project_key) {
     const [org, proj, comp] = session.project_key.split('/');
     if (org && proj && comp) {
@@ -8449,11 +8475,17 @@ function renderSettingsView(status, config) {
   html += '<option value="light"' + (curTheme === 'light' ? ' selected' : '') + '>Light</option>';
   html += '</select></div>';
   // Default panel state
-  const curPanel = window._prefs.default_panel_state || 'expanded';
-  html += '<div style="margin-top:8px"><span class="key">Default Panel State</span> ';
+  const curPanel = window._prefs.default_panel_state || 'minimized';
+  html += '<div style="margin-top:8px"><span class="key">Default Dispatch Panel State</span> ';
   html += '<select id="settings-panel-state" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px">';
-  html += '<option value="expanded"' + (curPanel === 'expanded' ? ' selected' : '') + '>Expanded</option>';
   html += '<option value="minimized"' + (curPanel === 'minimized' ? ' selected' : '') + '>Minimized</option>';
+  html += '<option value="expanded"' + (curPanel === 'expanded' ? ' selected' : '') + '>Expanded</option>';
+  html += '</select></div>';
+  const curTerminalPanel = window._prefs.default_terminal_panel_state || 'minimized';
+  html += '<div style="margin-top:8px"><span class="key">Default Terminal Panel State</span> ';
+  html += '<select id="settings-terminal-panel-state" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px">';
+  html += '<option value="minimized"' + (curTerminalPanel === 'minimized' ? ' selected' : '') + '>Minimized</option>';
+  html += '<option value="expanded"' + (curTerminalPanel === 'expanded' ? ' selected' : '') + '>Expanded</option>';
   html += '</select></div>';
   html += '</div></div>';
 
@@ -8604,6 +8636,19 @@ function bindSettingsEvents(status, config) {
         body: JSON.stringify({ default_panel_state: e.target.value }),
       });
       window._prefs.default_panel_state = e.target.value;
+    } catch (err) {
+      alert('Failed to save preference: ' + err.message);
+    }
+  });
+
+  document.getElementById('settings-terminal-panel-state')?.addEventListener('change', async (e) => {
+    try {
+      await fetch('/api/settings/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ default_terminal_panel_state: e.target.value }),
+      });
+      window._prefs.default_terminal_panel_state = e.target.value;
     } catch (err) {
       alert('Failed to save preference: ' + err.message);
     }
@@ -9574,7 +9619,6 @@ Promise.all([buildTree(), buildEpicTree()]).catch(err => { console.error('[start
   // Synchronous placement after route completes — bypasses rAF debounce entirely
   // to guarantee context-aware expand/collapse fires with all panels + correct hash.
   _placeSessionPanelsNow();
-  _appReady = true;
   refreshSessionsSidebar();
   // Periodic session refresh (every 10s) — sync with server-side auto-cleanup
   setInterval(restoreDispatches, 10000);
