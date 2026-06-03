@@ -5,6 +5,7 @@
 import { test, expect } from '@playwright/test';
 
 test('page reload: history restored and workflow status correct', async ({ page }) => {
+  test.skip(!process.env.E2E_LIVE_STACK, 'requires live Cognito stack — set E2E_LIVE_STACK=1');
   await page.goto('/chat/test-conversation-id');
 
   // Mock conversations endpoint to return messages

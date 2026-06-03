@@ -5,6 +5,7 @@
 import { test, expect, chromium } from '@playwright/test';
 
 test('multi-user: two Cognito users have isolated workflows', async () => {
+  test.skip(!process.env.E2E_LIVE_STACK, 'requires live Cognito stack — set E2E_LIVE_STACK=1');
   const browser = await chromium.launch();
 
   const context1 = await browser.newContext();

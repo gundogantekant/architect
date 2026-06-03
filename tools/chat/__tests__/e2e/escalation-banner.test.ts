@@ -6,6 +6,7 @@
 import { test, expect } from '@playwright/test';
 
 test('escalation banner: appears on timeout_warning, dismisses on extend', async ({ page }) => {
+  test.skip(!process.env.E2E_LIVE_STACK, 'requires live Cognito stack — set E2E_LIVE_STACK=1');
   await page.goto('/chat/test-conversation-id');
 
   // Simulate the timeout_warning event from W-1204

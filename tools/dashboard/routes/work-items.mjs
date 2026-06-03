@@ -8,6 +8,7 @@ import {
   isBackwardTransition,
   isAdministrativeTransition,
 } from '../constants.mjs';
+import { validateWorkItemTitle } from '../lib/work-item-validation.mjs';
 
 /**
  * Validate documentation content to reject one-char-per-line corruption.
@@ -173,6 +174,8 @@ export default function workItemRoutes(deps) {
       const body = await parseBody(req);
       const { project_key, title, status, priority, description, tags, epic_id } = body;
       if (!project_key || !title) return err(res, 'project_key and title are required', 400);
+      const titleValidation = validateWorkItemTitle(title);
+      if (!titleValidation.valid) return err(res, titleValidation.reason, 422);
       if (status && !VALID_WORK_ITEM_STATUSES.has(status)) {
         return err(res, `invalid status '${status}', must be one of: ${[...VALID_WORK_ITEM_STATUSES].join(', ')}`, 400);
       }
@@ -188,6 +191,11 @@ export default function workItemRoutes(deps) {
       const existing = await db.getWorkItem(itemId);
       if (!existing) return err(res, 'work item not found', 404);
       const body = await parseBody(req);
+
+      if (body.title !== undefined) {
+        const titleValidation = validateWorkItemTitle(body.title);
+        if (!titleValidation.valid) return err(res, titleValidation.reason, 422);
+      }
 
       if (body.status !== undefined) {
         if (!VALID_WORK_ITEM_STATUSES.has(body.status)) {
