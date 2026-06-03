@@ -5,6 +5,7 @@
 import { test, expect } from '@playwright/test';
 
 test('approval gate: renders when awaiting-approval, approves, workflow resumes', async ({ page }) => {
+  test.skip(!process.env.E2E_LIVE_STACK, 'requires live Cognito stack — set E2E_LIVE_STACK=1');
   await page.goto('/chat/test-conversation-id');
 
   // Simulate SSE approval-required event

@@ -9,6 +9,7 @@
 import { test, expect } from '@playwright/test';
 
 test('happy path: login, create conversation, send message, verify DB records', async ({ page }) => {
+  test.skip(!process.env.E2E_LIVE_STACK, 'requires live Cognito stack — set E2E_LIVE_STACK=1');
   // Step 1: Navigate to login
   await page.goto('/login');
   await page.waitForSelector('[data-amplify-authenticator]');
