@@ -853,6 +853,7 @@ Shared git rules enforced by all implementation agents.
 - **`worktree_mode: "none"`** is used for non-git projects. Set automatically by the profiler when `git rev-parse --git-dir` fails at the project root. Dispatch proceeds in-place with no isolation. No worktree is ever created, regardless of permission mode, work item presence, or feature flag.
 - **Worktree creation failure blocks the dispatch** with a 500 error. There is no silent fallback to the original project directory — isolation is mandatory when requested.
 - Read-only operations (review, audit, diagnosis, scouting) do not require a worktree.
+- **New file creation is not an inline orchestrator operation.** Any new file — documentation, config, code, templates — must be created by a dispatched agent operating in a worktree. This is enforced by the Trivial Exception Rule in Orchestrator Behavior Rules.
 - Worktrees are grouped under a `<projectDirName>-worktrees/` sibling directory next to the project folder, not inside the project and not as direct siblings
 - Path: `<parent-of-project-dir>/<projectDirName>-worktrees/<branchName>/` (e.g., `/Users/user/repos/light-app-worktrees/light-app-W-933-add-feature/`)
 - Branch/folder naming: `<projectDirName>-<branchPrefix><workItemId>-<slug>` (e.g., `light-app-W-933-add-feature`). On collision, a short UUID suffix is appended. Both the worktree directory and branch name use this form — project-prefixed, ticket-centric, immediately identifiable.
@@ -1007,6 +1008,7 @@ The orchestrator may handle single-line fixes inline without dispatching an agen
 - Typo corrections in string literals
 - Single-character fixes
 - Import statement additions
+- New file creation — any operation that results in a new file in the working tree (Write tool, Edit on a non-existent path, etc.) is never trivial and must be dispatched to a coder agent in a worktree, regardless of file type, content, or size.
 - Everything beyond this MUST be dispatched to the appropriate agent
 
 ### Dispatch Decision Flow
