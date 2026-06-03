@@ -988,8 +988,8 @@ async function killAllSessions() {
 }
 
 async function dismissAllCompleted() {
-  const staleDispatches = activeDispatches.filter(d => d.status !== 'running');
-  const staleTerminals = activeTerminals.filter(t => t.status !== 'running');
+  const staleDispatches = activeDispatches.filter(d => d.status !== 'running' && d.status !== 'suspended');
+  const staleTerminals = activeTerminals.filter(t => t.status !== 'running' && t.status !== 'suspended');
   if (!staleDispatches.length && !staleTerminals.length) return;
   for (const d of staleDispatches) { if (d._autoDismissTimer) { clearTimeout(d._autoDismissTimer); d._autoDismissTimer = null; } }
   for (const t of staleTerminals) { if (t._autoDismissTimer) { clearTimeout(t._autoDismissTimer); t._autoDismissTimer = null; } }
@@ -1010,8 +1010,8 @@ async function dismissAllCompleted() {
     if (panel?.parentElement) panel.remove();
     sessionPanels.delete(key);
   }
-  activeDispatches.splice(0, activeDispatches.length, ...activeDispatches.filter(d => d.status === 'running'));
-  activeTerminals.splice(0, activeTerminals.length, ...activeTerminals.filter(t => t.status === 'running'));
+  activeDispatches.splice(0, activeDispatches.length, ...activeDispatches.filter(d => d.status === 'running' || d.status === 'suspended'));
+  activeTerminals.splice(0, activeTerminals.length, ...activeTerminals.filter(t => t.status === 'running' || t.status === 'suspended'));
   syncSessionState();
 }
 
@@ -1260,6 +1260,12 @@ function _placeSessionPanelsNow() {
       sessionPanels.delete(key);
     }
   }
+
+  // 8. Eagerly populate suspended-sessions card on first render after route change.
+  // Re-anchor (lines above) handles the case where the container already exists;
+  // this handles the case where _suspendedContainer is null (fresh navigation or
+  // all sessions were previously dismissed). Fire-and-forget after DOM is settled.
+  if (!_suspendedContainer) refreshSuspendedPanel();
 }
 
 // --- Terminal theme ---
