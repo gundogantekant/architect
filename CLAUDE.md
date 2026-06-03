@@ -232,6 +232,7 @@ Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/log` (plain text 
 | /status | Project health check |
 | /work [subcommand] [args] | Track work items across sessions |
 | /implement [W-XXX] | Implement a tracked work item end-to-end |
+| auto-implement-scheduler (paste prompt) | Continuous backlog driver — paste `usecases/auto-implement-scheduler.md` into dispatch modal Additional Instructions |
 | /migrate [from] [to] | Technology migration |
 | /explain [path] [--focus area] | Codebase walkthrough |
 | /release [version] [--publish github] | Version bump, changelog, git tag |
