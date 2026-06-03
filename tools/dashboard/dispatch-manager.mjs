@@ -722,7 +722,7 @@ export function wireDispatchHandlers(dispatch, proc) {
           const output = (dispatch.output || []).map(line => {
             try { return extractStreamText(JSON.parse(line)) || ''; } catch { return ''; }
           }).join('');
-          const match = output.match(/CREATED_WORK_ITEM:\s*(W-\d+)/);
+          const match = output.match(/CREATED_WORK_ITEM:\s*([A-Za-z]+-\d+)/);
           if (match) {
             const workItemId = match[1];
             await db.linkDispatchToWorkItem(dispatch.id, workItemId);

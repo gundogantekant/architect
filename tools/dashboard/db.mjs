@@ -31,6 +31,11 @@ function jsonb(val, fallback = null) {
 }
 
 let pool = null;
+let prefixCache = new Map(); // projectKey → { prefix, ticketStart }
+
+export function configurePrefixMap(map) {
+  prefixCache = map;
+}
 
 function buildPoolConfig() {
   return {
@@ -355,7 +360,7 @@ export async function backupDatabase(workDir, backupDir) {
 
 // --- Sequences (atomic UPDATE…RETURNING prevents races) ---
 
-async function nextId(name) {
+async function nextId(name, start = 1) {
   const result = await pool.query(
     'UPDATE sequences SET next_val = next_val + 1 WHERE name = $1 RETURNING next_val - 1 AS val',
     [name]
@@ -363,16 +368,25 @@ async function nextId(name) {
   if (result.rows.length > 0) return Number(result.rows[0].val);
 
   // Sequences row missing — insert and atomically retrieve the allocated ID.
+  // start + 1 seeds next_val so the first returned value equals start.
   const fallback = await pool.query(
-    `INSERT INTO sequences (name, next_val) VALUES ($1, 2)
+    `INSERT INTO sequences (name, next_val) VALUES ($1, $2)
      ON CONFLICT (name) DO UPDATE SET next_val = sequences.next_val + 1
      RETURNING next_val - 1 AS val`,
-    [name]
+    [name, start + 1]
   );
   return Number(fallback.rows[0].val);
 }
 
-export async function nextWorkItemId() {
+export async function nextWorkItemId(projectKey) {
+  const cached = projectKey ? prefixCache.get(projectKey) : null;
+  if (cached) {
+    const val = await nextId(`prefix:${cached.prefix}`, cached.ticketStart);
+    return `${cached.prefix}-${val}`;
+  }
+  if (projectKey) {
+    console.warn(`[prefix-cache] WARN: project_key "${projectKey}" not in prefix cache, using default W- prefix`);
+  }
   const val = await nextId('work_item');
   return `W-${String(val).padStart(3, '0')}`;
 }
@@ -382,7 +396,21 @@ export async function nextEpicId() {
   return `E-${String(val).padStart(3, '0')}`;
 }
 
-export async function peekNextIds() {
+export async function peekNextIds(projectKey) {
+  const cached = projectKey ? prefixCache.get(projectKey) : null;
+  if (cached) {
+    const seqName = `prefix:${cached.prefix}`;
+    const result = await pool.query(
+      'SELECT name, next_val FROM sequences WHERE name = ANY($1)',
+      [[seqName, 'epic']]
+    );
+    const map = {};
+    for (const row of result.rows) map[row.name] = row.next_val;
+    return {
+      next_work_item_id: `${cached.prefix}-${map[seqName] ?? cached.ticketStart}`,
+      next_epic_id: `E-${String(map.epic ?? 1).padStart(3, '0')}`,
+    };
+  }
   const result = await pool.query('SELECT name, next_val FROM sequences WHERE name = ANY($1)', [['work_item', 'epic']]);
   const map = {};
   for (const row of result.rows) map[row.name] = row.next_val;
@@ -462,7 +490,7 @@ export async function searchWorkItems(keywords, projectKey) {
 }
 
 export async function createWorkItem({ project_key, title, status, priority, description, tags, epic_id }) {
-  const id = await nextWorkItemId();
+  const id = await nextWorkItemId(project_key);
   const now = new Date().toISOString();
   await pool.query(`
     INSERT INTO work_items (id, project_key, title, status, priority, description, epic_id, tags, depends_on, created_at, updated_at)
@@ -1262,12 +1290,16 @@ export async function getBacklog({ orgFilter, projectKey, includeArchived = fals
   }));
   const epics = projectKey ? allEpics.filter(e => e.project_keys.includes(projectKey)) : allEpics;
 
-  const seqRows = await pool.query('SELECT name, next_val FROM sequences WHERE name = ANY($1)', [['work_item', 'epic']]).then(r => r.rows);
+  const cachedPrefix = projectKey ? prefixCache.get(projectKey) : null;
+  const seqName = cachedPrefix ? `prefix:${cachedPrefix.prefix}` : 'work_item';
+  const seqRows = await pool.query('SELECT name, next_val FROM sequences WHERE name = ANY($1)', [[seqName, 'epic']]).then(r => r.rows);
   const seqMap = {};
   for (const r of seqRows) seqMap[r.name] = r.next_val;
 
   return {
-    next_id: seqMap.work_item || 1,
+    next_id: cachedPrefix
+      ? `${cachedPrefix.prefix}-${seqMap[seqName] ?? cachedPrefix.ticketStart}`
+      : (seqMap[seqName] || 1),
     next_epic_id: seqMap.epic || 1,
     projects,
     epics,

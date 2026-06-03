@@ -297,6 +297,14 @@ Stored at `portfolio/<org>/<project>/<component>.json`.
     // detection was added — triggers the Pre-Dispatch Worktree Readiness Check warning.
     "post_commands": ["string — shell commands to run in worktree after copy"]
   },
+  "ticket_prefix": "GEN",
+  // ticket_prefix: optional string matching ^[A-Z][A-Z0-9_-]*$; reserved values W and E are rejected.
+  // When set, this project's work items use a dedicated ID sequence (e.g., GEN-10000, GEN-10001)
+  // instead of the global W-NNN sequence. Projects without this field continue using W-NNN unchanged.
+  // Duplicate prefixes across projects are detected at server startup and excluded to prevent collisions.
+  "ticket_start": 10000,
+  // ticket_start: optional int (default 1); combined with ticket_prefix to seed the sequence on first use.
+  // For example, ticket_prefix="GEN" + ticket_start=10000 yields GEN-10000 as the first issued ID.
   "interfaces": {
     "provides": [
       {
@@ -316,7 +324,7 @@ Stored at `portfolio/<org>/<project>/<component>.json`.
 }
 ```
 
-**Optional fields**: `brief`, `doc_paths`, `portfolio_guides`, `worktree_mode`, `worktree_setup`, and `interfaces` are absent on entries onboarded before the profiler was added or where no setup is needed. After onboarding with profiler Phase 5.5, `worktree_setup` is always present (either with `copy_paths` populated or explicitly `{"copy_paths": [], "post_commands": []}`). An absent `worktree_setup` field is a signal that the project needs rescanning. The `interfaces` field enables cross-project awareness — the orchestrator and coordinator use `consumes` to identify impact when planning changes that affect APIs or protocols.
+**Optional fields**: `brief`, `doc_paths`, `portfolio_guides`, `worktree_mode`, `worktree_setup`, `interfaces`, `ticket_prefix`, and `ticket_start` are absent on entries onboarded before the profiler was added or where no setup is needed. After onboarding with profiler Phase 5.5, `worktree_setup` is always present (either with `copy_paths` populated or explicitly `{"copy_paths": [], "post_commands": []}`). An absent `worktree_setup` field is a signal that the project needs rescanning. The `interfaces` field enables cross-project awareness — the orchestrator and coordinator use `consumes` to identify impact when planning changes that affect APIs or protocols.
 
 ## Organization
 

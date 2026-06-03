@@ -5,6 +5,7 @@ export default function serverMgmtRoutes(deps) {
     dispatches, terminals, cliSessions,
     syncProjectsFromRegistry, getSyncWarnings,
     spawn, execFileSync, readFile, homedir, existsSync, join,
+    buildPrefixCache,
   } = deps;
   return [
     // --- Projects & Time Report endpoints ---
@@ -120,13 +121,19 @@ export default function serverMgmtRoutes(deps) {
       json(res, await db.getAllPreferences());
     }],
 
-    // Server action (restart, stop, fresh, install, uninstall)
+    // Server action (restart, stop, fresh, install, uninstall, reload-prefix-cache)
     [/^\/api\/server\/action$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
       const { action, clear_sessions } = body;
-      const validActions = ['restart', 'stop', 'fresh', 'install', 'uninstall'];
+      const validActions = ['restart', 'stop', 'fresh', 'install', 'uninstall', 'reload-prefix-cache'];
       if (!action || !validActions.includes(action)) {
         return err(res, `Invalid action. Must be one of: ${validActions.join(', ')}`, 400);
+      }
+
+      if (action === 'reload-prefix-cache') {
+        const map = await buildPrefixCache(PORTFOLIO);
+        db.configurePrefixMap(map);
+        return json(res, { ok: true, loaded: map.size });
       }
 
       if (action === 'install' || action === 'uninstall') {
