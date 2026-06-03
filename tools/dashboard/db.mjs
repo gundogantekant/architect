@@ -384,7 +384,7 @@ export async function nextWorkItemId(projectKey) {
     const val = await nextId(`prefix:${cached.prefix}`, cached.ticketStart);
     return `${cached.prefix}-${val}`;
   }
-  if (projectKey && !cached) {
+  if (projectKey) {
     console.warn(`[prefix-cache] WARN: project_key "${projectKey}" not in prefix cache, using default W- prefix`);
   }
   const val = await nextId('work_item');
@@ -1297,7 +1297,9 @@ export async function getBacklog({ orgFilter, projectKey, includeArchived = fals
   for (const r of seqRows) seqMap[r.name] = r.next_val;
 
   return {
-    next_id: seqMap[seqName] || (cachedPrefix?.ticketStart ?? 1),
+    next_id: cachedPrefix
+      ? `${cachedPrefix.prefix}-${seqMap[seqName] ?? cachedPrefix.ticketStart}`
+      : (seqMap[seqName] || 1),
     next_epic_id: seqMap.epic || 1,
     projects,
     epics,

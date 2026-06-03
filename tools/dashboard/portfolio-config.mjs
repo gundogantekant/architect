@@ -2,7 +2,7 @@ import { readdir, readFile } from 'fs/promises';
 import { join } from 'path';
 
 const RESERVED_PREFIXES = new Set(['W', 'E']);
-const VALID_PREFIX = /^[A-Z][A-Z0-9_-]*$/;
+const VALID_PREFIX = /^[A-Z][A-Z0-9]*$/;
 
 export async function buildPrefixCache(portfolioDir) {
   const cache = new Map(); // projectKey → { prefix, ticketStart }
@@ -29,10 +29,10 @@ export async function buildPrefixCache(portfolioDir) {
             const prefix = data.ticket_prefix;
             if (!prefix) continue;
             if (!VALID_PREFIX.test(prefix) || RESERVED_PREFIXES.has(prefix)) {
-              console.warn(`[prefix-cache] WARN: invalid ticket_prefix "${prefix}" in ${projectKey} — skipped (must match ^[A-Z][A-Z0-9_-]*$ and not be W or E)`);
+              console.warn(`[prefix-cache] WARN: invalid ticket_prefix "${prefix}" in ${projectKey} — skipped (must match ^[A-Z][A-Z0-9]*$ and not be W or E)`);
               continue;
             }
-            const ticketStart = Number.isInteger(data.ticket_start) ? data.ticket_start : 1;
+            const ticketStart = (typeof data.ticket_start === 'number' && Number.isInteger(data.ticket_start) && data.ticket_start >= 1) ? data.ticket_start : 1;
             if (prefixToProject.has(prefix)) {
               const other = prefixToProject.get(prefix);
               console.warn(`[prefix-cache] WARN: prefix "${prefix}" claimed by both ${projectKey} and ${other} — excluded from cache to prevent ID collisions`);
