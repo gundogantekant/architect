@@ -75,7 +75,8 @@ test.describe('project-key filter @headless', () => {
     await seedWorkItem({ project_key: ARCH_KEY,   title: 'PKF-5 arch' });
     await seedWorkItem({ project_key: CORTEX_KEY, title: 'PKF-5 cortex' });
 
-    const items = await api(`work-items?project_key=${encodeURIComponent(ARCH_KEY)}`);
+    const result = await api(`work-items?project_key=${encodeURIComponent(ARCH_KEY)}`);
+    const items = result.items;
     expect(Array.isArray(items)).toBe(true);
     expect(items.length).toBeGreaterThan(0);
     expect(items.every(i => i.project_key === ARCH_KEY)).toBe(true);

@@ -78,6 +78,7 @@ export const SPEC_FILES = [
   'session-end-fix',
   'terminal-notes',
   'project-key-filter',
+  'work-items-filter',
   'dispatch-lifecycle',
   'review-checkboxes',
 ];

@@ -125,8 +125,28 @@ export default function workItemRoutes(deps) {
       const from = reqUrl.searchParams.get('from') || null;
       const to = reqUrl.searchParams.get('to') || null;
       const dateFilter = (from || to) ? { from, to } : {};
+
+      const statusValues = reqUrl.searchParams.getAll('status');
+      const priorityValues = reqUrl.searchParams.getAll('priority');
+      const epicId = reqUrl.searchParams.get('epic_id') || null;
+
+      for (const s of statusValues) {
+        if (!VALID_WORK_ITEM_STATUSES.has(s)) return err(res, `invalid status '${s}', must be one of: ${[...VALID_WORK_ITEM_STATUSES].join(', ')}`, 400);
+      }
+      for (const p of priorityValues) {
+        if (!VALID_PRIORITIES.has(p)) return err(res, `invalid priority '${p}', must be one of: ${[...VALID_PRIORITIES].join(', ')}`, 400);
+      }
+
       // Stakeholder view includes archived items (STAKEHOLDER_PROJECTION maps 'archived' → 'Archived')
-      let backlog = await db.getBacklog({ orgFilter: orgFilter || null, projectKey, includeArchived: view === 'stakeholder', dateFilter });
+      let backlog = await db.getBacklog({
+        orgFilter: orgFilter || null,
+        projectKey,
+        includeArchived: view === 'stakeholder',
+        dateFilter,
+        statusFilter: statusValues.length ? statusValues : null,
+        priorityFilter: priorityValues.length ? priorityValues : null,
+        epicId,
+      });
       if (awaitingAction) backlog = filterAwaitingAction(backlog);
       backlog = projectBacklog(backlog, view);
       json(res, backlog);
@@ -160,6 +180,7 @@ export default function workItemRoutes(deps) {
       const reqUrl = new URL(req.url, 'http://localhost');
       const approverPending = reqUrl.searchParams.get('approver_pending');
       const projectKey = reqUrl.searchParams.get('project_key') || null;
+
       if (approverPending) {
         const rows = await db.getPendingApprovalsForIdentity(approverPending);
         const itemIds = [...new Set(rows.map(r => r.work_item_id))];
@@ -167,7 +188,64 @@ export default function workItemRoutes(deps) {
         if (projectKey) items = items.filter(i => i.project_key === projectKey);
         return json(res, items);
       }
-      json(res, projectKey ? await db.getWorkItemsByProject(projectKey) : await db.getAllWorkItems());
+
+      const statusValues = reqUrl.searchParams.getAll('status');
+      const priorityValues = reqUrl.searchParams.getAll('priority');
+      const epicId = reqUrl.searchParams.get('epic_id') || null;
+      const orgFilter = reqUrl.searchParams.get('org') || null;
+      const rawSort = (reqUrl.searchParams.get('sort_by') || 'created_at').toLowerCase();
+      const rawDir = (reqUrl.searchParams.get('sort_dir') || 'asc').toLowerCase();
+      const rawLimit = reqUrl.searchParams.get('limit');
+      const rawOffset = reqUrl.searchParams.get('offset');
+
+      const VALID_SORT_COLS = new Set(['created_at', 'updated_at', 'priority', 'status', 'title']);
+      if (!VALID_SORT_COLS.has(rawSort)) {
+        return err(res, `invalid sort_by '${rawSort}', must be one of: ${[...VALID_SORT_COLS].join(', ')}`, 400);
+      }
+      if (!['asc', 'desc'].includes(rawDir)) {
+        return err(res, `invalid sort_dir '${rawDir}', must be 'asc' or 'desc'`, 400);
+      }
+      for (const s of statusValues) {
+        if (!VALID_WORK_ITEM_STATUSES.has(s)) return err(res, `invalid status '${s}', must be one of: ${[...VALID_WORK_ITEM_STATUSES].join(', ')}`, 400);
+      }
+      for (const p of priorityValues) {
+        if (!VALID_PRIORITIES.has(p)) return err(res, `invalid priority '${p}', must be one of: ${[...VALID_PRIORITIES].join(', ')}`, 400);
+      }
+
+      const parsedOffset = rawOffset !== null ? parseInt(rawOffset, 10) : 0;
+      if (isNaN(parsedOffset) || parsedOffset < 0) {
+        return err(res, `invalid offset '${rawOffset}', must be a non-negative integer`, 400);
+      }
+      const limit = rawLimit !== null ? Math.min(Math.max(1, parseInt(rawLimit, 10) || 1), 500) : 200;
+
+      const { items, total } = await db.getWorkItemsFiltered({
+        orgFilter,
+        projectKey,
+        statusFilter: statusValues.length ? statusValues : null,
+        priorityFilter: priorityValues.length ? priorityValues : null,
+        epicId,
+        limit,
+        offset: parsedOffset,
+        sortBy: rawSort,
+        sortDir: rawDir,
+      });
+
+      json(res, {
+        items,
+        _meta: {
+          total,
+          limit,
+          offset: parsedOffset,
+          has_more: parsedOffset + items.length < total,
+          filters: {
+            status: statusValues.length ? statusValues : null,
+            priority: priorityValues.length ? priorityValues : null,
+            epic_id: epicId,
+            org: orgFilter,
+            project_key: projectKey,
+          },
+        },
+      });
     }],
 
     [/^\/api\/work-items$/, 'POST', async (_m, req, res) => {

@@ -1191,27 +1191,42 @@ export async function getAllPreferences() {
 
 // --- Backlog reconstruction (legacy shape for API compat) ---
 
-export async function getBacklog({ orgFilter, projectKey, includeArchived = false, dateFilter = {} } = {}) {
-  const archivedClause = includeArchived ? '' : " AND status != 'archived'";
+export async function getBacklog({ orgFilter, projectKey, includeArchived = false, dateFilter = {}, statusFilter, priorityFilter, epicId } = {}) {
+  const conditions = [];
   const params = [];
-  let where = `1=1${archivedClause}`;
 
+  if (!includeArchived && !statusFilter?.length) {
+    conditions.push("status != 'archived'");
+  }
   if (projectKey) {
     params.push(projectKey);
-    where = `project_key = $${params.length}${archivedClause}`;
+    conditions.push(`project_key = $${params.length}`);
   } else if (orgFilter) {
     params.push(orgFilter.toLowerCase() + '/%');
-    where = `project_key LIKE $${params.length}${archivedClause}`;
+    conditions.push(`project_key LIKE $${params.length}`);
   }
   if (dateFilter.from) {
     params.push(dateFilter.from);
-    where += ` AND created_at >= $${params.length}::timestamptz`;
+    conditions.push(`created_at >= $${params.length}::timestamptz`);
   }
   if (dateFilter.to) {
     params.push(dateFilter.to);
-    where += ` AND created_at < ($${params.length}::date + INTERVAL '1 day')`;
+    conditions.push(`created_at < ($${params.length}::date + INTERVAL '1 day')`);
+  }
+  if (statusFilter?.length) {
+    params.push(statusFilter);
+    conditions.push(`status = ANY($${params.length}::text[])`);
+  }
+  if (priorityFilter?.length) {
+    params.push(priorityFilter);
+    conditions.push(`priority = ANY($${params.length}::text[])`);
+  }
+  if (epicId) {
+    params.push(epicId);
+    conditions.push(`epic_id = $${params.length}`);
   }
 
+  const where = conditions.length ? conditions.join(' AND ') : '1=1';
   const rows = await pool.query(`SELECT * FROM work_items WHERE ${where}`, params).then(r => r.rows);
 
   const hydratedItems = await hydrateWorkItemsBatch(rows);
@@ -1253,6 +1268,60 @@ export async function getBacklog({ orgFilter, projectKey, includeArchived = fals
     projects,
     epics,
   };
+}
+
+const ALLOWED_SORT_COLS = Object.freeze({
+  created_at: 'created_at',
+  updated_at: 'updated_at',
+  priority: 'priority',
+  status: 'status',
+  title: 'title',
+});
+
+export async function getWorkItemsFiltered({
+  orgFilter, projectKey, statusFilter, priorityFilter, epicId,
+  limit = 200, offset = 0, sortBy = 'created_at', sortDir = 'asc',
+} = {}) {
+  const conditions = [];
+  const params = [];
+
+  if (!statusFilter?.length) {
+    conditions.push("status != 'archived'");
+  }
+  if (projectKey) {
+    params.push(projectKey);
+    conditions.push(`project_key = $${params.length}`);
+  } else if (orgFilter) {
+    params.push(orgFilter.toLowerCase() + '/%');
+    conditions.push(`project_key LIKE $${params.length}`);
+  }
+  if (statusFilter?.length) {
+    params.push(statusFilter);
+    conditions.push(`status = ANY($${params.length}::text[])`);
+  }
+  if (priorityFilter?.length) {
+    params.push(priorityFilter);
+    conditions.push(`priority = ANY($${params.length}::text[])`);
+  }
+  if (epicId) {
+    params.push(epicId);
+    conditions.push(`epic_id = $${params.length}`);
+  }
+
+  const where = conditions.length ? conditions.join(' AND ') : '1=1';
+  const total = await pool.query(`SELECT COUNT(*) FROM work_items WHERE ${where}`, params)
+    .then(r => parseInt(r.rows[0].count, 10));
+
+  const col = ALLOWED_SORT_COLS[sortBy] || 'created_at';
+  const dir = sortDir === 'desc' ? 'DESC' : 'ASC';
+  const pageParams = [...params, limit, offset];
+  const rows = await pool.query(
+    `SELECT * FROM work_items WHERE ${where} ORDER BY ${col} ${dir} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+    pageParams
+  ).then(r => r.rows);
+
+  const items = await hydrateWorkItemsBatch(rows);
+  return { items, total };
 }
 
 export async function backdateWorkItem(id, createdAt) {
