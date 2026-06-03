@@ -108,9 +108,7 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 
     **Log progress**: `POST /api/work-items/<id>/log` with `{"message": "Implemented: <summary>. Branch: <branch-name>"}`.
 
-14. **Merge-back confirmation**: Present a one-line summary: "Ready to merge <N> commit(s) from `<branch>` into `<originating_branch>`. Proceed?" Wait for user confirmation before continuing.
-
-    Before requesting confirmation, verify the **Merge-Back Checklist** — all 7 conditions are a hard gate; any unsatisfied condition blocks the merge:
+14. **Merge-back gate**: Verify the **Merge-Back Checklist** — all 7 conditions are a hard gate; any unsatisfied condition halts and surfaces the specific failing condition to the user before continuing:
     1. Code Gate aggregate verdict is `approve` (no outstanding `block` or `revise`).
     2. Full test suite is green.
     3. Contract tests pass green (or were exempted per step 7).
@@ -118,6 +116,8 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
     5. When `contract.success_criteria` is non-null, each criterion is explicitly confirmed by the Code Gate board (per the coverage check in step 11).
     6. The work item's `input_needed` flag is not set.
     7. The worktree has no uncommitted changes.
+
+    On checklist pass: log merge intent — `POST /api/work-items/<id>/log` with `{"message": "Merging <branch> → <originating_branch>"}` — then proceed automatically to step 15. A log-write failure is non-blocking; emit a warning and proceed.
 
 15. **Merge-back**: Dispatch git-ops to merge the worktree branch into the originating branch (fast-forward preferred, merge commit fallback). On success: remove the worktree, delete the branch, then proceed to step 16. On conflict: dispatch the coder agent to attempt resolution — it must (a) identify the conflicting hunks, (b) produce a resolution, and (c) provide an impact analysis (what changed semantically, risk level). If the coder agent's resolution is clean and low-risk, apply it, complete the merge, and proceed to step 16. If the conflict cannot be meaningfully resolved (risk too high, intent unclear, or multiple overlapping changes), run `git merge --abort`, preserve the worktree intact, report the conflicting files with a brief conflict summary, and offer two options: (a) run `/pr` to push a pull request instead, or (b) leave the worktree open for manual resolution. Do not proceed to step 16 on unresolved conflict.
 
