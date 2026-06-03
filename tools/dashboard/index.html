@@ -493,6 +493,12 @@ async function getEpics() {
 }
 
 
+// View-layer convenience: hide epics whose progress is fully done without a manual status transition.
+// This intentionally overrides the explicit domain status for display purposes only.
+function isEffectivelyDone(epic) {
+  return epic.progress && epic.progress.total > 0 && epic.progress.done === epic.progress.total;
+}
+
 async function buildEpicTree() {
   const epicTree = document.getElementById('epic-tree');
   epicTree.innerHTML = '';
@@ -532,14 +538,14 @@ async function buildEpicTree() {
     if (globalVisible) {
       const showCompleted = sessionStorage.getItem('sidebar-show-completed-epics') === 'true';
       const isInactive = s => s === 'done' || s === 'cancelled' || s === 'archived';
-      const hasCompleted = epics.some(e => isInactive(e.status));
+      const hasCompleted = epics.some(e => isInactive(e.status) || isEffectivelyDone(e));
 
       for (const epic of epics) {
         const isCompleted = isInactive(epic.status);
         const item = document.createElement('div');
         item.className = 'epic-item';
         item.dataset.epicId = epic.id;
-        if (isCompleted && !showCompleted) item.style.display = 'none';
+        if ((isCompleted || isEffectivelyDone(epic)) && !showCompleted) item.style.display = 'none';
         item.dataset.epicStatus = epic.status;
         const color = epicSignalColor(epic, epic.progress);
         const p = epic.progress || { done: 0, total: 0 };
@@ -5851,21 +5857,24 @@ async function showEpicDiscussModal(epicId) {
 
 function renderEpicListView(epics) {
   const isInactive = s => s === 'done' || s === 'cancelled' || s === 'archived';
-  const hasCompleted = epics.some(e => isInactive(e.status));
+  const hasCompleted = epics.some(e => isInactive(e.status) || isEffectivelyDone(e));
   let html = `<div class="card"><h2>Epics</h2>`;
   html += `<button class="btn-add-wi" id="create-epic">+ New Epic</button>`;
   if (hasCompleted) {
-    html += `<label class="filter-checkbox" style="margin-left:12px"><input type="checkbox" id="epic-show-done" />Show completed &amp; archived</label>`;
+    html += `<label class="filter-checkbox" style="margin-left:12px"><input type="checkbox" id="epic-show-done" />Show completed, archived &amp; finished</label>`;
   }
   if (epics.length) {
     html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Progress</th><th>Projects</th><th>Target</th><th></th></tr></thead><tbody>`;
     for (const epic of epics) {
       const p = epic.progress || { done: 0, total: 0 };
       const pct = p.total ? Math.round(p.done / p.total * 100) : 0;
-      const hideCompleted = isInactive(epic.status) ? ' style="display:none"' : '';
+      const isHidden = isInactive(epic.status) || isEffectivelyDone(epic);
+      const hideStyle = isHidden ? ' style="display:none"' : '';
+      // Map effectively-done to 'done' so the existing toggle handler covers it
+      const listStatus = isEffectivelyDone(epic) && !isInactive(epic.status) ? 'done' : epic.status;
       const statusBadge = epic.status === 'active' ? 'open' : epic.status === 'done' ? 'done' : epic.status === 'archived' ? 'archived' : 'medium';
       const canArchive = epic.status === 'done' || epic.status === 'cancelled';
-      html += `<tr data-epic-list-status="${esc(epic.status)}"${hideCompleted}>`;
+      html += `<tr data-epic-list-status="${esc(listStatus)}"${hideStyle}>`;
       html += `<td><code style="cursor:pointer" data-epic-nav="${esc(epic.id)}">${esc(epic.id)}</code></td>`;
       html += `<td>${esc(epic.title)}</td>`;
       html += `<td><span class="badge badge-${statusBadge}">${esc(epic.status)}</span></td>`;
