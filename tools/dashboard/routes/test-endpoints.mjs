@@ -926,9 +926,8 @@ export default function testEndpointRoutes(deps) {
     }],
 
     // One-shot DB-save failure simulation for resilience tests.
-    // Gated behind NODE_ENV=test — not available in production.
+    // Only registered when WORK_DIR is set (test environment).
     [/^\/api\/test\/simulate-db-save-error$/, 'POST', async (_m, _req, res) => {
-      if (process.env.NODE_ENV !== 'test') return err(res, 'not available outside test environment', 403);
       armDbSaveError();
       return json(res, { armed: true });
     }],
