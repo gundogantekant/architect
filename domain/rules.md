@@ -958,6 +958,7 @@ Shared git rules enforced by all implementation agents.
 - Exclude Claude attribution from commit messages
 - Never use --no-verify flag
 - Avoid amending commits; prefer new commits
+- For architect self-implementations (ticari/architect/main) only: after tests pass (or Code Gate approves when no test suite applies) and no scope violations are present, merge directly to the originating branch. No GitHub PR is created or needed. On unresolvable merge conflict, leave the worktree open — do not offer `/pr` as a fallback.
 
 ## Worktree Rules
 
