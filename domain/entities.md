@@ -196,7 +196,7 @@ Defines the success criteria for a single dispatch step. Immutable, compared by 
   "expected_output": "string — the specific artifact or structure the agent must produce (1-3 sentences)",
   "failure_conditions": "string — what makes the output unacceptable (1-3 sentences)",
   "scope_boundary": "string | null — files/directories the agent must NOT modify; null for trivial; optional for small; required for large",
-  "stop_conditions": "string[] | null — conditions requiring the agent to halt and report; null for trivial; optional for small; required for large",
+  "stop_conditions": "string[] | null — prompt-advisory conditions requiring the agent to halt and report; evaluated agent-side (server does not enforce); first matching condition triggers halt + log + structured summary; null for trivial; optional for small/medium; required for large (3+ entries). See domain/rules.md → Stop Condition Evaluation.",
   "success_criteria": "string | null — user-visible conditions defining done (1–3 sentences); required for small+, null for trivial",
   "e2e_test_criteria": "string[] | null — specific E2E test scenarios the agent must implement; required for small+ (1+ for small and medium, 3+ for large), null for trivial"
 }
@@ -569,6 +569,7 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "status": "running|completed|failed|killed|interrupted|suspended|merge_pending|merge_conflict|dismissed|superseded",
   "started_at": "string (ISO 8601)",
   "completed_at": "string (ISO 8601, optional)",
+  "timeout_at": "ISO 8601 timestamp | null — absolute wall-clock deadline for the session. Set at dispatch time based on complexity (trivial=5min, small=15min, medium=60min, large=120min). Two-phase soft-kill: Phase 1 at 80% (auto-extend or idle-warning); Phase 2 at 100% (SIGTERM→SIGKILL). Does not pause when suspended. See domain/rules.md → Timeout Semantics.",
   "session_id": "string (Claude session ID, optional — legacy field)",
   "claude_session_id": "string (Claude CLI session UUID, optional — captured from stream-json init event, used for resume)",
   "cost_usd": "number (total cost, optional)",

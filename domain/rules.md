@@ -794,6 +794,64 @@ When a `stop_conditions` entry matches the current situation:
 
 Stop conditions complement (not replace) orchestrator-level escalation triggers (stale, blocked-chain, epic-stall, cost-anomaly, dispatch-loop defined in PM Behavior Rules). Stop conditions are agent-self-enforced during execution; orchestrator triggers are detected after execution.
 
+### Timeout Semantics
+
+Every dispatched agent session runs under a timeout window determined by work item complexity. `timeout_at` is set at dispatch time and is the absolute wall-clock deadline for the session.
+
+#### Timeout Windows by Complexity
+
+| Complexity | Timeout |
+|------------|---------|
+| trivial | 5 minutes |
+| small | 15 minutes |
+| medium | 60 minutes |
+| large | 120 minutes |
+
+#### Two-Phase Soft-Kill Lifecycle
+
+**Phase 1** fires at 80% of the timeout window:
+- **Active session** (last output within 5 minutes OR `agent_phase='tool_running'`): the session is auto-extended by 30 minutes, once maximum (`MAX_AUTO_EXTENDS=1`). Phase 2 re-arms at the end of the extended window. The agent receives a `timeout_warning` event with `event: 'auto_extended'`.
+- **Idle session**: `input_needed` is set to `true` with the message "Approaching timeout — agent appears idle. Extend or kill from the dashboard." The agent receives a `timeout_warning` event with `event: 'idle'`. Phase 2 proceeds at the original deadline.
+
+**Phase 2** fires at 100% of the window (or end of the extended window): hard kill via SIGTERM → SIGKILL. The dispatch is marked `failed`.
+
+#### Suspended Sessions and the Timeout Clock
+
+The timeout clock does **not** pause when a session is suspended. `timeout_at` continues advancing against wall time. On resume, the server re-arms from the persisted `timeout_at`: if already past, the dispatch fails immediately without spawning.
+
+#### Interaction with stop_conditions
+
+`stop_conditions` can cause the agent to halt before `timeout_at`. A halt triggered by a stop condition does not affect the timeout clock — if the session were resumed, the original `timeout_at` deadline would still apply. See Stop Condition Evaluation below.
+
+### Stop Condition Evaluation
+
+`stop_conditions` in a DispatchContract are **prompt-advisory rules** injected into the dispatched agent's prompt. The server does not evaluate them — evaluation is the agent's responsibility.
+
+#### Evaluation Algorithm
+
+1. The agent reads its `stop_conditions` list at each logical checkpoint during execution.
+2. If **any condition matches** the current situation, the agent must halt immediately.
+3. **Multi-match behavior**: on the first matching condition, the agent halts and does not evaluate remaining conditions.
+
+#### Required Agent Response on Trigger
+
+When a stop condition matches, the agent must, in order:
+1. Halt implementation immediately — no further code changes or tool calls except the following.
+2. Write a session log entry: `POST /api/work-items/:id/log` with `{ "summary": "Halted: stop condition triggered — <condition text>. Work accomplished: <summary>. Recommendation: <next step>." }`.
+3. Emit a structured summary in the final output: what was accomplished, which condition triggered the halt, and what the agent recommends.
+4. Do NOT continue past the halt point.
+
+This protocol mirrors the Stop Condition Protocol in Long-Running Session Rules, which governs the same behavior for dispatched implementation agents.
+
+#### Complexity Requirements
+
+| Complexity | stop_conditions requirement |
+|------------|----------------------------|
+| trivial | absent (null) |
+| small | optional |
+| medium | optional |
+| large | required, 3+ entries |
+
 ### Refinement Session Rules
 
 > **Scope**: These rules apply exclusively to coordinator sessions dispatched with `dispatch_mode='refinement'`. They govern failure handling for the three cases where a refinement session cannot produce a valid DispatchContract. General Long-Running Session Rules (Phase-Based Progress Checkpoints, Scope Boundary Self-Enforcement, Stop Condition Protocol) apply to implementation agents and are distinct from these refinement-specific rules.
