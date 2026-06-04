@@ -85,6 +85,7 @@ export const SPEC_FILES = [
   'dispatch-restart-survival',
   'epic-link-lifecycle',
   'work-item-lifecycle',
+  'terminal-db-resilience',
 ];
 
 function getLiveDashboardPorts() {

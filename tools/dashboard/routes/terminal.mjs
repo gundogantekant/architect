@@ -216,7 +216,11 @@ export default function terminalRoutes(deps) {
       wireTerminalHandlers(terminal);
 
       terminals.set(id, terminal);
-      await saveTerminalToDb(terminal);
+      try {
+        await saveTerminalToDb(terminal);
+      } catch (dbErr) {
+        console.warn('[terminal-create] DB persist failed — session active in-memory only, will not survive restart:', dbErr.message);
+      }
       json(res, { terminal_id: id, status: 'running' });
     }],
 

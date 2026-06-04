@@ -1,5 +1,6 @@
 import { shouldCreateWorktree, checkWorktreeReadiness, isGitRepository } from '../worktree.mjs';
 import { promises as fs } from 'node:fs';
+import { armDbSaveError } from '../state.mjs';
 
 export default function testEndpointRoutes(deps) {
   const {
@@ -921,6 +922,14 @@ export default function testEndpointRoutes(deps) {
     [/^\/api\/test\/purge-work-items$/, 'POST', async (_m, _req, res) => {
       await db.purgeAllWorkItemsForTest();
       json(res, { ok: true });
+    }],
+
+    // One-shot DB-save failure simulation for resilience tests.
+    // Gated behind NODE_ENV=test — not available in production.
+    [/^\/api\/test\/simulate-db-save-error$/, 'POST', async (_m, _req, res) => {
+      if (process.env.NODE_ENV !== 'test') return err(res, 'not available outside test environment', 403);
+      armDbSaveError();
+      return json(res, { armed: true });
     }],
   ];
 }

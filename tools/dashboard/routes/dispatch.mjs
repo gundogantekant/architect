@@ -130,16 +130,20 @@ export default function dispatchRoutes(deps) {
       wireDispatchHandlers(dispatch, proc);
 
       dispatches.set(id, dispatch);
-      await saveDispatchToDb(dispatch);
-      // Capture prompt for audit — must run after saveDispatchToDb so the FK parent row exists
-      await db.insertPromptRecord({
-        dispatch_id: id,
-        work_item_id: null,
-        project_key: null,
-        prompt_text: onboardCapturedText,
-        char_count: onboardCapturedText.length,
-        truncated: onboardTruncated,
-      }).catch(e => console.error('[prompt-capture] failed:', e.message));
+      try {
+        await saveDispatchToDb(dispatch);
+        // Capture prompt for audit — must run after saveDispatchToDb so the FK parent row exists
+        await db.insertPromptRecord({
+          dispatch_id: id,
+          work_item_id: null,
+          project_key: null,
+          prompt_text: onboardCapturedText,
+          char_count: onboardCapturedText.length,
+          truncated: onboardTruncated,
+        }).catch(e => console.error('[prompt-capture] failed:', e.message));
+      } catch (dbErr) {
+        console.warn('[dispatch-onboard] DB persist failed — session active in-memory only, will not survive restart:', dbErr.message);
+      }
       json(res, { dispatch_id: id, status: 'running' });
     }],
 
@@ -412,16 +416,20 @@ export default function dispatchRoutes(deps) {
       scheduleDispatchTimeout(dispatch, DISPATCH_TIMEOUT_MS[tier] ?? DISPATCH_TIMEOUT_MS.medium, saveDispatchToDb);
 
       dispatches.set(id, dispatch);
-      await saveDispatchToDb(dispatch);
-      // Capture prompt for audit — must run after saveDispatchToDb so the FK parent row exists
-      await db.insertPromptRecord({
-        dispatch_id: id,
-        work_item_id: work_item_id || null,
-        project_key: project_key || null,
-        prompt_text: standardCapturedText,
-        char_count: standardCapturedText.length,
-        truncated: standardTruncated,
-      }).catch(e => console.error('[prompt-capture] failed:', e.message));
+      try {
+        await saveDispatchToDb(dispatch);
+        // Capture prompt for audit — must run after saveDispatchToDb so the FK parent row exists
+        await db.insertPromptRecord({
+          dispatch_id: id,
+          work_item_id: work_item_id || null,
+          project_key: project_key || null,
+          prompt_text: standardCapturedText,
+          char_count: standardCapturedText.length,
+          truncated: standardTruncated,
+        }).catch(e => console.error('[prompt-capture] failed:', e.message));
+      } catch (dbErr) {
+        console.warn('[dispatch-create] DB persist failed — session active in-memory only, will not survive restart:', dbErr.message);
+      }
       json(res, { dispatch_id: id, status: 'running' });
     }],
 
