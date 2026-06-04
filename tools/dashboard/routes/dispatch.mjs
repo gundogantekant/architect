@@ -5,7 +5,7 @@ import { triggerMerge, scheduleDispatchTimeout, appendProgress, interruptDispatc
 import { isMediumOrAbove, isSmallOrAbove, getComplexityLevel } from '../utils/complexity.mjs';
 import { validateContract } from '../utils/contract-validation.mjs';
 import { writePromptFile, deletePromptFile } from '../prompt-file.mjs';
-import { deriveContractFromDescription } from '../prompt-builder.mjs';
+import { createDispatch, createResumeDispatch } from '../utils/dispatch-factory.mjs';
 
 const SKILL_REGISTRY = {
   'project-refine-tasks': (workItemId) => workItemId ? `/project-refine-tasks ${workItemId}` : '/project-refine-tasks',
@@ -339,31 +339,22 @@ export default function dispatchRoutes(deps) {
       // Select sub-agents based on work item and portfolio context
       const agentDefs = await selectAgentsForDispatch({ workItem: effectiveWorkItem, portfolio });
 
-      const dispatch = {
+      const dispatch = createDispatch({
         id,
-        work_item_id,
-        epic_id: epic_id || null,
-        project_key,
-        project_path: projectPath,
+        projectKey: project_key,
+        projectPath,
+        workItemId: work_item_id,
+        epicId: epic_id || null,
         title: title || work_item_id || '',
-        permission_mode: resolvedPermMode,
-        skip_permissions: resolvedSkipPerms,
-        dispatch_mode: skill_id ? 'skill' : dispatch_mode,
-        skill_id: skill_id || null,
-        status: 'running',
-        agent_phase: 'generating',
-        agent_phase_history: [],
+        permissionMode: resolvedPermMode,
+        skipPermissions: resolvedSkipPerms,
+        dispatchMode: skill_id ? 'skill' : dispatch_mode,
+        skillId: skill_id || null,
         contract: contract || null,
-        claude_session_id: null,
-        worktree_path: worktreeContext?.worktreePath || null,
-        worktree_branch: worktreeContext?.branchName || null,
-        source_branch: worktreeContext?.sourceBranch || null,
-        output: [],
-        lastLines: [],
-        wsClients: new Set(),
-        started_at: new Date().toISOString(),
-        completed_at: null,
-      };
+        worktreePath: worktreeContext?.worktreePath,
+        worktreeBranch: worktreeContext?.branchName,
+        sourceBranch: worktreeContext?.sourceBranch,
+      });
 
       // Prompt delivery: see W-1184 comment in the onboard handler above.
       const standardPromptFile = await writePromptFile(prompt, id, TMP_DIR);
@@ -510,30 +501,16 @@ export default function dispatchRoutes(deps) {
 
       const effectiveCwd = worktreeContext?.worktreePath || projectPath;
 
-      const dispatch = {
+      const dispatch = createDispatch({
         id,
-        work_item_id,
-        epic_id: null,
-        project_key,
-        project_path: projectPath,
+        projectKey: project_key,
+        projectPath,
+        workItemId: work_item_id,
         title: workItem.title || work_item_id,
-        permission_mode: 'acceptEdits',
-        skip_permissions: true,
-        dispatch_mode: 'auto_implement',
-        status: 'running',
-        agent_phase: 'generating',
-        agent_phase_history: [],
-        contract: null,
-        claude_session_id: null,
-        worktree_path: worktreeContext?.worktreePath || null,
-        worktree_branch: worktreeContext?.branchName || null,
-        source_branch: worktreeContext?.sourceBranch || null,
-        output: [],
-        lastLines: [],
-        wsClients: new Set(),
-        started_at: new Date().toISOString(),
-        completed_at: null,
-      };
+        permissionMode: 'acceptEdits',
+        skipPermissions: true,
+        dispatchMode: 'auto_implement',
+      });
 
       // Prompt delivery: see W-1184 comment in the onboard handler above.
       const autoPromptFile = await writePromptFile(prompt, id, TMP_DIR);
@@ -996,6 +973,17 @@ export default function dispatchRoutes(deps) {
         return json(res, { error: 'contract_not_satisfied', message: 'Contract not satisfied.' }, 422);
       }
 
+      // Gate 4: Scope boundary violation (only blocks when definitively true; null/undefined means check never ran)
+      if (dispatch.scope_violation === true) {
+        const detail = dispatch.session_log?.findLast?.(e => e.trigger === 'scope-violation')?.summary;
+        return json(res, {
+          error: 'scope_violation',
+          message: 'Scope boundary was violated; review changes before merging.',
+          ...(detail && { detail }),
+          hint: 'Revert out-of-scope files or adjust the contract scope_boundary before retrying.',
+        }, 422);
+      }
+
       if (dispatch._mergeTimer) {
         clearTimeout(dispatch._mergeTimer);
         dispatch._mergeTimer = null;
@@ -1067,6 +1055,7 @@ export default function dispatchRoutes(deps) {
 
       if (mergeGate === 'auto') {
         dispatch._mergeTimer = setTimeout(() => {
+          if (dispatch.scope_violation === true) return;
           triggerMerge(dispatch, deps).catch(e => console.error(`[auto-merge] error for ${m[1]}:`, e));
         }, 10000);
       }
@@ -1186,30 +1175,21 @@ export default function dispatchRoutes(deps) {
       const resolvedPermMode = permission_mode || 'acceptEdits';
       const resolvedSkipPerms = skip_permissions === true || skip_permissions === 'true';
 
-      const dispatch = {
+      const dispatch = createResumeDispatch({
         id,
-        work_item_id,
-        epic_id,
-        project_key,
-        project_path,
+        projectKey: project_key,
+        projectPath: project_path,
+        workItemId: work_item_id,
+        epicId: epic_id,
         title: title || '',
-        permission_mode: resolvedPermMode,
-        skip_permissions: resolvedSkipPerms,
-        status: 'running',
-        agent_phase: 'generating',
-        agent_phase_history: [],
-        contract: null,
-        claude_session_id: resumeSessionId,
-        worktree_path: worktree_path || null,
-        worktree_branch: worktree_branch || null,
-        source_branch: source_branch || null,
-        output: [],
-        lastLines: [],
-        wsClients: new Set(),
-        started_at: new Date().toISOString(),
-        completed_at: null,
-        _autoExtended: old.auto_extended ?? false,
-      };
+        permissionMode: resolvedPermMode,
+        skipPermissions: resolvedSkipPerms,
+        claudeSessionId: resumeSessionId,
+        autoExtended: old.auto_extended ?? false,
+        worktreePath: worktree_path || null,
+        worktreeBranch: worktree_branch || null,
+        sourceBranch: source_branch || null,
+      });
 
       const { workItem: freshWorkItem, portfolio } = await loadResumeContext({ work_item_id, project_key });
 

@@ -5,3 +5,11 @@ export class ContractIncompleteError extends Error {
     this.violations = violations;
   }
 }
+
+export class MissingDispatchFieldError extends Error {
+  constructor(field) {
+    super(`Missing required dispatch field: ${field}`);
+    this.name = 'MissingDispatchFieldError';
+    this.field = field;
+  }
+}
