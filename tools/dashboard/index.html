@@ -4274,6 +4274,10 @@ function renderComponentView(org, proj, comp, data, workItems, files, projectEpi
   }
   // Project-level session slot (sessions with project_key but no matching work item slot)
   html += `<div class="context-sessions-section hidden" style="margin-top:16px"><h3>Project Agents</h3><div data-session-slot-project="${esc(currentProjectKey)}"></div></div>`;
+  // Recent Commits
+  html += `<hr style="margin:16px 0">`;
+  html += `<h3>Recent Commits</h3>`;
+  html += `<div class="git-log-section" id="git-log-${esc(`${org}/${proj}/${comp}`)}"><span style="font-size:13px;color:var(--text-light,#6B7280)">Loading…</span></div>`;
   html += `</div>`;
 
   // Tab 1: Overview (Profile + Guidance + Agents)
@@ -4344,10 +4348,6 @@ function renderComponentView(org, proj, comp, data, workItems, files, projectEpi
   } else {
     html += `<p class="empty">No agent recommendations.</p>`;
   }
-  // Recent Commits
-  html += `<hr style="margin:16px 0">`;
-  html += `<h3>Recent Commits</h3>`;
-  html += `<div class="git-log-section" id="git-log-${esc(`${org}/${proj}/${comp}`)}"><span style="font-size:13px;color:var(--text-light,#6B7280)">Loading…</span></div>`;
   html += `</div>`;
 
   // Tab 2: Docs
