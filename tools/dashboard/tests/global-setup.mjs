@@ -81,6 +81,10 @@ export const SPEC_FILES = [
   'work-items-filter',
   'dispatch-lifecycle',
   'review-checkboxes',
+  'date-sort-combined',
+  'dispatch-restart-survival',
+  'epic-link-lifecycle',
+  'work-item-lifecycle',
 ];
 
 function getLiveDashboardPorts() {

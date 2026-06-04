@@ -66,7 +66,12 @@ describe('backupDatabase', () => {
     await closeDatabase();
     delete process.env.ARCHITECT_PG_DB;
     await dropDb(testDbName).catch(() => {});
-    rmSync(tmpDir, { recursive: true, force: true });
+    // Guard all tmpDir-dependent teardown — before() may not have run if setup failed.
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      const container = process.env.ARCHITECT_PG_CONTAINER ?? 'architect-postgres';
+      spawnSync('docker', ['stop', container], { encoding: 'utf8' });
+    }
   });
 
   it('creates a timestamped backup file', async () => {

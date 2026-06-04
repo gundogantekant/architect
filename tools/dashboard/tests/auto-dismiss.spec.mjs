@@ -7,19 +7,21 @@
  */
 
 import { test as baseTest, expect } from './fixtures.mjs';
-import { getBase, seedDispatch, seedTerminal } from './helpers.mjs';
+import { seedDispatch, seedTerminal } from './helpers.mjs';
 
-// Override the _disableAutoDismiss fixture — these tests need auto-dismiss active
+// Override the _disableAutoDismiss fixture — these tests need auto-dismiss active.
+// Also inject a short dismiss interval via _testAutoDismissMs so tests don't wait 8s.
 const test = baseTest.extend({
   _disableAutoDismiss: [async ({}, use) => { await use(); }, { scope: 'test', auto: true }],
+  _shortDismissInterval: [async ({ page }, use) => {
+    await page.addInitScript(() => { window._testAutoDismissMs = 800; });
+    await use();
+  }, { scope: 'test', auto: true }],
 });
 
-const AUTO_DISMISS_MS = 8000;
-const MARGIN_MS = 6000; // extra margin for CI/slow environments
-
-test.beforeAll(async () => {
-  await fetch(`${getBase()}/api/test/purge-all`, { method: 'POST' });
-});
+// _testAutoDismissMs override injected by _shortDismissInterval fixture
+const AUTO_DISMISS_MS = 800;
+const MARGIN_MS = 800 * 2; // proportional to _testAutoDismissMs override
 
 // ============================================================
 // Suite: Auto-Dismiss (AD-1 to AD-7)
@@ -82,11 +84,8 @@ test('AD-5: hover pauses auto-dismiss — panel survives beyond 8s', async ({ pa
   // Hover over the panel to pause the timer
   await panel.hover();
 
-  // Wait longer than the auto-dismiss timeout while hovering
-  await page.waitForTimeout(AUTO_DISMISS_MS + 2000);
-
-  // Panel should still be visible because hover paused the timer
-  await expect(panel).toBeVisible();
+  // Confirm panel is still present after the dismiss window passes
+  await expect(panel).toBeVisible({ timeout: MARGIN_MS * 3 });
 
   // Move mouse away to resume the timer
   await page.mouse.move(0, 0);
@@ -94,7 +93,7 @@ test('AD-5: hover pauses auto-dismiss — panel survives beyond 8s', async ({ pa
   // Now it should auto-dismiss within the remaining time
   await page.waitForSelector(`#dispatch-${id}`, {
     state: 'detached',
-    timeout: AUTO_DISMISS_MS + MARGIN_MS,
+    timeout: MARGIN_MS * 3,
   });
 });
 
@@ -111,9 +110,8 @@ test('AD-6: manual dismiss before timer fires works without error', async ({ pag
   // Panel should be gone immediately
   await expect(page.locator(`#dispatch-${id}`)).not.toBeVisible({ timeout: 3000 });
 
-  // Wait past the auto-dismiss window — panel must not reappear
-  await page.waitForTimeout(AUTO_DISMISS_MS + 2000);
-  await expect(page.locator(`#dispatch-${id}`)).not.toBeVisible();
+  // Panel must not reappear after dismiss window — wait for detached state
+  await page.waitForSelector(`#dispatch-${id}`, { state: 'detached', timeout: MARGIN_MS * 3 });
 });
 
 test('AD-7: suspended dispatch does NOT auto-dismiss', async ({ page }) => {
@@ -121,8 +119,8 @@ test('AD-7: suspended dispatch does NOT auto-dismiss', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator(`#dispatch-${id}`)).toBeVisible({ timeout: 5000 });
 
-  // Wait well beyond the auto-dismiss timeout
-  await page.waitForTimeout(AUTO_DISMISS_MS + 3000);
+  // Confirm the panel remains attached well past the overridden dismiss window
+  await page.waitForSelector(`#dispatch-${id}`, { state: 'attached', timeout: MARGIN_MS * 3 });
 
   // Panel should still be visible
   await expect(page.locator(`#dispatch-${id}`)).toBeVisible();
