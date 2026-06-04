@@ -21,8 +21,8 @@ test.describe('Work Item Lifecycle @behavioral', () => {
   });
 
   test('WIL-1: dispatch appears in sidebar and work item reflects done state after status update', async ({ page }) => {
-    // Seed a work item
-    const workItem = await seedWorkItem({ title: 'WIL-1 lifecycle item', project_key: PROJECT_KEY });
+    // T1 tag enables the in-progress→done shortcut (trivial items skip the contract gate)
+    const workItem = await seedWorkItem({ title: 'WIL-1 lifecycle item', project_key: PROJECT_KEY, status: 'in-progress', tags: ['T1'] });
 
     // Seed a dispatch linked to that work item
     const { dispatch_id } = await seedDispatch({
@@ -38,9 +38,7 @@ test.describe('Work Item Lifecycle @behavioral', () => {
     // The dispatch panel should appear somewhere on the page
     await expect(page.locator(`#dispatch-${dispatch_id}`)).toBeVisible({ timeout: 10_000 });
 
-    // Advance work item through required state transitions (draft → planned → in-progress → done)
-    await api(`work-items/${workItem.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'planned' }) });
-    await api(`work-items/${workItem.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'in-progress' }) });
+    // Advance to done (item starts as in-progress, so this transition is contract-free)
     await api(`work-items/${workItem.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'done' }) });
 
     // Navigate to component view and assert done badge is visible

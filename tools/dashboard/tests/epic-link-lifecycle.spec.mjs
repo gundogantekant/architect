@@ -45,10 +45,10 @@ test.describe('Epic Link Lifecycle @behavioral', () => {
     await expect(page.locator('[data-ef-row]').filter({ hasText: 'ELL-1 item A' })).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('[data-ef-row]').filter({ hasText: 'ELL-1 item B' })).toBeVisible({ timeout: 5_000 });
 
-    // Unlink item B
+    // Unlink item B (endpoint expects singular work_item_id)
     await api(`epics/${epic.id}/unlink`, {
       method: 'POST',
-      body: JSON.stringify({ work_item_ids: [itemB.id] }),
+      body: JSON.stringify({ work_item_id: itemB.id }),
     });
 
     // Confirm server reflects the unlink

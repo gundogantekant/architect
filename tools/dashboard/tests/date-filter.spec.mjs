@@ -89,12 +89,6 @@ test.describe('Date Filter @fast', () => {
     await page.fill('#wi-filter-date-from', yesterday);
     await page.fill('#wi-filter-date-to', todayUTCString());
 
-    // Wait for the debounced filter to apply: old item must disappear from the list
-    await page.waitForFunction(() => {
-      const rows = Array.from(document.querySelectorAll('[data-wi-row]'));
-      return rows.every(r => !r.textContent.includes('DF-2 old item'));
-    }, null, { timeout: 5_000 });
-
     await expect(page.locator('[data-wi-row]').filter({ hasText: 'DF-2 recent item' })).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('[data-wi-row]').filter({ hasText: 'DF-2 old item' })).not.toBeVisible({ timeout: 5_000 });
 
