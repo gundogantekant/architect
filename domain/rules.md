@@ -598,7 +598,7 @@ to determine which fields to include. Omit for architect-internal tasks.]
 
 ## Dispatch Contract Rules
 
-Every dispatch step for medium+ complexity work must carry a DispatchContract (see `domain/entities.md`) that defines clear success criteria. This ensures agents have unambiguous goals to work against and enables structured evaluation of dispatch outcomes.
+Every dispatch step for small+ complexity work must carry a DispatchContract (see `domain/entities.md`) that defines clear success criteria. This ensures agents have unambiguous goals to work against and enables structured evaluation of dispatch outcomes.
 
 ### When Required
 
@@ -620,8 +620,8 @@ Every dispatch step for medium+ complexity work must carry a DispatchContract (s
 
 ### Who Produces
 
-- **Coordinator**: Produces contracts as part of the DispatchPlan for medium+ complexity work. Each step in `execution_plan.steps` includes a `contract` field.
-- **Orchestrator**: For direct dispatches without a coordinator (e.g., orchestrator constructs plan from classifier output for medium+ work), the orchestrator constructs a minimal contract from the work item description.
+- **Coordinator**: Produces contracts as part of the DispatchPlan for medium+ complexity work. Each step in `execution_plan.steps` includes a `contract` field. (The coordinator is not invoked for small complexity — the orchestrator constructs small contracts directly.)
+- **Orchestrator**: For direct dispatches without a coordinator (e.g., orchestrator constructs plan from classifier output for small+ work when the coordinator is skipped), the orchestrator constructs a minimal contract from the work item description.
 
 ### Contract Source
 
@@ -1381,13 +1381,13 @@ Skills are classified as **inline** (executed directly by the orchestrator) or *
 
 ## Contract-First Planning Rules
 
-Every plan that introduces new API endpoints, UI interactions, or agent dispatch flows must define a contract test before implementation begins.
+Every implementation plan must define `success_criteria` and `e2e_test_criteria` before any coding begins — not only plans introducing new API endpoints, UI interactions, or dispatch flows.
 
 1. **Write contract tests first**: Create an E2E or integration test spec that encodes the expected behavior (API response shapes, UI element presence, prompt content). These tests must fail (red) before any implementation code is written.
 2. **Implementation makes tests pass**: The implementation is considered complete only when all contract tests pass (green) and no existing tests regress.
 3. **Test placement**: Dashboard contracts go in `tools/dashboard/tests/`. Other projects use their own test infrastructure. Test files follow the naming convention `<feature>.spec.mjs`.
 4. **Contract scope**: At minimum, cover the API layer (request/response contracts), the UI layer (element rendering, user interactions), and any prompt/context assembly (content verification).
-5. **Exemptions**: Trivial changes (typo fixes, single-line edits, documentation-only) are exempt. If in doubt, write the contract.
+5. **Exemptions**: Trivial changes (typo fixes, single-line edits, documentation-only) are exempt from contract test specs. If in doubt, write the contract. Trivial changes must still articulate the plan's intended outcome in the `goal` field. The `success_criteria` field is null for trivial per `domain/entities.md` → DispatchContract, but the goal serves as the minimum success term.
 
 ## Review Board Rules
 

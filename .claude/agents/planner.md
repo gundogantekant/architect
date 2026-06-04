@@ -64,8 +64,8 @@ Numbered list of implementation tasks, each specifying:
 - Key files to create or modify
 - Dependencies on other tasks (reference by ID)
 - **Contract fields** (medium+ only): goal, constraints, expected output, and failure conditions — the coordinator uses these to build DispatchContracts per `domain/entities.md` → DispatchContract
-- **Acceptance criteria** (required for medium+): 1–3 sentences stating what must be observably true when the task is complete, written from the user's perspective (e.g. "Done when X can Y without Z"). Maps to the `success_criteria` contract field.
-- **E2E test scenarios** (required for medium+; 3+ for large): specific behaviors to validate end-to-end, each listed as a named scenario (e.g. "User creates an item → it appears in the list"). Maps to the `e2e_test_criteria` contract field.
+- **Acceptance criteria** (required for small+; 1 sentence for small, 1–3 sentences for medium+): what must be observably true when the task is complete, written from the user's perspective (e.g. "Done when X can Y without Z"). Maps to the `success_criteria` contract field. For trivial tasks, the plan goal serves this purpose — the `success_criteria` field is null for trivial per `domain/entities.md` → DispatchContract.
+- **E2E test scenarios** (required for small+; 1+ for small/medium, 3+ for large; exempt for trivial): specific behaviors to validate end-to-end, each listed as a named scenario (e.g. "User creates an item → it appears in the list"). Maps to the `e2e_test_criteria` contract field.
 - **Session governance hints** (medium+ only): scope boundary (files/dirs the agent should stay within), potential stop conditions (situations that should halt execution). The coordinator formalizes these into `scope_boundary` and `stop_conditions` contract fields per `domain/rules.md` → Complexity-Scaled Contract Detail.
 
 ### Parallel Batches

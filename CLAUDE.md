@@ -94,9 +94,9 @@ classifier (haiku, fast triage) → [pre-dispatch check (orchestrator, if work t
 ```
 For simple cases (trivial/small, high confidence), the orchestrator skips the coordinator and constructs a dispatch plan directly from the classifier output. Pre-dispatch check runs in parallel with coordinator when both are needed. See `domain/rules.md` → Pre-Dispatch Check Rules.
 
-**Dispatch Contracts** (medium+ complexity): Each step in the coordinator's DispatchPlan includes a `DispatchContract` (Goal, Constraints, Expected Output, Failure Conditions + optional Scope Boundary, Stop Conditions) that defines clear success criteria and session governance for the dispatched agent. Contracts flow into sub-agent prompts and are used by the Review Board to evaluate whether implementation meets stated goals. For long-running sessions, the contract's scope_boundary and stop_conditions provide self-enforcement guardrails. Work items must have a valid contract (at minimum a goal) to transition from `open` to `ready` status; only `ready`+ items are dispatchable from the dashboard. See `domain/entities.md` → DispatchContract, `domain/rules.md` → Dispatch Contract Rules, and `domain/rules.md` → Long-Running Session Rules.
+**Dispatch Contracts** (small+ complexity; for trivial items the `goal` field in the step's `purpose` serves as the minimum success term): Each step in the coordinator's DispatchPlan includes a `DispatchContract` (Goal, Constraints, Expected Output, Failure Conditions + optional Scope Boundary, Stop Conditions) that defines clear success criteria and session governance for the dispatched agent. Contracts flow into sub-agent prompts and are used by the Review Board to evaluate whether implementation meets stated goals. For long-running sessions, the contract's scope_boundary and stop_conditions provide self-enforcement guardrails. Work items must have a valid contract (at minimum a goal) to transition from `open` to `ready` status; only `ready`+ items are dispatchable from the dashboard. See `domain/entities.md` → DispatchContract, `domain/rules.md` → Dispatch Contract Rules, and `domain/rules.md` → Long-Running Session Rules.
 
-**Review Board** (two-gate lifecycle for medium+ work):
+**Review Board** (two-gate lifecycle for small+ work):
 ```
 Plan Gate:  planner → [tech-reviewer-swe + tech-reviewer-arch + tech-reviewer-pm + (context-dependent: frontend, ux, dx, dba, systems, prod, iot)] (parallel)
   → aggregate verdicts → if block: revise + re-review (max 2 cycles) → status: ready
@@ -184,8 +184,8 @@ Use `/work list --org <name>` to scope work items to a specific organization. Se
 - All work on portfolio projects uses a git worktree by default — create one before making any code changes. Exception: projects with `worktree_mode: "explicit"` in their portfolio entry work in-place; worktrees are created only on explicit request. Skip only when the user explicitly opts out. See `domain/rules.md` → Worktree Rules.
 - Follow git standards defined in `domain/rules.md`
 - Before using Playwright MCP tools directly in the main session, follow Model Affinity Rules in `domain/rules.md` to prompt model switching
-- Plans that introduce new API endpoints, UI interactions, or dispatch flows must include contract tests written before implementation. See `domain/rules.md` → Contract-First Planning Rules.
-- For medium+ complexity dispatches, ensure DispatchContracts (Goal, Constraints, Expected Output, Failure Conditions + Scope Boundary, Stop Conditions for large) from the coordinator's plan are propagated to sub-agent prompts. See `domain/rules.md` → Dispatch Contract Rules and Long-Running Session Rules.
+- Every implementation plan must include `success_criteria` and `e2e_test_criteria` before any coding begins. Trivial changes use the `goal` field as the minimum success term; formal `e2e_test_criteria` entries are exempt for trivial. See `domain/rules.md` → Contract-First Planning Rules.
+- For small+ complexity dispatches, ensure DispatchContracts (all four core fields + `success_criteria` + `e2e_test_criteria` for small+; Scope Boundary + Stop Conditions for large) from the coordinator's or orchestrator's plan are propagated to sub-agent prompts. See `domain/rules.md` → Dispatch Contract Rules and Long-Running Session Rules.
 
 ## Dashboard (`tools/dashboard/`)
 

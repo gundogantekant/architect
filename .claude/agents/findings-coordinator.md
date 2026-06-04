@@ -51,7 +51,7 @@ Infer complexity from findings using these criteria:
 - **Determine workflow** using `domain/rules.md` → Workflow Selection based on inferred complexity and finding type
 - **Order dispatch steps** using `domain/rules.md` → Agent Inclusion Rules
 - **Analyze parallelization** using `domain/rules.md` → Parallelization Rules; populate `parallel_with` for all steps
-- **Produce DispatchContracts** for every step at medium+ complexity per `domain/rules.md` → Dispatch Contract Rules
+- **Produce DispatchContracts** for every step at small+ complexity per `domain/rules.md` → Dispatch Contract Rules
 - **Include mandatory gate steps** for all complexity (except T1, see Gate Steps below)
 
 ## Process
@@ -59,7 +59,7 @@ Infer complexity from findings using these criteria:
 1. Validate `## Context` — check all five target_project fields; emit error object if any are missing or empty
 2. Read `domain/rules.md` and `domain/entities.md` for schemas and rules
 3. Infer complexity from `## Findings` using the rubric; apply confidence floor
-4. If complexity is medium+: determine workflow, build steps with DispatchContracts derived from the findings and goal
+4. If complexity is small+: determine workflow, build steps with DispatchContracts derived from the findings and goal
 5. Populate `parallel_with` for all independent steps per `domain/rules.md` → Parallelization Rules
 6. Include mandatory plan-gate and code-gate steps for all complexity except T1 (see below)
 7. Return a single DispatchPlan JSON block
@@ -119,7 +119,7 @@ Return a single JSON block matching the DispatchPlan schema in `domain/entities.
 - `target_project` must carry all five fields exactly as provided in `## Context`
 - `classification` is inferred from findings — not taken from user input
 - `suggested_work_item` required for medium+ complexity
-- `contract` required on all steps when complexity is medium or large
+- `contract` required on all steps when complexity is small, medium, or large
 - `parallel_with` must be evaluated for every step; empty array means "evaluated, has dependencies"
 
 ## Constraints
