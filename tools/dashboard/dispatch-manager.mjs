@@ -1032,6 +1032,10 @@ export async function restartDispatch(id, opts, inMemoryDispatches, dbModule) {
   proc.stdin.end();
 
   inMemoryDispatches.set(newId, dispatch);
-  await saveDispatchToDb(dispatch);
+  try {
+    await saveDispatchToDb(dispatch);
+  } catch (dbErr) {
+    console.warn('[dispatch-restart] DB persist failed — session active in-memory only, will not survive restart:', dbErr.message);
+  }
   return dispatch;
 }

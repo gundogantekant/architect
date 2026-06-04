@@ -81,6 +81,7 @@ export const SPEC_FILES = [
   'work-items-filter',
   'dispatch-lifecycle',
   'review-checkboxes',
+  'terminal-db-resilience',
 ];
 
 function getLiveDashboardPorts() {
