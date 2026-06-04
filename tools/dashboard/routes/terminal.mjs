@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { spawnTerminalSession } from '../terminal-session.mjs';
 import { updateTerminalTitle, updateTerminalNote } from '../db.mjs';
 
@@ -38,10 +39,12 @@ export default function terminalRoutes(deps) {
       if (org_key && !project_key) {
         projectPath = await resolveOrgPath(org_key);
         if (!projectPath) return err(res, `Could not resolve path for organization: ${org_key}`, 400);
+        if (!existsSync(projectPath)) return err(res, `Organization path does not exist: ${projectPath} — check if the volume or drive is mounted`, 400);
         orgContext = await loadOrgContext(org_key);
       } else {
         projectPath = await resolveProjectPath(project_key);
         if (!projectPath) return err(res, `Could not resolve path for project: ${project_key}`, 400);
+        if (!existsSync(projectPath)) return err(res, `Project path does not exist: ${projectPath} — check if the volume or drive is mounted`, 400);
         portfolio = await loadPortfolioContext(project_key);
       }
 

@@ -86,6 +86,7 @@ export const SPEC_FILES = [
   'epic-link-lifecycle',
   'work-item-lifecycle',
   'terminal-db-resilience',
+  'project-path-guard',
 ];
 
 function getLiveDashboardPorts() {

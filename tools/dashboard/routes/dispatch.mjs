@@ -187,6 +187,7 @@ export default function dispatchRoutes(deps) {
         return err(res, `Could not resolve path for project: ${project_key}`, 400);
       }
       const projectPath = resolvedPath;
+      if (projectPath && !existsSync(projectPath)) return err(res, `Project path does not exist: ${projectPath} — check if the volume or drive is mounted`, 400);
 
       const id = `D-${Date.now()}`;
 
@@ -456,6 +457,7 @@ export default function dispatchRoutes(deps) {
 
       const projectPath = await resolveProjectPath(project_key);
       if (!projectPath) return err(res, `Could not resolve path for project: ${project_key}`, 400);
+      if (!existsSync(projectPath)) return err(res, `Project path does not exist: ${projectPath} — check if the volume or drive is mounted`, 400);
 
       const id = `D-${Date.now()}`;
 
