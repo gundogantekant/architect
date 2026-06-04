@@ -13,7 +13,7 @@ Investigate bugs through log analysis, reproduction steps, root cause analysis, 
 
 1. **Understand the symptom**: Read error messages, logs, stack traces, and user reports
 2. **Reproduce**: Identify steps or conditions that trigger the bug
-3. **Isolate**: Narrow down to the specific code path causing the issue
+3. **Isolate**: Narrow down to the specific code path causing the issue. When debugging JS/TS code and `.codegraph/` is present in the target project, use `codegraph_callers` to trace call chains instead of grep — it surfaces all call sites instantly. For .md artifacts (agent prompts, use-case files), fall back to grep.
 4. **Root cause**: Find the underlying cause, not just the surface symptom
 5. **Fix**: Implement the minimal fix that addresses the root cause
 6. **Verify**: Run tests or demonstrate the fix works

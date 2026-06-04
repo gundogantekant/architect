@@ -492,6 +492,10 @@ Findings are listed by severity (critical first), max 5 shown. If more exist, ap
 
 When both the pre-dispatch check and the coordinator are needed (`needs_coordinator: true`), the orchestrator runs the pre-dispatch check in parallel with the coordinator dispatch — they are independent operations. If the check requires user confirmation, the coordinator output is buffered until the user confirms.
 
+### Static Analysis at Dispatch
+
+For medium+ changes to code files in the target project, consult available static analysis tools before dispatch. When `.codegraph/` is present and the task touches code files, run `codegraph_impact` on the proposed symbols and surface the affected component list in the DispatchContract `constraints` field. Skip for prompt-only or config-only changes — the graph does not index .md files.
+
 ## Coding Standards
 
 Shared standards enforced by all implementation agents. These rules apply to every line of code written by the system.
@@ -585,6 +589,7 @@ to determine which fields to include. Omit for architect-internal tasks.]
 - `## Work Item` — when the dispatch is for a tracked work item (ID, title, description, status)
 - `## Epic Context` — when the work item is linked to an epic (title, acceptance criteria, progress)
 - `## Environment` — when the agent needs dashboard API endpoints or path information
+- `## CodeGraph Context` — when the target project has `.codegraph/` present AND the task involves code files (not prompt-only or config-only changes). Include: `codegraph_available: true`, the indexed scope (code files only — .md excluded), and any impact analysis result for the changed symbols. Omit entirely for .md-only or config-only changes.
 
 **Exemptions**:
 - Read-only agents at `none` tier (git-ops): only Task and Target Project sections are required

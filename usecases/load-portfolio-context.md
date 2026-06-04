@@ -48,6 +48,22 @@ Organization conventions (`organization.json`) are always loaded regardless of t
 4. If not found:
    - Return fallback indicator — caller decides the fallback strategy (see Fallback Strategies below)
 
+### Step 5 — Code Analysis Tool Availability (standard and full tiers, optional)
+
+After loading portfolio guides, check whether a CodeGraph index exists at the **target project's absolute path** resolved in Step 1. Do not check the agent's cwd — always use the resolved target path.
+
+1. Check if `<target-path>/.codegraph/` exists
+2. If present, call `codegraph_status` to verify the index is current (not just that the directory exists — an empty or corrupted index must not be reported as available)
+3. If `codegraph_status` reports the index is current, append a `### CodeGraph` subsection to the assembled context block:
+   ```
+   ### CodeGraph
+   - Available: yes
+   - Indexed scope: code files only (*.ts, *.js, *.mjs, *.py, etc.) — .md files are not indexed
+   - Use codegraph_search, codegraph_callers, codegraph_callees, codegraph_impact for JS/TS symbol lookups and impact analysis
+   - Fallback: use grep/find for .md artifacts and when CodeGraph is unavailable
+   ```
+4. If `.codegraph/` is absent or `codegraph_status` errors, omit the subsection entirely — do not inject a "CodeGraph: unavailable" note; just proceed without it
+
 ### Load Sync Context (standard and full tiers)
 
 After loading portfolio guides, if the tier is `standard` or `full`:

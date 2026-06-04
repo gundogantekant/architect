@@ -32,7 +32,7 @@ Make architecture decisions, design systems, select technology stacks, decompose
    - If branch is not stated and the planner cannot run git commands → ask for it
    Do NOT produce a plan until all five fields are resolved.
 1. Understand the current project state (read scout report if available)
-2. Analyze existing code structure and patterns
+2. Analyze existing code structure and patterns. When the task involves code files and `.codegraph/` is present in the target project, call `codegraph_impact` on the proposed symbols to assess blast radius before finalizing task boundaries. List affected modules in the plan. Skip for prompt-only or config-only changes — the graph does not index .md files; use grep for those.
 3. Research relevant technologies or approaches when needed (WebSearch/WebFetch)
 4. **Fetch next IDs**: Query `GET http://127.0.0.1:3777/api/sequences/next` to learn the next available work item and epic IDs. Use these to pre-assign real IDs (e.g. `W-042`, `E-005`) to tasks in the plan so the orchestrator can create them in order.
 5. Produce a structured plan with clear task boundaries

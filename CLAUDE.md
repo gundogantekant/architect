@@ -241,3 +241,32 @@ Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/log` (plain text 
 | /browse [task] | Perform a web automation task via browser agent |
 | /worktree [list\|cleanup] | Manage git worktrees for implementation isolation |
 | /review-board [gate] [scope] | Manually trigger the Technical Review Board on a plan or code diff |
+
+## CodeGraph
+
+`.codegraph/` is initialized at the architect project root. The index covers **code files only** — markdown files (agent prompts, use-case workflows, domain rules) are not indexed.
+
+**Indexed corpus** (~230 files):
+- `tools/dashboard/` — all `.mjs` files (server, dispatch manager, routes, DB, prompt builder, etc.)
+- `tools/temporal/` — TypeScript workflows and activities
+- `templates/` — scaffold TypeScript/TSX reference code
+- `tools/ble-relay/`, `tools/dart-debug/` — Python utilities
+
+### Tools and when to use them
+
+| Tool | Use for | Skip when |
+|------|---------|-----------|
+| `codegraph_search` | Find functions/constants in dashboard/temporal/templates code | Exploring .md artifacts — use grep instead |
+| `codegraph_callers` / `codegraph_callees` | Trace JS/TS function call chains | Prompt flow or .md-only investigation |
+| `codegraph_impact` | Blast radius for code changes before dispatch | Prompt-only or config-only changes |
+| `codegraph_context` | Pull relevant JS/TS context for a task | Non-code tasks |
+
+### Freshness
+
+- Check `codegraph_status` once at session start. Do not re-check per dispatch.
+- Refresh trigger: run `codegraph index` only when **code files** in `tools/dashboard/` are structurally changed (added, removed, renamed). Skip for prompt-only edits.
+- Fallback: if `codegraph_status` errors or is unavailable, use grep/find. Never block on CodeGraph availability.
+
+### Explore agents
+
+When spawning Explore agents for dashboard JS work, include: "Use codegraph tools (`.codegraph/` is present) for symbol lookup and caller tracing instead of grep."
