@@ -11,6 +11,8 @@ function isSafePath(resolvedPath) {
   return SAFE_ROOTS.some(root => resolvedPath === root || resolvedPath.startsWith(root + '/'));
 }
 
+const RECENT_COMMITS_LIMIT = 10;
+
 export default function gitRoutes(deps) {
   const { json, err, resolveProjectPath } = deps;
 
@@ -27,7 +29,7 @@ export default function gitRoutes(deps) {
       try {
         const { stdout } = await execFileAsync(
           'git',
-          ['log', '--format=%h%x1f%an%x1f%aI%x1f%B%x00', '-5'],
+          ['log', '--format=%h%x1f%an%x1f%aI%x1f%B%x00', `-${RECENT_COMMITS_LIMIT}`],
           { cwd: resolved, encoding: 'utf8', timeout: 5000 }
         );
 
