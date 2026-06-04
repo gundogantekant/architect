@@ -313,3 +313,54 @@ test('SR-31: #suspended-sessions card appears immediately after route navigation
   // Card must appear well within the 10s polling interval — 5s is safe for eager-refresh path
   await expect(page.locator('#suspended-sessions')).toBeVisible({ timeout: 5000 });
 });
+
+// ============================================================
+// SR-PROJECT-1 to SR-PROJECT-3: per-project guard in refreshSuspendedPanel (W-1336)
+// ============================================================
+
+test('SR-PROJECT-1: session matching active project route is excluded from global suspended card', async ({ page }) => {
+  const { dispatch_id: id } = await seedDispatch({
+    status: 'suspended',
+    claude_session_id: 'fake-sr-project-1',
+    project_key: 'ticari/architect/main',
+  });
+  await page.goto('/#component/ticari/architect/main');
+  await page.waitForLoadState('networkidle');
+
+  const card = page.locator('#suspended-sessions');
+  const entry = page.locator(`[data-susp-resume-dispatch="${id}"]`);
+  const cardVisible = await card.isVisible().catch(() => false);
+  if (cardVisible) {
+    await expect(entry).not.toBeVisible({ timeout: 3000 });
+  } else {
+    expect(cardVisible).toBe(false);
+  }
+});
+
+test('SR-PROJECT-2: session from a different project still shows in global suspended card', async ({ page }) => {
+  const { dispatch_id: id } = await seedDispatch({
+    status: 'suspended',
+    claude_session_id: 'fake-sr-project-2',
+    project_key: 'ticari/other-project/main',
+  });
+  await page.goto('/#component/ticari/architect/main');
+  await expect(page.locator('#suspended-sessions')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator(`[data-susp-resume-dispatch="${id}"]`)).toBeVisible({ timeout: 5000 });
+});
+
+test('SR-PROJECT-3: all sessions show on non-project routes', async ({ page }) => {
+  const { dispatch_id: projId } = await seedDispatch({
+    status: 'suspended',
+    claude_session_id: 'fake-sr-project-3a',
+    project_key: 'ticari/architect/main',
+  });
+  const { dispatch_id: otherId } = await seedDispatch({
+    status: 'suspended',
+    claude_session_id: 'fake-sr-project-3b',
+    project_key: 'ticari/other-project/main',
+  });
+  await page.goto('/');
+  await expect(page.locator('#suspended-sessions')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator(`[data-susp-resume-dispatch="${projId}"]`)).toBeVisible({ timeout: 5000 });
+  await expect(page.locator(`[data-susp-resume-dispatch="${otherId}"]`)).toBeVisible({ timeout: 5000 });
+});

@@ -3190,8 +3190,15 @@ async function refreshSuspendedPanel() {
       ...suspTerminals.map(t => ({ ...t, _stype: 'terminal', _suspendedAt: t.exited_at || t.started_at })),
     ];
 
+    const activeProjectKey = _getActiveProjectKey();
+    const visible = all.filter(s =>
+      !s.project_key ||
+      !activeProjectKey ||
+      !_isProjectMatch(s.project_key, activeProjectKey)
+    );
+
     let container = _suspendedContainer || document.getElementById('suspended-sessions');
-    if (all.length === 0) {
+    if (visible.length === 0) {
       if (container) container.remove();
       _suspendedContainer = null;
       return;
@@ -3205,9 +3212,9 @@ async function refreshSuspendedPanel() {
     }
     _suspendedContainer = container;
 
-    let html = `<h3 style="margin:0 0 12px 0;font-size:15px;font-weight:600">Suspended Sessions <span style="font-size:12px;font-weight:400;background:#fef3c7;color:#b45309;padding:2px 8px;border-radius:3px;margin-left:6px">${all.length}</span></h3>`;
+    let html = `<h3 style="margin:0 0 12px 0;font-size:15px;font-weight:600">Suspended Sessions <span style="font-size:12px;font-weight:400;background:#fef3c7;color:#b45309;padding:2px 8px;border-radius:3px;margin-left:6px">${visible.length}</span></h3>`;
     html += '<div style="display:flex;flex-direction:column;gap:8px">';
-    for (const s of all) {
+    for (const s of visible) {
       const keyParts = (s.project_key || '').split('/').filter(p => p && p !== '*');
       const projectLabel = keyParts.length >= 2 ? `${esc(keyParts[0])} / ${esc(keyParts[1])}` : (keyParts[0] ? esc(keyParts[0]) : '');
       const wiBadge = s.work_item_id ? `<span class="suspended-badge" style="margin-left:0">${esc(s.work_item_id)}</span>` : '';
@@ -3225,7 +3232,7 @@ async function refreshSuspendedPanel() {
     html += '</div>';
     container.innerHTML = html;
 
-    for (const s of all) {
+    for (const s of visible) {
       const resumeBtn = container.querySelector(`[data-susp-resume-${s._stype}="${CSS.escape(s.id)}"]`);
       const dismissBtn = container.querySelector(`[data-susp-dismiss-${s._stype}="${CSS.escape(s.id)}"]`);
 
