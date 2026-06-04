@@ -794,6 +794,41 @@ When a `stop_conditions` entry matches the current situation:
 
 Stop conditions complement (not replace) orchestrator-level escalation triggers (stale, blocked-chain, epic-stall, cost-anomaly, dispatch-loop defined in PM Behavior Rules). Stop conditions are agent-self-enforced during execution; orchestrator triggers are detected after execution.
 
+### Refinement Session Rules
+
+> **Scope**: These rules apply exclusively to coordinator sessions dispatched with `dispatch_mode='refinement'`. They govern failure handling for the three cases where a refinement session cannot produce a valid DispatchContract. General Long-Running Session Rules (Phase-Based Progress Checkpoints, Scope Boundary Self-Enforcement, Stop Condition Protocol) apply to implementation agents and are distinct from these refinement-specific rules.
+
+#### Failure Case Protocols
+
+Each failure case must: (1) keep the work item in `draft` status — no status transition is attempted, (2) write a structured session log entry before halting, (3) halt immediately — no partial contract is applied.
+
+**Case A: Session interrupted before DispatchContract appears**
+Detected after the fact: the coordinator session ends (token limit, timeout, network cut, model interruption) without a `# DispatchContract` fenced JSON block in its output.
+- Log entry: `POST /api/work-items/:id/log` with `{ "summary": "Refinement session ended without producing a DispatchContract. Cause: session interrupted (token limit, timeout, or truncation). Work item remains draft." }`
+- Status: remains `draft`
+- User action required: re-dispatch refinement after addressing the cause (e.g., simplify description, split ticket)
+
+**Case B: Plan Gate hard-block after 2 revision cycles**
+The coordinator's refinement Plan Gate (dispatched in step 4 of the refinement workflow) returns `block` after both the original plan and one revision cycle.
+- Log entry: `POST /api/work-items/:id/log` with `{ "summary": "Refinement halted: Plan Gate returned block after 2 revision cycles. Work item remains draft. Review the board block reasons before re-refining." }`
+- Status: remains `draft`
+- User action required: address Plan Gate blocking concerns and re-dispatch
+
+**Case C: Coordinator approaching maxTurns before contract is complete**
+Proactive: the coordinator detects it is within ~10 turns of the session maxTurns limit and has not yet produced a complete DispatchContract. This is an agent-side early exit, distinct from Case A (which is server-side post-hoc detection).
+- Log entry: `POST /api/work-items/:id/log` with `{ "summary": "Refinement halted: approaching maxTurns limit before DispatchContract could be completed. Work item remains draft. Consider simplifying the item or splitting into smaller tickets." }`
+- Status: remains `draft`
+- Immediately halt — do NOT emit a partial contract
+
+#### Log Payload Schema
+
+All three failure cases use the same log endpoint with a single `summary` string field. The summary must:
+- Identify the failure case (interrupted / Plan Gate block / maxTurns)
+- State that the work item remains in `draft`
+- Suggest a user action (re-refine, address board concerns, split ticket)
+
+This schema matches the existing `POST /api/work-items/:id/log` interface used by Phase-Based Progress Checkpoints. No new fields are required.
+
 ## Session Lifecycle Operations
 
 Operations for managing the lifecycle of cloud-dispatched sessions (D-XXX) beyond the standard run/suspend/resume cycle.
@@ -902,6 +937,7 @@ Before dispatching any implementation agent to a `worktree_mode: "auto"` project
 | Tests fail after implementation | Dispatch debugger to investigate, then coder for fix |
 | Review finds critical issues | Coder addresses findings, re-review (max 2 iterations) |
 | Scout finds no recognizable stack | Report findings, ask user to clarify project structure |
+| Refinement session produces no DispatchContract | Apply Refinement Session Rules: log reason, preserve `draft` status, surface to user for re-dispatch |
 
 ## Debug Artifact Rules
 
