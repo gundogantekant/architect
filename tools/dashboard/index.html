@@ -49,6 +49,12 @@
 .ws-reconnect-banner.ws-reconnect-failed { color:#7C2D12; background:#FEE2E2; border-color:#FECACA; }
 .ws-reconnect-banner button { font-size:11px; padding:2px 8px; border:1px solid #D97706; border-radius:3px; background:#FFF; cursor:pointer; }
 .ws-reconnect-banner button:hover { background:#FEF3C7; }
+.git-log-section { margin-top:4px; }
+.git-commit-row { display:flex; align-items:baseline; gap:10px; padding:5px 0; border-bottom:1px solid var(--border,#E5E7EB); font-size:13px; }
+.git-commit-row:last-child { border-bottom:none; }
+.git-hash-badge { font-family:monospace; font-size:11px; background:var(--surface2,#F3F4F6); color:var(--text-light,#6B7280); padding:1px 5px; border-radius:3px; flex-shrink:0; }
+.git-subject { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.git-meta { font-size:11px; color:var(--text-light,#6B7280); white-space:nowrap; flex-shrink:0; }
 </style>
 </head>
 <body>
@@ -4337,6 +4343,10 @@ function renderComponentView(org, proj, comp, data, workItems, files, projectEpi
   } else {
     html += `<p class="empty">No agent recommendations.</p>`;
   }
+  // Recent Commits
+  html += `<hr style="margin:16px 0">`;
+  html += `<h3>Recent Commits</h3>`;
+  html += `<div class="git-log-section" id="git-log-${esc(`${org}/${proj}/${comp}`)}"><span style="font-size:13px;color:var(--text-light,#6B7280)">Loading…</span></div>`;
   html += `</div>`;
 
   // Tab 2: Docs
@@ -9217,6 +9227,45 @@ function navigate(fragment) {
 }
 window.navigate = navigate;
 
+// --- Git log section ---
+const _gitLogCache = new Map();
+
+async function loadGitLog(org, proj, comp) {
+  const key = `${org}/${proj}/${comp}`;
+  const container = document.getElementById(`git-log-${key}`);
+  if (!container) return;
+
+  const now = Date.now();
+  const cached = _gitLogCache.get(key);
+  if (cached && now - cached.ts < 30000) {
+    _renderGitCommits(container, cached.commits, cached.unavailable);
+    return;
+  }
+
+  try {
+    const resp = await fetch(`/api/git-log/${encodeURIComponent(org)}/${encodeURIComponent(proj)}/${encodeURIComponent(comp)}`);
+    const data = await resp.json();
+    _gitLogCache.set(key, { commits: data.commits || [], unavailable: !!data.unavailable, ts: now });
+    _renderGitCommits(container, data.commits || [], data.unavailable);
+  } catch {
+    container.innerHTML = `<span style="font-size:13px;color:var(--text-light,#6B7280)">Could not load commits</span>`;
+  }
+}
+
+function _renderGitCommits(container, commits, unavailable) {
+  if (unavailable || !commits.length) {
+    container.innerHTML = `<span style="font-size:13px;color:var(--text-light,#6B7280)">Git history unavailable</span>`;
+    return;
+  }
+  container.innerHTML = commits.map(c => `
+    <div class="git-commit-row">
+      <span class="git-hash-badge">${esc(c.hash)}</span>
+      <span class="git-subject">${esc(c.subject)}</span>
+      <span class="git-meta">${esc(c.author)} &middot; ${timeAgo(c.date)}</span>
+    </div>
+  `).join('');
+}
+
 // --- timeAgo helper ---
 function timeAgo(isoString) {
   if (!isoString) return '—';
@@ -9783,6 +9832,9 @@ async function route() {
       main.innerHTML = renderComponentView(org, proj, comp, data, workItems, files, projectEpics);
       bindTabs();
       setActive(projectKey);
+
+      // Inject git log into Overview tab — parallel fetch, non-blocking
+      loadGitLog(org, proj, comp).catch(() => {});
 
       // Inject sync freshness indicator — parallel fetch, non-blocking
       (async () => {

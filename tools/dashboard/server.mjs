@@ -41,6 +41,7 @@ import costsRoutes from './routes/costs.mjs';
 import assetsRoutes from './routes/assets.mjs';
 import promptsRoutes from './routes/prompts.mjs';
 import workItemAssetsRoutes from './routes/work-item-assets.mjs';
+import gitRoutes from './routes/git.mjs';
 import testEndpointRoutes from './routes/test-endpoints.mjs';
 import { attemptMerge, isMergeLocked } from './merge.mjs';
 
@@ -87,6 +88,7 @@ const routes = [
   ...assetsRoutes(deps),
   ...promptsRoutes(deps),
   ...workItemAssetsRoutes(deps),
+  ...gitRoutes(deps),
   ...(process.env.WORK_DIR ? testEndpointRoutes(deps) : []),
 ];
 
