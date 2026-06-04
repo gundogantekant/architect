@@ -3,6 +3,8 @@
  * All API helpers communicate with the live dashboard at BASE.
  */
 
+import { randomUUID } from 'node:crypto';
+
 export const getBase = () => {
   if (!process.env.TEST_SERVER_PORT) {
     throw new Error('TEST_SERVER_PORT not set — refusing to fall back to port 3777 (real server). Tests must run through Playwright.');
@@ -290,7 +292,7 @@ export async function seedEpic(opts = {}) {
 }
 
 export async function seedDispatch(opts = {}) {
-  const id = opts.id || `D-${Date.now()}`;
+  const id = opts.id || `D-${randomUUID().slice(0, 8)}`;
   const logLines = opts.output
     ? opts.output.map(text => JSON.stringify({ type: 'content_block_delta', delta: { text } }))
     : [];

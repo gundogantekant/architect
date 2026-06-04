@@ -9,6 +9,7 @@
  * CT-6: Regression — getProjectAvgDispatchCost unchanged after migration
  */
 
+import { randomUUID } from 'node:crypto';
 import { test, expect } from './fixtures.mjs';
 import { getBase, api, seedWorkItem, seedDispatch } from './helpers.mjs';
 
@@ -17,7 +18,7 @@ import { getBase, api, seedWorkItem, seedDispatch } from './helpers.mjs';
 // ---------------------------------------------------------------------------
 
 async function seedDispatchWithCost(opts = {}) {
-  const id = opts.id || `D-cost-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const id = opts.id || `D-cost-${randomUUID().slice(0, 8)}`;
   return api('test/seed-dispatch-cost', {
     method: 'POST',
     body: JSON.stringify({ id, ...opts }),

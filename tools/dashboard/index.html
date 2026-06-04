@@ -659,16 +659,18 @@ function scheduleAutoDismiss(panelType, id, infoObj) {
   const panel = document.getElementById(`${panelType}-${id}`);
   if (!panel || infoObj._autoDismissTimer) return;
 
+  const dismissMs = window._testAutoDismissMs ?? AUTO_DISMISS_MS;
+
   const bar = document.createElement('div');
   bar.className = 'auto-dismiss-bar';
   panel.appendChild(bar);
 
   requestAnimationFrame(() => {
-    bar.style.transitionDuration = `${AUTO_DISMISS_MS}ms`;
+    bar.style.transitionDuration = `${dismissMs}ms`;
     bar.style.width = '0%';
   });
 
-  let remaining = AUTO_DISMISS_MS;
+  let remaining = dismissMs;
   let startedAt = Date.now();
 
   const dismiss = async () => {
@@ -681,7 +683,7 @@ function scheduleAutoDismiss(panelType, id, infoObj) {
     syncSessionState();
   };
 
-  infoObj._autoDismissTimer = setTimeout(dismiss, AUTO_DISMISS_MS);
+  infoObj._autoDismissTimer = setTimeout(dismiss, dismissMs);
 
   panel.addEventListener('mouseenter', () => {
     if (!infoObj._autoDismissTimer) return;
