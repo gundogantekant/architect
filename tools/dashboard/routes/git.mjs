@@ -27,7 +27,7 @@ export default function gitRoutes(deps) {
       try {
         const { stdout } = await execFileAsync(
           'git',
-          ['log', '--format=%h%x1f%s%x1f%an%x1f%aI%x00', '-5'],
+          ['log', '--format=%h%x1f%an%x1f%aI%x1f%B%x00', '-5'],
           { cwd: resolved, encoding: 'utf8', timeout: 5000 }
         );
 
@@ -36,8 +36,12 @@ export default function gitRoutes(deps) {
           .map(r => r.trim())
           .filter(Boolean)
           .map(record => {
-            const [hash, subject, author, date] = record.split('\x1f');
-            return { hash, subject, author, date };
+            const parts = record.split('\x1f');
+            const hash = parts[0];
+            const author = parts[1];
+            const date = parts[2];
+            const message = parts.slice(3).join('\x1f').trim();
+            return { hash, message, author, date };
           });
 
         json(res, { commits });

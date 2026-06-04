@@ -55,6 +55,7 @@
 .git-hash-badge { font-family:monospace; font-size:11px; background:var(--surface2,#F3F4F6); color:var(--text-light,#6B7280); padding:1px 5px; border-radius:3px; flex-shrink:0; }
 .git-subject { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .git-meta { font-size:11px; color:var(--text-light,#6B7280); white-space:nowrap; flex-shrink:0; }
+.git-body { margin:4px 0 8px; font-size:12px; color:var(--text-light,#6B7280); white-space:pre-wrap; font-family:inherit; background:none; border:none; padding:0; }
 </style>
 </head>
 <body>
@@ -9257,13 +9258,19 @@ function _renderGitCommits(container, commits, unavailable) {
     container.innerHTML = `<span style="font-size:13px;color:var(--text-light,#6B7280)">Git history unavailable</span>`;
     return;
   }
-  container.innerHTML = commits.map(c => `
-    <div class="git-commit-row">
-      <span class="git-hash-badge">${esc(c.hash)}</span>
-      <span class="git-subject">${esc(c.subject)}</span>
-      <span class="git-meta">${esc(c.author)} &middot; ${timeAgo(c.date)}</span>
-    </div>
-  `).join('');
+  container.innerHTML = commits.map(c => {
+    const lines = (c.message || '').split('\n');
+    const subject = lines[0] || '';
+    const body = lines.slice(1).join('\n').trim();
+    return `<div class="git-commit-row" style="flex-wrap:wrap;align-items:flex-start">
+      <span class="git-hash-badge" style="margin-top:2px">${esc(c.hash)}</span>
+      <span style="flex:1;min-width:0">
+        <span class="git-subject">${esc(subject)}</span>
+        ${body ? `<pre class="git-body">${esc(body)}</pre>` : ''}
+      </span>
+      <span class="git-meta" style="margin-top:2px">${esc(c.author)} &middot; ${timeAgo(c.date)}</span>
+    </div>`;
+  }).join('');
 }
 
 // --- timeAgo helper ---
