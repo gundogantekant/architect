@@ -177,6 +177,7 @@ Use `/work list --org <name>` to scope work items to a specific organization. Se
 - Read-only agents do not modify code (see `domain/rules.md` → Agent Permission Model)
 - Implementation agents (coder-*, git-ops) use acceptEdits permission mode
 - The orchestrator delegates all git operations (commit, push, PR, branch, worktree) to the git-ops agent. The orchestrator only runs read-only git commands (status, log, diff) directly.
+- Architect self-implementations (ticari/architect/main): after tests pass (or Code Gate approves when no test suite applies) and no scope violations are present, merge directly to the originating branch. No GitHub PR is created or needed. On unresolvable merge conflict, leave the worktree open — do not offer `/pr` as a fallback.
 - Apply role-scoped context injection when dispatching agents — see `domain/rules.md` → Role-Scoped Context Injection for the tier mapping per agent role. Before each dispatch, look up the agent in `domain/rules.md` → Context Tier Mapping to determine which portfolio fields to include.
 - Use dynamic model selection per dispatch — see `domain/rules.md` → Model Selection Rules for complexity-to-model mapping
 - The orchestrator dispatches sub-agents for research, analysis, and investigation tasks. The main session decomposes, dispatches, and synthesizes — sub-agents execute. See `domain/rules.md` → Dispatch-First Rule for trigger criteria. Structure every Agent tool dispatch using the template in `domain/rules.md` → Agent Dispatch Standards.
