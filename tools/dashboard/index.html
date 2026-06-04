@@ -1024,6 +1024,25 @@ let _recentContainer = null;
 // DOM state (xterm, WebSocket, etc.) is preserved while hidden.
 const _hiddenPanelBuffer = document.createElement('div');
 
+const SESSION_AWARE_ROUTES = new Set([
+  '', 'agents', 'autonomous', 'epics', 'all-sessions', 'audit', 'settings', 'assets', 'repos', 'adrs',
+]);
+
+function _isSessionAwareRoute(hash) {
+  const clean = (hash || '').replace(/^#/, '');
+  if (!clean) return true;
+  const base = clean.split('/')[0].split('?')[0];
+  if (SESSION_AWARE_ROUTES.has(base)) return true;
+  return ['component', 'epic', 'org', 'adr'].includes(base);
+}
+
+function _hideSessionPanelsForCleanRoute() {
+  const globalContainer = document.getElementById('dispatch-panels');
+  if (globalContainer) globalContainer.style.display = 'none';
+  if (_suspendedContainer) _suspendedContainer.style.display = 'none';
+  if (_recentContainer) _recentContainer.style.display = 'none';
+}
+
 function placeSessionPanels() {
   if (_placeTimer) return;
   _placeTimer = requestAnimationFrame(() => { _placeTimer = null; _placeSessionPanelsNow(); });
@@ -1053,6 +1072,12 @@ function _isProjectMatch(sessionProjectKey, activeProjectKey) {
 }
 
 function _placeSessionPanelsNow() {
+  if (_isSessionAwareRoute(location.hash)) {
+    const globalContainer = document.getElementById('dispatch-panels');
+    if (globalContainer) globalContainer.style.display = '';
+    if (_suspendedContainer) _suspendedContainer.style.display = '';
+    if (_recentContainer) _recentContainer.style.display = '';
+  }
   const sidebarTarget = window._sidebarTargetSession || null;
   window._sidebarTargetSession = null;
   const arrivalProject = _pendingProjectArrival;
@@ -9554,6 +9579,7 @@ async function route() {
   }
 
   if (parts[0] === 'time-report') {
+    _hideSessionPanelsForCleanRoute();
     try {
       const groupBy = sessionStorage.getItem('time-report-group') || 'project';
       const report = await api(`time-report${groupBy === 'org' ? '?group=org' : ''}`);
@@ -9568,6 +9594,7 @@ async function route() {
   }
 
   if (parts[0] === 'costs') {
+    _hideSessionPanelsForCleanRoute();
     try {
       const savedParams = sessionStorage.getItem('cost-report-params');
       const params = new URLSearchParams(savedParams || '');
