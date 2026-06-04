@@ -569,20 +569,6 @@ async function buildEpicTree() {
     }
   } catch {}
 
-  // AGENTS label
-  const agentsLabel = document.createElement('div');
-  agentsLabel.className = 'sidebar-section-label';
-  agentsLabel.innerHTML = 'AGENTS <span id="agents-badge" class="agents-badge empty"></span>';
-  agentsLabel.onclick = () => { location.hash = '#agents'; };
-  epicTree.appendChild(agentsLabel);
-
-  // AUTONOMOUS label
-  const autoLabel = document.createElement('div');
-  autoLabel.className = 'sidebar-section-label';
-  autoLabel.innerHTML = 'AUTONOMOUS <span id="autonomous-badge" class="agents-badge empty"></span>';
-  autoLabel.onclick = () => { location.hash = '#autonomous'; };
-  epicTree.appendChild(autoLabel);
-
   // Onboard button — always visible
   const onboardBtn = document.createElement('div');
   onboardBtn.className = 'sidebar-onboard-btn';
@@ -607,18 +593,19 @@ function updateDispatchBadge() {
   } else {
     badge.classList.add('empty');
   }
-  const agentsBadge = document.getElementById('agents-badge');
-  if (agentsBadge) {
-    const total = activeDispatches.length + activeTerminals.length + activeCliSessions.length;
-    if (total > 0) { agentsBadge.textContent = total; agentsBadge.classList.remove('empty'); }
-    else { agentsBadge.classList.add('empty'); }
+  const total = activeDispatches.length + activeTerminals.length + activeCliSessions.length;
+  const autoCount = activeDispatches.filter(d => d.dispatch_mode === 'auto_implement').length;
+  const totalBadge = document.getElementById('dispatches-total-badge');
+  if (totalBadge) {
+    if (total > 0) { totalBadge.textContent = total; totalBadge.classList.remove('empty'); }
+    else { totalBadge.classList.add('empty'); }
   }
-  const autoBadge = document.getElementById('autonomous-badge');
-  if (autoBadge) {
-    const autoCount = activeDispatches.filter(d => d.dispatch_mode === 'auto_implement').length;
-    if (autoCount > 0) { autoBadge.textContent = autoCount; autoBadge.classList.remove('empty'); }
-    else { autoBadge.classList.add('empty'); }
-  }
+  const tabBadgeActive = document.getElementById('tab-badge-active');
+  if (tabBadgeActive) tabBadgeActive.textContent = total > 0 ? total : '';
+  const tabBadgeAuto = document.getElementById('tab-badge-autonomous');
+  if (tabBadgeAuto) tabBadgeAuto.textContent = autoCount > 0 ? autoCount : '';
+  const tabBadgeAll = document.getElementById('tab-badge-all');
+  if (tabBadgeAll) tabBadgeAll.textContent = total > 0 ? total : '';
   refreshSessionsSidebar();
 }
 
@@ -7133,23 +7120,78 @@ function showOnboardModal() {
 function buildSessionsSidebar() {
   const container = document.getElementById('sessions-sidebar');
   if (!container) return;
-  const collapsed = sessionStorage.getItem('sessions-sidebar-collapsed') === 'true';
-  // Label with toggle arrow
-  const label = document.createElement('div');
-  label.className = 'sidebar-section-label';
-  label.style.cursor = 'pointer';
-  label.innerHTML = `<span class="arrow ${collapsed ? '' : 'open'}">&#9654;</span> SESSIONS`;
-  container.appendChild(label);
+  container.id = 'dispatches-sidebar';
+
+  const collapsed = sessionStorage.getItem('dispatches-sidebar-collapsed') === 'true';
+  const header = document.createElement('div');
+  header.className = 'sidebar-section-label dispatches-header';
+  header.style.cursor = 'pointer';
+  header.innerHTML = `<span class="arrow ${collapsed ? '' : 'open'}">&#9654;</span> DISPATCHES <span id="dispatches-total-badge" class="agents-badge empty"></span>`;
+
+  const body = document.createElement('div');
+  body.id = 'dispatches-body';
+  body.style.display = collapsed ? 'none' : '';
+
+  const tabs = document.createElement('div');
+  tabs.className = 'dispatches-tabs';
+  tabs.setAttribute('role', 'tablist');
+  tabs.innerHTML = `
+    <button class="dispatch-tab" data-filter="active" role="tab" tabindex="0">Active <span class="dispatch-tab-badge" id="tab-badge-active"></span></button>
+    <button class="dispatch-tab" data-filter="autonomous" role="tab" tabindex="-1">Autonomous <span class="dispatch-tab-badge" id="tab-badge-autonomous"></span></button>
+    <button class="dispatch-tab" data-filter="all" role="tab" tabindex="-1">All <span class="dispatch-tab-badge" id="tab-badge-all"></span></button>
+  `;
+  body.appendChild(tabs);
+
   const list = document.createElement('div');
-  list.id = 'sessions-list';
-  list.style.display = collapsed ? 'none' : '';
-  container.appendChild(list);
-  label.onclick = () => {
-    const arrow = label.querySelector('.arrow');
+  list.id = 'dispatches-list';
+  body.appendChild(list);
+
+  const viewAll = document.createElement('a');
+  viewAll.className = 'dispatches-view-all';
+  viewAll.textContent = 'View all →';
+  viewAll.href = '#agents';
+  body.appendChild(viewAll);
+
+  container.appendChild(header);
+  container.appendChild(body);
+
+  header.addEventListener('click', () => {
+    const arrow = header.querySelector('.arrow');
     const open = arrow.classList.toggle('open');
-    list.style.display = open ? '' : 'none';
-    sessionStorage.setItem('sessions-sidebar-collapsed', !open);
-  };
+    body.style.display = open ? '' : 'none';
+    sessionStorage.setItem('dispatches-sidebar-collapsed', !open);
+  });
+
+  tabs.addEventListener('keydown', (e) => {
+    const tabBtns = [...tabs.querySelectorAll('.dispatch-tab')];
+    const idx = tabBtns.indexOf(document.activeElement);
+    if (e.key === 'ArrowRight' && idx < tabBtns.length - 1) {
+      tabBtns[idx + 1].focus();
+      tabBtns[idx].tabIndex = -1;
+      tabBtns[idx + 1].tabIndex = 0;
+    } else if (e.key === 'ArrowLeft' && idx > 0) {
+      tabBtns[idx - 1].focus();
+      tabBtns[idx].tabIndex = -1;
+      tabBtns[idx - 1].tabIndex = 0;
+    } else if (e.key === 'Enter') {
+      document.activeElement.click();
+    }
+  });
+
+  tabs.addEventListener('click', (e) => {
+    const btn = e.target.closest('.dispatch-tab');
+    if (!btn) return;
+    const filter = btn.dataset.filter;
+    sessionStorage.setItem('dispatches-sidebar-filter', filter);
+    tabs.querySelectorAll('.dispatch-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    refreshSessionsSidebar();
+  });
+
+  const savedFilter = sessionStorage.getItem('dispatches-sidebar-filter') || 'active';
+  const activeTab = tabs.querySelector(`[data-filter="${savedFilter}"]`);
+  if (activeTab) activeTab.classList.add('active');
+
   const divider = document.createElement('hr');
   divider.className = 'sidebar-divider';
   container.appendChild(divider);
@@ -7236,18 +7278,33 @@ function navigateToSession(session) {
 }
 
 function refreshSessionsSidebar() {
-  const list = document.getElementById('sessions-list');
+  const list = document.getElementById('dispatches-list');
   if (!list) return;
   list.innerHTML = '';
-  const allSessions = [
-    ...activeDispatches.map(d => ({ type: 'dispatch', id: d.id, status: d.status, label: d.work_item_id || d.title || d.id, started_at: d.started_at, epic_id: d.epic_id, work_item_id: d.work_item_id, project_key: d.project_key })),
-    ...activeTerminals.map(t => ({ type: 'terminal', id: t.id, status: t.status, label: t.title || t.id, started_at: t.started_at, epic_id: t.epic_id, work_item_id: t.work_item_id, project_key: t.project_key })),
-    ...activeCliSessions.map(c => ({ type: 'cli', id: c.id, status: c.status, label: `[CLI] ${c.title}`, started_at: c.registered_at, epic_id: c.epic_id, work_item_id: c.work_item_id, project_key: c.project_key })),
-  ];
-  if (!allSessions.length) return;
 
-  // Group by project_key, then by epic_id within each project
-  const projectGroups = new Map(); // project_key → { epics: Map<epic_id, sessions[]>, noEpic: sessions[] }
+  const filter = sessionStorage.getItem('dispatches-sidebar-filter') || 'active';
+  const allDispatches = activeDispatches.map(d => ({ type: 'dispatch', id: d.id, status: d.status, label: d.work_item_id || d.title || d.id, started_at: d.started_at, epic_id: d.epic_id, work_item_id: d.work_item_id, project_key: d.project_key, dispatch_mode: d.dispatch_mode }));
+  const allTerminals = activeTerminals.map(t => ({ type: 'terminal', id: t.id, status: t.status, label: t.title || t.id, started_at: t.started_at, epic_id: t.epic_id, work_item_id: t.work_item_id, project_key: t.project_key, dispatch_mode: null }));
+  const allCli = activeCliSessions.map(c => ({ type: 'cli', id: c.id, status: c.status, label: `[CLI] ${c.title}`, started_at: c.registered_at, epic_id: c.epic_id, work_item_id: c.work_item_id, project_key: c.project_key, dispatch_mode: null }));
+
+  let allSessions;
+  if (filter === 'autonomous') {
+    allSessions = allDispatches.filter(d => d.dispatch_mode === 'auto_implement');
+  } else {
+    allSessions = [...allDispatches, ...allTerminals, ...allCli];
+  }
+
+  if (!allSessions.length) {
+    const empty = document.createElement('div');
+    empty.className = 'session-entry';
+    empty.style.cssText = 'color:var(--text-light);font-size:11px;padding:6px 16px;font-style:italic';
+    empty.textContent = 'No dispatches';
+    list.appendChild(empty);
+    updateProjectSignalDots();
+    return;
+  }
+
+  const projectGroups = new Map();
   const standalone = [];
   for (const s of allSessions) {
     if (s.project_key) {
@@ -7309,15 +7366,15 @@ function refreshSessionsSidebar() {
   }
 
   const totalSuspended = activeDispatches.filter(d => d.status === 'suspended').length;
-  const sidebarLabel = document.querySelector('#sessions-sidebar .sidebar-section-label');
-  if (sidebarLabel) {
-    let globalSuspBadge = sidebarLabel.querySelector('.susp-total-badge');
+  const dispatchesHeader = document.querySelector('#dispatches-sidebar .dispatches-header');
+  if (dispatchesHeader) {
+    let globalSuspBadge = dispatchesHeader.querySelector('.susp-total-badge');
     if (totalSuspended > 0) {
       if (!globalSuspBadge) {
         globalSuspBadge = document.createElement('span');
         globalSuspBadge.className = 'susp-total-badge';
         globalSuspBadge.style.cssText = 'background:#6B7280;color:#fff;font-size:10px;padding:1px 5px;border-radius:9px;margin-left:6px;cursor:default';
-        sidebarLabel.appendChild(globalSuspBadge);
+        dispatchesHeader.appendChild(globalSuspBadge);
       }
       globalSuspBadge.textContent = totalSuspended;
       globalSuspBadge.title = `${totalSuspended} session${totalSuspended !== 1 ? 's' : ''} suspended`;
@@ -7326,11 +7383,9 @@ function refreshSessionsSidebar() {
     }
   }
 
-  // Render project > epic > session hierarchy
   for (const [pk, pg] of projectGroups) {
-    // Show project label (drop org prefix for brevity)
-    const parts = pk.split('/');
-    const shortLabel = parts.length >= 3 ? (parts[2] === 'main' ? parts[1] : `${parts[1]}/${parts[2]}`) : pk;
+    const pkParts = pk.split('/');
+    const shortLabel = pkParts.length >= 3 ? (pkParts[2] === 'main' ? pkParts[1] : `${pkParts[1]}/${pkParts[2]}`) : pk;
     const projLabel = document.createElement('div');
     projLabel.className = 'sidebar-project-label';
     projLabel.style.display = 'flex';
@@ -7364,7 +7419,6 @@ function refreshSessionsSidebar() {
     };
     list.appendChild(projLabel);
 
-    // Epic sub-groups
     for (const [epicId, sessions] of pg.epics) {
       const epicLabel = document.createElement('div');
       epicLabel.className = 'sidebar-epic-sublabel';
@@ -7374,11 +7428,9 @@ function refreshSessionsSidebar() {
       for (const s of sessions) list.appendChild(renderEntry(s, true));
     }
 
-    // No-epic sessions
     for (const s of pg.noEpic) list.appendChild(renderEntry(s, false));
   }
 
-  // Render standalone
   if (standalone.length && projectGroups.size > 0) {
     const label = document.createElement('div');
     label.className = 'sidebar-group-label';
@@ -7386,7 +7438,6 @@ function refreshSessionsSidebar() {
     list.appendChild(label);
   }
   for (const s of standalone) list.appendChild(renderEntry(s, false));
-  // Update sidebar project signal dots based on current session state
   updateProjectSignalDots();
 }
 
@@ -9566,6 +9617,8 @@ async function route() {
   }
 
   if (parts[0] === 'autonomous') {
+    sessionStorage.setItem('dispatches-sidebar-filter', 'autonomous');
+    refreshSessionsSidebar();
     try {
       const dispatches = await api('dispatch/autonomous');
       main.innerHTML = renderAutonomousView(dispatches);
