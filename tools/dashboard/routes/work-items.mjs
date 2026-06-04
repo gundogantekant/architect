@@ -205,7 +205,7 @@ export default function workItemRoutes(deps) {
       const rawLimit = reqUrl.searchParams.get('limit');
       const rawOffset = reqUrl.searchParams.get('offset');
 
-      const VALID_SORT_COLS = new Set(['created_at', 'updated_at', 'priority', 'status', 'title']);
+      const VALID_SORT_COLS = new Set(['created_at', 'updated_at', 'priority', 'status', 'title', 'done_at']);
       if (!VALID_SORT_COLS.has(rawSort)) {
         return err(res, `invalid sort_by '${rawSort}', must be one of: ${[...VALID_SORT_COLS].join(', ')}`, 400);
       }

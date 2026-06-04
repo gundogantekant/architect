@@ -251,4 +251,59 @@ test.describe('work-items filter API @headless', () => {
     expect(result.items.every(i => i.project_key === 'ticari/architect/main')).toBe(true);
     expect(result.items.some(i => i.project_key === 'ticari/cortex/main')).toBe(false);
   });
+
+  // ============================================================
+  // Sort by done_at (W-sort-dates)
+  // ============================================================
+
+  test('WIF-21: work-items?sort_by=done_at returns 200 with items', async () => {
+    await purgeAll();
+    await seedWorkItem({ title: 'WIF-21 item', project_key: PROJECT_KEY });
+    const resp = await rawGet('work-items?sort_by=done_at&sort_dir=asc');
+    expect(resp.status).toBe(200);
+    const result = await resp.json();
+    expect(Array.isArray(result.items)).toBe(true);
+  });
+
+  test('WIF-22: work-items?sort_by=done_at&sort_dir=desc returns done items before null items', async () => {
+    await purgeAll();
+    const undone = await seedWorkItem({ title: 'WIF-22 undone', project_key: PROJECT_KEY, tags: ['trivial'] });
+    const done = await seedWorkItem({ title: 'WIF-22 done', project_key: PROJECT_KEY, tags: ['trivial'] });
+
+    // Walk done item through to 'done' status
+    for (const status of ['planned', 'in-progress', 'in-review', 'testing', 'preview', 'done']) {
+      await api(`work-items/${done.id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+    }
+
+    const result = await api('work-items?sort_by=done_at&sort_dir=desc');
+    expect(Array.isArray(result.items)).toBe(true);
+
+    const doneItem = result.items.find(i => i.id === done.id);
+    const undoneItem = result.items.find(i => i.id === undone.id);
+    expect(doneItem, 'done item must appear in results').toBeDefined();
+    expect(undoneItem, 'undone item must appear in results').toBeDefined();
+    expect(doneItem.done_at).not.toBeNull();
+    expect(undoneItem.done_at).toBeNull();
+
+    // desc sort: done item (non-null done_at) must appear before undone item (null done_at)
+    const doneIdx = result.items.findIndex(i => i.id === done.id);
+    const undoneIdx = result.items.findIndex(i => i.id === undone.id);
+    expect(doneIdx).toBeLessThan(undoneIdx);
+  });
+
+  test('WIF-23: work-items?sort_by=created_at&sort_dir=asc returns items in ascending creation order', async () => {
+    await purgeAll();
+    const first = await seedWorkItem({ title: 'WIF-23 first', project_key: PROJECT_KEY });
+    // Brief pause to guarantee distinct created_at timestamps
+    await new Promise(r => setTimeout(r, 50));
+    const second = await seedWorkItem({ title: 'WIF-23 second', project_key: PROJECT_KEY });
+
+    const result = await api('work-items?sort_by=created_at&sort_dir=asc');
+    expect(Array.isArray(result.items)).toBe(true);
+    expect(result.items.length).toBeGreaterThanOrEqual(2);
+
+    const firstIdx = result.items.findIndex(i => i.id === first.id);
+    const secondIdx = result.items.findIndex(i => i.id === second.id);
+    expect(firstIdx).toBeLessThan(secondIdx);
+  });
 });
