@@ -1312,6 +1312,7 @@ const ALLOWED_SORT_COLS = Object.freeze({
   priority: 'priority',
   status: 'status',
   title: 'title',
+  done_at: 'done_at',
 });
 
 export async function getWorkItemsFiltered({
@@ -1354,9 +1355,10 @@ export async function getWorkItemsFiltered({
 
   const col = ALLOWED_SORT_COLS[sortBy] || 'created_at';
   const dir = sortDir === 'desc' ? 'DESC' : 'ASC';
+  const nullsClause = col === 'done_at' ? ' NULLS LAST' : '';
   const pageParams = [...params, limit, offset];
   const rows = await pool.query(
-    `SELECT * FROM work_items WHERE ${where} ORDER BY ${col} ${dir} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+    `SELECT * FROM work_items WHERE ${where} ORDER BY ${col} ${dir}${nullsClause} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     pageParams
   ).then(r => r.rows);
 

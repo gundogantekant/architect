@@ -4969,9 +4969,8 @@ function bindFilterBar() {
     applyFilters();
   };
 
-  // Column sorting
-  const wiTable = document.getElementById('wi-table');
-  if (wiTable) {
+  // Column sorting — attaches to every .wi-table on the page (non-grouped and each epic group)
+  document.querySelectorAll('.wi-table').forEach(wiTable => {
     const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
     const statusOrder = { 'draft': 0, 'planned': 1, 'in-progress': 2, 'blocked': 3, 'in-review': 4, 'testing': 5, 'preview': 6, 'done': 7, 'cancelled': 8, 'archived': 9 };
     let sortCol = null, sortAsc = true;
@@ -5023,7 +5022,7 @@ function bindFilterBar() {
         });
       };
     });
-  }
+  });
 }
 
 // --- Agent-Gated Task Creation ---
