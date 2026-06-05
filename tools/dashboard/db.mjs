@@ -980,6 +980,8 @@ export async function updatePipelineStage(id, stage) {
 
 export async function deleteDispatch(id) {
   await pool.query('UPDATE dispatches SET deleted_at = NOW() WHERE id = $1', [id]);
+  // Soft delete does not trigger the ON DELETE SET NULL FK — null out dispatch_id manually.
+  await pool.query('UPDATE dispatch_prompts SET dispatch_id = NULL WHERE dispatch_id = $1', [id]);
 }
 
 export async function getPersistedDispatches() {
@@ -1709,6 +1711,19 @@ export async function hardDeleteAllTestData() {
     await client.query('DELETE FROM work_items WHERE created_at > $1', [cutoff]);
     await client.query('DELETE FROM epics WHERE created_at > $1', [cutoff]);
     await client.query('DELETE FROM session_history WHERE ended_at > $1', [cutoff]);
+    // dispatch_costs uses ON DELETE CASCADE, but dispatches are soft-deleted.
+    // Hard-delete dispatch_costs rows for dispatches soft-deleted during this test run
+    // so cost summary queries don't accumulate stale data across tests.
+    await client.query(`
+      DELETE FROM dispatch_costs dc
+      WHERE EXISTS (
+        SELECT 1 FROM dispatches d
+        WHERE d.id = dc.id AND d.deleted_at IS NOT NULL AND d.deleted_at > $1
+      )`, [cutoff]);
+    // Also hard-delete the soft-deleted dispatch rows themselves (test DBs only).
+    await client.query('DELETE FROM dispatches WHERE deleted_at > $1', [cutoff]);
+    // Clean dispatch_prompts for soft-deleted dispatches
+    await client.query('DELETE FROM dispatch_prompts WHERE dispatch_id IS NULL AND created_at > $1', [cutoff]);
   });
 }
 

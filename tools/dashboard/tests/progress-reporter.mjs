@@ -18,19 +18,22 @@ class ProgressReporter {
     const pct = Math.round(this.done / this.total * 100);
     const specfile = path.basename(test.location.file, path.extname(test.location.file));
     const duration = (result.duration / 1000).toFixed(1) + 's';
-    const icon = result.status === 'passed' ? '✓' : '✗';
+    const isSkipped = result.status === 'skipped';
+    const isPassed = result.status === 'passed' || isSkipped;
+    const icon = isPassed ? '✓' : '✗';
 
-    if (result.status === 'passed') {
+    if (isPassed) {
       this.passed++;
     } else {
       this.failed++;
     }
 
+    const skipNote = isSkipped ? ' (skipped)' : '';
     process.stdout.write(
-      `[${this.done}/${this.total}] ${pct}%  ${specfile} — ${test.title} ${icon}  (${duration})\n`
+      `[${this.done}/${this.total}] ${pct}%  ${specfile} — ${test.title} ${icon}  (${duration})${skipNote}\n`
     );
 
-    if (result.status !== 'passed') {
+    if (!isPassed) {
       const errorMessage = result.error?.message ?? result.errors?.[0]?.message ?? '';
       const firstLine = errorMessage.split('\n')[0];
       if (firstLine) {

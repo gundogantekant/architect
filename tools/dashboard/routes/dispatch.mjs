@@ -186,7 +186,9 @@ export default function dispatchRoutes(deps) {
       if (!resolvedPath && dispatch_mode !== 'task_creation') {
         return err(res, `Could not resolve path for project: ${project_key}`, 400);
       }
-      const projectPath = resolvedPath;
+      // task_creation dispatches don't require a registered path — fall back to ROOT so
+      // createDispatch's required-field validation passes.
+      const projectPath = resolvedPath ?? (dispatch_mode === 'task_creation' ? ROOT : null);
       if (projectPath && !existsSync(projectPath)) return err(res, `Project path does not exist: ${projectPath} — check if the volume or drive is mounted`, 400);
 
       const id = `D-${Date.now()}`;

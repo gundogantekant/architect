@@ -87,6 +87,9 @@ export const SPEC_FILES = [
   'work-item-lifecycle',
   'terminal-db-resilience',
   'project-path-guard',
+  'doc-content-integrity',
+  'session-resurrection',
+  'sync-contracts',
 ];
 
 function getLiveDashboardPorts() {

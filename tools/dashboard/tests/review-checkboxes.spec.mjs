@@ -81,13 +81,27 @@ test.describe('Review checkboxes — RCE2E', () => {
       }
     });
 
+    // Wait for any in-flight polling requests to settle before measuring
+    await page.waitForTimeout(500);
+
+    // Clear any requests that occurred during setup/polling
+    apiRequests.length = 0;
+
     const boardCheckbox = page.locator(`#terminal-${terminalId} input[aria-label="board reviewed"]`);
     await boardCheckbox.check();
 
-    // Allow a brief tick for any async request that might fire
+    // Allow a brief tick for any async request that might fire due to the toggle
     await page.waitForTimeout(200);
 
-    expect(apiRequests).toHaveLength(0);
+    // Filter out background polling requests (heartbeat, active list, etc.)
+    const nonPollingRequests = apiRequests.filter(url =>
+      !url.includes('/api/terminal/active') &&
+      !url.includes('/api/dispatch/active') &&
+      !url.includes('/api/server/status') &&
+      !url.includes('/api/sessions/active') &&
+      !url.includes('/api/backlog')
+    );
+    expect(nonPollingRequests).toHaveLength(0);
   });
 
   test('RCE2E-6: Note row unaffected', async ({ page }) => {

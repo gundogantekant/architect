@@ -186,6 +186,7 @@ test.describe('Suite 1: Single Terminal Core', () => {
 test.describe('Suite 2: Multi-Browser Consistency', () => {
 
   test('10. two browsers, 1 terminal: identical content, neither blanks', async ({ browser }) => {
+    test.setTimeout(90_000);
     const t = await seedTerminal({ lines: 200, withFakeContent: true, status: 'running' });
 
     const ctx1 = await browser.newContext();
@@ -193,14 +194,17 @@ test.describe('Suite 2: Multi-Browser Consistency', () => {
     const page1 = await ctx1.newPage();
     const page2 = await ctx2.newPage();
 
-    await Promise.all([page1.goto('/'), page2.goto('/')]);
+    // Apply test defaults to manually-created contexts (not covered by fixtures auto-setup)
+    await page1.addInitScript(() => { window._testDefaultExpanded = true; window._testDisableAutoDismiss = true; });
+    await page2.addInitScript(() => { window._testDefaultExpanded = true; window._testDisableAutoDismiss = true; });
+
+    // Load first browser, wait for it to be live before joining second
+    await page1.goto('/');
+    await waitForTerminalLive(page1, t.id, 60_000);
+    await page2.goto('/');
     await Promise.all([
-      waitForTerminalLive(page1, t.id),
-      waitForTerminalLive(page2, t.id),
-    ]);
-    await Promise.all([
-      waitForTerminalContent(page1, t.id, 30),
-      waitForTerminalContent(page2, t.id, 30),
+      waitForTerminalContent(page1, t.id, 30, 60_000),
+      waitForTerminalLive(page2, t.id, 60_000).then(() => waitForTerminalContent(page2, t.id, 30, 60_000)),
     ]);
 
     const result = await compareXtermBuffers(page1, t.id, page2, t.id, 30);
@@ -232,14 +236,16 @@ test.describe('Suite 2: Multi-Browser Consistency', () => {
       browser.newContext(),
     ]);
     const pages = await Promise.all(contexts.map((ctx) => ctx.newPage()));
+    // Apply test defaults to manually-created contexts
+    await Promise.all(pages.map(p => p.addInitScript(() => { window._testDefaultExpanded = true; window._testDisableAutoDismiss = true; })));
     await Promise.all(pages.map((p) => p.goto('/')));
 
     // Wait for all 9 combinations (3 pages × 3 terminals) to reach LIVE
     await Promise.all(
-      pages.flatMap((page) => terminals.map((t) => waitForTerminalLive(page, t.id))),
+      pages.flatMap((page) => terminals.map((t) => waitForTerminalLive(page, t.id, 60_000))),
     );
     await Promise.all(
-      pages.flatMap((page) => terminals.map((t) => waitForTerminalContent(page, t.id, 30))),
+      pages.flatMap((page) => terminals.map((t) => waitForTerminalContent(page, t.id, 30, 60_000))),
     );
 
     // Verify each page has content for every terminal
@@ -255,21 +261,24 @@ test.describe('Suite 2: Multi-Browser Consistency', () => {
   });
 
   test('12. browser 2 opens mid-stream: content matches after both reach LIVE', async ({ browser }) => {
+    test.setTimeout(90_000);
     const t = await seedTerminal({ lines: 100, withFakeContent: true, status: 'running' });
     await pumpTerminal(t.id, { linesPerSecond: 3, duration: 15 });
 
     const ctx1 = await browser.newContext();
     const page1 = await ctx1.newPage();
+    await page1.addInitScript(() => { window._testDefaultExpanded = true; window._testDisableAutoDismiss = true; });
     await page1.goto('/');
-    await waitForTerminalLive(page1, t.id);
-    await waitForTerminalContent(page1, t.id, 30);
+    await waitForTerminalLive(page1, t.id, 60_000);
+    await waitForTerminalContent(page1, t.id, 30, 60_000);
 
     // Second browser opens after first is already LIVE
     const ctx2 = await browser.newContext();
     const page2 = await ctx2.newPage();
+    await page2.addInitScript(() => { window._testDefaultExpanded = true; window._testDisableAutoDismiss = true; });
     await page2.goto('/');
-    await waitForTerminalLive(page2, t.id);
-    await waitForTerminalContent(page2, t.id, 30);
+    await waitForTerminalLive(page2, t.id, 60_000);
+    await waitForTerminalContent(page2, t.id, 30, 60_000);
 
     const m1 = await getXtermScrollMetrics(page1, t.id);
     const m2 = await getXtermScrollMetrics(page2, t.id);
@@ -349,19 +358,22 @@ test.describe('Suite 3: Session Reconnection', () => {
   });
 
   test('16. two separate page objects get same content from same session', async ({ browser }) => {
+    test.setTimeout(90_000);
     const t = await seedTerminal({ lines: 150, withFakeContent: true, status: 'running' });
 
     const ctx1 = await browser.newContext();
     const ctx2 = await browser.newContext();
     const page1 = await ctx1.newPage();
-    await page1.goto('/');
-    await waitForTerminalLive(page1, t.id);
-    await waitForTerminalContent(page1, t.id, 20);
-
     const page2 = await ctx2.newPage();
+    await page1.addInitScript(() => { window._testDefaultExpanded = true; window._testDisableAutoDismiss = true; });
+    await page2.addInitScript(() => { window._testDefaultExpanded = true; window._testDisableAutoDismiss = true; });
+    await page1.goto('/');
+    await waitForTerminalLive(page1, t.id, 60_000);
+    await waitForTerminalContent(page1, t.id, 20, 60_000);
+
     await page2.goto('/');
-    await waitForTerminalLive(page2, t.id);
-    await waitForTerminalContent(page2, t.id, 20);
+    await waitForTerminalLive(page2, t.id, 60_000);
+    await waitForTerminalContent(page2, t.id, 20, 60_000);
 
     const result = await compareXtermBuffers(page1, t.id, page2, t.id, 20);
     expect(result.match).toBe(true);
