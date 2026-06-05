@@ -52,12 +52,10 @@ test.describe('work-items filter API @headless', () => {
   });
 
   test('WIF-3: backlog without status param excludes archived by default (backward compat)', async () => {
-    const item = await seedWorkItem({ title: 'WIF-3 draft', status: 'draft', project_key: PROJECT_KEY });
+    // trivial bypasses contract gate; T1 enables in-progress→done fast path
+    const item = await seedWorkItem({ title: 'WIF-3 draft', status: 'draft', project_key: PROJECT_KEY, tags: ['trivial', 'T1'] });
     await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'planned' }) });
     await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'in-progress' }) });
-    await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'in-review' }) });
-    await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'testing' }) });
-    await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'preview' }) });
     await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'done' }) });
     await api(`work-items/${item.id}/archive`, { method: 'POST' });
 
@@ -67,12 +65,10 @@ test.describe('work-items filter API @headless', () => {
   });
 
   test('WIF-4: backlog?status=archived explicitly includes archived items', async () => {
-    const item = await seedWorkItem({ title: 'WIF-4 archived', status: 'draft', project_key: PROJECT_KEY });
+    // trivial bypasses contract gate; T1 enables in-progress→done fast path
+    const item = await seedWorkItem({ title: 'WIF-4 archived', status: 'draft', project_key: PROJECT_KEY, tags: ['trivial', 'T1'] });
     await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'planned' }) });
     await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'in-progress' }) });
-    await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'in-review' }) });
-    await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'testing' }) });
-    await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'preview' }) });
     await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'done' }) });
     await api(`work-items/${item.id}/archive`, { method: 'POST' });
 

@@ -109,7 +109,13 @@ test.describe('Epic detail timestamp @fast', () => {
   test('FTE-5: epic detail created_at and updated_at render two-line format', async ({ page }) => {
     const epic = await seedEpic({ title: 'FTE-5 epic timestamp', status: 'active' });
     await page.goto(`/#epic/${epic.id}`);
-    await page.waitForSelector('dl.kv', { timeout: 15_000 });
+    // dl.kv lives inside an inactive tab — use 'attached' to find it in the DOM
+    await page.waitForSelector('dl.kv', { state: 'attached', timeout: 15_000 });
+
+    // Click the Details tab to make dl.kv visible
+    const detailsTab = page.locator('#epic-tabs .tab').filter({ hasText: 'Details' });
+    await detailsTab.click();
+    await page.waitForSelector('dl.kv', { timeout: 10_000 });
 
     const kv = page.locator('dl.kv');
     // "Created" dt/dd pair
@@ -128,14 +134,14 @@ test.describe('Epic detail timestamp @fast', () => {
 test.describe('All-sessions table CLI registered_at @fast', () => {
 
   test('FTE-6: all-sessions table shows two-line timestamp for CLI sessions', async ({ page }) => {
-    // Register a fake CLI session
+    // Register a CLI session using the current Playwright runner PID (guaranteed alive)
     await api('sessions/register', {
       method: 'POST',
       body: JSON.stringify({
         id: `cli-fte-6-${Date.now()}`,
         title: 'FTE-6 CLI session',
         project_key: COMPONENT_KEY,
-        pid: 99999,
+        pid: process.pid,
       }),
     });
 

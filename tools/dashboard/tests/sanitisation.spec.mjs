@@ -101,7 +101,8 @@ test.describe('Special-character sanitisation @behavioral', () => {
       return renderSettingsView(status, config);
     });
 
-    expect(html).not.toContain('onerror=alert(2)');
+    // The raw <img> tag must not appear as executable HTML — it must be escaped
+    expect(html).not.toContain('<img src=x onerror=alert(2)>');
     expect(html).toContain('&lt;img');
   });
 

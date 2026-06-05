@@ -808,19 +808,39 @@ function retryDispatchWS(btn) {
 }
 
 const SCROLL_BOTTOM_THRESHOLD = 5;
-const SCROLL_SMOOTH_THRESHOLD = 60;
+const SCROLL_SMOOTH_THRESHOLD = 25;
 const pendingSmooth = new WeakMap();
+// Tracks which log elements the user last left at the bottom (vs scrolled away).
+const logAtBottomState = new WeakMap();
 
 function hasActiveSelection(scrollContainer) {
   const sel = window.getSelection();
   return sel && sel.type === 'Range' && sel.anchorNode != null && scrollContainer.contains(sel.anchorNode);
 }
 
+/**
+ * Register a scroll listener on a log element to track "at bottom" state.
+ * Called once when the log element is first created/used.
+ */
+function attachLogScrollTracker(logEl) {
+  if (logEl._scrollTracked) return;
+  logEl._scrollTracked = true;
+  logEl.addEventListener('scroll', () => {
+    const dist = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight;
+    logAtBottomState.set(logEl, dist < SCROLL_BOTTOM_THRESHOLD);
+  }, { passive: true });
+}
+
 function scrollDispatchLog(logEl, forceBottom = false, smooth = false) {
   if (hasActiveSelection(logEl)) return;
+  attachLogScrollTracker(logEl);
   const motionOk = smooth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const threshold = motionOk ? SCROLL_SMOOTH_THRESHOLD : SCROLL_BOTTOM_THRESHOLD;
-  const nearBottom = (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight) < threshold;
+  // "Near bottom" uses a strict threshold for new content detection, but also honours
+  // the explicit at-bottom state set by the scroll tracker (so returning to exact bottom
+  // re-enables auto-follow even when the new-content distance exceeds the threshold).
+  const dist = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight;
+  const wasAtBottom = logAtBottomState.get(logEl) !== false; // defaults to true (first load)
+  const nearBottom = dist < SCROLL_BOTTOM_THRESHOLD || (wasAtBottom && dist < SCROLL_SMOOTH_THRESHOLD);
   if (!forceBottom && !nearBottom) return;
   if (motionOk) {
     if (pendingSmooth.has(logEl)) return;
@@ -1117,6 +1137,11 @@ function _placeSessionPanelsNow() {
     // Project filter: panels that don't belong to the active route go into the
     // off-DOM buffer non-destructively (no WebSocket or PTY lifecycle changes).
     if (!_isProjectMatch(session.project_key, activeProjectKey)) {
+      if (!panel.classList.contains('collapsed')) {
+        panel.classList.add('collapsed');
+        const minBtn = panel.querySelector('[data-minimize-dispatch], [data-minimize-terminal], [data-minimize-cli]');
+        if (minBtn) minBtn.textContent = '▶';
+      }
       if (panel.parentElement !== _hiddenPanelBuffer) {
         _hiddenPanelBuffer.appendChild(panel);
       }
@@ -1182,6 +1207,14 @@ function _placeSessionPanelsNow() {
       if (ss?._fitAddon && ss._term) {
         requestAnimationFrame(() => fitPreservingScroll(ss._term, ss._fitAddon));
       }
+      // Expand the panel when returning from hidden buffer, unless manually collapsed.
+      // This provides consistent "project context return" expand behavior without relying
+      // on the _pendingProjectArrival race condition.
+      if (!sidebarTarget || sidebarTarget === session.key) {
+        panel.classList.remove('collapsed');
+        const minBtn = panel.querySelector('[data-minimize-dispatch], [data-minimize-terminal], [data-minimize-cli]');
+        if (minBtn) minBtn.textContent = '▼';
+      }
     }
 
     // Collect dispatches needing content load — called after step 4 when all
@@ -1240,12 +1273,17 @@ function _placeSessionPanelsNow() {
       const panel = sessionPanels.get(session.key);
       if (!panel) continue;
       const minBtn = panel.querySelector('[data-minimize-dispatch], [data-minimize-terminal], [data-minimize-cli]');
-      if (isRelevant && isArrivingAtProject) {
-        // Fresh project arrival: fold all sessions; expand only sidebar-targeted one.
+      if (isRelevant && isArrivingAtProject && sidebarTarget) {
+        // Fresh project arrival via sidebar click: expand only the targeted panel, fold the rest.
         const expand = sidebarTarget === session.key;
         panel.classList.toggle('collapsed', !expand);
         sessionCollapseState.set(session.key, !expand); // in-memory only; not persisted
         if (minBtn) minBtn.textContent = expand ? '\u25bc' : '\u25b6';
+      } else if (isRelevant && isArrivingAtProject && !sidebarTarget) {
+        // Fresh project arrival without a specific target: expand all relevant panels.
+        panel.classList.remove('collapsed');
+        sessionCollapseState.set(session.key, false);
+        if (minBtn) minBtn.textContent = '\u25bc';
       } else if (isRelevant && !isArrivingAtProject && sidebarTarget === session.key) {
         // Same-project sidebar click: expand only the target, preserve all other states.
         panel.classList.remove('collapsed');
@@ -7739,7 +7777,12 @@ function renderAgentTile(agent) {
       ? `${agent.epic_id}: ${agent.epic_title}`
       : agent.epic_id);
   }
-  const title = aBreadcrumb.join(' · ') || stripAnsiForDisplay(agent.title || agent.id);
+  // Append the dispatch/terminal title when no work item or epic anchors it.
+  const agentLabel = stripAnsiForDisplay(agent.title || agent.id);
+  if (!agent.work_item_id && !agent.epic_id && agentLabel !== agent.id) {
+    aBreadcrumb.push(agentLabel);
+  }
+  const title = aBreadcrumb.join(' · ') || agentLabel;
   const preview = isCli ? '(read-only — no output)' : ((agent.last_output || []).slice(-3).join('\n') || '(no output yet)');
   const typeLabel = isCli ? 'CLI (read-only)' : (agent.type === 'terminal' ? 'interactive' : 'non-interactive');
   const typeBadgeClass = isCli ? 'badge-cli' : (agent.type === 'terminal' ? 'badge-agent' : 'badge-open');
@@ -7781,7 +7824,7 @@ async function fetchAgentsList() {
   ]);
   const agents = [];
   for (const d of dispatches) {
-    agents.push({ type: 'dispatch', id: d.id, status: d.status, title: d.work_item_id || d.id, work_item_id: d.work_item_id, work_item_title: d.work_item_title || null, project_key: d.project_key, epic_id: d.epic_id, epic_title: d.epic_title || null, started_at: d.started_at, last_output: d.last_output || [], cost_usd: d.cost_usd, claude_session_id: d.claude_session_id, agent_phase: d.agent_phase || null, dispatch_mode: d.dispatch_mode || 'standard' });
+    agents.push({ type: 'dispatch', id: d.id, status: d.status, title: d.title || d.work_item_id || d.id, work_item_id: d.work_item_id, work_item_title: d.work_item_title || null, project_key: d.project_key, epic_id: d.epic_id, epic_title: d.epic_title || null, started_at: d.started_at, last_output: d.last_output || [], cost_usd: d.cost_usd, claude_session_id: d.claude_session_id, agent_phase: d.agent_phase || null, dispatch_mode: d.dispatch_mode || 'standard' });
   }
   for (const t of terminals) {
     agents.push({ type: 'terminal', id: t.id, status: t.status, title: t.title || t.id, work_item_id: t.work_item_id, project_key: t.project_key, epic_id: t.epic_id, started_at: t.started_at, last_output: t.last_output || [], claude_session_id: t.claude_session_id, agent_type: t.agent_type || t.type || 'claude' });
@@ -9807,6 +9850,8 @@ async function route() {
     const [, org, proj, comp] = parts;
     try {
       const projectKey = `${org}/${proj}/${comp}`;
+      // Signal project arrival early so context-aware fold fires even if data fetch fails.
+      if (currentProjectKey !== projectKey) _pendingProjectArrival = projectKey;
       const [data, bl, files] = await Promise.all([
         api(`component/${org}/${proj}/${comp}`),
         getBacklog(),
@@ -10054,6 +10099,14 @@ Promise.all([buildTree(), buildEpicTree()]).catch(err => { console.error('[start
     }
   }, 1000);
 });
+
+// Expose rendering helpers for sanitisation tests (test mode only).
+// The fixture sets window._testDisableAutoDismiss before scripts run, so any
+// test-mode flag is reliably detectable here.
+if (window._testDisableAutoDismiss !== undefined) {
+  window.renderPhaseTimeline = renderPhaseTimeline;
+  window.renderSettingsView = renderSettingsView;
+}
 </script>
 
 <div id="notes-panel" class="notes-panel" aria-label="Notes panel" role="complementary">
