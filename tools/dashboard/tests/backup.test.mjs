@@ -69,8 +69,7 @@ describe('backupDatabase', () => {
     // Guard all tmpDir-dependent teardown — before() may not have run if setup failed.
     if (tmpDir) {
       rmSync(tmpDir, { recursive: true, force: true });
-      const container = process.env.ARCHITECT_PG_CONTAINER ?? 'architect-postgres';
-      spawnSync('docker', ['stop', container], { encoding: 'utf8' });
+      // shared container — test only owns the temp DB, not the container lifecycle
     }
   });
 
@@ -170,5 +169,13 @@ describe('backupDatabase', () => {
     } finally {
       await dropDb(restoreDb).catch(() => {});
     }
+  });
+
+  it('does not stop the shared postgres container', () => {
+    const container = process.env.ARCHITECT_PG_CONTAINER ?? 'architect-postgres';
+    assert.ok(
+      dockerContainerRunning(container),
+      `container '${container}' must still be running after all backup tests`
+    );
   });
 });
