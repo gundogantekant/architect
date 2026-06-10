@@ -4176,7 +4176,13 @@ function renderEpicGroupedBoard(workItems, epics, projectKey) {
     const sorted = topoSort(items);
     const done = items.filter(i => i.status === 'done').length;
     const collapseKey = `${projectKey}:${epic.id}`;
-    const collapsed = collapsePrefs[collapseKey] === true;
+    // Tri-state: true = user collapsed, false = user expanded (beats auto), undefined = no pref (auto applies)
+    // Use local item count, not epic.progress — epic.progress spans all projects; items is project-scoped.
+    // Cancelled items are excluded from the completion check — 17 done + 1 cancelled = complete.
+    const nonCancelled = items.filter(i => i.status !== 'cancelled');
+    const epicDoneInView = epic.status === 'done' || (nonCancelled.length > 0 && done === nonCancelled.length);
+    const userPref = collapsePrefs[collapseKey];
+    const collapsed = userPref === true || (epicDoneInView && userPref !== false);
     const color = epicSignalColor(epic, { done, total: items.length });
 
     html += `<div class="epic-group${collapsed ? ' collapsed' : ''}" data-epic-group="${esc(epic.id)}">`;

@@ -90,6 +90,7 @@ export const SPEC_FILES = [
   'doc-content-integrity',
   'session-resurrection',
   'sync-contracts',
+  'epic-fold-done',
 ];
 
 function getLiveDashboardPorts() {
