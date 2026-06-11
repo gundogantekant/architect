@@ -124,6 +124,21 @@ Session type semantics:
 
 See `domain/rules.md` → Session Scope Rules for permission tiers per session type.
 
+## SessionProjectContext
+
+The orchestrator's in-session record of which portfolio project is currently the focus. Set when the orchestrator resolves a target project and used as the default scope for all subsequent work-item commands until updated or the session ends. Storage is in-context only — this entity is never persisted to a file or database.
+
+```json
+{
+  "project_key": "string (org/project/component, e.g. neuronic/cortex/main)",
+  "set_at_turn": "number (conversation turn index, for eviction display only)",
+  "source": "explicit | inferred"
+}
+```
+
+- `source: explicit` — user explicitly named this project (e.g. "/work scope neuronic/cortex/main" or "let's work on Cortex")
+- `source: inferred` — orchestrator resolved the project via portfolio-aware disambiguation or coordinator dispatch
+
 ## WorkflowPattern
 
 ```
@@ -154,7 +169,7 @@ Full coordinator output. References RequestClassification and WorkflowPattern.
         "agent": "string (agent name)",
         "purpose": "string",
         "parallel_with": ["string (agent names)"],
-        "contract": { "$ref": "DispatchContract (required for medium+ complexity, optional for trivial/small)" }
+        "contract": { "$ref": "DispatchContract (required for small+ complexity, optional for trivial)" }
       }
     ]
   },
@@ -168,7 +183,7 @@ Full coordinator output. References RequestClassification and WorkflowPattern.
 }
 ```
 
-**Rules**: `suggested_work_item` only for medium+ complexity. `skip_reason` mutually exclusive with `execution_plan.steps`. `contract` is required on all steps when classification complexity is `medium` or `large`; optional for `trivial` and `small`. When present, `purpose` serves as a one-line summary; `contract` provides the full success criteria. Steps without `contract` (legacy or trivial) remain valid.
+**Rules**: `suggested_work_item` only for medium+ complexity. `skip_reason` mutually exclusive with `execution_plan.steps`. `contract` is required on all steps when classification complexity is `small`, `medium`, or `large`; optional for `trivial`. When present, `purpose` serves as a one-line summary; `contract` provides the full success criteria. Steps without `contract` (legacy or trivial) remain valid.
 
 ## DispatchContract (Value Object)
 
@@ -180,14 +195,14 @@ Defines the success criteria for a single dispatch step. Immutable, compared by 
   "constraints": "string — hard boundaries that must not be crossed (1-3 sentences)",
   "expected_output": "string — the specific artifact or structure the agent must produce (1-3 sentences)",
   "failure_conditions": "string — what makes the output unacceptable (1-3 sentences)",
-  "scope_boundary": "string | null — files/directories the agent must NOT modify; null for trivial/small",
-  "stop_conditions": "string[] | null — conditions requiring the agent to halt and report; null for trivial/small",
-  "success_criteria": "string | null — user-visible conditions defining done (1–3 sentences); required for medium+, null for trivial/small",
-  "e2e_test_criteria": "string[] | null — specific E2E test scenarios the agent must implement; required for medium+ (3+ for large), null for trivial/small"
+  "scope_boundary": "string | null — files/directories the agent must NOT modify; null for trivial; optional for small; required for large",
+  "stop_conditions": "string[] | null — prompt-advisory conditions requiring the agent to halt and report; evaluated agent-side (server does not enforce); first matching condition triggers halt + log + structured summary; null for trivial; optional for small/medium; required for large (3+ entries). See domain/rules.md → Stop Condition Evaluation.",
+  "success_criteria": "string | null — user-visible conditions defining done (1–3 sentences); required for small+, null for trivial",
+  "e2e_test_criteria": "string[] | null — specific E2E test scenarios the agent must implement; required for small+ (1+ for small and medium, 3+ for large), null for trivial"
 }
 ```
 
-**Rules**: All four core fields (goal, constraints, expected_output, failure_conditions) are required when the contract is present. `scope_boundary` is required for large complexity, optional for medium, absent for trivial/small. `stop_conditions` is required for large complexity (3+ conditions), optional for medium, absent for trivial/small. `success_criteria` is required for medium+, null for trivial/small. `e2e_test_criteria` is required for medium+ (3+ entries for large), null for trivial/small. Each string field should be 1–3 sentences. Empty strings are treated as absent (see `domain/rules.md` → Dispatch Contract Rules). The coordinator produces contracts as part of the DispatchPlan; the prompt-builder renders them in the dispatch prompt.
+**Rules**: All four core fields (goal, constraints, expected_output, failure_conditions) are required when the contract is present for small+ complexity. `scope_boundary` is required for large complexity, optional for small/medium, absent for trivial. `stop_conditions` is required for large complexity (3+ conditions), optional for small/medium, absent for trivial. `success_criteria` is required for small+, null for trivial. `e2e_test_criteria` is required for small+ (1+ entries for small/medium, 3+ for large), null for trivial. Each string field should be 1–3 sentences. Empty strings are treated as absent (see `domain/rules.md` → Dispatch Contract Rules). The coordinator produces contracts as part of the DispatchPlan; the prompt-builder renders them in the dispatch prompt.
 
 ## ScoutReport
 
@@ -282,6 +297,14 @@ Stored at `portfolio/<org>/<project>/<component>.json`.
     // detection was added — triggers the Pre-Dispatch Worktree Readiness Check warning.
     "post_commands": ["string — shell commands to run in worktree after copy"]
   },
+  "ticket_prefix": "GEN",
+  // ticket_prefix: optional string matching ^[A-Z][A-Z0-9_-]*$; reserved values W and E are rejected.
+  // When set, this project's work items use a dedicated ID sequence (e.g., GEN-10000, GEN-10001)
+  // instead of the global W-NNN sequence. Projects without this field continue using W-NNN unchanged.
+  // Duplicate prefixes across projects are detected at server startup and excluded to prevent collisions.
+  "ticket_start": 10000,
+  // ticket_start: optional int (default 1); combined with ticket_prefix to seed the sequence on first use.
+  // For example, ticket_prefix="GEN" + ticket_start=10000 yields GEN-10000 as the first issued ID.
   "interfaces": {
     "provides": [
       {
@@ -301,7 +324,7 @@ Stored at `portfolio/<org>/<project>/<component>.json`.
 }
 ```
 
-**Optional fields**: `brief`, `doc_paths`, `portfolio_guides`, `worktree_mode`, `worktree_setup`, and `interfaces` are absent on entries onboarded before the profiler was added or where no setup is needed. After onboarding with profiler Phase 5.5, `worktree_setup` is always present (either with `copy_paths` populated or explicitly `{"copy_paths": [], "post_commands": []}`). An absent `worktree_setup` field is a signal that the project needs rescanning. The `interfaces` field enables cross-project awareness — the orchestrator and coordinator use `consumes` to identify impact when planning changes that affect APIs or protocols.
+**Optional fields**: `brief`, `doc_paths`, `portfolio_guides`, `worktree_mode`, `worktree_setup`, `interfaces`, `ticket_prefix`, and `ticket_start` are absent on entries onboarded before the profiler was added or where no setup is needed. After onboarding with profiler Phase 5.5, `worktree_setup` is always present (either with `copy_paths` populated or explicitly `{"copy_paths": [], "post_commands": []}`). An absent `worktree_setup` field is a signal that the project needs rescanning. The `interfaces` field enables cross-project awareness — the orchestrator and coordinator use `consumes` to identify impact when planning changes that affect APIs or protocols.
 
 ## Organization
 
@@ -489,6 +512,21 @@ Backed by PostgreSQL (Docker, `tools/dashboard/docker-compose.yml`). Migrations 
 }
 ```
 
+## BacklogResponse
+
+The shape of the `GET /api/backlog` API response. Both the tracker agent and the dashboard UI must implement against this canonical schema.
+
+Note: `scoped` and `scope` are not yet returned by the server. They describe the intended future shape (Solution C of the context-leakage fix). `projects` and `epics` are current.
+
+```json
+{
+  "scoped": "boolean (true if a project_key or org filter was applied, false if returning all projects)",
+  "scope": "string | null (the project_key or org value used to filter, null if unscoped)",
+  "projects": "{ [project_key: string]: { items: WorkItem[] } }",
+  "epics": "Epic[]"
+}
+```
+
 ## WorktreeContext
 
 Tracks an active worktree created for implementation isolation.
@@ -531,11 +569,12 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "status": "running|completed|failed|killed|interrupted|suspended|merge_pending|merge_conflict|dismissed|superseded",
   "started_at": "string (ISO 8601)",
   "completed_at": "string (ISO 8601, optional)",
+  "timeout_at": "ISO 8601 timestamp | null — absolute wall-clock deadline for the session. Set at dispatch time based on complexity (trivial=5min, small=15min, medium=60min, large=120min). Two-phase soft-kill: Phase 1 at 80% (auto-extend or idle-warning); Phase 2 at 100% (SIGTERM→SIGKILL). Does not pause when suspended. See domain/rules.md → Timeout Semantics.",
   "session_id": "string (Claude session ID, optional — legacy field)",
   "claude_session_id": "string (Claude CLI session UUID, optional — captured from stream-json init event, used for resume)",
   "cost_usd": "number (total cost, optional)",
   "pid": "number (OS process ID, optional — stored for restart survival)",
-  "exit_type": "'graceful'|'killed'|'interrupted'|'unknown'|null — how the process exited. Set by close handler: 'graceful' for code 0, 'killed' for intentional kill, 'interrupted' for ungraceful termination (crash, SIGKILL, OOM). null for dispatches that were never classified (pre-W-1139 rows).",
+  "exit_type": "'graceful'|'killed'|'interrupted'|'timeout'|'unknown'|null — how the process exited. Set by close handler: 'graceful' for code 0, 'killed' for intentional kill, 'timeout' for auto-timeout kill, 'interrupted' for ungraceful termination (crash, SIGKILL, OOM) and for user-initiated graceful interrupt (_gracefulInterrupt=true). null for dispatches that were never classified (pre-W-1139 rows).",
   "agent_phase": "AgentPhase (ephemeral, in-memory only — not persisted to PostgreSQL, derived from live stream-json event parsing or log replay)",
   "worktree_path": "string (absolute path to worktree, null if no worktree — persisted to PostgreSQL)",
   "worktree_branch": "string (worktree branch name, null if no worktree — persisted to PostgreSQL)",
@@ -553,7 +592,9 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "scope_violation": "boolean — true when post-dispatch scope boundary check detected out-of-boundary file changes; surfaced as a pre-merge warning",
   "merged_at": "string | null — ISO 8601 timestamp when the worktree branch was merged into the source branch",
   "merge_target": "string | null — branch name the worktree was merged into",
-  "deleted_at": "string (ISO 8601) | null — set to the kill timestamp when the record is soft-deleted via DELETE /api/dispatch/:id. null for all active, completed, and terminal-state records. Records with a non-null deleted_at are excluded from all default list queries and not restored to in-memory state on server restart. Set concurrently with status = 'killed' — never independently. Presence means the record is dismissed from active UI views; the status field independently records the operational outcome."
+  "deleted_at": "string (ISO 8601) | null — set to the kill timestamp when the record is soft-deleted via DELETE /api/dispatch/:id. null for all active, completed, and terminal-state records. Records with a non-null deleted_at are excluded from all default list queries and not restored to in-memory state on server restart. Set concurrently with status = 'killed' — never independently. Presence means the record is dismissed from active UI views; the status field independently records the operational outcome.",
+  "revoked_at": "TIMESTAMPTZ | null — set by POST /api/dispatch/:id/revoke (atomic: WHERE revoked_at IS NULL) and by POST /api/dispatch/:id/restart on the original before spawning. Invariant: only settable when status ≠ 'running'. Terminal: once set, cannot be cleared (COALESCE in UPSERT prevents overwrite). Effect: blocks resume (409 session_revoked), restart (409 if in-memory; 404 via DB fallback). Does NOT change status, deleted_at, or claude_session_id. `interrupted` with non-null claude_session_id and null revoked_at is restartable via POST .../restart.",
+  "previous_dispatch_id": "TEXT | null — set on new dispatches created via restart; persisted in initial saveDispatch UPSERT. Points to the original dispatch this was restarted from. No FK constraint (soft-delete compatibility: referenced dispatch may be soft-deleted). Null for all original (non-restarted) dispatches. Forms a singly-linked restart chain traceable by walking previous_dispatch_id."
 }
 ```
 
@@ -562,8 +603,9 @@ Status semantics for terminal states:
 - `superseded` — session was replaced by a re-dispatch. Treated same as dismissed in UI.
 
 CompleteDispatchRequest validation:
-- For medium+ complexity dispatches: reject completion if code_gate_passed !== true
-- For trivial/small dispatches: gate fields may be null (backward compatible; no rejection)
+- `test_suite_passed` and `build_verified` are required for all complexity including trivial; `test_framework_absent: true` satisfies the test gate; no `guidance.build_command` satisfies the build gate.
+- `contract_satisfied` is required only for small+ complexity dispatches.
+- For trivial dispatches: test and build gates apply; contract gate is waived.
 - Complexity is determined by getComplexityLevel(workItem) — see Isolated Work Mandate
 
 ## AutonomousCompletionPayload (Value Object)

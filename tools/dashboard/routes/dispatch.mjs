@@ -1,11 +1,11 @@
 import { existsSync, createReadStream } from 'node:fs';
 import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository, checkWorktreeReadiness } from '../worktree.mjs';
 import { AUTO_IMPLEMENTABLE_STATUSES, DISPATCH_TIMEOUT_MS, EXTEND_DURATION_MS, HEARTBEAT_INTERVAL_MS, INPUT_NEEDED_SOURCE, PIPELINE_STAGES, PORTFOLIO } from '../constants.mjs';
-import { triggerMerge, scheduleDispatchTimeout, appendProgress } from '../dispatch-manager.mjs';
-import { isMediumOrAbove } from '../utils/complexity.mjs';
+import { triggerMerge, scheduleDispatchTimeout, appendProgress, interruptDispatch, restartDispatch } from '../dispatch-manager.mjs';
+import { isMediumOrAbove, isSmallOrAbove, getComplexityLevel } from '../utils/complexity.mjs';
 import { validateContract } from '../utils/contract-validation.mjs';
 import { writePromptFile, deletePromptFile } from '../prompt-file.mjs';
-import { deriveContractFromDescription } from '../prompt-builder.mjs';
+import { createDispatch, createResumeDispatch } from '../utils/dispatch-factory.mjs';
 
 const SKILL_REGISTRY = {
   'project-refine-tasks': (workItemId) => workItemId ? `/project-refine-tasks ${workItemId}` : '/project-refine-tasks',
@@ -130,16 +130,20 @@ export default function dispatchRoutes(deps) {
       wireDispatchHandlers(dispatch, proc);
 
       dispatches.set(id, dispatch);
-      await saveDispatchToDb(dispatch);
-      // Capture prompt for audit — must run after saveDispatchToDb so the FK parent row exists
-      await db.insertPromptRecord({
-        dispatch_id: id,
-        work_item_id: null,
-        project_key: null,
-        prompt_text: onboardCapturedText,
-        char_count: onboardCapturedText.length,
-        truncated: onboardTruncated,
-      }).catch(e => console.error('[prompt-capture] failed:', e.message));
+      try {
+        await saveDispatchToDb(dispatch);
+        // Capture prompt for audit — must run after saveDispatchToDb so the FK parent row exists
+        await db.insertPromptRecord({
+          dispatch_id: id,
+          work_item_id: null,
+          project_key: null,
+          prompt_text: onboardCapturedText,
+          char_count: onboardCapturedText.length,
+          truncated: onboardTruncated,
+        }).catch(e => console.error('[prompt-capture] failed:', e.message));
+      } catch (dbErr) {
+        console.warn('[dispatch-onboard] DB persist failed — session active in-memory only, will not survive restart:', dbErr.message);
+      }
       json(res, { dispatch_id: id, status: 'running' });
     }],
 
@@ -182,7 +186,10 @@ export default function dispatchRoutes(deps) {
       if (!resolvedPath && dispatch_mode !== 'task_creation') {
         return err(res, `Could not resolve path for project: ${project_key}`, 400);
       }
-      const projectPath = resolvedPath;
+      // task_creation dispatches don't require a registered path — fall back to ROOT so
+      // createDispatch's required-field validation passes.
+      const projectPath = resolvedPath ?? (dispatch_mode === 'task_creation' ? ROOT : null);
+      if (projectPath && !existsSync(projectPath)) return err(res, `Project path does not exist: ${projectPath} — check if the volume or drive is mounted`, 400);
 
       const id = `D-${Date.now()}`;
 
@@ -226,10 +233,11 @@ export default function dispatchRoutes(deps) {
 
       const effectiveWorkItem = workItem || (work_item_id ? { id: work_item_id, title: title || '', description: description || '', status: 'draft', priority: 'medium', tags: [], session_log: [] } : null);
 
-      // Validate contract completeness for medium+ complexity before proceeding.
+      // Validate contract completeness for small+ complexity before proceeding.
       // Runs on rawContract (pre-strip) so empty-string fields are caught as missing.
-      // Skill dispatches bypass contract validation — the skill manages its own workflow.
-      if (!skill_id) {
+      // Skill dispatches and task_creation dispatches bypass contract validation.
+      // Dispatches without a work item (review, discuss, ad-hoc) are also exempt.
+      if (!skill_id && dispatch_mode !== 'task_creation' && work_item_id) {
         const contractViolations = validateContract(effectiveWorkItem, rawContract);
         if (contractViolations) {
           return json(res, { error: 'Contract incomplete', violations: contractViolations }, 422);
@@ -262,7 +270,8 @@ export default function dispatchRoutes(deps) {
       }
 
       // Validate derived contract completeness before worktree creation
-      if (!skill_id && (!rawContract || Object.keys(rawContract).length === 0)) {
+      // Only applies to dispatches with an explicit work item and not task_creation mode.
+      if (!skill_id && dispatch_mode !== 'task_creation' && work_item_id && (!rawContract || Object.keys(rawContract).length === 0)) {
         if (isMediumOrAbove(effectiveWorkItem)) {
           const derived = deriveContractFromDescription(effectiveWorkItem?.description ?? '');
           if (derived) {
@@ -333,31 +342,22 @@ export default function dispatchRoutes(deps) {
       // Select sub-agents based on work item and portfolio context
       const agentDefs = await selectAgentsForDispatch({ workItem: effectiveWorkItem, portfolio });
 
-      const dispatch = {
+      const dispatch = createDispatch({
         id,
-        work_item_id,
-        epic_id: epic_id || null,
-        project_key,
-        project_path: projectPath,
+        projectKey: project_key,
+        projectPath,
+        workItemId: work_item_id,
+        epicId: epic_id || null,
         title: title || work_item_id || '',
-        permission_mode: resolvedPermMode,
-        skip_permissions: resolvedSkipPerms,
-        dispatch_mode: skill_id ? 'skill' : dispatch_mode,
-        skill_id: skill_id || null,
-        status: 'running',
-        agent_phase: 'generating',
-        agent_phase_history: [],
+        permissionMode: resolvedPermMode,
+        skipPermissions: resolvedSkipPerms,
+        dispatchMode: skill_id ? 'skill' : dispatch_mode,
+        skillId: skill_id || null,
         contract: contract || null,
-        claude_session_id: null,
-        worktree_path: worktreeContext?.worktreePath || null,
-        worktree_branch: worktreeContext?.branchName || null,
-        source_branch: worktreeContext?.sourceBranch || null,
-        output: [],
-        lastLines: [],
-        wsClients: new Set(),
-        started_at: new Date().toISOString(),
-        completed_at: null,
-      };
+        worktreePath: worktreeContext?.worktreePath,
+        worktreeBranch: worktreeContext?.branchName,
+        sourceBranch: worktreeContext?.sourceBranch,
+      });
 
       // Prompt delivery: see W-1184 comment in the onboard handler above.
       const standardPromptFile = await writePromptFile(prompt, id, TMP_DIR);
@@ -410,16 +410,20 @@ export default function dispatchRoutes(deps) {
       scheduleDispatchTimeout(dispatch, DISPATCH_TIMEOUT_MS[tier] ?? DISPATCH_TIMEOUT_MS.medium, saveDispatchToDb);
 
       dispatches.set(id, dispatch);
-      await saveDispatchToDb(dispatch);
-      // Capture prompt for audit — must run after saveDispatchToDb so the FK parent row exists
-      await db.insertPromptRecord({
-        dispatch_id: id,
-        work_item_id: work_item_id || null,
-        project_key: project_key || null,
-        prompt_text: standardCapturedText,
-        char_count: standardCapturedText.length,
-        truncated: standardTruncated,
-      }).catch(e => console.error('[prompt-capture] failed:', e.message));
+      try {
+        await saveDispatchToDb(dispatch);
+        // Capture prompt for audit — must run after saveDispatchToDb so the FK parent row exists
+        await db.insertPromptRecord({
+          dispatch_id: id,
+          work_item_id: work_item_id || null,
+          project_key: project_key || null,
+          prompt_text: standardCapturedText,
+          char_count: standardCapturedText.length,
+          truncated: standardTruncated,
+        }).catch(e => console.error('[prompt-capture] failed:', e.message));
+      } catch (dbErr) {
+        console.warn('[dispatch-create] DB persist failed — session active in-memory only, will not survive restart:', dbErr.message);
+      }
       json(res, { dispatch_id: id, status: 'running' });
     }],
 
@@ -455,6 +459,7 @@ export default function dispatchRoutes(deps) {
 
       const projectPath = await resolveProjectPath(project_key);
       if (!projectPath) return err(res, `Could not resolve path for project: ${project_key}`, 400);
+      if (!existsSync(projectPath)) return err(res, `Project path does not exist: ${projectPath} — check if the volume or drive is mounted`, 400);
 
       const id = `D-${Date.now()}`;
 
@@ -500,30 +505,16 @@ export default function dispatchRoutes(deps) {
 
       const effectiveCwd = worktreeContext?.worktreePath || projectPath;
 
-      const dispatch = {
+      const dispatch = createDispatch({
         id,
-        work_item_id,
-        epic_id: null,
-        project_key,
-        project_path: projectPath,
+        projectKey: project_key,
+        projectPath,
+        workItemId: work_item_id,
         title: workItem.title || work_item_id,
-        permission_mode: 'acceptEdits',
-        skip_permissions: true,
-        dispatch_mode: 'auto_implement',
-        status: 'running',
-        agent_phase: 'generating',
-        agent_phase_history: [],
-        contract: null,
-        claude_session_id: null,
-        worktree_path: worktreeContext?.worktreePath || null,
-        worktree_branch: worktreeContext?.branchName || null,
-        source_branch: worktreeContext?.sourceBranch || null,
-        output: [],
-        lastLines: [],
-        wsClients: new Set(),
-        started_at: new Date().toISOString(),
-        completed_at: null,
-      };
+        permissionMode: 'acceptEdits',
+        skipPermissions: true,
+        dispatchMode: 'auto_implement',
+      });
 
       // Prompt delivery: see W-1184 comment in the onboard handler above.
       const autoPromptFile = await writePromptFile(prompt, id, TMP_DIR);
@@ -680,7 +671,9 @@ export default function dispatchRoutes(deps) {
     // List dispatches (returns all including completed/failed/interrupted)
     [/^\/api\/dispatch\/active$/, 'GET', async (_m, req, res) => {
       const workerId = req.headers['x-test-worker-id'];
-      const includeDeleted = new URL(req.url, 'http://x').searchParams.get('include_deleted') === 'true';
+      const reqUrl = new URL(req.url, 'http://x');
+      const includeDeleted = reqUrl.searchParams.get('include_deleted') === 'true';
+      const projectKey = reqUrl.searchParams.get('project_key') || null;
       const list = await Promise.all([...dispatches].map(async ([id, d]) => {
         if (workerId !== undefined && d._testWorkerId !== workerId) return null;
         return {
@@ -723,15 +716,18 @@ export default function dispatchRoutes(deps) {
           contract_satisfied: d.contract_satisfied ?? null,
           scope_violation: d.scope_violation ?? false,
           deleted_at: null,
+          revoked_at: d.revoked_at || null,
+          previous_dispatch_id: d.previous_dispatch_id || null,
         };
       }));
-      const active = list.filter(Boolean);
+      const active = list.filter(Boolean).filter(d => !projectKey || d.project_key === projectKey);
       if (!includeDeleted) {
         json(res, active);
         return;
       }
       const deleted = await db.getDeletedDispatches();
       const deletedRows = deleted
+        .filter(d => !projectKey || d.project_key === projectKey)
         .map(d => ({
           id: d.id,
           title: d.title || null,
@@ -964,6 +960,34 @@ export default function dispatchRoutes(deps) {
       const dispatch = dispatches.get(m[1]);
       if (!dispatch) return err(res, 'dispatch not found', 404);
       if (dispatch.status !== 'merge_pending') return err(res, 'dispatch is not in merge_pending status', 400);
+
+      // Gate 1: Test suite must have been verified at /complete time
+      if (!dispatch.test_suite_passed) {
+        return json(res, { error: 'tests_not_passed', message: 'Test suite has not been verified for this dispatch.' }, 422);
+      }
+
+      // Gate 2: Build must have been verified at /complete time
+      if (dispatch.build_command_required && !dispatch.build_verified) {
+        return json(res, { error: 'build_not_verified', message: 'Build has not been verified for this dispatch.' }, 422);
+      }
+
+      // Gate 3: Contract satisfaction (small+ only)
+      const workItemForMerge = dispatch.work_item_id ? await deps.loadWorkItem(dispatch.work_item_id).catch(() => null) : null;
+      if (isSmallOrAbove(getComplexityLevel(workItemForMerge)) && !dispatch.contract_satisfied) {
+        return json(res, { error: 'contract_not_satisfied', message: 'Contract not satisfied.' }, 422);
+      }
+
+      // Gate 4: Scope boundary violation (only blocks when definitively true; null/undefined means check never ran)
+      if (dispatch.scope_violation === true) {
+        const detail = dispatch.session_log?.findLast?.(e => e.trigger === 'scope-violation')?.summary;
+        return json(res, {
+          error: 'scope_violation',
+          message: 'Scope boundary was violated; review changes before merging.',
+          ...(detail && { detail }),
+          hint: 'Revert out-of-scope files or adjust the contract scope_boundary before retrying.',
+        }, 422);
+      }
+
       if (dispatch._mergeTimer) {
         clearTimeout(dispatch._mergeTimer);
         dispatch._mergeTimer = null;
@@ -984,7 +1008,34 @@ export default function dispatchRoutes(deps) {
       dispatch._mergeHandled = true;
 
       const body = await parseBody(req);
-      const { sha, summary } = body || {};
+      const { sha, summary, test_suite_passed, test_framework_absent, build_verified, contract_satisfied } = body || {};
+
+      // Gate 1: Test suite (required for all complexity)
+      if (!test_suite_passed && !test_framework_absent) {
+        dispatch._mergeHandled = false;
+        return json(res, { error: 'tests_not_passed', message: 'Full test suite must pass before completing. Report test_suite_passed=true or test_framework_absent=true.' }, 422);
+      }
+
+      // Gate 2: Build verification (only when portfolio has build_command)
+      const portfolioEntry = dispatch.project_key ? await deps.loadPortfolioContext(dispatch.project_key).catch(() => null) : null;
+      const hasBuildCmd = !!(portfolioEntry?.entry?.guidance?.build_command);
+      if (hasBuildCmd && !build_verified) {
+        dispatch._mergeHandled = false;
+        return json(res, { error: 'build_not_verified', message: 'Build must be verified before completing.' }, 422);
+      }
+
+      // Gate 3: Contract (small+ only)
+      const workItemForGate = dispatch.work_item_id ? await deps.loadWorkItem(dispatch.work_item_id).catch(() => null) : null;
+      const complexityForGate = getComplexityLevel(workItemForGate);
+      if (isSmallOrAbove(complexityForGate) && !contract_satisfied && !dispatch.contract_satisfied) {
+        dispatch._mergeHandled = false;
+        return json(res, { error: 'contract_not_satisfied', message: 'E2E contract criteria must be verified before completing.' }, 422);
+      }
+
+      dispatch.test_suite_passed = test_suite_passed || !!test_framework_absent;
+      dispatch.build_command_required = hasBuildCmd;
+      dispatch.build_verified = hasBuildCmd ? (build_verified === true) : true;
+      if (contract_satisfied) dispatch.contract_satisfied = true;
 
       dispatch.status = 'merge_pending';
       dispatch.completion_sha = sha || null;
@@ -1008,6 +1059,7 @@ export default function dispatchRoutes(deps) {
 
       if (mergeGate === 'auto') {
         dispatch._mergeTimer = setTimeout(() => {
+          if (dispatch.scope_violation === true) return;
           triggerMerge(dispatch, deps).catch(e => console.error(`[auto-merge] error for ${m[1]}:`, e));
         }, 10000);
       }
@@ -1051,12 +1103,61 @@ export default function dispatchRoutes(deps) {
       json(res, { status: 'dismissed', id: m[1] });
     }],
 
+    // Interrupt a running dispatch: SIGINT → SIGTERM(10s) → SIGKILL(15s)
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/interrupt$/, 'POST', async (m, _req, res) => {
+      try {
+        const result = interruptDispatch(m[1], dispatches);
+        json(res, { dispatch_id: m[1], status: 'interrupted', claude_session_id: result.claude_session_id });
+      } catch (e) {
+        if (e.status) return json(res, { error: e.error, code: e.code }, e.status);
+        throw e;
+      }
+    }],
+
+    // Restart a finished dispatch by re-spawning with --resume SESSION_ID from same cwd
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/restart$/, 'POST', async (m, req, res) => {
+      let body = {};
+      try { body = await parseBody(req); } catch {}
+      try {
+        const result = await restartDispatch(m[1], { additional_instructions: body?.additional_instructions }, dispatches, db);
+        json(res, { dispatch_id: result.id, status: 'running', restarted_from: m[1], claude_session_id: result.claude_session_id });
+      } catch (e) {
+        if (e.status) return json(res, { error: e.error, code: e.code }, e.status);
+        throw e;
+      }
+    }],
+
+    // Revoke a non-running dispatch: marks it permanently non-resumable
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/revoke$/, 'POST', async (m, _req, res) => {
+      const id = m[1];
+      const inMemory = dispatches.get(id);
+
+      // Two-step lookup: in-memory first for running guard, raw DB for 404 vs 409 disambiguation
+      if (!inMemory) {
+        const raw = await db.getRawDispatchForRevoke(id);
+        if (!raw) return err(res, 'dispatch not found', 404);
+        if (raw.revoked_at) return json(res, { error: 'session is already revoked', code: 'session_revoked' }, 409);
+        if (raw.status === 'running') return json(res, { error: 'cannot revoke a running session — interrupt it first', code: 'session_running' }, 400);
+      } else {
+        if (inMemory.revoked_at) return json(res, { error: 'session is already revoked', code: 'session_revoked' }, 409);
+        if (inMemory.status === 'running') return json(res, { error: 'cannot revoke a running session — interrupt it first', code: 'session_running' }, 400);
+      }
+
+      const revoked = await db.revokeDispatch(id);
+      if (!revoked) return json(res, { error: 'session was concurrently revoked', code: 'session_revoked' }, 409);
+
+      const revokedAt = new Date().toISOString();
+      if (inMemory) inMemory.revoked_at = revokedAt;
+      json(res, { dispatch_id: id, status: 'revoked', revoked_at: revokedAt });
+    }],
+
     // Resume a suspended dispatch
     [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/resume$/, 'POST', async (m, req, res) => {
       const old = dispatches.get(m[1]);
       if (!old) return err(res, 'dispatch not found');
       if (old.status !== 'suspended') return err(res, 'dispatch is not suspended', 400);
       if (!old.claude_session_id) return err(res, 'no session ID available for resume', 400);
+      if (old.revoked_at) return json(res, { error: 'cannot resume a revoked session — use restart instead', code: 'session_revoked' }, 409);
 
       let body = {};
       try { body = await parseBody(req); } catch {}
@@ -1078,30 +1179,21 @@ export default function dispatchRoutes(deps) {
       const resolvedPermMode = permission_mode || 'acceptEdits';
       const resolvedSkipPerms = skip_permissions === true || skip_permissions === 'true';
 
-      const dispatch = {
+      const dispatch = createResumeDispatch({
         id,
-        work_item_id,
-        epic_id,
-        project_key,
-        project_path,
+        projectKey: project_key,
+        projectPath: project_path,
+        workItemId: work_item_id,
+        epicId: epic_id,
         title: title || '',
-        permission_mode: resolvedPermMode,
-        skip_permissions: resolvedSkipPerms,
-        status: 'running',
-        agent_phase: 'generating',
-        agent_phase_history: [],
-        contract: null,
-        claude_session_id: resumeSessionId,
-        worktree_path: worktree_path || null,
-        worktree_branch: worktree_branch || null,
-        source_branch: source_branch || null,
-        output: [],
-        lastLines: [],
-        wsClients: new Set(),
-        started_at: new Date().toISOString(),
-        completed_at: null,
-        _autoExtended: old.auto_extended ?? false,
-      };
+        permissionMode: resolvedPermMode,
+        skipPermissions: resolvedSkipPerms,
+        claudeSessionId: resumeSessionId,
+        autoExtended: old.auto_extended ?? false,
+        worktreePath: worktree_path || null,
+        worktreeBranch: worktree_branch || null,
+        sourceBranch: source_branch || null,
+      });
 
       const { workItem: freshWorkItem, portfolio } = await loadResumeContext({ work_item_id, project_key });
 
@@ -1142,6 +1234,12 @@ export default function dispatchRoutes(deps) {
       dispatches.set(id, dispatch);
       await saveDispatchToDb(dispatch);
       json(res, { dispatch_id: id, status: 'running', resumed_from: m[1] });
+    }],
+    // GET /api/dispatch/:id/prompt — retrieves the stored assembled prompt for a dispatch
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/prompt$/, 'GET', async (m, _req, res) => {
+      const record = await db.getPromptByDispatchId(m[1]);
+      if (!record) return err(res, 'not_found', 404);
+      return json(res, record);
     }],
   ];
 }

@@ -172,6 +172,8 @@ export function spawnTestServer(port, workDir, dbName, extraEnv = {}) {
     // Ensure password default is always propagated to the child process even
     // when the ambient env does not have ARCHITECT_PG_PASSWORD set.
     ARCHITECT_PG_PASSWORD: process.env.ARCHITECT_PG_PASSWORD ?? 'architect',
+    // Enable test-only endpoints (e.g. simulate-db-save-error).
+    NODE_ENV: 'test',
   };
 
   const proc = spawn(process.execPath, [SERVER], {

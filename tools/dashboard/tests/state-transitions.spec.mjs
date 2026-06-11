@@ -55,7 +55,7 @@ async function walkToState(id, targetStatus) {
 test.describe('State machine contracts @fast', () => {
 
   test('SM-1: full lifecycle draft→planned→in-progress→in-review→testing→preview→done', async () => {
-    const item = await seedWorkItem({ title: 'SM-1 full lifecycle' });
+    const item = await seedWorkItem({ title: 'SM-1 full lifecycle', tags: ['trivial'] });
     expect(item.status).toBe('draft');
     await expectTransition(item.id, 'planned');
     await expectTransition(item.id, 'in-progress');
@@ -77,7 +77,7 @@ test.describe('State machine contracts @fast', () => {
   });
 
   test('SM-3: input_needed flag blocks forward, resolves on clear', async () => {
-    const item = await seedWorkItem({ title: 'SM-3 input flag' });
+    const item = await seedWorkItem({ title: 'SM-3 input flag', tags: ['trivial'] });
     await walkToState(item.id, 'in-progress');
     await fetch(`${getBase()}/api/work-items/${item.id}/input-needed`, {
       method: 'PATCH',
@@ -94,7 +94,7 @@ test.describe('State machine contracts @fast', () => {
   });
 
   test('SM-4: approval flag (all mode) blocks until all approvers approve', async () => {
-    const item = await seedWorkItem({ title: 'SM-4 approvals' });
+    const item = await seedWorkItem({ title: 'SM-4 approvals', tags: ['trivial'] });
     await walkToState(item.id, 'testing');
     const a1 = await api(`work-items/${item.id}/approvals`, {
       method: 'POST',
@@ -118,7 +118,7 @@ test.describe('State machine contracts @fast', () => {
   });
 
   test('SM-5: backward transitions work regardless of flag state', async () => {
-    const item = await seedWorkItem({ title: 'SM-5 backward flags' });
+    const item = await seedWorkItem({ title: 'SM-5 backward flags', tags: ['trivial'] });
     await walkToState(item.id, 'in-review');
     await fetch(`${getBase()}/api/work-items/${item.id}/input-needed`, {
       method: 'PATCH',
@@ -128,7 +128,7 @@ test.describe('State machine contracts @fast', () => {
     const res = await expectTransition(item.id, 'in-progress');
     expect(res.status).toBe('in-progress');
 
-    const item2 = await seedWorkItem({ title: 'SM-5 preview→in-progress' });
+    const item2 = await seedWorkItem({ title: 'SM-5 preview→in-progress', tags: ['trivial'] });
     await walkToState(item2.id, 'preview');
     await fetch(`${getBase()}/api/work-items/${item2.id}/input-needed`, {
       method: 'PATCH',
@@ -139,7 +139,7 @@ test.describe('State machine contracts @fast', () => {
   });
 
   test('SM-6: cancellation and reopening', async () => {
-    const item = await seedWorkItem({ title: 'SM-6 cancel reopen' });
+    const item = await seedWorkItem({ title: 'SM-6 cancel reopen', tags: ['trivial'] });
     await walkToState(item.id, 'testing');
     const cancelled = await expectTransition(item.id, 'cancelled');
     expect(cancelled.status).toBe('cancelled');
@@ -156,7 +156,7 @@ test.describe('State machine contracts @fast', () => {
   });
 
   test('SM-8: released metadata only settable on done', async () => {
-    const item = await seedWorkItem({ title: 'SM-8 released on non-done' });
+    const item = await seedWorkItem({ title: 'SM-8 released on non-done', tags: ['trivial'] });
     await walkToState(item.id, 'in-progress');
     const bad = await fetch(`${getBase()}/api/work-items/${item.id}/released`, {
       method: 'PATCH',
@@ -165,7 +165,7 @@ test.describe('State machine contracts @fast', () => {
     });
     expect(bad.status).toBe(400);
 
-    const item2 = await seedWorkItem({ title: 'SM-8 released on done' });
+    const item2 = await seedWorkItem({ title: 'SM-8 released on done', tags: ['trivial'] });
     await walkToState(item2.id, 'done');
     const ok = await fetch(`${getBase()}/api/work-items/${item2.id}/released`, {
       method: 'PATCH',
@@ -179,7 +179,7 @@ test.describe('State machine contracts @fast', () => {
   });
 
   test('SM-9: sequential approval activates approvers one at a time', async () => {
-    const item = await seedWorkItem({ title: 'SM-9 sequential' });
+    const item = await seedWorkItem({ title: 'SM-9 sequential', tags: ['trivial'] });
     await walkToState(item.id, 'testing');
     // Set sequential mode before adding approvers
     await api(`work-items/${item.id}`, {
@@ -226,15 +226,15 @@ test.describe('State machine contracts @fast', () => {
   });
 
   test('SM-10: stakeholder projection view maps states correctly', async () => {
-    const draftItem = await seedWorkItem({ title: 'SM-10 draft' });
-    const doneItem = await seedWorkItem({ title: 'SM-10 done' });
+    const draftItem = await seedWorkItem({ title: 'SM-10 draft', tags: ['trivial'] });
+    const doneItem = await seedWorkItem({ title: 'SM-10 done', tags: ['trivial'] });
     await walkToState(doneItem.id, 'done');
 
-    const archivedItem = await seedWorkItem({ title: 'SM-10 archived' });
+    const archivedItem = await seedWorkItem({ title: 'SM-10 archived', tags: ['trivial'] });
     await walkToState(archivedItem.id, 'done');
     await expectTransition(archivedItem.id, 'archived');
 
-    const reviewItem = await seedWorkItem({ title: 'SM-10 review' });
+    const reviewItem = await seedWorkItem({ title: 'SM-10 review', tags: ['trivial'] });
     await walkToState(reviewItem.id, 'in-review');
 
     const resp = await fetch(`${getBase()}/api/backlog?view=stakeholder`);
@@ -249,11 +249,11 @@ test.describe('State machine contracts @fast', () => {
   });
 
   test('SM-11: archive transitions — done→archived and cancelled→archived succeed; archived is terminal', async () => {
-    const doneItem = await seedWorkItem({ title: 'SM-11 done→archived' });
+    const doneItem = await seedWorkItem({ title: 'SM-11 done→archived', tags: ['trivial'] });
     await walkToState(doneItem.id, 'done');
     await expectTransition(doneItem.id, 'archived');
 
-    const cancelledItem = await seedWorkItem({ title: 'SM-11 cancelled→archived' });
+    const cancelledItem = await seedWorkItem({ title: 'SM-11 cancelled→archived', tags: ['trivial'] });
     await expectTransition(cancelledItem.id, 'cancelled');
     await expectTransition(cancelledItem.id, 'archived');
 
@@ -263,7 +263,7 @@ test.describe('State machine contracts @fast', () => {
   });
 
   test('SM-12: planned→draft without reason returns 400; with reason logs to session_log', async () => {
-    const item = await seedWorkItem({ title: 'SM-12 rollback' });
+    const item = await seedWorkItem({ title: 'SM-12 rollback', tags: ['trivial'] });
     await expectTransition(item.id, 'planned');
 
     const noReason = await patchStatus(item.id, 'draft');
@@ -276,8 +276,8 @@ test.describe('State machine contracts @fast', () => {
   });
 
   test('SM-13: cross-project approval with blocking_work_item_id stays active until blocker=done', async () => {
-    const blocker = await seedWorkItem({ title: 'SM-13 blocker', project_key: 'ticari/other/main' });
-    const item = await seedWorkItem({ title: 'SM-13 blocked approval' });
+    const blocker = await seedWorkItem({ title: 'SM-13 blocker', project_key: 'ticari/other/main', tags: ['trivial'] });
+    const item = await seedWorkItem({ title: 'SM-13 blocked approval', tags: ['trivial'] });
     await walkToState(item.id, 'testing');
     await api(`work-items/${item.id}/approvals`, {
       method: 'POST',
@@ -294,7 +294,7 @@ test.describe('State machine contracts @fast', () => {
   test('SM-14: T1 fast path allows draft→planned→in-progress→done for items tagged T1', async () => {
     const item = await api('work-items', {
       method: 'POST',
-      body: JSON.stringify({ title: 'SM-14 T1 fast', project_key: 'ticari/architect/main', tags: ['T1'] }),
+      body: JSON.stringify({ title: 'SM-14 T1 fast', project_key: 'ticari/architect/main', tags: ['T1', 'trivial'] }),
     });
     expect(item.status).toBe('draft');
     await expectTransition(item.id, 'planned');
@@ -303,14 +303,14 @@ test.describe('State machine contracts @fast', () => {
     expect(done.status).toBe('done');
 
     // Non-T1 items may not skip in-review/testing/preview
-    const normal = await seedWorkItem({ title: 'SM-14 non-T1' });
+    const normal = await seedWorkItem({ title: 'SM-14 non-T1', tags: ['trivial'] });
     await expectTransition(normal.id, 'planned');
     await expectTransition(normal.id, 'in-progress');
     await expectRejectedTransition(normal.id, 'done');
   });
 
   test('SM-15: approval invariant — cannot set approval_active=1 without pending approvers', async () => {
-    const item = await seedWorkItem({ title: 'SM-15 invariant' });
+    const item = await seedWorkItem({ title: 'SM-15 invariant', tags: ['trivial'] });
     await walkToState(item.id, 'testing');
     const resp = await fetch(`${getBase()}/api/work-items/${item.id}`, {
       method: 'PATCH',
@@ -321,7 +321,7 @@ test.describe('State machine contracts @fast', () => {
   });
 
   test('SM-16: formatStatusWithFlags helper — stakeholder projection includes flag modifier', async () => {
-    const item = await seedWorkItem({ title: 'SM-16 flag render' });
+    const item = await seedWorkItem({ title: 'SM-16 flag render', tags: ['trivial'] });
     await walkToState(item.id, 'in-progress');
     await fetch(`${getBase()}/api/work-items/${item.id}/input-needed`, {
       method: 'PATCH',
@@ -376,7 +376,7 @@ test.describe('State machine contracts @fast', () => {
   });
 
   test('SM-18: composite index idx_wia_identity_status is used for approver_pending query', async () => {
-    const item = await seedWorkItem({ title: 'SM-18 index check' });
+    const item = await seedWorkItem({ title: 'SM-18 index check', tags: ['trivial'] });
     await walkToState(item.id, 'testing');
     await api(`work-items/${item.id}/approvals`, {
       method: 'POST',

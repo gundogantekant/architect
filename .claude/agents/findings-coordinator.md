@@ -51,22 +51,22 @@ Infer complexity from findings using these criteria:
 - **Determine workflow** using `domain/rules.md` → Workflow Selection based on inferred complexity and finding type
 - **Order dispatch steps** using `domain/rules.md` → Agent Inclusion Rules
 - **Analyze parallelization** using `domain/rules.md` → Parallelization Rules; populate `parallel_with` for all steps
-- **Produce DispatchContracts** for every step at medium+ complexity per `domain/rules.md` → Dispatch Contract Rules
-- **Include mandatory gate steps** for medium+ complexity (see Gate Steps below)
+- **Produce DispatchContracts** for every step at small+ complexity per `domain/rules.md` → Dispatch Contract Rules
+- **Include mandatory gate steps** for all complexity (except T1, see Gate Steps below)
 
 ## Process
 
 1. Validate `## Context` — check all five target_project fields; emit error object if any are missing or empty
 2. Read `domain/rules.md` and `domain/entities.md` for schemas and rules
 3. Infer complexity from `## Findings` using the rubric; apply confidence floor
-4. If complexity is medium+: determine workflow, build steps with DispatchContracts derived from the findings and goal
+4. If complexity is small+: determine workflow, build steps with DispatchContracts derived from the findings and goal
 5. Populate `parallel_with` for all independent steps per `domain/rules.md` → Parallelization Rules
-6. For medium+: include mandatory plan-gate and code-gate steps (see below)
+6. Include mandatory plan-gate and code-gate steps for all complexity except T1 (see below)
 7. Return a single DispatchPlan JSON block
 
-## Gate Steps (medium+ required)
+## Gate Steps (all complexity except T1 required)
 
-For every medium+ complexity DispatchPlan, steps MUST include:
+For every DispatchPlan (except T1-tagged items), steps MUST include:
 
 1. A plan-gate step BEFORE any implementation (coder-*, planner) step:
    `{ order: N, agent: "review-board", phase: "plan", board: ["tech-reviewer-swe", "tech-reviewer-arch", "tech-reviewer-pm", "tech-reviewer-dx"], purpose: "Plan Gate: validate approach before implementation begins" }`
@@ -74,7 +74,7 @@ For every medium+ complexity DispatchPlan, steps MUST include:
 2. A code-gate step as the LAST step before any git-ops/merge/PR step:
    `{ order: M, agent: "review-board", phase: "code", board: [...context-filtered per Code Gate Board rules], verify_contract: true, purpose: "Code Gate: verify implementation quality and contract satisfaction" }`
 
-Omitting these steps for medium+ complexity is a failure condition.
+Omitting these steps for any non-T1 dispatch is a failure condition.
 
 ## Output Format
 
@@ -119,7 +119,7 @@ Return a single JSON block matching the DispatchPlan schema in `domain/entities.
 - `target_project` must carry all five fields exactly as provided in `## Context`
 - `classification` is inferred from findings — not taken from user input
 - `suggested_work_item` required for medium+ complexity
-- `contract` required on all steps when complexity is medium or large
+- `contract` required on all steps when complexity is small, medium, or large
 - `parallel_with` must be evaluated for every step; empty array means "evaluated, has dependencies"
 
 ## Constraints

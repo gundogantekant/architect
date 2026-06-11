@@ -35,6 +35,27 @@
 .split-btn-group .btn-item-refine { border-radius: 0; margin-left: 0; border-left: none; }
 .cost-badge { font-size: 11px; color: var(--text-light, #888); margin-left: 6px; font-variant-numeric: tabular-nums; }
 .cost-placeholder { font-size: 11px; color: var(--text-light, #888); margin-left: 6px; }
+.btn-interrupt { font-size:11px; padding:2px 8px; border-radius:3px; border:1px solid #D97706; color:#92400E; background:transparent; cursor:pointer; }
+.btn-interrupt:hover { background:#FEF3C7; }
+.btn-restart  { font-size:11px; padding:2px 8px; border-radius:3px; border:1px solid #7C3AED; color:#7C3AED; background:transparent; cursor:pointer; }
+.btn-restart:hover  { background:#EDE9FE; }
+.btn-revoke   { font-size:11px; padding:2px 8px; border-radius:3px; border:1px solid #9CA3AF; color:#6B7280; background:transparent; cursor:pointer; }
+.btn-revoke:hover   { background:#F3F4F6; }
+.revoked-badge    { font-size:11px; background:#F3F4F6; color:#6B7280; padding:1px 5px; border-radius:3px; margin-left:4px; cursor:help; }
+.superseded-badge { font-size:11px; background:#EDE9FE; color:#7C3AED; padding:1px 5px; border-radius:3px; margin-left:4px; }
+.session-stopping { font-size:11px; color:#92400E; margin-left:6px; }
+.status-dot.interrupted { background: #F59E0B; }
+.ws-reconnect-banner { font-size:12px; color:#92400E; background:#FEF3C7; border:1px solid #FDE68A; border-radius:4px; padding:4px 10px; margin:4px 0; display:flex; align-items:center; gap:8px; }
+.ws-reconnect-banner.ws-reconnect-failed { color:#7C2D12; background:#FEE2E2; border-color:#FECACA; }
+.ws-reconnect-banner button { font-size:11px; padding:2px 8px; border:1px solid #D97706; border-radius:3px; background:#FFF; cursor:pointer; }
+.ws-reconnect-banner button:hover { background:#FEF3C7; }
+.git-log-section { margin-top:4px; }
+.git-commit-row { display:flex; align-items:baseline; gap:10px; padding:5px 0; border-bottom:1px solid var(--border,#E5E7EB); font-size:13px; }
+.git-commit-row:last-child { border-bottom:none; }
+.git-hash-badge { font-family:monospace; font-size:11px; background:var(--surface2,#F3F4F6); color:var(--text-light,#6B7280); padding:1px 5px; border-radius:3px; flex-shrink:0; }
+.git-subject { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.git-meta { font-size:11px; color:var(--text-light,#6B7280); white-space:nowrap; flex-shrink:0; }
+.git-body { margin:4px 0 8px; font-size:12px; color:var(--text-light,#6B7280); white-space:pre-wrap; font-family:inherit; background:none; border:none; padding:0; }
 </style>
 </head>
 <body>
@@ -323,6 +344,151 @@ function openPromptPreview(templateId, variables, triggerEl) {
 }
 
 
+function openDynamicPromptPreview(dynamicBody, triggerEl) {
+  let abortCtrl = null;
+  let elapsedTimer = null;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.setAttribute('role', 'presentation');
+
+  const dialog = document.createElement('div');
+  dialog.className = 'modal modal-prompt-preview';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  dialog.setAttribute('aria-labelledby', 'dyn-preview-title');
+
+  dialog.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+      <h3 id="dyn-preview-title" style="margin:0">Prompt Preview <span style="font-size:0.75rem;font-weight:normal;color:var(--text-muted,#888)">(Read only — live portfolio context)</span></h3>
+      <button id="dyn-preview-close" aria-label="Close preview" style="background:none;border:none;font-size:1.5rem;cursor:pointer;line-height:1">&times;</button>
+    </div>
+    <div id="dyn-preview-loading" style="font-size:0.85rem;color:var(--text-muted,#888);margin-bottom:0.5rem">Loading… <span id="dyn-preview-elapsed">0s</span></div>
+    <div id="dyn-preview-slow-warn" style="display:none;font-size:0.8rem;color:#b45309;margin-bottom:0.5rem">Loading portfolio files — this may take a moment</div>
+    <div style="display:flex;flex-wrap:wrap;gap:1rem;flex:1">
+      <div class="preview-col-tokens" id="dyn-preview-nav" style="min-width:160px;max-width:200px">
+        <h4 style="margin-top:0">Sections</h4>
+        <div id="dyn-preview-section-list" style="font-size:0.8rem;overflow-y:auto;max-height:60vh">(loading)</div>
+      </div>
+      <div class="preview-col-rendered" style="flex:1">
+        <pre id="dyn-preview-content" style="margin-top:0"><span role="status">Loading…</span></pre>
+        <div style="margin-top:0.5rem">
+          <button id="dyn-preview-copy" class="btn-secondary" style="font-size:0.8rem">Copy to clipboard</button>
+          <span id="dyn-preview-char-count" style="margin-left:0.75rem;font-size:0.8rem;color:var(--text-muted,#888)"></span>
+          <span id="dyn-preview-copied" aria-live="polite" style="margin-left:0.5rem;font-size:0.8rem;display:none">Copied!</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  let renderedText = '';
+  const startTime = Date.now();
+
+  elapsedTimer = setInterval(() => {
+    const el = dialog.querySelector('#dyn-preview-elapsed');
+    if (el) {
+      const secs = Math.floor((Date.now() - startTime) / 1000);
+      el.textContent = `${secs}s`;
+    }
+    if (Date.now() - startTime > 5000) {
+      const warn = dialog.querySelector('#dyn-preview-slow-warn');
+      if (warn) warn.style.display = '';
+    }
+  }, 1000);
+
+  const close = () => {
+    if (abortCtrl) abortCtrl.abort();
+    if (elapsedTimer) clearInterval(elapsedTimer);
+    overlay.remove();
+    if (triggerEl) triggerEl.focus();
+  };
+
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  dialog.querySelector('#dyn-preview-close').addEventListener('click', close);
+  const onEsc = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onEsc); } };
+  document.addEventListener('keydown', onEsc);
+
+  dialog.querySelector('#dyn-preview-copy').addEventListener('click', () => {
+    navigator.clipboard.writeText(renderedText).then(() => {
+      const copied = dialog.querySelector('#dyn-preview-copied');
+      copied.style.display = 'inline';
+      setTimeout(() => { copied.style.display = 'none'; }, 2000);
+    });
+  });
+
+  abortCtrl = new AbortController();
+
+  const fetchPromise = dynamicBody._prerendered !== undefined
+    ? Promise.resolve({ rendered: dynamicBody._prerendered, truncated: false, char_count: dynamicBody._prerendered.length })
+    : fetch('/api/prompts/preview-dynamic', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dynamicBody),
+        signal: abortCtrl.signal,
+      }).then(r => r.json());
+
+  fetchPromise
+    .then(data => {
+      if (elapsedTimer) clearInterval(elapsedTimer);
+      const loading = dialog.querySelector('#dyn-preview-loading');
+      if (loading) loading.style.display = 'none';
+
+      renderedText = data.rendered || '';
+      const pre = dialog.querySelector('#dyn-preview-content');
+      pre.textContent = renderedText;
+
+      const charCount = dialog.querySelector('#dyn-preview-char-count');
+      if (charCount) charCount.textContent = `${(data.char_count || renderedText.length).toLocaleString()} chars${data.truncated ? ' (truncated)' : ''}`;
+
+      const lines = renderedText.split('\n');
+      const headings = lines
+        .map((line, i) => ({ line, i }))
+        .filter(({ line }) => line.startsWith('# '))
+        .map(({ line, i }) => ({ title: line.replace(/^# /, ''), lineIndex: i }));
+
+      const sectionList = dialog.querySelector('#dyn-preview-section-list');
+      if (headings.length === 0) {
+        sectionList.textContent = '(none)';
+      } else {
+        const ul = document.createElement('ul');
+        ul.style.cssText = 'margin:0;padding-left:1rem;list-style:none';
+        headings.forEach(({ title, lineIndex }) => {
+          const li = document.createElement('li');
+          li.style.cssText = 'margin-bottom:4px';
+          const a = document.createElement('a');
+          a.href = '#';
+          a.textContent = title;
+          a.style.cssText = 'font-size:0.78rem;color:var(--link,#2563eb);text-decoration:none';
+          a.addEventListener('click', (e) => {
+            e.preventDefault();
+            const linesUpTo = lines.slice(0, lineIndex).join('\n').length;
+            pre.scrollTop = pre.scrollTop + pre.querySelector('span')?.getBoundingClientRect().top || 0;
+            const charOffset = linesUpTo;
+            const avgCharWidth = 8;
+            const lineHeight = 18;
+            const approxTop = lineIndex * lineHeight;
+            pre.scrollTop = approxTop;
+          });
+          li.appendChild(a);
+          ul.appendChild(li);
+        });
+        sectionList.replaceChildren(ul);
+      }
+    })
+    .catch(err => {
+      if (elapsedTimer) clearInterval(elapsedTimer);
+      if (err.name !== 'AbortError') {
+        dialog.querySelector('#dyn-preview-content').textContent = 'Failed to load preview.';
+        const loading = dialog.querySelector('#dyn-preview-loading');
+        if (loading) loading.style.display = 'none';
+      }
+    });
+}
+
+
 async function getBacklog() {
   if (!backlog) setBacklog(await api('backlog'));
   return backlog;
@@ -333,6 +499,10 @@ async function getEpics() {
   return epicCache;
 }
 
+
+function isTerminalEpic(epic) {
+  return epic.status === 'done' || epic.status === 'cancelled' || epic.status === 'archived';
+}
 
 async function buildEpicTree() {
   const epicTree = document.getElementById('epic-tree');
@@ -372,11 +542,10 @@ async function buildEpicTree() {
 
     if (globalVisible) {
       const showCompleted = sessionStorage.getItem('sidebar-show-completed-epics') === 'true';
-      const isInactive = s => s === 'done' || s === 'cancelled' || s === 'archived';
-      const hasCompleted = epics.some(e => isInactive(e.status));
+      const hasCompleted = epics.some(e => isTerminalEpic(e));
 
       for (const epic of epics) {
-        const isCompleted = isInactive(epic.status);
+        const isCompleted = isTerminalEpic(epic);
         const item = document.createElement('div');
         item.className = 'epic-item';
         item.dataset.epicId = epic.id;
@@ -404,20 +573,6 @@ async function buildEpicTree() {
     }
   } catch {}
 
-  // AGENTS label
-  const agentsLabel = document.createElement('div');
-  agentsLabel.className = 'sidebar-section-label';
-  agentsLabel.innerHTML = 'AGENTS <span id="agents-badge" class="agents-badge empty"></span>';
-  agentsLabel.onclick = () => { location.hash = '#agents'; };
-  epicTree.appendChild(agentsLabel);
-
-  // AUTONOMOUS label
-  const autoLabel = document.createElement('div');
-  autoLabel.className = 'sidebar-section-label';
-  autoLabel.innerHTML = 'AUTONOMOUS <span id="autonomous-badge" class="agents-badge empty"></span>';
-  autoLabel.onclick = () => { location.hash = '#autonomous'; };
-  epicTree.appendChild(autoLabel);
-
   // Onboard button — always visible
   const onboardBtn = document.createElement('div');
   onboardBtn.className = 'sidebar-onboard-btn';
@@ -442,18 +597,19 @@ function updateDispatchBadge() {
   } else {
     badge.classList.add('empty');
   }
-  const agentsBadge = document.getElementById('agents-badge');
-  if (agentsBadge) {
-    const total = activeDispatches.length + activeTerminals.length + activeCliSessions.length;
-    if (total > 0) { agentsBadge.textContent = total; agentsBadge.classList.remove('empty'); }
-    else { agentsBadge.classList.add('empty'); }
+  const total = activeDispatches.length + activeTerminals.length + activeCliSessions.length;
+  const autoCount = activeDispatches.filter(d => d.dispatch_mode === 'auto_implement').length;
+  const totalBadge = document.getElementById('dispatches-total-badge');
+  if (totalBadge) {
+    if (total > 0) { totalBadge.textContent = total; totalBadge.classList.remove('empty'); }
+    else { totalBadge.classList.add('empty'); }
   }
-  const autoBadge = document.getElementById('autonomous-badge');
-  if (autoBadge) {
-    const autoCount = activeDispatches.filter(d => d.dispatch_mode === 'auto_implement').length;
-    if (autoCount > 0) { autoBadge.textContent = autoCount; autoBadge.classList.remove('empty'); }
-    else { autoBadge.classList.add('empty'); }
-  }
+  const tabBadgeActive = document.getElementById('tab-badge-active');
+  if (tabBadgeActive) tabBadgeActive.textContent = total > 0 ? total : '';
+  const tabBadgeAuto = document.getElementById('tab-badge-autonomous');
+  if (tabBadgeAuto) tabBadgeAuto.textContent = autoCount > 0 ? autoCount : '';
+  const tabBadgeAll = document.getElementById('tab-badge-all');
+  if (tabBadgeAll) tabBadgeAll.textContent = total > 0 ? total : '';
   refreshSessionsSidebar();
 }
 
@@ -507,16 +663,18 @@ function scheduleAutoDismiss(panelType, id, infoObj) {
   const panel = document.getElementById(`${panelType}-${id}`);
   if (!panel || infoObj._autoDismissTimer) return;
 
+  const dismissMs = window._testAutoDismissMs ?? AUTO_DISMISS_MS;
+
   const bar = document.createElement('div');
   bar.className = 'auto-dismiss-bar';
   panel.appendChild(bar);
 
   requestAnimationFrame(() => {
-    bar.style.transitionDuration = `${AUTO_DISMISS_MS}ms`;
+    bar.style.transitionDuration = `${dismissMs}ms`;
     bar.style.width = '0%';
   });
 
-  let remaining = AUTO_DISMISS_MS;
+  let remaining = dismissMs;
   let startedAt = Date.now();
 
   const dismiss = async () => {
@@ -529,7 +687,7 @@ function scheduleAutoDismiss(panelType, id, infoObj) {
     syncSessionState();
   };
 
-  infoObj._autoDismissTimer = setTimeout(dismiss, AUTO_DISMISS_MS);
+  infoObj._autoDismissTimer = setTimeout(dismiss, dismissMs);
 
   panel.addEventListener('mouseenter', () => {
     if (!infoObj._autoDismissTimer) return;
@@ -575,7 +733,10 @@ function finalizeDispatchPanel(dispatch) {
     const dot = panel.querySelector('.status-dot');
     if (dot) {
       clearActiveDotClasses(dot);
-      dot.classList.add(dispatch.status === 'completed' ? 'completed' : 'failed');
+      const terminalClass = dispatch.status === 'completed' ? 'completed'
+        : dispatch.status === 'interrupted' ? 'interrupted'
+        : 'failed';
+      dot.classList.add(terminalClass);
     }
     // Hide action buttons, show dismiss
     const killBtn = panel.querySelector(`[data-kill-dispatch="${dispatch.id}"]`);
@@ -607,20 +768,77 @@ function showAutoImplementToast(dispatch) {
   }
 }
 
+const WS_MAX_RETRIES = 3;
+const WS_RETRY_DELAYS_MS = [2000, 3000, 5000];
+
+function showDispatchReconnecting(dispatch, attempt, max) {
+  const panelEl = document.getElementById(`dispatch-${dispatch.id}`);
+  if (!panelEl) return;
+  let banner = panelEl.querySelector('.ws-reconnect-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.className = 'ws-reconnect-banner';
+    const logEl = panelEl.querySelector(`#log-${dispatch.id}`);
+    if (logEl) logEl.before(banner);
+  }
+  banner.textContent = `Reconnecting… (attempt ${attempt}/${max})`;
+}
+
+function showDispatchReconnectFailed(dispatch) {
+  const panelEl = document.getElementById(`dispatch-${dispatch.id}`);
+  if (!panelEl) return;
+  let banner = panelEl.querySelector('.ws-reconnect-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.className = 'ws-reconnect-banner ws-reconnect-failed';
+    const logEl = panelEl.querySelector(`#log-${dispatch.id}`);
+    if (logEl) logEl.before(banner);
+  }
+  banner.innerHTML = 'Live output paused. <button onclick="retryDispatchWS(this)">Reconnect</button>';
+  banner.dataset.dispatchId = dispatch.id;
+}
+
+function retryDispatchWS(btn) {
+  const banner = btn.closest('.ws-reconnect-banner');
+  const id = banner?.dataset?.dispatchId;
+  const dispatch = activeDispatches.find(d => d.id === id);
+  if (dispatch) { dispatch._wsRetries = 0; loadDispatchContent(dispatch); }
+}
+
 const SCROLL_BOTTOM_THRESHOLD = 5;
-const SCROLL_SMOOTH_THRESHOLD = 60;
+const SCROLL_SMOOTH_THRESHOLD = 25;
 const pendingSmooth = new WeakMap();
+// Tracks which log elements the user last left at the bottom (vs scrolled away).
+const logAtBottomState = new WeakMap();
 
 function hasActiveSelection(scrollContainer) {
   const sel = window.getSelection();
   return sel && sel.type === 'Range' && sel.anchorNode != null && scrollContainer.contains(sel.anchorNode);
 }
 
+/**
+ * Register a scroll listener on a log element to track "at bottom" state.
+ * Called once when the log element is first created/used.
+ */
+function attachLogScrollTracker(logEl) {
+  if (logEl._scrollTracked) return;
+  logEl._scrollTracked = true;
+  logEl.addEventListener('scroll', () => {
+    const dist = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight;
+    logAtBottomState.set(logEl, dist < SCROLL_BOTTOM_THRESHOLD);
+  }, { passive: true });
+}
+
 function scrollDispatchLog(logEl, forceBottom = false, smooth = false) {
   if (hasActiveSelection(logEl)) return;
+  attachLogScrollTracker(logEl);
   const motionOk = smooth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const threshold = motionOk ? SCROLL_SMOOTH_THRESHOLD : SCROLL_BOTTOM_THRESHOLD;
-  const nearBottom = (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight) < threshold;
+  // "Near bottom" uses a strict threshold for new content detection, but also honours
+  // the explicit at-bottom state set by the scroll tracker (so returning to exact bottom
+  // re-enables auto-follow even when the new-content distance exceeds the threshold).
+  const dist = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight;
+  const wasAtBottom = logAtBottomState.get(logEl) !== false; // defaults to true (first load)
+  const nearBottom = dist < SCROLL_BOTTOM_THRESHOLD || (wasAtBottom && dist < SCROLL_SMOOTH_THRESHOLD);
   if (!forceBottom && !nearBottom) return;
   if (motionOk) {
     if (pendingSmooth.has(logEl)) return;
@@ -663,6 +881,7 @@ async function loadDispatchContent(dispatch) {
         }
       } else if (msg.type === 'replay-end') {
         dispatch._contentLoaded = true;
+        dispatch._wsRetries = 0;
         scrollDispatchLog(logEl, true);
         logEl.dataset.replayDone = '1';
       } else if (msg.type === 'done') {
@@ -726,12 +945,31 @@ async function loadDispatchContent(dispatch) {
     } catch (err) { console.warn('[dispatch] ws message:', err); }
   };
 
+  ws.onopen = () => {
+    dispatch._wsRetries = 0;
+    document.querySelector(`#dispatch-${dispatch.id} .ws-reconnect-banner`)?.remove();
+  };
+
   ws.onclose = () => {
-    dispatch._ws = null;
+    if (dispatch._ws === ws) dispatch._ws = null;
+    if (dispatch._wsRetryTimer) { clearTimeout(dispatch._wsRetryTimer); dispatch._wsRetryTimer = null; }
+
     if (dispatch.status === 'running' && !dispatch._contentLoaded) {
-      // WS closed before replay-end was received — treat as connection failure
-      dispatch.status = 'failed';
-      finalizeDispatchPanel(dispatch);
+      // WS dropped during log replay — agent may still be running. Retry before giving up.
+      dispatch._wsRetries = (dispatch._wsRetries || 0) + 1;
+      if (dispatch._wsRetries <= WS_MAX_RETRIES) {
+        const delay = WS_RETRY_DELAYS_MS[dispatch._wsRetries - 1] ?? 5000;
+        showDispatchReconnecting(dispatch, dispatch._wsRetries, WS_MAX_RETRIES);
+        dispatch._wsRetryTimer = setTimeout(() => {
+          dispatch._wsRetryTimer = null;
+          loadDispatchContent(dispatch);
+        }, delay);
+      } else {
+        // All retries exhausted — fetch real server state; show manual reconnect affordance.
+        dispatch._wsRetries = 0;
+        restoreDispatches();
+        showDispatchReconnectFailed(dispatch);
+      }
     } else {
       // Either done message was received (status != 'running') or WS dropped after
       // successful connect — sync badge so kills/completions via WS are reflected
@@ -763,8 +1001,8 @@ async function killAllSessions() {
 }
 
 async function dismissAllCompleted() {
-  const staleDispatches = activeDispatches.filter(d => d.status !== 'running');
-  const staleTerminals = activeTerminals.filter(t => t.status !== 'running');
+  const staleDispatches = activeDispatches.filter(d => d.status !== 'running' && d.status !== 'suspended');
+  const staleTerminals = activeTerminals.filter(t => t.status !== 'running' && t.status !== 'suspended');
   if (!staleDispatches.length && !staleTerminals.length) return;
   for (const d of staleDispatches) { if (d._autoDismissTimer) { clearTimeout(d._autoDismissTimer); d._autoDismissTimer = null; } }
   for (const t of staleTerminals) { if (t._autoDismissTimer) { clearTimeout(t._autoDismissTimer); t._autoDismissTimer = null; } }
@@ -785,18 +1023,38 @@ async function dismissAllCompleted() {
     if (panel?.parentElement) panel.remove();
     sessionPanels.delete(key);
   }
-  activeDispatches.splice(0, activeDispatches.length, ...activeDispatches.filter(d => d.status === 'running'));
-  activeTerminals.splice(0, activeTerminals.length, ...activeTerminals.filter(t => t.status === 'running'));
+  activeDispatches.splice(0, activeDispatches.length, ...activeDispatches.filter(d => d.status === 'running' || d.status === 'suspended'));
+  activeTerminals.splice(0, activeTerminals.length, ...activeTerminals.filter(t => t.status === 'running' || t.status === 'suspended'));
   syncSessionState();
 }
 
 let _placeTimer = null;
+let _pendingProjectArrival = ''; // set by routing on project change; consumed once in _placeSessionPanelsNow
 let _suspendedContainer = null;
 let _recentContainer = null;
 // Off-DOM buffer for panels that don't match the active route's project context.
 // Never appended to document.body — panels move here non-destructively so their
 // DOM state (xterm, WebSocket, etc.) is preserved while hidden.
 const _hiddenPanelBuffer = document.createElement('div');
+
+const SESSION_AWARE_ROUTES = new Set([
+  '', 'agents', 'autonomous', 'epics', 'all-sessions', 'audit', 'settings', 'assets', 'repos', 'adrs',
+]);
+
+function _isSessionAwareRoute(hash) {
+  const clean = (hash || '').replace(/^#/, '');
+  if (!clean) return true;
+  const base = clean.split('/')[0].split('?')[0];
+  if (SESSION_AWARE_ROUTES.has(base)) return true;
+  return ['component', 'epic', 'org', 'adr'].includes(base);
+}
+
+function _hideSessionPanelsForCleanRoute() {
+  const globalContainer = document.getElementById('dispatch-panels');
+  if (globalContainer) globalContainer.style.display = 'none';
+  if (_suspendedContainer) _suspendedContainer.style.display = 'none';
+  if (_recentContainer) _recentContainer.style.display = 'none';
+}
 
 function placeSessionPanels() {
   if (_placeTimer) return;
@@ -827,6 +1085,16 @@ function _isProjectMatch(sessionProjectKey, activeProjectKey) {
 }
 
 function _placeSessionPanelsNow() {
+  if (_isSessionAwareRoute(location.hash)) {
+    const globalContainer = document.getElementById('dispatch-panels');
+    if (globalContainer) globalContainer.style.display = '';
+    if (_suspendedContainer) _suspendedContainer.style.display = '';
+    if (_recentContainer) _recentContainer.style.display = '';
+  }
+  const sidebarTarget = window._sidebarTargetSession || null;
+  window._sidebarTargetSession = null;
+  const arrivalProject = _pendingProjectArrival;
+  _pendingProjectArrival = '';
   // 1. Ensure global fallback container exists
   let globalContainer = document.getElementById('dispatch-panels');
   if (!globalContainer) {
@@ -867,6 +1135,11 @@ function _placeSessionPanelsNow() {
     // Project filter: panels that don't belong to the active route go into the
     // off-DOM buffer non-destructively (no WebSocket or PTY lifecycle changes).
     if (!_isProjectMatch(session.project_key, activeProjectKey)) {
+      if (!panel.classList.contains('collapsed')) {
+        panel.classList.add('collapsed');
+        const minBtn = panel.querySelector('[data-minimize-dispatch], [data-minimize-terminal], [data-minimize-cli]');
+        if (minBtn) minBtn.textContent = '▶';
+      }
       if (panel.parentElement !== _hiddenPanelBuffer) {
         _hiddenPanelBuffer.appendChild(panel);
       }
@@ -932,6 +1205,14 @@ function _placeSessionPanelsNow() {
       if (ss?._fitAddon && ss._term) {
         requestAnimationFrame(() => fitPreservingScroll(ss._term, ss._fitAddon));
       }
+      // Expand the panel when returning from hidden buffer, unless manually collapsed.
+      // This provides consistent "project context return" expand behavior without relying
+      // on the _pendingProjectArrival race condition.
+      if (!sidebarTarget || sidebarTarget === session.key) {
+        panel.classList.remove('collapsed');
+        const minBtn = panel.querySelector('[data-minimize-dispatch], [data-minimize-terminal], [data-minimize-cli]');
+        if (minBtn) minBtn.textContent = '▼';
+      }
     }
 
     // Collect dispatches needing content load — called after step 4 when all
@@ -970,9 +1251,8 @@ function _placeSessionPanelsNow() {
     loadDispatchContent(dispatch);
   }
 
-  // 5. Context-aware expand/collapse: expand relevant panels, collapse others.
-  // Guards on previousProjectKey to prevent cross-project navigation from folding
-  // sessions that belong to a project the user is navigating away from.
+  // 5. Context-aware fold: fold arriving project's sessions (fold-by-default); preserve
+  // user state on same-project refresh; fold off-project sessions always.
   const hash = location.hash || '';
   let viewProjectKey = '';
   let viewEpicId = '';
@@ -981,28 +1261,41 @@ function _placeSessionPanelsNow() {
   const epicMatch = hash.match(/^#epic\/(.+)$/);
   if (epicMatch) viewEpicId = epicMatch[1];
 
-  // Skip auto-fold when navigating to a different project than was previously shown.
-  const isCrossProjectNav = viewProjectKey && previousProjectKey && viewProjectKey !== previousProjectKey;
+  const isArrivingAtProject = arrivalProject && arrivalProject === viewProjectKey;
 
-  if (!isCrossProjectNav && (viewProjectKey || viewEpicId)) {
+  if (viewProjectKey || viewEpicId) {
     for (const session of allSessions) {
-      let isRelevant = true;
-      if (viewProjectKey) {
-        isRelevant = session.project_key === viewProjectKey;
-      } else if (viewEpicId) {
-        isRelevant = session.epic_id === viewEpicId;
-      }
+      const isRelevant = viewProjectKey
+        ? session.project_key === viewProjectKey
+        : session.epic_id === viewEpicId;
       const panel = sessionPanels.get(session.key);
       if (!panel) continue;
       const minBtn = panel.querySelector('[data-minimize-dispatch], [data-minimize-terminal], [data-minimize-cli]');
-      if (isRelevant && panel.classList.contains('collapsed')) {
+      if (isRelevant && isArrivingAtProject && sidebarTarget) {
+        // Fresh project arrival via sidebar click: expand only the targeted panel, fold the rest.
+        const expand = sidebarTarget === session.key;
+        panel.classList.toggle('collapsed', !expand);
+        sessionCollapseState.set(session.key, !expand); // in-memory only; not persisted
+        if (minBtn) minBtn.textContent = expand ? '\u25bc' : '\u25b6';
+      } else if (isRelevant && isArrivingAtProject && !sidebarTarget) {
+        // Fresh project arrival without a specific target: expand all relevant panels.
         panel.classList.remove('collapsed');
+        sessionCollapseState.set(session.key, false);
+        if (minBtn) minBtn.textContent = '\u25bc';
+      } else if (isRelevant && !isArrivingAtProject && sidebarTarget === session.key) {
+        // Same-project sidebar click: expand only the target, preserve all other states.
+        panel.classList.remove('collapsed');
+        sessionCollapseState.set(session.key, false);
         if (minBtn) minBtn.textContent = '\u25bc';
       } else if (!isRelevant && !panel.classList.contains('collapsed')) {
+        // Off-project/epic session: fold it (CSS only).
         panel.classList.add('collapsed');
         if (minBtn) minBtn.textContent = '\u25b6';
       }
+      // isRelevant + same project + not sidebar target: preserve user's manual state.
     }
+    // saveCollapseState() not called here \u2014 arrival folds are navigation-scoped, not
+    // user preferences; isTerminalCollapsedByDefault() handles the next page load.
   }
 
   // 6. Fit only terminals that were actually moved to a new slot (preserve scroll)
@@ -1023,6 +1316,12 @@ function _placeSessionPanelsNow() {
       sessionPanels.delete(key);
     }
   }
+
+  // 8. Eagerly populate suspended-sessions card on first render after route change.
+  // Re-anchor (lines above) handles the case where the container already exists;
+  // this handles the case where _suspendedContainer is null (fresh navigation or
+  // all sessions were previously dismissed). Fire-and-forget after DOM is settled.
+  if (!_suspendedContainer) refreshSuspendedPanel();
 }
 
 // --- Terminal theme ---
@@ -1609,6 +1908,23 @@ function saveCollapseState() {
   try { sessionStorage.setItem('sessionCollapseState', JSON.stringify(Object.fromEntries(sessionCollapseState))); } catch {}
 }
 
+let _reviewState = null;
+function loadReviewState() {
+  if (_reviewState) return _reviewState;
+  try { _reviewState = JSON.parse(localStorage.getItem('termReviewState') || '{}'); } catch { _reviewState = {}; }
+  return _reviewState;
+}
+function saveReviewState(id, field, value) {
+  const state = loadReviewState();
+  if (!state[id]) state[id] = {};
+  state[id][field] = value;
+  try { localStorage.setItem('termReviewState', JSON.stringify(state)); } catch {}
+}
+function getReviewState(id) {
+  const state = loadReviewState();
+  return { boardReviewed: false, humanReviewed: false, ...(state[id] || {}) };
+}
+
 function truncateNote(str, max) {
   return str.length > max ? str.slice(0, max) + '…' : str;
 }
@@ -1638,6 +1954,30 @@ function flashSaved(row) {
   if (!el) return;
   el.style.color = 'var(--green, #22c55e)';
   setTimeout(() => { el.style.color = ''; }, 600);
+}
+
+function renderReviewRow(row, id) {
+  if (!row) return;
+  row.innerHTML = '';
+  const { boardReviewed, humanReviewed } = getReviewState(id);
+  const checks = [
+    { key: 'boardReviewed', label: 'board reviewed', checked: boardReviewed },
+    { key: 'humanReviewed', label: 'human reviewed', checked: humanReviewed },
+  ];
+  checks.forEach(({ key, label, checked }) => {
+    const lbl = document.createElement('label');
+    lbl.className = 'review-checkbox-label';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = checked;
+    cb.setAttribute('aria-label', label);
+    cb.addEventListener('change', () => {
+      saveReviewState(id, key, cb.checked);
+    });
+    lbl.appendChild(cb);
+    lbl.appendChild(document.createTextNode(label));
+    row.appendChild(lbl);
+  });
 }
 
 function activateNoteEdit(row, terminalId, currentNote) {
@@ -1740,6 +2080,10 @@ function activateNoteEdit(row, terminalId, currentNote) {
 
 function isPanelCollapsedByDefault() {
   return !window._testDefaultExpanded && (window._prefs?.default_panel_state || 'minimized') !== 'expanded';
+}
+
+function isTerminalCollapsedByDefault() {
+  return !window._testDefaultExpanded && (window._prefs?.default_terminal_panel_state || 'minimized') !== 'expanded';
 }
 
 function togglePanelCollapse(key, panel, btn) {
@@ -1875,7 +2219,7 @@ async function restoreTerminals() {
       const panelKey = `terminal:${t.id}`;
       const isCollapsed = sessionCollapseState.has(panelKey)
         ? sessionCollapseState.get(panelKey)
-        : isPanelCollapsedByDefault();
+        : isTerminalCollapsedByDefault();
       if (!isCollapsed) await initSession(t);
       // else: deferred until expand or focus; poll guard (if (existing)) prevents re-init on next cycle
     }
@@ -1942,6 +2286,11 @@ function createSessionPanel(type, info) {
     panel.id = `dispatch-${id}`;
     const isRunning = dispatch.status === 'running';
     const isSuspended = dispatch.status === 'suspended';
+    const isRevoked     = !!dispatch.revoked_at;
+    const hasClaude     = !!dispatch.claude_session_id;
+    const isRestartable = ['interrupted', 'suspended', 'failed'].includes(dispatch.status) && hasClaude && !isRevoked;
+    const isRevokable   = ['interrupted', 'suspended', 'failed'].includes(dispatch.status) && hasClaude && !isRevoked;
+    const showInterrupt = dispatch.status === 'running';
     const skipBadge = dispatch.skip_permissions ? '<span class="auto-badge">[skip-perms]</span>' : '';
     const planBadge = dispatch.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
     const suspendedBadge = isSuspended ? '<span class="suspended-badge">[suspended]</span>' : '';
@@ -1969,12 +2318,15 @@ function createSessionPanel(type, info) {
     panel.innerHTML = `
       <div class="dispatch-header">
         <span class="status-dot ${isRunning ? (dispatch.agent_phase === 'waiting_for_input' ? 'needs-input' : dispatch.agent_phase === 'tool_running' ? 'tool-running' : 'generating') : dispatch.status}" title="${isRunning ? ({generating:'Thinking',tool_running:'Running tool',waiting_for_input:'Needs input'}[dispatch.agent_phase]||'') : ''}"></span>
-        <span class="dispatch-title">${dispatchPathStr}${planBadge}${skipBadge}${suspendedBadge}${autoImplementBadge}${alertBadges}${timeoutBadge}</span>
+        <span class="dispatch-title">${dispatchPathStr}${planBadge}${skipBadge}${suspendedBadge}${autoImplementBadge}${alertBadges}${timeoutBadge}${isRevoked ? '<span class="revoked-badge" title="This session has been revoked and cannot be resumed">[revoked]</span>' : ''}${dispatch.status === 'superseded' ? '<span class="superseded-badge">[superseded]</span>' : ''}</span>
         <span class="dispatch-meta">${fmtTimestamp(dispatch.started_at)}${costBadge}</span>
         <button class="focus-btn" data-focus-dispatch="${esc(id)}">Focus</button>
         <button class="minimize-btn" data-minimize-dispatch="${esc(id)}">▼</button>
         <button class="suspend-btn" data-suspend-dispatch="${esc(id)}" ${!isRunning ? 'style="display:none"' : ''}>Suspend</button>
         <button class="resume-btn" data-resume-dispatch="${esc(id)}" ${!isSuspended ? 'style="display:none"' : ''}>Resume</button>
+        <button class="btn-interrupt" data-interrupt-dispatch="${esc(id)}" ${!showInterrupt ? 'style="display:none"' : ''}>Interrupt</button>
+        <button class="btn-restart"   data-restart-dispatch="${esc(id)}"   ${!isRestartable ? 'style="display:none"' : ''}>Restart</button>
+        <button class="btn-revoke"    data-revoke-dispatch="${esc(id)}"    ${!isRevokable   ? 'style="display:none"' : ''}>Revoke</button>
         <button class="kill-btn" data-kill-dispatch="${esc(id)}" ${!isRunning ? 'disabled' : ''}>Kill</button>
         <button class="dismiss-btn" data-dismiss-dispatch="${esc(id)}" ${isRunning ? 'style="display:none"' : ''}>✕</button>
       </div>
@@ -1997,11 +2349,13 @@ function createSessionPanel(type, info) {
         <span style="font-weight:600;">Session interrupted — recover?</span>
         ${dispatch.claude_session_id ? `<span style="font-family:monospace;font-size:11px;opacity:0.8;">${esc(dispatch.claude_session_id)}</span>` : ''}
         <button class="btn-redispatch" data-redispatch="${esc(id)}" style="font-size:11px;padding:2px 8px;border-radius:3px;border:1px solid #7C3AED;color:#7C3AED;background:transparent;cursor:pointer;">Re-dispatch</button>
+        ${hasClaude && !isRevoked ? `<button class="btn-restart" data-restart-dispatch="${esc(id)}">Restart from saved state</button>` : ''}
         <button class="btn-dismiss-interrupted" data-dismiss-interrupted="${esc(id)}" style="font-size:11px;padding:2px 8px;border-radius:3px;border:1px solid #9CA3AF;color:#6B7280;background:transparent;cursor:pointer;">Dismiss</button>
       </div>` : ''}
       <div class="dispatch-log${resolveTermTheme() === 'light' ? ' log-light' : ''}" id="log-${id}"></div>
       <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
         <button class="focus-btn" data-focus-dispatch-bottom="${esc(id)}">Focus</button>
+        <button class="btn-view-prompt" data-view-prompt-dispatch="${esc(id)}" style="font-size:11px;padding:2px 8px;border-radius:3px;border:1px solid var(--border);background:transparent;cursor:pointer;color:var(--text-secondary)">View Prompt</button>
         ${sessionIdTag(dispatch.claude_session_id)}
       </div>
     `;
@@ -2025,6 +2379,23 @@ function createSessionPanel(type, info) {
     panel.querySelector(`[data-focus-dispatch="${id}"]`).onclick = () => openFocusPopup('dispatch', id);
     const bottomFocusD = panel.querySelector(`[data-focus-dispatch-bottom="${id}"]`);
     if (bottomFocusD) bottomFocusD.onclick = () => openFocusPopup('dispatch', id);
+    const viewPromptBtn = panel.querySelector(`[data-view-prompt-dispatch="${id}"]`);
+    if (viewPromptBtn) {
+      viewPromptBtn.onclick = async () => {
+        viewPromptBtn.disabled = true;
+        try {
+          const r = await fetch(`/api/dispatch/${id}/prompt`);
+          if (!r.ok) { showToast('No prompt recorded for this dispatch', 'error'); return; }
+          const record = await r.json();
+          const promptText = record.prompt_text || '';
+          openDynamicPromptPreview({ _prerendered: promptText }, viewPromptBtn);
+        } catch {
+          showToast('Failed to load prompt', 'error');
+        } finally {
+          viewPromptBtn.disabled = false;
+        }
+      };
+    }
     panel.querySelector(`[data-kill-dispatch="${id}"]`).onclick = async (e) => {
       const btn = e.target;
       btn.disabled = true;
@@ -2136,6 +2507,114 @@ function createSessionPanel(type, info) {
       };
     }
 
+    const interruptBtn = panel.querySelector(`[data-interrupt-dispatch="${id}"]`);
+    if (interruptBtn) {
+      interruptBtn.onclick = (e) => {
+        if (!confirm(`Interrupt session ${id}?\n\nThe agent will receive SIGINT and stop. Session ID preserved for restart.`)) return;
+        const btn = e.target;
+        btn.disabled = true;
+        const stoppingSpan = document.createElement('span');
+        stoppingSpan.className = 'session-stopping';
+        stoppingSpan.textContent = 'Stopping…';
+        btn.insertAdjacentElement('afterend', stoppingSpan);
+        fetch(`/api/dispatch/${id}/interrupt`, { method: 'POST' })
+          .then(r => r.ok ? r.json() : r.json().then(e2 => Promise.reject(e2)))
+          .then(() => {
+            stoppingSpan.remove();
+            dispatch.status = 'interrupted';
+            finalizeDispatchPanel(dispatch);
+            btn.style.display = 'none';
+            if (dispatch.claude_session_id) {
+              panel.querySelector(`[data-restart-dispatch="${id}"]`)?.removeAttribute('style');
+              panel.querySelector(`[data-revoke-dispatch="${id}"]`)?.removeAttribute('style');
+            }
+            showToast('Session interrupted — session ID preserved for restart', 'info');
+          })
+          .catch(err => {
+            stoppingSpan.remove();
+            btn.disabled = false;
+            showToast(err.error || 'Failed to interrupt session', 'error');
+          });
+      };
+    }
+
+    const restartBtn = panel.querySelector(`[data-restart-dispatch="${id}"]`);
+    if (restartBtn) {
+      restartBtn.onclick = (e) => {
+        const btn = e.target;
+        btn.disabled = true;
+        fetch(`/api/dispatch/${id}/restart`, { method: 'POST' })
+          .then(r => r.ok ? r.json() : r.json().then(e2 => Promise.reject(e2)))
+          .then(result => {
+            dispatch.status = 'superseded';
+            dispatch.revoked_at = new Date().toISOString();
+            const titleEl = panel.querySelector('.dispatch-title');
+            if (titleEl && !titleEl.querySelector('.superseded-badge')) {
+              titleEl.insertAdjacentHTML('beforeend', '<span class="superseded-badge">[superseded]</span>');
+            }
+            panel.querySelector(`[data-restart-dispatch="${id}"]`)?.remove();
+            panel.querySelector(`[data-revoke-dispatch="${id}"]`)?.remove();
+            const newDispatch = {
+              id: result.dispatch_id,
+              work_item_id: dispatch.work_item_id,
+              work_item_title: dispatch.work_item_title,
+              epic_id: dispatch.epic_id,
+              project_key: dispatch.project_key,
+              permission_mode: dispatch.permission_mode,
+              skip_permissions: dispatch.skip_permissions,
+              dispatch_mode: dispatch.dispatch_mode,
+              title: dispatch.title,
+              claude_session_id: result.claude_session_id || null,
+              previous_dispatch_id: id,
+              status: 'running',
+              agent_phase: 'generating',
+              started_at: new Date().toISOString(),
+              revoked_at: null,
+            };
+            activeDispatches.push(newDispatch);
+            createSessionPanel(newDispatch);
+            placeSessionPanels();
+            loadDispatchContent(newDispatch);
+            syncSessionState();
+            showToast('Session restarted — original preserved as [superseded]', 'info');
+          })
+          .catch(err => {
+            btn.disabled = false;
+            if (err.code === 'worktree_missing' || err.error?.includes('worktree was removed')) {
+              showInlineErrorBanner(panel, (err.error || 'Worktree was removed') + ' — use Re-dispatch to create a new worktree.');
+            } else {
+              showToast(err.error || 'Failed to restart session', 'error');
+            }
+          });
+      };
+    }
+
+    const revokeBtn = panel.querySelector(`[data-revoke-dispatch="${id}"]`);
+    if (revokeBtn) {
+      revokeBtn.onclick = (e) => {
+        if (!confirm(`Revoke session ${id}?\n\nThis marks the session permanently non-resumable.`)) return;
+        const btn = e.target;
+        btn.disabled = true;
+        fetch(`/api/dispatch/${id}/revoke`, { method: 'POST' })
+          .then(r => r.ok ? r.json() : r.json().then(e2 => Promise.reject(e2)))
+          .then(() => {
+            dispatch.revoked_at = new Date().toISOString();
+            panel.querySelector(`[data-revoke-dispatch="${id}"]`)?.remove();
+            panel.querySelector(`[data-restart-dispatch="${id}"]`)?.remove();
+            const titleEl = panel.querySelector('.dispatch-title');
+            if (titleEl && !titleEl.querySelector('.revoked-badge')) {
+              titleEl.insertAdjacentHTML('beforeend',
+                '<span class="revoked-badge" title="This session has been revoked and cannot be resumed">[revoked]</span>');
+            }
+            showToast('Session revoked', 'info');
+          })
+          .catch(err => {
+            btn.disabled = false;
+            showToast(err.error || 'Failed to revoke session', 'error');
+          });
+      };
+    }
+
   } else if (type === 'terminal') {
     const terminalInfo = info;
     panel.className = `terminal-panel status-${terminalInfo.status}`;
@@ -2185,6 +2664,7 @@ function createSessionPanel(type, info) {
           <button class="dismiss-btn" data-dismiss-terminal="${esc(id)}" ${isRunning ? 'style="display:none"' : ''}>✕</button>
         </div>
         <div class="terminal-note-row" data-note-panel="${esc(id)}"></div>
+        <div class="terminal-review-row" data-review-panel="${esc(id)}"></div>
       </div>
       <div class="terminal-container" id="term-container-${id}">${termContainerBody}</div>
       <div style="padding:6px 16px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--border)">
@@ -2196,9 +2676,10 @@ function createSessionPanel(type, info) {
     `;
     bindSessionIdCopy(panel);
     renderNoteRow(panel.querySelector('.terminal-note-row'), terminalInfo.note ?? null, id);
+    renderReviewRow(panel.querySelector('.terminal-review-row'), id);
     const panelKey = `terminal:${id}`;
     sessionPanels.set(panelKey, panel);
-    const defaultCollapsed = isPanelCollapsedByDefault();
+    const defaultCollapsed = isTerminalCollapsedByDefault();
     const collapsed = sessionCollapseState.has(panelKey) ? sessionCollapseState.get(panelKey) : defaultCollapsed;
     if (collapsed) {
       panel.classList.add('collapsed');
@@ -2209,7 +2690,7 @@ function createSessionPanel(type, info) {
       togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-terminal="${id}"]`));
     };
     panel.querySelector('.terminal-header').addEventListener('click', (e) => {
-      if (e.target.closest('button') || e.target.closest('.terminal-note-row')) return;
+      if (e.target.closest('button') || e.target.closest('.terminal-note-row') || e.target.closest('.terminal-review-row')) return;
       togglePanelCollapse(panelKey, panel, panel.querySelector(`[data-minimize-terminal="${id}"]`));
     });
     const noteRow = panel.querySelector('.terminal-note-row');
@@ -2429,6 +2910,8 @@ async function dispatchWorkItem(workItem, projectKey) {
             <div class="field"><label for="contract-failure-conditions">Failure Conditions</label><textarea id="contract-failure-conditions" rows="2" placeholder="What makes output unacceptable"></textarea></div>
             <div class="field"><label for="contract-scope-boundary">Scope Boundary</label><textarea id="contract-scope-boundary" rows="1" placeholder="Files/dirs the agent must NOT modify"></textarea></div>
             <div class="field"><label for="contract-stop-conditions">Stop Conditions</label><textarea id="contract-stop-conditions" rows="2" placeholder="One per line: conditions to halt and report"></textarea></div>
+            <div class="contract-field field"><label>Success Criteria</label><textarea id="dispatch-success-criteria" rows="1" placeholder="User-visible done conditions"></textarea></div>
+            <div class="contract-field field"><label>E2E Test Criteria</label><textarea id="dispatch-e2e-test-criteria" rows="2" placeholder="One scenario per line"></textarea></div>
           </div>
         </details>
         <div class="field">
@@ -2456,8 +2939,23 @@ async function dispatchWorkItem(workItem, projectKey) {
         previewBtn.className = 'btn btn-secondary';
         previewBtn.textContent = 'Preview prompt';
         previewBtn.addEventListener('click', () => {
-          const [org, proj, comp] = (projectKey || '').split('/');
-          openPromptPreview('dispatch', { ORG: org || '', PROJECT: proj || '', COMPONENT: comp || '' }, previewBtn);
+          const modalEl = previewBtn.closest('.modal') || document;
+          const dynamicBody = {
+            project_key: projectKey || '',
+            work_item_id: workItem?.id || undefined,
+            additional_instructions: modalEl.querySelector('#dispatch-instructions')?.value || '',
+            contract: {
+              goal: modalEl.querySelector('#contract-goal')?.value || '',
+              constraints: modalEl.querySelector('#contract-constraints')?.value || '',
+              expected_output: modalEl.querySelector('#contract-expected-output')?.value || '',
+              failure_conditions: modalEl.querySelector('#contract-failure-conditions')?.value || '',
+              scope_boundary: modalEl.querySelector('#contract-scope-boundary')?.value || '',
+              stop_conditions: (modalEl.querySelector('#contract-stop-conditions')?.value || '').split('\n').filter(Boolean),
+              success_criteria: modalEl.querySelector('#dispatch-success-criteria')?.value || '',
+              e2e_test_criteria: (modalEl.querySelector('#dispatch-e2e-test-criteria')?.value || '').split('\n').filter(Boolean),
+            },
+          };
+          openDynamicPromptPreview(dynamicBody, previewBtn);
         });
         o.querySelector('.modal-actions').prepend(previewBtn);
 
@@ -2465,22 +2963,28 @@ async function dispatchWorkItem(workItem, projectKey) {
         if (workItem.description) {
           const desc = workItem.description;
           const extract = (header) => { const m = desc.match(new RegExp(`\\*\\*${header}\\*\\*:\\s*(.+)`, 'i')); return m ? m[1].trim() : ''; };
+          const extractMultiline = (header) => {
+            const m = desc.match(new RegExp(`\\*\\*${header}\\*\\*:\\s*\\n([\\s\\S]*?)(?=\\n\\*\\*[A-Z]|\\n##|\\s*$)`, 'i'));
+            return m ? m[1].split('\n').map(l => l.replace(/^[-*]\s*/, '').trim()).filter(Boolean).join('\n') : '';
+          };
           const goal = extract('Goal');
           const constraints = extract('Constraints');
           const expectedOutput = extract('Expected Output');
           const failureConditions = extract('Failure Conditions');
           const scopeBoundary = extract('Scope Boundary');
-          // Stop conditions: multi-line after header
-          const scMatch = desc.match(/\*\*Stop Conditions\*\*:\s*\n([\s\S]*?)(?=\n\*\*[A-Z]|\n##|\s*$)/i);
-          const stopConditions = scMatch ? scMatch[1].split('\n').map(l => l.replace(/^[-*]\s*/, '').trim()).filter(Boolean).join('\n') : '';
+          const successCriteria = extract('Success Criteria');
+          const stopConditions = extractMultiline('Stop Conditions');
+          const e2eTestCriteria = extractMultiline('E2E Test Criteria');
           if (goal) o.querySelector('#contract-goal').value = goal;
           if (constraints) o.querySelector('#contract-constraints').value = constraints;
           if (expectedOutput) o.querySelector('#contract-expected-output').value = expectedOutput;
           if (failureConditions) o.querySelector('#contract-failure-conditions').value = failureConditions;
           if (scopeBoundary) o.querySelector('#contract-scope-boundary').value = scopeBoundary;
           if (stopConditions) o.querySelector('#contract-stop-conditions').value = stopConditions;
+          if (successCriteria) o.querySelector('#dispatch-success-criteria').value = successCriteria;
+          if (e2eTestCriteria) o.querySelector('#dispatch-e2e-test-criteria').value = e2eTestCriteria;
           // Auto-expand if any field was populated
-          if (goal || constraints || expectedOutput || failureConditions || scopeBoundary || stopConditions) {
+          if (goal || constraints || expectedOutput || failureConditions || scopeBoundary || stopConditions || successCriteria || e2eTestCriteria) {
             o.querySelector('#contract-details').open = true;
           }
         }
@@ -2501,6 +3005,9 @@ async function dispatchWorkItem(workItem, projectKey) {
         const contractScopeBoundary = overlay.querySelector('#contract-scope-boundary')?.value?.trim() || '';
         const contractStopConditionsRaw = overlay.querySelector('#contract-stop-conditions')?.value?.trim() || '';
         const contractStopConditions = contractStopConditionsRaw ? contractStopConditionsRaw.split('\n').map(s => s.trim()).filter(Boolean) : [];
+        const contractSuccessCriteria = overlay.querySelector('#dispatch-success-criteria')?.value?.trim() || '';
+        const contractE2eTestCriteriaRaw = overlay.querySelector('#dispatch-e2e-test-criteria')?.value?.trim() || '';
+        const contractE2eTestCriteria = contractE2eTestCriteriaRaw ? contractE2eTestCriteriaRaw.split('\n').map(s => s.trim()).filter(Boolean) : [];
 
         const contract = {};
         if (contractGoal) contract.goal = contractGoal;
@@ -2509,6 +3016,8 @@ async function dispatchWorkItem(workItem, projectKey) {
         if (contractFailureConditions) contract.failure_conditions = contractFailureConditions;
         if (contractScopeBoundary) contract.scope_boundary = contractScopeBoundary;
         if (contractStopConditions.length) contract.stop_conditions = contractStopConditions;
+        if (contractSuccessCriteria) contract.success_criteria = contractSuccessCriteria;
+        if (contractE2eTestCriteria.length) contract.e2e_test_criteria = contractE2eTestCriteria;
 
         const endpoint = plainTerminal ? '/api/terminal/shell' : '/api/terminal';
         const body = plainTerminal
@@ -2614,6 +3123,17 @@ function showToast(message, type, linkText, linkDispatchId) {
   toast.querySelector('.toast-close').onclick = () => toast.remove();
   container.appendChild(toast);
   setTimeout(() => { if (toast.parentElement) toast.remove(); }, 10000);
+}
+
+function showInlineErrorBanner(panel, message) {
+  panel.querySelector('.inline-error-banner')?.remove();
+  const banner = document.createElement('div');
+  banner.className = 'inline-error-banner';
+  banner.style.cssText = 'background:#FEF2F2;border:1px solid #FCA5A5;border-radius:4px;padding:6px 10px;font-size:12px;color:#991B1B;margin:6px 0;';
+  banner.textContent = message;
+  const header = panel.querySelector('.panel-header');
+  if (header?.nextSibling) { panel.insertBefore(banner, header.nextSibling); }
+  else { panel.appendChild(banner); }
 }
 
 async function suspendSession(endpoint, btn, onSuccess) {
@@ -2726,8 +3246,15 @@ async function refreshSuspendedPanel() {
       ...suspTerminals.map(t => ({ ...t, _stype: 'terminal', _suspendedAt: t.exited_at || t.started_at })),
     ];
 
+    const activeProjectKey = _getActiveProjectKey();
+    const visible = all.filter(s =>
+      !s.project_key ||
+      !activeProjectKey ||
+      !_isProjectMatch(s.project_key, activeProjectKey)
+    );
+
     let container = _suspendedContainer || document.getElementById('suspended-sessions');
-    if (all.length === 0) {
+    if (visible.length === 0) {
       if (container) container.remove();
       _suspendedContainer = null;
       return;
@@ -2741,9 +3268,9 @@ async function refreshSuspendedPanel() {
     }
     _suspendedContainer = container;
 
-    let html = `<h3 style="margin:0 0 12px 0;font-size:15px;font-weight:600">Suspended Sessions <span style="font-size:12px;font-weight:400;background:#fef3c7;color:#b45309;padding:2px 8px;border-radius:3px;margin-left:6px">${all.length}</span></h3>`;
+    let html = `<h3 style="margin:0 0 12px 0;font-size:15px;font-weight:600">Suspended Sessions <span style="font-size:12px;font-weight:400;background:#fef3c7;color:#b45309;padding:2px 8px;border-radius:3px;margin-left:6px">${visible.length}</span></h3>`;
     html += '<div style="display:flex;flex-direction:column;gap:8px">';
-    for (const s of all) {
+    for (const s of visible) {
       const keyParts = (s.project_key || '').split('/').filter(p => p && p !== '*');
       const projectLabel = keyParts.length >= 2 ? `${esc(keyParts[0])} / ${esc(keyParts[1])}` : (keyParts[0] ? esc(keyParts[0]) : '');
       const wiBadge = s.work_item_id ? `<span class="suspended-badge" style="margin-left:0">${esc(s.work_item_id)}</span>` : '';
@@ -2761,7 +3288,7 @@ async function refreshSuspendedPanel() {
     html += '</div>';
     container.innerHTML = html;
 
-    for (const s of all) {
+    for (const s of visible) {
       const resumeBtn = container.querySelector(`[data-susp-resume-${s._stype}="${CSS.escape(s.id)}"]`);
       const dismissBtn = container.querySelector(`[data-susp-dismiss-${s._stype}="${CSS.escape(s.id)}"]`);
 
@@ -2962,6 +3489,16 @@ async function restoreDispatches() {
           }
           if (!existing.work_item_input_needed) {
             panelEl.querySelector('.input-needed-banner')?.remove();
+          }
+          if (d.revoked_at && !existing.revoked_at) {
+            existing.revoked_at = d.revoked_at;
+            if (!panelEl.querySelector('.revoked-badge')) {
+              const titleEl = panelEl.querySelector('.dispatch-title');
+              titleEl?.insertAdjacentHTML('beforeend',
+                '<span class="revoked-badge" title="This session has been revoked and cannot be resumed">[revoked]</span>');
+              panelEl.querySelector(`[data-restart-dispatch]`)?.remove();
+              panelEl.querySelector(`[data-revoke-dispatch]`)?.remove();
+            }
           }
         }
         if (prevPhase !== 'waiting_for_input' && existing.agent_phase === 'waiting_for_input' && existing.project_key) {
@@ -3616,7 +4153,7 @@ function renderWorkItemsTable(items, allWorkItems, tableId) {
 // `workItems` = all work items for this project.
 // `epics` = epics associated with this project (from backlog).
 // `projectKey` = current project key for preference scoping.
-function renderEpicGroupedBoard(workItems, epics, projectKey) {
+function renderEpicGroupedBoard(workItems, epics, projectKey, showCompleted = false) {
   const collapsePrefs = JSON.parse(window._prefs.board_epic_collapse || '{}');
   const epicIds = new Set(epics.map(e => e.id));
   const byEpic = {};
@@ -3629,10 +4166,16 @@ function renderEpicGroupedBoard(workItems, epics, projectKey) {
     }
   }
 
+  let hiddenCount = 0;
+  let terminalCount = 0;
   let html = '';
   for (const epic of epics) {
     const items = byEpic[epic.id];
     if (!items || !items.length) continue;
+    if (isTerminalEpic(epic)) {
+      terminalCount++;
+      if (!showCompleted) { hiddenCount++; continue; }
+    }
     const sorted = topoSort(items);
     const done = items.filter(i => i.status === 'done').length;
     const collapseKey = `${projectKey}:${epic.id}`;
@@ -3653,6 +4196,13 @@ function renderEpicGroupedBoard(workItems, epics, projectKey) {
     html += `</div></div>`;
   }
 
+  if (terminalCount > 0) {
+    const label = showCompleted
+      ? '▾ Hide completed & archived'
+      : `▸ Show ${hiddenCount} completed & archived`;
+    html = `<div data-board-completed-toggle style="padding:4px 0;font-size:10px;color:#6c7086;cursor:pointer;user-select:none">${label}</div>` + html;
+  }
+
   if (orphans.length) {
     if (epics.some(e => (byEpic[e.id] || []).length > 0)) {
       html += `<div class="orphan-section-label">Other Tasks (${orphans.length})</div>`;
@@ -3666,7 +4216,9 @@ function renderEpicGroupedBoard(workItems, epics, projectKey) {
 function renderComponentView(org, proj, comp, data, workItems, files, projectEpics) {
   currentWorkItems = workItems;
   previousProjectKey = currentProjectKey;
-  currentProjectKey = `${org}/${proj}/${comp}`;
+  const newKey = `${org}/${proj}/${comp}`;
+  if (currentProjectKey !== newKey) _pendingProjectArrival = newKey;
+  currentProjectKey = newKey;
 
   const tabs = ['Board', 'Overview', 'Docs'];
   let html = `<div class="card"><h2>${esc(data.name || (comp === 'main' ? proj : `${proj}/${comp}`))}</h2>`;
@@ -3761,7 +4313,8 @@ function renderComponentView(org, proj, comp, data, workItems, files, projectEpi
     html += `</div>`;
 
     if (showEpicGrouping) {
-      html += renderEpicGroupedBoard(workItems, epics, currentProjectKey);
+      const boardShowCompleted = sessionStorage.getItem('board-show-completed-epics') === 'true';
+      html += renderEpicGroupedBoard(workItems, epics, currentProjectKey, boardShowCompleted);
     } else {
       html += renderWorkItemsTable(topoSort(workItems), workItems, 'wi-table');
     }
@@ -3770,6 +4323,10 @@ function renderComponentView(org, proj, comp, data, workItems, files, projectEpi
   }
   // Project-level session slot (sessions with project_key but no matching work item slot)
   html += `<div class="context-sessions-section hidden" style="margin-top:16px"><h3>Project Agents</h3><div data-session-slot-project="${esc(currentProjectKey)}"></div></div>`;
+  // Recent Commits
+  html += `<hr style="margin:16px 0">`;
+  html += `<h3>Recent Commits</h3>`;
+  html += `<div class="git-log-section" id="git-log-${esc(`${org}/${proj}/${comp}`)}"><span style="font-size:13px;color:var(--text-light,#6B7280)">Loading…</span></div>`;
   html += `</div>`;
 
   // Tab 1: Overview (Profile + Guidance + Agents)
@@ -4146,6 +4703,15 @@ function bindTabs() {
     };
   });
 
+  // Board completed-epics toggle
+  document.querySelectorAll('[data-board-completed-toggle]').forEach(el => {
+    el.onclick = () => {
+      const next = sessionStorage.getItem('board-show-completed-epics') !== 'true';
+      sessionStorage.setItem('board-show-completed-epics', next ? 'true' : 'false');
+      route();
+    };
+  });
+
   // Doc links
   document.querySelectorAll('.file-link').forEach(link => {
     link.onclick = async () => {
@@ -4474,9 +5040,8 @@ function bindFilterBar() {
     applyFilters();
   };
 
-  // Column sorting
-  const wiTable = document.getElementById('wi-table');
-  if (wiTable) {
+  // Column sorting — attaches to every .wi-table on the page (non-grouped and each epic group)
+  document.querySelectorAll('.wi-table').forEach(wiTable => {
     const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
     const statusOrder = { 'draft': 0, 'planned': 1, 'in-progress': 2, 'blocked': 3, 'in-review': 4, 'testing': 5, 'preview': 6, 'done': 7, 'cancelled': 8, 'archived': 9 };
     let sortCol = null, sortAsc = true;
@@ -4528,7 +5093,7 @@ function bindFilterBar() {
         });
       };
     });
-  }
+  });
 }
 
 // --- Agent-Gated Task Creation ---
@@ -5386,22 +5951,23 @@ async function showEpicDiscussModal(epicId) {
 // --- Epic Views ---
 
 function renderEpicListView(epics) {
-  const isInactive = s => s === 'done' || s === 'cancelled' || s === 'archived';
-  const hasCompleted = epics.some(e => isInactive(e.status));
+  const hasCompleted = epics.some(e => isTerminalEpic(e));
   let html = `<div class="card"><h2>Epics</h2>`;
   html += `<button class="btn-add-wi" id="create-epic">+ New Epic</button>`;
   if (hasCompleted) {
-    html += `<label class="filter-checkbox" style="margin-left:12px"><input type="checkbox" id="epic-show-done" />Show completed &amp; archived</label>`;
+    html += `<label class="filter-checkbox" style="margin-left:12px"><input type="checkbox" id="epic-show-done" />Show completed, archived &amp; finished</label>`;
   }
   if (epics.length) {
     html += `<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Progress</th><th>Projects</th><th>Target</th><th></th></tr></thead><tbody>`;
     for (const epic of epics) {
       const p = epic.progress || { done: 0, total: 0 };
       const pct = p.total ? Math.round(p.done / p.total * 100) : 0;
-      const hideCompleted = isInactive(epic.status) ? ' style="display:none"' : '';
+      const isHidden = isTerminalEpic(epic);
+      const hideStyle = isHidden ? ' style="display:none"' : '';
+      const listStatus = epic.status;
       const statusBadge = epic.status === 'active' ? 'open' : epic.status === 'done' ? 'done' : epic.status === 'archived' ? 'archived' : 'medium';
       const canArchive = epic.status === 'done' || epic.status === 'cancelled';
-      html += `<tr data-epic-list-status="${esc(epic.status)}"${hideCompleted}>`;
+      html += `<tr data-epic-list-status="${esc(listStatus)}"${hideStyle}>`;
       html += `<td><code style="cursor:pointer" data-epic-nav="${esc(epic.id)}">${esc(epic.id)}</code></td>`;
       html += `<td>${esc(epic.title)}</td>`;
       html += `<td><span class="badge badge-${statusBadge}">${esc(epic.status)}</span></td>`;
@@ -6622,23 +7188,78 @@ function showOnboardModal() {
 function buildSessionsSidebar() {
   const container = document.getElementById('sessions-sidebar');
   if (!container) return;
-  const collapsed = sessionStorage.getItem('sessions-sidebar-collapsed') === 'true';
-  // Label with toggle arrow
-  const label = document.createElement('div');
-  label.className = 'sidebar-section-label';
-  label.style.cursor = 'pointer';
-  label.innerHTML = `<span class="arrow ${collapsed ? '' : 'open'}">&#9654;</span> SESSIONS`;
-  container.appendChild(label);
+  container.id = 'dispatches-sidebar';
+
+  const collapsed = sessionStorage.getItem('dispatches-sidebar-collapsed') === 'true';
+  const header = document.createElement('div');
+  header.className = 'sidebar-section-label dispatches-header';
+  header.style.cursor = 'pointer';
+  header.innerHTML = `<span class="arrow ${collapsed ? '' : 'open'}">&#9654;</span> DISPATCHES <span id="dispatches-total-badge" class="agents-badge empty"></span>`;
+
+  const body = document.createElement('div');
+  body.id = 'dispatches-body';
+  body.style.display = collapsed ? 'none' : '';
+
+  const tabs = document.createElement('div');
+  tabs.className = 'dispatches-tabs';
+  tabs.setAttribute('role', 'tablist');
+  tabs.innerHTML = `
+    <button class="dispatch-tab" data-filter="active" role="tab" tabindex="0">Active <span class="dispatch-tab-badge" id="tab-badge-active"></span></button>
+    <button class="dispatch-tab" data-filter="autonomous" role="tab" tabindex="-1">Autonomous <span class="dispatch-tab-badge" id="tab-badge-autonomous"></span></button>
+    <button class="dispatch-tab" data-filter="all" role="tab" tabindex="-1">All <span class="dispatch-tab-badge" id="tab-badge-all"></span></button>
+  `;
+  body.appendChild(tabs);
+
   const list = document.createElement('div');
-  list.id = 'sessions-list';
-  list.style.display = collapsed ? 'none' : '';
-  container.appendChild(list);
-  label.onclick = () => {
-    const arrow = label.querySelector('.arrow');
+  list.id = 'dispatches-list';
+  body.appendChild(list);
+
+  const viewAll = document.createElement('a');
+  viewAll.className = 'dispatches-view-all';
+  viewAll.textContent = 'View all →';
+  viewAll.href = '#agents';
+  body.appendChild(viewAll);
+
+  container.appendChild(header);
+  container.appendChild(body);
+
+  header.addEventListener('click', () => {
+    const arrow = header.querySelector('.arrow');
     const open = arrow.classList.toggle('open');
-    list.style.display = open ? '' : 'none';
-    sessionStorage.setItem('sessions-sidebar-collapsed', !open);
-  };
+    body.style.display = open ? '' : 'none';
+    sessionStorage.setItem('dispatches-sidebar-collapsed', !open);
+  });
+
+  tabs.addEventListener('keydown', (e) => {
+    const tabBtns = [...tabs.querySelectorAll('.dispatch-tab')];
+    const idx = tabBtns.indexOf(document.activeElement);
+    if (e.key === 'ArrowRight' && idx < tabBtns.length - 1) {
+      tabBtns[idx + 1].focus();
+      tabBtns[idx].tabIndex = -1;
+      tabBtns[idx + 1].tabIndex = 0;
+    } else if (e.key === 'ArrowLeft' && idx > 0) {
+      tabBtns[idx - 1].focus();
+      tabBtns[idx].tabIndex = -1;
+      tabBtns[idx - 1].tabIndex = 0;
+    } else if (e.key === 'Enter') {
+      document.activeElement.click();
+    }
+  });
+
+  tabs.addEventListener('click', (e) => {
+    const btn = e.target.closest('.dispatch-tab');
+    if (!btn) return;
+    const filter = btn.dataset.filter;
+    sessionStorage.setItem('dispatches-sidebar-filter', filter);
+    tabs.querySelectorAll('.dispatch-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    refreshSessionsSidebar();
+  });
+
+  const savedFilter = sessionStorage.getItem('dispatches-sidebar-filter') || 'active';
+  const activeTab = tabs.querySelector(`[data-filter="${savedFilter}"]`);
+  if (activeTab) activeTab.classList.add('active');
+
   const divider = document.createElement('hr');
   divider.className = 'sidebar-divider';
   container.appendChild(divider);
@@ -6685,6 +7306,21 @@ function scrollToSessionPanel(session) {
 }
 
 function navigateToSession(session) {
+  window._sidebarTargetSession = `${session.type}:${session.id}`;
+  // Same-project: expand directly — hash won't change so no hashchange/route fires.
+  // Hash guard ensures currentProjectKey is not stale from a prior non-component view.
+  if (session.project_key && session.project_key === currentProjectKey
+      && location.hash.startsWith('#component/')) {
+    const panelKey = `${session.type}:${session.id}`;
+    const panel = sessionPanels.get(panelKey);
+    if (panel && panel.classList.contains('collapsed')) {
+      const minBtn = panel.querySelector('[data-minimize-dispatch],[data-minimize-terminal],[data-minimize-cli]');
+      togglePanelCollapse(panelKey, panel, minBtn);
+    }
+    window._sidebarTargetSession = null;
+    setTimeout(() => scrollToSessionPanel(session), 50);
+    return;
+  }
   if (session.work_item_id && session.project_key) {
     const [org, proj, comp] = session.project_key.split('/');
     if (org && proj && comp) {
@@ -6710,18 +7346,33 @@ function navigateToSession(session) {
 }
 
 function refreshSessionsSidebar() {
-  const list = document.getElementById('sessions-list');
+  const list = document.getElementById('dispatches-list');
   if (!list) return;
   list.innerHTML = '';
-  const allSessions = [
-    ...activeDispatches.map(d => ({ type: 'dispatch', id: d.id, status: d.status, label: d.work_item_id || d.title || d.id, started_at: d.started_at, epic_id: d.epic_id, work_item_id: d.work_item_id, project_key: d.project_key })),
-    ...activeTerminals.map(t => ({ type: 'terminal', id: t.id, status: t.status, label: t.title || t.id, started_at: t.started_at, epic_id: t.epic_id, work_item_id: t.work_item_id, project_key: t.project_key })),
-    ...activeCliSessions.map(c => ({ type: 'cli', id: c.id, status: c.status, label: `[CLI] ${c.title}`, started_at: c.registered_at, epic_id: c.epic_id, work_item_id: c.work_item_id, project_key: c.project_key })),
-  ];
-  if (!allSessions.length) return;
 
-  // Group by project_key, then by epic_id within each project
-  const projectGroups = new Map(); // project_key → { epics: Map<epic_id, sessions[]>, noEpic: sessions[] }
+  const filter = sessionStorage.getItem('dispatches-sidebar-filter') || 'active';
+  const allDispatches = activeDispatches.map(d => ({ type: 'dispatch', id: d.id, status: d.status, label: d.work_item_id || d.title || d.id, started_at: d.started_at, epic_id: d.epic_id, work_item_id: d.work_item_id, project_key: d.project_key, dispatch_mode: d.dispatch_mode }));
+  const allTerminals = activeTerminals.map(t => ({ type: 'terminal', id: t.id, status: t.status, label: t.title || t.id, started_at: t.started_at, epic_id: t.epic_id, work_item_id: t.work_item_id, project_key: t.project_key, dispatch_mode: null }));
+  const allCli = activeCliSessions.map(c => ({ type: 'cli', id: c.id, status: c.status, label: `[CLI] ${c.title}`, started_at: c.registered_at, epic_id: c.epic_id, work_item_id: c.work_item_id, project_key: c.project_key, dispatch_mode: null }));
+
+  let allSessions;
+  if (filter === 'autonomous') {
+    allSessions = allDispatches.filter(d => d.dispatch_mode === 'auto_implement');
+  } else {
+    allSessions = [...allDispatches, ...allTerminals, ...allCli];
+  }
+
+  if (!allSessions.length) {
+    const empty = document.createElement('div');
+    empty.className = 'session-entry';
+    empty.style.cssText = 'color:var(--text-light);font-size:11px;padding:6px 16px;font-style:italic';
+    empty.textContent = 'No dispatches';
+    list.appendChild(empty);
+    updateProjectSignalDots();
+    return;
+  }
+
+  const projectGroups = new Map();
   const standalone = [];
   for (const s of allSessions) {
     if (s.project_key) {
@@ -6783,15 +7434,15 @@ function refreshSessionsSidebar() {
   }
 
   const totalSuspended = activeDispatches.filter(d => d.status === 'suspended').length;
-  const sidebarLabel = document.querySelector('#sessions-sidebar .sidebar-section-label');
-  if (sidebarLabel) {
-    let globalSuspBadge = sidebarLabel.querySelector('.susp-total-badge');
+  const dispatchesHeader = document.querySelector('#dispatches-sidebar .dispatches-header');
+  if (dispatchesHeader) {
+    let globalSuspBadge = dispatchesHeader.querySelector('.susp-total-badge');
     if (totalSuspended > 0) {
       if (!globalSuspBadge) {
         globalSuspBadge = document.createElement('span');
         globalSuspBadge.className = 'susp-total-badge';
         globalSuspBadge.style.cssText = 'background:#6B7280;color:#fff;font-size:10px;padding:1px 5px;border-radius:9px;margin-left:6px;cursor:default';
-        sidebarLabel.appendChild(globalSuspBadge);
+        dispatchesHeader.appendChild(globalSuspBadge);
       }
       globalSuspBadge.textContent = totalSuspended;
       globalSuspBadge.title = `${totalSuspended} session${totalSuspended !== 1 ? 's' : ''} suspended`;
@@ -6800,11 +7451,9 @@ function refreshSessionsSidebar() {
     }
   }
 
-  // Render project > epic > session hierarchy
   for (const [pk, pg] of projectGroups) {
-    // Show project label (drop org prefix for brevity)
-    const parts = pk.split('/');
-    const shortLabel = parts.length >= 3 ? (parts[2] === 'main' ? parts[1] : `${parts[1]}/${parts[2]}`) : pk;
+    const pkParts = pk.split('/');
+    const shortLabel = pkParts.length >= 3 ? (pkParts[2] === 'main' ? pkParts[1] : `${pkParts[1]}/${pkParts[2]}`) : pk;
     const projLabel = document.createElement('div');
     projLabel.className = 'sidebar-project-label';
     projLabel.style.display = 'flex';
@@ -6838,7 +7487,6 @@ function refreshSessionsSidebar() {
     };
     list.appendChild(projLabel);
 
-    // Epic sub-groups
     for (const [epicId, sessions] of pg.epics) {
       const epicLabel = document.createElement('div');
       epicLabel.className = 'sidebar-epic-sublabel';
@@ -6848,11 +7496,9 @@ function refreshSessionsSidebar() {
       for (const s of sessions) list.appendChild(renderEntry(s, true));
     }
 
-    // No-epic sessions
     for (const s of pg.noEpic) list.appendChild(renderEntry(s, false));
   }
 
-  // Render standalone
   if (standalone.length && projectGroups.size > 0) {
     const label = document.createElement('div');
     label.className = 'sidebar-group-label';
@@ -6860,7 +7506,6 @@ function refreshSessionsSidebar() {
     list.appendChild(label);
   }
   for (const s of standalone) list.appendChild(renderEntry(s, false));
-  // Update sidebar project signal dots based on current session state
   updateProjectSignalDots();
 }
 
@@ -7151,7 +7796,12 @@ function renderAgentTile(agent) {
       ? `${agent.epic_id}: ${agent.epic_title}`
       : agent.epic_id);
   }
-  const title = aBreadcrumb.join(' · ') || stripAnsiForDisplay(agent.title || agent.id);
+  // Append the dispatch/terminal title when no work item or epic anchors it.
+  const agentLabel = stripAnsiForDisplay(agent.title || agent.id);
+  if (!agent.work_item_id && !agent.epic_id && agentLabel !== agent.id) {
+    aBreadcrumb.push(agentLabel);
+  }
+  const title = aBreadcrumb.join(' · ') || agentLabel;
   const preview = isCli ? '(read-only — no output)' : ((agent.last_output || []).slice(-3).join('\n') || '(no output yet)');
   const typeLabel = isCli ? 'CLI (read-only)' : (agent.type === 'terminal' ? 'interactive' : 'non-interactive');
   const typeBadgeClass = isCli ? 'badge-cli' : (agent.type === 'terminal' ? 'badge-agent' : 'badge-open');
@@ -7193,7 +7843,7 @@ async function fetchAgentsList() {
   ]);
   const agents = [];
   for (const d of dispatches) {
-    agents.push({ type: 'dispatch', id: d.id, status: d.status, title: d.work_item_id || d.id, work_item_id: d.work_item_id, work_item_title: d.work_item_title || null, project_key: d.project_key, epic_id: d.epic_id, epic_title: d.epic_title || null, started_at: d.started_at, last_output: d.last_output || [], cost_usd: d.cost_usd, claude_session_id: d.claude_session_id, agent_phase: d.agent_phase || null, dispatch_mode: d.dispatch_mode || 'standard' });
+    agents.push({ type: 'dispatch', id: d.id, status: d.status, title: d.title || d.work_item_id || d.id, work_item_id: d.work_item_id, work_item_title: d.work_item_title || null, project_key: d.project_key, epic_id: d.epic_id, epic_title: d.epic_title || null, started_at: d.started_at, last_output: d.last_output || [], cost_usd: d.cost_usd, claude_session_id: d.claude_session_id, agent_phase: d.agent_phase || null, dispatch_mode: d.dispatch_mode || 'standard' });
   }
   for (const t of terminals) {
     agents.push({ type: 'terminal', id: t.id, status: t.status, title: t.title || t.id, work_item_id: t.work_item_id, project_key: t.project_key, epic_id: t.epic_id, started_at: t.started_at, last_output: t.last_output || [], claude_session_id: t.claude_session_id, agent_type: t.agent_type || t.type || 'claude' });
@@ -7970,7 +8620,7 @@ function renderTimeReport(report, groupBy) {
   const dailyLookup = new Map();
   for (const d of (report.daily || [])) dailyLookup.set(`${d.project_key}|${d.day}`, d.time_seconds);
   const dailyMatrix = dailyProjects.map(p => dailyCols.map(c => dailyLookup.get(`${p.key}|${c}`) || 0));
-  const dailyColLabels = dailyCols.map(d => { const dt = new Date(d + 'T00:00:00'); return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); });
+  const dailyColLabels = dailyCols.map(d => { if (!d || typeof d !== 'string') return '(unknown)'; const dt = new Date(d + 'T00:00:00'); return isNaN(dt) ? d : dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); });
 
   // Monthly stacked chart
   const monthlyCols = [...new Set((report.monthly || []).map(d => d.month))].sort();
@@ -7986,7 +8636,7 @@ function renderTimeReport(report, groupBy) {
   const monthlyLookup = new Map();
   for (const d of (report.monthly || [])) monthlyLookup.set(`${d.project_key}|${d.month}`, d.time_seconds);
   const monthlyMatrix = monthlyProjects.map(p => monthlyCols.map(c => monthlyLookup.get(`${p.key}|${c}`) || 0));
-  const monthlyColLabels = monthlyCols.map(m => { const [y, mo] = m.split('-'); return new Date(+y, +mo - 1).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }); });
+  const monthlyColLabels = monthlyCols.map(m => { if (!m || typeof m !== 'string') return '(unknown)'; const [y, mo] = m.split('-'); const dt = new Date(+y, +mo - 1); return isNaN(dt) ? m : dt.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }); });
 
   const groupToggle = `<div style="display:inline-flex;gap:0;border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:12px;margin-left:12px;vertical-align:middle">
     <span data-tr-group="project" style="padding:4px 10px;cursor:pointer;${!isOrg ? 'background:var(--accent);color:#fff' : 'color:var(--text-light)'}">By Project</span>
@@ -8015,12 +8665,12 @@ function renderTimeReport(report, groupBy) {
     <div class="tab-content" data-panel="2">
       <div style="margin-bottom:20px">${renderStackedBarChart(dailyColLabels, dailyProjects, dailyMatrix)}</div>
       <h3 style="font-size:14px;margin:20px 0 10px;color:var(--accent)">Daily Breakdown</h3>
-      ${renderPivotTable(report.daily || [], 'day', d => { const dt = new Date(d + 'T00:00:00'); return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' }); })}
+      ${renderPivotTable(report.daily || [], 'day', d => { if (!d || typeof d !== 'string') return '(unknown)'; const dt = new Date(d + 'T00:00:00'); return isNaN(dt) ? d : dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' }); })}
     </div>
     <div class="tab-content" data-panel="3">
       <div style="margin-bottom:20px">${renderStackedBarChart(monthlyColLabels, monthlyProjects, monthlyMatrix)}</div>
       <h3 style="font-size:14px;margin:20px 0 10px;color:var(--accent)">Monthly Breakdown</h3>
-      ${renderPivotTable(report.monthly || [], 'month', m => { const [y, mo] = m.split('-'); return new Date(+y, +mo - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); })}
+      ${renderPivotTable(report.monthly || [], 'month', m => { if (!m || typeof m !== 'string') return '(unknown)'; const [y, mo] = m.split('-'); const dt = new Date(+y, +mo - 1); return isNaN(dt) ? m : dt.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); })}
     </div>
   </div>`;
 }
@@ -8248,11 +8898,17 @@ function renderSettingsView(status, config) {
   html += '<option value="light"' + (curTheme === 'light' ? ' selected' : '') + '>Light</option>';
   html += '</select></div>';
   // Default panel state
-  const curPanel = window._prefs.default_panel_state || 'expanded';
-  html += '<div style="margin-top:8px"><span class="key">Default Panel State</span> ';
+  const curPanel = window._prefs.default_panel_state || 'minimized';
+  html += '<div style="margin-top:8px"><span class="key">Default Dispatch Panel State</span> ';
   html += '<select id="settings-panel-state" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px">';
-  html += '<option value="expanded"' + (curPanel === 'expanded' ? ' selected' : '') + '>Expanded</option>';
   html += '<option value="minimized"' + (curPanel === 'minimized' ? ' selected' : '') + '>Minimized</option>';
+  html += '<option value="expanded"' + (curPanel === 'expanded' ? ' selected' : '') + '>Expanded</option>';
+  html += '</select></div>';
+  const curTerminalPanel = window._prefs.default_terminal_panel_state || 'minimized';
+  html += '<div style="margin-top:8px"><span class="key">Default Terminal Panel State</span> ';
+  html += '<select id="settings-terminal-panel-state" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px">';
+  html += '<option value="minimized"' + (curTerminalPanel === 'minimized' ? ' selected' : '') + '>Minimized</option>';
+  html += '<option value="expanded"' + (curTerminalPanel === 'expanded' ? ' selected' : '') + '>Expanded</option>';
   html += '</select></div>';
   html += '</div></div>';
 
@@ -8403,6 +9059,19 @@ function bindSettingsEvents(status, config) {
         body: JSON.stringify({ default_panel_state: e.target.value }),
       });
       window._prefs.default_panel_state = e.target.value;
+    } catch (err) {
+      alert('Failed to save preference: ' + err.message);
+    }
+  });
+
+  document.getElementById('settings-terminal-panel-state')?.addEventListener('change', async (e) => {
+    try {
+      await fetch('/api/settings/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ default_terminal_panel_state: e.target.value }),
+      });
+      window._prefs.default_terminal_panel_state = e.target.value;
     } catch (err) {
       alert('Failed to save preference: ' + err.message);
     }
@@ -8619,6 +9288,51 @@ function navigate(fragment) {
   location.hash = '#' + fragment;
 }
 window.navigate = navigate;
+
+// --- Git log section ---
+const _gitLogCache = new Map();
+
+async function loadGitLog(org, proj, comp) {
+  const key = `${org}/${proj}/${comp}`;
+  const container = document.getElementById(`git-log-${key}`);
+  if (!container) return;
+
+  const now = Date.now();
+  const cached = _gitLogCache.get(key);
+  if (cached && now - cached.ts < 30000) {
+    _renderGitCommits(container, cached.commits, cached.unavailable);
+    return;
+  }
+
+  try {
+    const resp = await fetch(`/api/git-log/${encodeURIComponent(org)}/${encodeURIComponent(proj)}/${encodeURIComponent(comp)}`);
+    const data = await resp.json();
+    _gitLogCache.set(key, { commits: data.commits || [], unavailable: !!data.unavailable, ts: now });
+    _renderGitCommits(container, data.commits || [], data.unavailable);
+  } catch {
+    container.innerHTML = `<span style="font-size:13px;color:var(--text-light,#6B7280)">Could not load commits</span>`;
+  }
+}
+
+function _renderGitCommits(container, commits, unavailable) {
+  if (unavailable || !commits.length) {
+    container.innerHTML = `<span style="font-size:13px;color:var(--text-light,#6B7280)">Git history unavailable</span>`;
+    return;
+  }
+  container.innerHTML = commits.map(c => {
+    const lines = (c.message || '').split('\n');
+    const subject = lines[0] || '';
+    const body = lines.slice(1).join('\n').trim();
+    return `<div class="git-commit-row" style="flex-wrap:wrap;align-items:flex-start">
+      <span class="git-hash-badge" style="margin-top:2px">${esc(c.hash)}</span>
+      <span style="flex:1;min-width:0">
+        <span class="git-subject">${esc(subject)}</span>
+        ${body ? `<pre class="git-body">${esc(body)}</pre>` : ''}
+      </span>
+      <span class="git-meta" style="margin-top:2px">${esc(c.author)} &middot; ${timeAgo(c.date)}</span>
+    </div>`;
+  }).join('');
+}
 
 // --- timeAgo helper ---
 function timeAgo(isoString) {
@@ -9021,6 +9735,8 @@ async function route() {
   }
 
   if (parts[0] === 'autonomous') {
+    sessionStorage.setItem('dispatches-sidebar-filter', 'autonomous');
+    refreshSessionsSidebar();
     try {
       const dispatches = await api('dispatch/autonomous');
       main.innerHTML = renderAutonomousView(dispatches);
@@ -9034,6 +9750,7 @@ async function route() {
   }
 
   if (parts[0] === 'time-report') {
+    _hideSessionPanelsForCleanRoute();
     try {
       const groupBy = sessionStorage.getItem('time-report-group') || 'project';
       const report = await api(`time-report${groupBy === 'org' ? '?group=org' : ''}`);
@@ -9048,6 +9765,7 @@ async function route() {
   }
 
   if (parts[0] === 'costs') {
+    _hideSessionPanelsForCleanRoute();
     try {
       const savedParams = sessionStorage.getItem('cost-report-params');
       const params = new URLSearchParams(savedParams || '');
@@ -9157,6 +9875,8 @@ async function route() {
     const [, org, proj, comp] = parts;
     try {
       const projectKey = `${org}/${proj}/${comp}`;
+      // Signal project arrival early so context-aware fold fires even if data fetch fails.
+      if (currentProjectKey !== projectKey) _pendingProjectArrival = projectKey;
       const [data, bl, files] = await Promise.all([
         api(`component/${org}/${proj}/${comp}`),
         getBacklog(),
@@ -9182,6 +9902,9 @@ async function route() {
       main.innerHTML = renderComponentView(org, proj, comp, data, workItems, files, projectEpics);
       bindTabs();
       setActive(projectKey);
+
+      // Inject git log into Overview tab — parallel fetch, non-blocking
+      loadGitLog(org, proj, comp).catch(() => {});
 
       // Inject sync freshness indicator — parallel fetch, non-blocking
       (async () => {
@@ -9401,6 +10124,14 @@ Promise.all([buildTree(), buildEpicTree()]).catch(err => { console.error('[start
     }
   }, 1000);
 });
+
+// Expose rendering helpers for sanitisation tests (test mode only).
+// The fixture sets window._testDisableAutoDismiss before scripts run, so any
+// test-mode flag is reliably detectable here.
+if (window._testDisableAutoDismiss !== undefined) {
+  window.renderPhaseTimeline = renderPhaseTimeline;
+  window.renderSettingsView = renderSettingsView;
+}
 </script>
 
 <div id="notes-panel" class="notes-panel" aria-label="Notes panel" role="complementary">

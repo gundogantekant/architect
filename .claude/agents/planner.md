@@ -32,7 +32,7 @@ Make architecture decisions, design systems, select technology stacks, decompose
    - If branch is not stated and the planner cannot run git commands → ask for it
    Do NOT produce a plan until all five fields are resolved.
 1. Understand the current project state (read scout report if available)
-2. Analyze existing code structure and patterns
+2. Analyze existing code structure and patterns. When the task involves code files and `.codegraph/` is present in the target project, call `codegraph_impact` on the proposed symbols to assess blast radius before finalizing task boundaries. List affected modules in the plan. Skip for prompt-only or config-only changes — the graph does not index .md files; use grep for those.
 3. Research relevant technologies or approaches when needed (WebSearch/WebFetch)
 4. **Fetch next IDs**: Query `GET http://127.0.0.1:3777/api/sequences/next` to learn the next available work item and epic IDs. Use these to pre-assign real IDs (e.g. `W-042`, `E-005`) to tasks in the plan so the orchestrator can create them in order.
 5. Produce a structured plan with clear task boundaries
@@ -63,7 +63,9 @@ Numbered list of implementation tasks, each specifying:
 - Which agent should handle it (coder, coder-frontend, coder-backend, coder-mobile, coder-infra)
 - Key files to create or modify
 - Dependencies on other tasks (reference by ID)
-- **Success criteria** (goal, constraints, expected output, failure conditions) — the coordinator uses these to build DispatchContracts per `domain/entities.md` → DispatchContract
+- **Contract fields** (medium+ only): goal, constraints, expected output, and failure conditions — the coordinator uses these to build DispatchContracts per `domain/entities.md` → DispatchContract
+- **Acceptance criteria** (required for small+; 1 sentence for small, 1–3 sentences for medium+): what must be observably true when the task is complete, written from the user's perspective (e.g. "Done when X can Y without Z"). Maps to the `success_criteria` contract field. For trivial tasks, the plan goal serves this purpose — the `success_criteria` field is null for trivial per `domain/entities.md` → DispatchContract.
+- **E2E test scenarios** (required for small+; 1+ for small/medium, 3+ for large; exempt for trivial): specific behaviors to validate end-to-end, each listed as a named scenario (e.g. "User creates an item → it appears in the list"). Maps to the `e2e_test_criteria` contract field.
 - **Session governance hints** (medium+ only): scope boundary (files/dirs the agent should stay within), potential stop conditions (situations that should halt execution). The coordinator formalizes these into `scope_boundary` and `stop_conditions` contract fields per `domain/rules.md` → Complexity-Scaled Contract Detail.
 
 ### Parallel Batches

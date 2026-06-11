@@ -6,6 +6,11 @@ import * as db from './db.mjs';
 import { readJson } from './utils.mjs';
 import { isMediumOrAbove } from './utils/complexity.mjs';
 
+// Portfolio fields may arrive as strings; toArray guards against char-by-char iteration.
+function toArray(v) {
+  return Array.isArray(v) ? v : [];
+}
+
 export async function resolveProjectPath(projectKey) {
   if (projectKey === ARCHITECT_KEY) return ROOT;
   const registry = await readJson(join(PORTFOLIO, 'registry.json'));
@@ -406,7 +411,18 @@ function buildAdrSection(syncContext) {
 
 function buildMandateSection(complexity) {
   if (!['medium', 'large'].includes(complexity)) {
-    return '> This dispatch follows the Isolated Work Mandate defined in `domain/rules.md` → Isolated Work Mandate.';
+    return [
+      '> **Plan-First + Board Review required for this dispatch.**',
+      '>',
+      '> Before taking any implementation action:',
+      '> 1. Produce a brief inline plan (1–3 bullet points) covering: what files change, the approach, and the test strategy.',
+      '> 2. Submit the plan to the Plan Gate board (dispatch tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx in parallel with the plan text, artifact_type=plan).',
+      '> 3. Do not dispatch any coder agent or modify any file until the board approves.',
+      '> 4. **Plan mode**: If this session will call ExitPlanMode, wait for ALL board verdicts to arrive before calling ExitPlanMode. Board review must complete synchronously before the plan is surfaced to the user. Do not call ExitPlanMode while board is still running.',
+      '>',
+      '> No DispatchContract is required — the board evaluates the plan\'s stated intent and approach.',
+      '> This dispatch follows the Isolated Work Mandate defined in `domain/rules.md` → Isolated Work Mandate.',
+    ].join('\n');
   }
   try {
     const rulesPath = join(ROOT, 'domain', 'rules.md');
@@ -447,7 +463,7 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     '',
     '| Condition | Workflow |',
     '|-----------|----------|',
-    '| Trivial tasks | direct — dispatch a single coder agent |',
+    '| Trivial tasks | plan-then-direct — agent produces brief inline plan, Plan Gate board reviews, then coder dispatched |',
     '| Small features | sequential — scout → planner → coder → tester → reviewer |',
     '| Full-stack work (independent FE/BE/infra) | parallel-fan-out — split then converge at tester → reviewer |',
     '| Medium/large features | plan-then-execute — planner decomposes, then dispatch coders per task |',
@@ -460,7 +476,7 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     '|-------|-------------|',
     '| scout | No portfolio entry exists for the target project |',
     '| strategist | Large/vague/strategic requests, build-vs-buy decisions |',
-    '| planner | Medium+ complexity (skip for small/trivial) |',
+    '| planner | Medium+ complexity. For trivial/small: dispatched agent produces a brief inline plan (1–3 bullet points) directly — no planner agent required. |',
     '| tester | All code changes except trivial |',
     '| reviewer | All code changes except trivial |',
     '| security-auditor | Auth, secrets, input validation, or external data involved |',
@@ -479,11 +495,12 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     '',
     '1. Assess complexity (trivial / small / medium / large / strategic)',
     '2. Select workflow from the table above',
-    '3. Plan if needed (medium+ complexity)',
-    '4. Dispatch agents per the workflow',
-    '5. Test (dispatch tester for all non-trivial code changes)',
-    '6. Review (dispatch reviewer)',
-    '7. Log results via the dashboard API',
+    '3. Plan (always — produce an inline plan for trivial/small; dispatch planner agent for medium+)',
+    '4. Board review on plan — wait for all board verdicts before surfacing plan to user or exiting plan mode (always, except T1). In plan mode: board completes → plan updated → ExitPlanMode. In implement skill: board completes → present plan WITH verdicts to user.',
+    '5. Dispatch implementation agents per the workflow',
+    '6. Test (dispatch tester for all non-trivial code changes)',
+    '7. Review (dispatch reviewer)',
+    '8. Log results via the dashboard API',
   ].join('\n'));
 
   // --- Available Skills ---
@@ -559,9 +576,10 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
         if (v) lines.push(`- ${k}: ${v}`);
       }
     }
-    if (o.rules?.length) {
+    const orgRules = toArray(o.rules);
+    if (orgRules.length) {
       lines.push('', '**Rules**:');
-      for (const r of o.rules) lines.push(`- ${r}`);
+      for (const r of orgRules) lines.push(`- ${r}`);
     }
     if (o.cloud_environments) {
       lines.push('', '**Cloud Environments**:');
@@ -574,15 +592,17 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
       }
     }
     if (o.coding_standards) {
-      if (o.coding_standards.additional_rules?.length) {
+      const additionalRules = toArray(o.coding_standards.additional_rules);
+      if (additionalRules.length) {
         lines.push('', '**Org Coding Standards**:');
-        for (const r of o.coding_standards.additional_rules) lines.push(`- ${r}`);
+        for (const r of additionalRules) lines.push(`- ${r}`);
       }
       if (o.coding_standards.framework_patterns) {
-        for (const [fw, patterns] of Object.entries(o.coding_standards.framework_patterns)) {
-          if (patterns?.length) {
+        for (const [fw, rawPatterns] of Object.entries(o.coding_standards.framework_patterns)) {
+          const fwPatterns = toArray(rawPatterns);
+          if (fwPatterns.length) {
             lines.push('', `**${fw} Patterns**:`);
-            for (const p of patterns) lines.push(`- ${p}`);
+            for (const p of fwPatterns) lines.push(`- ${p}`);
           }
         }
       }
@@ -622,13 +642,15 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     const e = portfolio.entry;
     const lines = ['# Project Context', ''];
     if (e.guidance?.stack_summary) lines.push(`**Stack**: ${e.guidance.stack_summary}`);
-    if (e.guidance?.structure && e.guidance.structure.length) {
+    const structure = toArray(e.guidance?.structure);
+    if (structure.length) {
       lines.push('', '**Structure**:');
-      for (const s of e.guidance.structure) lines.push(`- ${s}`);
+      for (const s of structure) lines.push(`- ${s}`);
     }
-    if (e.guidance?.conventions && e.guidance.conventions.length) {
+    const conventions = toArray(e.guidance?.conventions);
+    if (conventions.length) {
       lines.push('', '**Conventions**:');
-      for (const c of e.guidance.conventions) lines.push(`- ${c}`);
+      for (const c of conventions) lines.push(`- ${c}`);
     }
     if (e.agents?.dispatch_notes && Object.keys(e.agents.dispatch_notes).length) {
       lines.push('', '**Agent Notes**:');
@@ -642,33 +664,40 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     if (e.brief?.key_entities?.length) lines.push(`**Key Entities**: ${e.brief.key_entities.join(', ')}`);
     if (e.brief?.data_flow) lines.push(`**Data Flow**: ${e.brief.data_flow}`);
     if (e.brief?.architecture_rationale) lines.push(`**Architecture Rationale**: ${e.brief.architecture_rationale}`);
-    if (e.brief?.constraints?.length) {
+    const constraints = toArray(e.brief?.constraints);
+    if (constraints.length) {
       lines.push('', '**Constraints**:');
-      for (const c of e.brief.constraints) lines.push(`- ${c}`);
+      for (const c of constraints) lines.push(`- ${c}`);
     }
-    if (e.brief?.environments?.length) {
+    const environments = toArray(e.brief?.environments);
+    if (environments.length) {
       lines.push('', '**Environments**:');
-      for (const env of e.brief.environments) lines.push(`- ${env}`);
+      for (const env of environments) lines.push(`- ${env}`);
     }
-    if (e.brief?.external_dependencies?.length) {
+    const externalDeps = toArray(e.brief?.external_dependencies);
+    if (externalDeps.length) {
       lines.push('', '**External Dependencies**:');
-      for (const dep of e.brief.external_dependencies) lines.push(`- ${dep}`);
+      for (const dep of externalDeps) lines.push(`- ${dep}`);
     }
-    if (e.guidance?.ci_cd?.length) {
+    const ciCd = toArray(e.guidance?.ci_cd);
+    if (ciCd.length) {
       lines.push('', '**CI/CD**:');
-      for (const c of e.guidance.ci_cd) lines.push(`- ${c}`);
+      for (const c of ciCd) lines.push(`- ${c}`);
     }
-    if (e.guidance?.testing?.length) {
+    const testing = toArray(e.guidance?.testing);
+    if (testing.length) {
       lines.push('', '**Testing**:');
-      for (const t of e.guidance.testing) lines.push(`- ${t}`);
+      for (const t of testing) lines.push(`- ${t}`);
     }
-    if (e.custom_rules?.length) {
+    const customRules = toArray(e.custom_rules);
+    if (customRules.length) {
       lines.push('', '**Project Rules**:');
-      for (const r of e.custom_rules) lines.push(`- ${r}`);
+      for (const r of customRules) lines.push(`- ${r}`);
     }
-    if (e.doc_paths?.length) {
+    const docPaths = toArray(e.doc_paths);
+    if (docPaths.length) {
       lines.push('', '**Documentation** (files in target project):');
-      for (const d of e.doc_paths) lines.push(`- ${d}`);
+      for (const d of docPaths) lines.push(`- ${d}`);
     }
     sections.push(lines.join('\n'));
   }
@@ -678,20 +707,23 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     const lines = ['# Organization Conventions', ''];
     if (o.conventions?.branch_prefix) lines.push(`- Branch prefix: ${o.conventions.branch_prefix}`);
     if (o.conventions?.pr_title_pattern) lines.push(`- PR title pattern: ${o.conventions.pr_title_pattern}`);
-    if (o.rules && o.rules.length) {
+    const rules = toArray(o.rules);
+    if (rules.length) {
       lines.push('', '**Rules**:');
-      for (const r of o.rules) lines.push(`- ${r}`);
+      for (const r of rules) lines.push(`- ${r}`);
     }
     if (o.coding_standards) {
-      if (o.coding_standards.additional_rules?.length) {
+      const additionalRules = toArray(o.coding_standards.additional_rules);
+      if (additionalRules.length) {
         lines.push('', '**Org Coding Standards**:');
-        for (const r of o.coding_standards.additional_rules) lines.push(`- ${r}`);
+        for (const r of additionalRules) lines.push(`- ${r}`);
       }
       if (o.coding_standards.framework_patterns) {
-        for (const [fw, patterns] of Object.entries(o.coding_standards.framework_patterns)) {
-          if (patterns?.length) {
+        for (const [fw, rawPatterns] of Object.entries(o.coding_standards.framework_patterns)) {
+          const fwPatterns = toArray(rawPatterns);
+          if (fwPatterns.length) {
             lines.push('', `**${fw} Patterns**:`);
-            for (const p of patterns) lines.push(`- ${p}`);
+            for (const p of fwPatterns) lines.push(`- ${p}`);
           }
         }
       }

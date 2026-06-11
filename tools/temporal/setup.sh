@@ -7,7 +7,7 @@
 # Usage:
 #   ./tools/temporal/setup.sh [--namespace <name>] [--help]
 #
-# Default namespaces: architect, neuronic-ai-team, new-project
+# Default namespaces: architect, new-project
 # Use --namespace to add more without editing this file.
 
 set -euo pipefail
@@ -26,14 +26,13 @@ Creates Temporal PostgreSQL schema pairs, runs migrations, and registers
 Temporal namespaces. Idempotent: safe to run multiple times.
 
 Options:
-  --namespace <name>   Add a namespace beyond the three defaults.
+  --namespace <name>   Add a namespace beyond the two defaults.
                        Can be specified multiple times.
   --help, -h           Show this help message.
 
 Default namespaces and their schema pairs:
-  architect         → architect_temporal, architect_temporal_visibility
-  neuronic-ai-team  → neuronic_temporal, neuronic_temporal_visibility
-  new-project       → new_project_temporal, new_project_temporal_visibility
+  architect   → architect_temporal, architect_temporal_visibility
+  new-project → new_project_temporal, new_project_temporal_visibility
 
 Schema naming for --namespace additions:
   Non-alphanumeric characters in <name> are replaced with underscores.
@@ -97,16 +96,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-ALL_NAMESPACES=(architect neuronic-ai-team new-project ${EXTRA_NAMESPACES[@]+"${EXTRA_NAMESPACES[@]}"})
+ALL_NAMESPACES=(architect new-project ${EXTRA_NAMESPACES[@]+"${EXTRA_NAMESPACES[@]}"})
 
 # ── Namespace → schema prefix ──────────────────────────────────────────────────
 
 schema_prefix() {
   local NS="$1"
   case "$NS" in
-    architect)        echo "architect" ;;
-    neuronic-ai-team) echo "neuronic" ;;
-    new-project)      echo "new_project" ;;
+    architect)    echo "architect" ;;
+    new-project)  echo "new_project" ;;
     *)                echo "${NS//[^a-zA-Z0-9]/_}" ;;
   esac
 }

@@ -29,6 +29,7 @@ export const SPEC_FILES = [
   'worktree-dispatch',
   'dispatch-contract',
   'time-tracking',
+  'time-report-dates',
   'suspend-resume',
   'state-transitions',
   'auto-implement',
@@ -76,6 +77,20 @@ export const SPEC_FILES = [
   'terminal-goal-summary',
   'session-end-fix',
   'terminal-notes',
+  'project-key-filter',
+  'work-items-filter',
+  'dispatch-lifecycle',
+  'review-checkboxes',
+  'date-sort-combined',
+  'dispatch-restart-survival',
+  'epic-link-lifecycle',
+  'work-item-lifecycle',
+  'terminal-db-resilience',
+  'project-path-guard',
+  'doc-content-integrity',
+  'session-resurrection',
+  'sync-contracts',
+  'epic-fold-done',
 ];
 
 function getLiveDashboardPorts() {

@@ -44,8 +44,8 @@ All three terms refer to the same entity. The dashboard UI uses "task" for brevi
 
 | Condition | Workflow |
 |-----------|----------|
-| Trivial tasks | direct — dispatch a single coder agent |
-| Small features | sequential — scout → planner → coder → tester → reviewer |
+| Trivial tasks | plan-then-direct — agent produces brief inline plan (1–3 bullets), Plan Gate board reviews, then coder dispatched |
+| Small features | sequential — scout → planner → coder → tester → reviewer. Implementation uses a worktree-isolated dispatch per Isolated Work Mandate Rule 1. |
 | Full-stack work (independent frontend/backend/infra) | parallel-fan-out — split then converge at tester → reviewer |
 | Medium/large features | plan-then-execute — planner decomposes, then dispatch coders per task |
 | Bugfixes | investigate-then-fix — debugger/scout → coder → tester |
@@ -95,10 +95,10 @@ These rules apply to ALL workflow patterns, not only `parallel-fan-out`:
 |-------|-------------|
 | scout | No portfolio entry or scout report exists for the target project |
 | strategist | Large/vague/strategic requests, build-vs-buy decisions |
-| planner | Medium+ complexity (skip for small/trivial) |
+| planner | Medium+ complexity. For trivial/small: dispatched agent produces a brief inline plan (1–3 bullet points) directly — no planner agent required. |
 | tester | All code changes except trivial |
 | reviewer | All code changes except trivial |
-| security-auditor | Auth, secrets, input validation, or external data is involved |
+| security-auditor | Full-codebase OWASP audit, dependency CVE scan, infrastructure review — invoked via `/secure`. NOT dispatched at code gate (use tech-reviewer-security there) |
 | browser | E2E tests, visual regression, bug reproduction in browser, or web automation tasks requested by the user |
 | tech-reviewer-* | All plans from planner agent (medium+ complexity) and all non-trivial code changes. Dispatched as a context-filtered group (3–10 agents) in parallel per Review Board Rules |
 
@@ -106,7 +106,7 @@ These rules apply to ALL workflow patterns, not only `parallel-fan-out`:
 
 | Category | Agents | Can modify code | Can write data | Can interact with web | Uses worktree |
 |----------|--------|-----------------|----------------|-----------------------|---------------|
-| Read-only | reviewer, security-auditor, performance, strategist, classifier, coordinator, findings-coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod | No | No | No | No (main tree) |
+| Read-only | reviewer, security-auditor, performance, strategist, classifier, coordinator, findings-coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod, tech-reviewer-security | No | No | No | No (main tree) |
 | Interactive | browser | No | No | Yes | No |
 | Interactive | discuss | No | No | No | No |
 | Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer, git-ops | Yes | No | No | Yes (worktree) |
@@ -210,6 +210,22 @@ If none of these provide a clear target, the orchestrator must ask the user whic
 they intend to work on before proceeding. This applies to all modes: plan mode, PM dispatch,
 direct agent invocation, slash commands, and trivial tasks.
 
+### Session Project Context (Sticky Scope)
+
+Once the orchestrator resolves a target project (via any Resolution source), that project key becomes the **session's current project context** — the default scope for all subsequent work-item commands until a different project is resolved or the session ends.
+
+**Carry-forward behavior**: When the user issues a work-item command (e.g. "find the draft tickets", "/work list") without specifying a project, the orchestrator uses the current session project context as the scope and passes it explicitly to the tracker dispatch: `--project <project_key>`.
+
+**Eviction / update model**: When the orchestrator resolves a new target project (because the user references a different project by name, or coordinator dispatches for a different project), the session project context updates to the new project. The orchestrator emits a one-line acknowledgment: `Session focus shifted to <new-project-key>.` Mid-session project switches are never silent.
+
+**Cold-start gap**: If no session project context has been set and the user issues a work-item command before any project has been resolved in the session, the orchestrator asks: "Which project are you focused on?" It does not silently return all-project results. Epic commands are exempt — epics are always cross-project and do not require a project scope.
+
+**Override signals**: Natural-language phrases that express cross-project intent ("show all tickets", "across all projects", "global backlog", "everything") override the sticky context for that single operation. The orchestrator translates these to a cross-project query and informs the tracker to skip the project filter. Sticky context is not cleared.
+
+**Cortex ↔ Architect exception**: When the session is focused on either `neuronic/cortex/main` or `ticari/architect/main`, cross-access to the other project's tickets is permitted when explicitly mentioned (e.g., "find the architect ticket for this", "link this to a Cortex work item"). The orchestrator treats an explicit project name reference as a single-operation scope override without abandoning the current sticky context.
+
+**Proactive discoverability**: When the orchestrator resolves a project for the first time in a session and no session scope has been set, it acknowledges the resolved context: "Session focus set to `<project_key>`. Subsequent work commands will scope to this project."
+
 ### Plan File Requirement
 
 When the orchestrator operates in plan mode and produces a plan file, the plan must
@@ -267,7 +283,7 @@ When PM's classification confidence is below **0.6**, always include clarificati
 - New items default to status `draft`
 - Statuses: `draft` → `planned` → `in-progress` → `done` (or `blocked`, `cancelled`); see State Transition Table for full map
 - `archived` is reachable only from `done` or `cancelled` — archived items are hidden from the active backlog
-- **Contract-gated planned transition**: The `draft → planned` transition requires a valid contract. At minimum, a non-empty `goal` field must be present (from structured description sections, coordinator DispatchPlan, or manual input). For medium+ complexity: all 4 core contract fields must be populated. For large complexity: `scope_boundary` and `stop_conditions` (3+) must also be populated. The plan gate (Review Board) evaluates the contract alongside the plan for medium+ complexity. Dashboard dispatch is restricted to `planned`+ status items.
+- **Contract-gated planned transition**: The `draft → planned` transition requires a valid contract. Trivial items: non-empty `goal` only. Small+: all 4 core contract fields + `success_criteria` + at least one `e2e_test_criteria` entry must be populated. For large complexity: `scope_boundary` and `stop_conditions` (3+) must also be populated. The plan gate (Review Board) evaluates the contract alongside the plan for small+ complexity. Dashboard dispatch is restricted to `planned`+ status items.
 - Session log is append-only
 - `list` supports `--org <name>` to filter by organization prefix
 - `list` supports `--project` with comma-separated values for multi-project filtering
@@ -302,8 +318,8 @@ Forward transitions are rejected when `input_needed = 1` OR `approval.active = 1
 ### Draft → Planned Contract Gate (W-236 preserved)
 
 `draft → planned` requires a valid DispatchContract attached to the work item:
-- Minimum (any complexity): non-empty `goal`
-- Medium+: all four core fields (`goal`, `constraints`, `expected_output`, `failure_conditions`)
+- Trivial: non-empty `goal` only
+- Small+: all four core fields (`goal`, `constraints`, `expected_output`, `failure_conditions`) + `success_criteria` + at least one `e2e_test_criteria` entry must be populated
 - Large: also `scope_boundary` and `stop_conditions` (3+ entries)
 
 The contract gate operates independently of the `approval` flag — both must be satisfied when approval is required.
@@ -476,6 +492,10 @@ Findings are listed by severity (critical first), max 5 shown. If more exist, ap
 
 When both the pre-dispatch check and the coordinator are needed (`needs_coordinator: true`), the orchestrator runs the pre-dispatch check in parallel with the coordinator dispatch — they are independent operations. If the check requires user confirmation, the coordinator output is buffered until the user confirms.
 
+### Static Analysis at Dispatch
+
+For medium+ changes to code files in the target project, consult available static analysis tools before dispatch. When `.codegraph/` is present and the task touches code files, run `codegraph_impact` on the proposed symbols and surface the affected component list in the DispatchContract `constraints` field. Skip for prompt-only or config-only changes — the graph does not index .md files.
+
 ## Coding Standards
 
 Shared standards enforced by all implementation agents. These rules apply to every line of code written by the system.
@@ -569,6 +589,7 @@ to determine which fields to include. Omit for architect-internal tasks.]
 - `## Work Item` — when the dispatch is for a tracked work item (ID, title, description, status)
 - `## Epic Context` — when the work item is linked to an epic (title, acceptance criteria, progress)
 - `## Environment` — when the agent needs dashboard API endpoints or path information
+- `## CodeGraph Context` — when the target project has `.codegraph/` present AND the task involves code files (not prompt-only or config-only changes). Include: `codegraph_available: true`, the indexed scope (code files only — .md excluded), and any impact analysis result for the changed symbols. Omit entirely for .md-only or config-only changes.
 
 **Exemptions**:
 - Read-only agents at `none` tier (git-ops): only Task and Target Project sections are required
@@ -577,14 +598,14 @@ to determine which fields to include. Omit for architect-internal tasks.]
 
 ## Dispatch Contract Rules
 
-Every dispatch step for medium+ complexity work must carry a DispatchContract (see `domain/entities.md`) that defines clear success criteria. This ensures agents have unambiguous goals to work against and enables structured evaluation of dispatch outcomes.
+Every dispatch step for small+ complexity work must carry a DispatchContract (see `domain/entities.md`) that defines clear success criteria. This ensures agents have unambiguous goals to work against and enables structured evaluation of dispatch outcomes.
 
 ### When Required
 
 | Complexity | Contract Required |
 |------------|-------------------|
 | trivial | No — `purpose` field suffices |
-| small | No — `purpose` field suffices |
+| small | Yes — 4 core fields (1-sentence each), success_criteria required, 1 e2e_test_criteria entry minimum |
 | medium | Yes — all four core fields must be populated |
 | large | Yes — all four core fields must be populated |
 
@@ -593,14 +614,14 @@ Every dispatch step for medium+ complexity work must carry a DispatchContract (s
 | Complexity | Core Fields (4) | scope_boundary | stop_conditions | success_criteria | e2e_test_criteria |
 |------------|-----------------|----------------|-----------------|-----------------|-------------------|
 | trivial | None | None | None | None | None |
-| small | None | None | None | None | None |
+| small | Required (1-sentence each) | Optional | Optional | Required (1-sentence) | Required (1+) |
 | medium | Required, 1-2 sentences each | Optional | Optional | Required | Required |
 | large | Required, 2-3 sentences with measurable criteria | Required | Required (3+) | Required | Required (3+) |
 
 ### Who Produces
 
-- **Coordinator**: Produces contracts as part of the DispatchPlan for medium+ complexity work. Each step in `execution_plan.steps` includes a `contract` field.
-- **Orchestrator**: For direct dispatches without a coordinator (e.g., orchestrator constructs plan from classifier output for medium+ work), the orchestrator constructs a minimal contract from the work item description.
+- **Coordinator**: Produces contracts as part of the DispatchPlan for medium+ complexity work. Each step in `execution_plan.steps` includes a `contract` field. (The coordinator is not invoked for small complexity — the orchestrator constructs small contracts directly.)
+- **Orchestrator**: For direct dispatches without a coordinator (e.g., orchestrator constructs plan from classifier output for small+ work when the coordinator is skipped), the orchestrator constructs a minimal contract from the work item description.
 
 ### Contract Source
 
@@ -625,7 +646,7 @@ Empty strings are treated as absent. The prompt-builder strips empty fields and 
 
 ### Backward Compatibility
 
-Steps without a `contract` field (from pre-existing plans or trivial/small dispatches) remain valid. The prompt-builder gracefully no-ops when the contract is missing or incomplete. No migration is needed for existing DispatchPlans.
+Steps without a `contract` field (from pre-existing plans or trivial dispatches) remain valid. The prompt-builder gracefully no-ops when the contract is missing or incomplete. No migration is needed for existing DispatchPlans. The new small+ baseline replaces the previous medium+ baseline for worktree and contract requirements; trivial items retain their prior behaviour.
 
 ### Refine Dispatch (AI Orchestrator Guidance)
 
@@ -778,6 +799,156 @@ When a `stop_conditions` entry matches the current situation:
 
 Stop conditions complement (not replace) orchestrator-level escalation triggers (stale, blocked-chain, epic-stall, cost-anomaly, dispatch-loop defined in PM Behavior Rules). Stop conditions are agent-self-enforced during execution; orchestrator triggers are detected after execution.
 
+### Timeout Semantics
+
+Every dispatched agent session runs under a timeout window determined by work item complexity. `timeout_at` is set at dispatch time and is the absolute wall-clock deadline for the session.
+
+#### Timeout Windows by Complexity
+
+| Complexity | Timeout |
+|------------|---------|
+| trivial | 5 minutes |
+| small | 15 minutes |
+| medium | 60 minutes |
+| large | 120 minutes |
+
+#### Two-Phase Soft-Kill Lifecycle
+
+**Phase 1** fires at 80% of the timeout window:
+- **Active session** (last output within 5 minutes OR `agent_phase='tool_running'`): the session is auto-extended by 30 minutes, once maximum (`MAX_AUTO_EXTENDS=1`). Phase 2 re-arms at the end of the extended window. The agent receives a `timeout_warning` event with `event: 'auto_extended'`.
+- **Idle session**: `input_needed` is set to `true` with the message "Approaching timeout — agent appears idle. Extend or kill from the dashboard." The agent receives a `timeout_warning` event with `event: 'idle'`. Phase 2 proceeds at the original deadline.
+
+**Phase 2** fires at 100% of the window (or end of the extended window): hard kill via SIGTERM → SIGKILL. The dispatch is marked `failed`.
+
+#### Suspended Sessions and the Timeout Clock
+
+The timeout clock does **not** pause when a session is suspended. `timeout_at` continues advancing against wall time. On resume, the server re-arms from the persisted `timeout_at`: if already past, the dispatch fails immediately without spawning.
+
+#### Interaction with stop_conditions
+
+`stop_conditions` can cause the agent to halt before `timeout_at`. A halt triggered by a stop condition does not affect the timeout clock — if the session were resumed, the original `timeout_at` deadline would still apply. See Stop Condition Evaluation below.
+
+### Stop Condition Evaluation
+
+`stop_conditions` in a DispatchContract are **prompt-advisory rules** injected into the dispatched agent's prompt. The server does not evaluate them — evaluation is the agent's responsibility.
+
+#### Evaluation Algorithm
+
+1. The agent reads its `stop_conditions` list at each logical checkpoint during execution.
+2. If **any condition matches** the current situation, the agent must halt immediately.
+3. **Multi-match behavior**: on the first matching condition, the agent halts and does not evaluate remaining conditions.
+
+#### Required Agent Response on Trigger
+
+When a stop condition matches, the agent must, in order:
+1. Halt implementation immediately — no further code changes or tool calls except the following.
+2. Write a session log entry: `POST /api/work-items/:id/log` with `{ "summary": "Halted: stop condition triggered — <condition text>. Work accomplished: <summary>. Recommendation: <next step>." }`.
+3. Emit a structured summary in the final output: what was accomplished, which condition triggered the halt, and what the agent recommends.
+4. Do NOT continue past the halt point.
+
+This protocol mirrors the Stop Condition Protocol in Long-Running Session Rules, which governs the same behavior for dispatched implementation agents.
+
+#### Complexity Requirements
+
+| Complexity | stop_conditions requirement |
+|------------|----------------------------|
+| trivial | absent (null) |
+| small | optional |
+| medium | optional |
+| large | required, 3+ entries |
+
+### Refinement Session Rules
+
+> **Scope**: These rules apply exclusively to coordinator sessions dispatched with `dispatch_mode='refinement'`. They govern failure handling for the three cases where a refinement session cannot produce a valid DispatchContract. General Long-Running Session Rules (Phase-Based Progress Checkpoints, Scope Boundary Self-Enforcement, Stop Condition Protocol) apply to implementation agents and are distinct from these refinement-specific rules.
+
+#### Failure Case Protocols
+
+Each failure case must: (1) keep the work item in `draft` status — no status transition is attempted, (2) write a structured session log entry before halting, (3) halt immediately — no partial contract is applied.
+
+**Case A: Session interrupted before DispatchContract appears**
+Detected after the fact: the coordinator session ends (token limit, timeout, network cut, model interruption) without a `# DispatchContract` fenced JSON block in its output.
+- Log entry: `POST /api/work-items/:id/log` with `{ "summary": "Refinement session ended without producing a DispatchContract. Cause: session interrupted (token limit, timeout, or truncation). Work item remains draft." }`
+- Status: remains `draft`
+- User action required: re-dispatch refinement after addressing the cause (e.g., simplify description, split ticket)
+
+**Case B: Plan Gate hard-block after 2 revision cycles**
+The coordinator's refinement Plan Gate (dispatched in step 4 of the refinement workflow) returns `block` after both the original plan and one revision cycle.
+- Log entry: `POST /api/work-items/:id/log` with `{ "summary": "Refinement halted: Plan Gate returned block after 2 revision cycles. Work item remains draft. Review the board block reasons before re-refining." }`
+- Status: remains `draft`
+- User action required: address Plan Gate blocking concerns and re-dispatch
+
+**Case C: Coordinator approaching maxTurns before contract is complete**
+Proactive: the coordinator detects it is within ~10 turns of the session maxTurns limit and has not yet produced a complete DispatchContract. This is an agent-side early exit, distinct from Case A (which is server-side post-hoc detection).
+- Log entry: `POST /api/work-items/:id/log` with `{ "summary": "Refinement halted: approaching maxTurns limit before DispatchContract could be completed. Work item remains draft. Consider simplifying the item or splitting into smaller tickets." }`
+- Status: remains `draft`
+- Immediately halt — do NOT emit a partial contract
+
+#### Log Payload Schema
+
+All three failure cases use the same log endpoint with a single `summary` string field. The summary must:
+- Identify the failure case (interrupted / Plan Gate block / maxTurns)
+- State that the work item remains in `draft`
+- Suggest a user action (re-refine, address board concerns, split ticket)
+
+This schema matches the existing `POST /api/work-items/:id/log` interface used by Phase-Based Progress Checkpoints. No new fields are required.
+
+## Session Lifecycle Operations
+
+Operations for managing the lifecycle of cloud-dispatched sessions (D-XXX) beyond the standard run/suspend/resume cycle.
+
+### Interrupt
+
+`POST /api/dispatch/:id/interrupt` — SIGINT → SIGTERM(10s) → SIGKILL(15s).
+- Running sessions only (400 not_running; 409 interrupt_in_progress if already being interrupted).
+- PID fallback: if dispatch.process is null (reconnected-via-tail), uses process.kill(pid, signal).
+- If process already gone at call time: returns 200 without scheduling timers.
+- `_gracefulInterrupt` flag classifies exit_type='interrupted' in close handler; close handler is sole DB writer.
+- Does NOT set deleted_at — session stays visible and restartable.
+- Returns 200 immediately; DB writes happen when process closes.
+
+### Restart
+
+`POST /api/dispatch/:id/restart` — re-spawns using `--resume SESSION_ID` from same cwd.
+- Status allowlist: {interrupted, suspended, failed}. completed/killed/dismissed/merge_pending not restartable.
+- CRITICAL cwd constraint: spawn in worktree_path (if on disk) else project_path — cloud session ID is directory-scoped.
+- Atomic revoke-before-spawn: WHERE revoked_at IS NULL; rowCount=0 → 409 session_revoked.
+- On spawn failure: original remains revoked with no successor; user must re-dispatch.
+- previous_dispatch_id set on new dispatch, persisted in initial saveDispatch UPSERT.
+- Auto-binding: new dispatch inherits work_item_id, project_key, epic_id from original.
+- Returns 200 (not 201) — consistent with other sub-resource actions.
+
+### Revoke
+
+`POST /api/dispatch/:id/revoke` — marks session permanently non-resumable.
+- Non-running sessions only (400 session_running).
+- Atomic: WHERE revoked_at IS NULL; 409 on concurrent race.
+- Blocks: resume (409 session_revoked), restart (409 if in-memory; 404 via DB fallback).
+- Does not change status, deleted_at, or claude_session_id.
+- State is terminal: revoked_at cannot be cleared once set.
+
+### Button visibility state machine
+
+| status | revoked_at | Interrupt | Restart | Revoke |
+|--------|-----------|-----------|---------|--------|
+| running | null | yes | — | — |
+| interrupted / suspended / failed | null | — | yes (has session_id) | yes |
+| completed / merge_pending / killed / dismissed | null | — | — | — |
+| any | set | — | — | — |
+
+### Comparison table
+
+| Operation | Signal | status after | deleted_at | claude_session_id | Restartable |
+|-----------|--------|-------------|------------|-------------------|-------------|
+| DELETE /kill | SIGTERM→SIGKILL | killed | NOW() | preserved | no (deleted) |
+| POST /suspend | SIGTERM→SIGKILL | suspended | null | preserved | yes (/resume or /restart) |
+| POST /interrupt | SIGINT→SIGTERM→SIGKILL | interrupted | null | preserved | yes (/restart) |
+| POST /revoke | none | unchanged | null | preserved | no |
+| POST /restart | (new spawn via --resume) | running (new) | null | new session | — |
+
+### Error codes
+
+All error responses: `{ error: string, code: string }`. Codes: `session_revoked`, `session_running`, `not_running`, `interrupt_in_progress`, `not_restartable`, `no_session_id`, `worktree_missing`, `spawn_failed`.
+
 ## Git Standards
 
 Shared git rules enforced by all implementation agents.
@@ -787,6 +958,7 @@ Shared git rules enforced by all implementation agents.
 - Exclude Claude attribution from commit messages
 - Never use --no-verify flag
 - Avoid amending commits; prefer new commits
+- For architect self-implementations (ticari/architect/main) only: after tests pass (or Code Gate approves when no test suite applies) and no scope violations are present, merge directly to the originating branch. No GitHub PR is created or needed. On unresolvable merge conflict, leave the worktree open — do not offer `/pr` as a fallback.
 
 ## Worktree Rules
 
@@ -796,6 +968,7 @@ Shared git rules enforced by all implementation agents.
 - **`worktree_mode: "none"`** is used for non-git projects. Set automatically by the profiler when `git rev-parse --git-dir` fails at the project root. Dispatch proceeds in-place with no isolation. No worktree is ever created, regardless of permission mode, work item presence, or feature flag.
 - **Worktree creation failure blocks the dispatch** with a 500 error. There is no silent fallback to the original project directory — isolation is mandatory when requested.
 - Read-only operations (review, audit, diagnosis, scouting) do not require a worktree.
+- **New file creation is not an inline orchestrator operation.** Any new file — documentation, config, code, templates — must be created by a dispatched agent operating in a worktree. This is enforced by the Trivial Exception Rule in Orchestrator Behavior Rules.
 - Worktrees are grouped under a `<projectDirName>-worktrees/` sibling directory next to the project folder, not inside the project and not as direct siblings
 - Path: `<parent-of-project-dir>/<projectDirName>-worktrees/<branchName>/` (e.g., `/Users/user/repos/light-app-worktrees/light-app-W-933-add-feature/`)
 - Branch/folder naming: `<projectDirName>-<branchPrefix><workItemId>-<slug>` (e.g., `light-app-W-933-add-feature`). On collision, a short UUID suffix is appended. Both the worktree directory and branch name use this form — project-prefixed, ticket-centric, immediately identifiable.
@@ -828,6 +1001,7 @@ Before dispatching any implementation agent to a `worktree_mode: "auto"` project
 | Tests fail after implementation | Dispatch debugger to investigate, then coder for fix |
 | Review finds critical issues | Coder addresses findings, re-review (max 2 iterations) |
 | Scout finds no recognizable stack | Report findings, ask user to clarify project structure |
+| Refinement session produces no DispatchContract | Apply Refinement Session Rules: log reason, preserve `draft` status, surface to user for re-dispatch |
 
 ## Debug Artifact Rules
 
@@ -908,6 +1082,7 @@ Static defaults defined in each agent's frontmatter. The orchestrator overrides 
 | tech-reviewer-systems | sonnet | read-only |
 | tech-reviewer-iot | sonnet | read-only |
 | tech-reviewer-prod | sonnet | read-only |
+| tech-reviewer-security | sonnet | read-only |
 
 ### Review Board Escalation
 
@@ -930,7 +1105,7 @@ Each agent receives only the context layers relevant to its role. This reduces t
 |--------------|--------|-----------------|
 | none | git-ops | Branch name and project path only |
 | minimal | classifier, scout, tracker, dependency-manager, browser, discuss | `guidance.stack_summary`, `scout_report.language`, `scout_report.framework` |
-| standard | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, coordinator, findings-coordinator, planner, debugger, documenter, api-designer, refactorer, strategist, profiler, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod | Minimal + `guidance.structure`, `guidance.conventions`, `custom_rules`, `agents.dispatch_notes`, `brief.purpose`, `brief.domain`, `brief.users`, `doc_paths`, `portfolio_guides` |
+| standard | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, coordinator, findings-coordinator, planner, debugger, documenter, api-designer, refactorer, strategist, profiler, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod, tech-reviewer-security | Minimal + `guidance.structure`, `guidance.conventions`, `custom_rules`, `agents.dispatch_notes`, `brief.purpose`, `brief.domain`, `brief.users`, `doc_paths`, `portfolio_guides` |
 | full | tester, reviewer, security-auditor, ci-cd, performance | Standard + `guidance.ci_cd`, `guidance.testing`, complete `brief` (all fields), `doc_paths` |
 
 ### Application
@@ -950,6 +1125,7 @@ The orchestrator may handle single-line fixes inline without dispatching an agen
 - Typo corrections in string literals
 - Single-character fixes
 - Import statement additions
+- New file creation — any operation that results in a new file in the working tree (Write tool, Edit on a non-existent path, etc.) is never trivial and must be dispatched to a coder agent in a worktree, regardless of file type, content, or size.
 - Everything beyond this MUST be dispatched to the appropriate agent
 
 ### Dispatch Decision Flow
@@ -999,6 +1175,10 @@ This guidance governs the model chosen for the **main-thread CLI session** itsel
 - **Limitation**: This is documentation-only guidance. The architect has no mechanism to verify or enforce the operator-selected session model at runtime, and recommendations may drift if not periodically reviewed.
 
 > Footnote: The orchestrator is intentionally absent from the Canonical Agent Default Models table because no architect process programmatically selects its model — that choice lives with the operator launching the CLI session.
+
+### Plan Surfacing Gate
+
+6. **Plan Surfacing Gate**: When the orchestrator operates in plan mode (the session will exit via ExitPlanMode to present a plan to the user for approval), the Plan Gate board review MUST complete and board feedback MUST be incorporated into the plan file BEFORE the plan is surfaced to the user (i.e., before ExitPlanMode is called). The user must always see an already-reviewed plan. This rule applies to the orchestrator session only — dispatched agents in `usecases/implement-work-item.md` follow the Plan Gate step sequence at steps 5–6 of that usecase.
 
 ## Session Scope Rules
 
@@ -1202,13 +1382,13 @@ Skills are classified as **inline** (executed directly by the orchestrator) or *
 
 ## Contract-First Planning Rules
 
-Every plan that introduces new API endpoints, UI interactions, or agent dispatch flows must define a contract test before implementation begins.
+Every implementation plan must define `success_criteria` and `e2e_test_criteria` before any coding begins — not only plans introducing new API endpoints, UI interactions, or dispatch flows.
 
 1. **Write contract tests first**: Create an E2E or integration test spec that encodes the expected behavior (API response shapes, UI element presence, prompt content). These tests must fail (red) before any implementation code is written.
 2. **Implementation makes tests pass**: The implementation is considered complete only when all contract tests pass (green) and no existing tests regress.
 3. **Test placement**: Dashboard contracts go in `tools/dashboard/tests/`. Other projects use their own test infrastructure. Test files follow the naming convention `<feature>.spec.mjs`.
 4. **Contract scope**: At minimum, cover the API layer (request/response contracts), the UI layer (element rendering, user interactions), and any prompt/context assembly (content verification).
-5. **Exemptions**: Trivial changes (typo fixes, single-line edits, documentation-only) are exempt. If in doubt, write the contract.
+5. **Exemptions**: Trivial changes (typo fixes, single-line edits, documentation-only) are exempt from contract test specs. If in doubt, write the contract. Trivial changes must still articulate the plan's intended outcome in the `goal` field. The `success_criteria` field is null for trivial per `domain/entities.md` → DispatchContract, but the goal serves as the minimum success term.
 
 ## Review Board Rules
 
@@ -1235,6 +1415,7 @@ The Review Board is a context-filtered group of specialized review agents (3–1
 | tech-reviewer-systems | System boundaries, communication protocols, cross-subsystem failure modes, version compat | Project spans multiple subsystems OR artifact crosses system boundaries |
 | tech-reviewer-iot | Device provisioning, OTA, telemetry, power management, BLE, connectivity resilience | Project involves IoT/embedded devices OR artifact touches device-layer code |
 | tech-reviewer-prod | Logging, monitoring, health checks, deployment safety, config management, graceful degradation, operational documentation | Project has backend services or APIs OR artifact introduces new deployment units, secrets/config management, or changes to operational runbooks. Skip for purely frontend-only artifacts with no deployment changes. |
+| tech-reviewer-security | Diff-scoped OWASP A01–A10 review, secrets/auth/injection patterns visible in the changed code | **Code gate only — always dispatched unconditionally.** Replaces the `security-auditor` conditional at the code gate. `security-auditor` is for full standalone audits (`/secure`), not the Review Board. |
 
 All agents are read-only. tech-reviewer-arch and tech-reviewer-systems escalate to opus for large/strategic artifacts; all others use sonnet. See Model Selection Rules → Review Board Escalation.
 
@@ -1264,7 +1445,7 @@ open → [Plan Gate] → ready → in-progress → [Code Gate] → done
 
 | Gate | Trigger | Artifact Type | Success Outcome |
 |------|---------|---------------|-----------------|
-| Plan Gate | Plan produced by planner (medium+ complexity) | plan | Work item status → `ready` |
+| Plan Gate | Plan produced by any dispatched agent (all complexity except T1-tagged items) | plan | Work item status → `ready` |
 | Code Gate | Implementation complete, before merge | diff or pr | Work item status → `done` |
 
 ### Orchestrator Flow
@@ -1284,14 +1465,13 @@ open → [Plan Gate] → ready → in-progress → [Code Gate] → done
 
 ### Exemptions
 
-- Trivial or small complexity work items skip the plan gate (no planner involved)
-- The code gate runs for all non-trivial code changes
-- Direct agent dispatches without a planning phase skip the plan gate
-- Plans provided by the user (not generated by the planner agent) skip the plan gate
+- T1-tagged items skip all gates per the T1 Fast Path rule
+- The code gate runs for all non-trivial code changes (trivial items may skip code gate but never skip plan gate)
+- For trivial/small items, the board evaluates the inline plan's stated intent and approach — a DispatchContract is not required
 
 ### Integration Points
 
-1. `usecases/implement-work-item.md` step 6 — **Plan Gate**: after plan generation, before user confirmation. On approve → status `ready`.
+1. `usecases/implement-work-item.md` step 6 — **Plan Gate**: after plan generation, before plan is presented to user. Board verdicts must be collected before user sees the plan. Runs for all complexity except T1. On approve → status `ready`.
 2. `usecases/implement-work-item.md` step 11 — **Code Gate**: after tests pass, before commit. On approve → proceed to commit.
 3. `usecases/review-code.md` — Code Gate runs alongside the reviewer agent for detailed findings.
 4. `usecases/create-pr.md` — Code Gate runs before PR creation. Block verdicts warn the user.
@@ -1300,22 +1480,28 @@ open → [Plan Gate] → ready → in-progress → [Code Gate] → done
 
 ## Isolated Work Mandate
 
-These rules apply to all medium+ complexity dispatches without exception. They are enforced at the API boundary, injected into every dispatch prompt, and required in every coordinator DispatchPlan.
+These rules apply to all dispatches (except T1-tagged items) without exception. They are enforced at the API boundary, injected into every dispatch prompt, and required in every coordinator DispatchPlan.
 
 ### Core Rules
-1. **Worktree required**: Every medium+ dispatch must execute in an isolated git worktree. The worktree branches off the currently checked-out branch at dispatch time (source_branch). Never branch off main by default.
-2. **Complete contract required**: Every medium+ dispatch must have a complete DispatchContract with all four core fields (goal, constraints, expected_output, failure_conditions) plus e2e_test_criteria (minimum 1 entry; 3+ for large complexity).
-3. **Plan Gate required**: Every medium+ DispatchPlan must include a plan-gate review step (Review Board) before any implementation agent runs. Board: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx.
-4. **Code Gate required**: Every medium+ DispatchPlan must include a code-gate review step as the final pre-merge step. The code gate must verify contract satisfaction (each e2e_test_criteria item is implemented and passing). Board: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod, plus tech-reviewer-dba if DB changes present, tech-reviewer-security if auth/secrets present.
-5. **Base branch merge**: Merge always targets source_branch (the originating branch captured at worktree creation time). Never hardcode main as merge target.
+0. **Plan-First required**: Every dispatch must begin by producing a written plan before any implementation action. For medium+ items the planner agent produces the plan; for trivial/small the dispatched agent produces a brief inline plan (1–3 bullet points) as its first output. No file edits, no coder-agent dispatches, no implementation steps may occur before the plan exists and has cleared the Plan Gate board.
+1. **Worktree required**: Every small+ dispatch must execute in an isolated git worktree. The worktree branches off the currently checked-out branch at dispatch time (source_branch). Never branch off main by default. Trivial items (T1-tagged) are exempt from worktree isolation per the T1 Fast Path rule.
+2. **Complete contract required**: Every small+ dispatch must have a complete DispatchContract with all four core fields (goal, constraints, expected_output, failure_conditions) plus `success_criteria` (user-visible done conditions, required for small+) and `e2e_test_criteria` (minimum 1 entry for small and medium, 3+ for large complexity). Trivial items require only a non-empty goal. Test suite and build verification are required for all complexity including T1 — see Rule 5.
+3. **Plan Gate required**: Every DispatchPlan must include a plan-gate review step (Review Board) before any implementation agent runs. Applies to all complexity except T1. For trivial/small, the board reviews the inline plan produced per Rule 0.
+4. **Code Gate required**: Every small+ DispatchPlan must include a code-gate review step as the final pre-merge step. The code gate must verify contract satisfaction (each e2e_test_criteria item is implemented and passing). For small: lightweight board (swe + arch + security only). Trivial items skip the code gate board but are subject to Rule 5. Board for medium+: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod, tech-reviewer-security (always); plus tech-reviewer-dba if DB changes present.
+5. **Test + Build Gate required (all complexity including T1)**: Every dispatch regardless of complexity must report `test_suite_passed` and `build_verified` signals in the `POST /api/dispatch/:id/complete` payload before the merge path opens. The `/merge` handler reads these values from the dispatch record (set at `/complete` time). If no test framework is detected, the agent reports `test_framework_absent: true` (treated as gate satisfied with an informational note in the session log). If the portfolio entry has no `guidance.build_command`, build verification is a no-op (gate satisfied). When a regression is detected, the agent self-corrects within the same dispatch session (same process, extended turns — no new dispatch created), re-runs the suite, then reports. Maximum 2 self-correction cycles per the agent's `maxTurns` config; on second failure, agent halts and reports `tests_not_passed` with a blocking note.
+6. **Base branch merge**: Merge always targets source_branch (the originating branch captured at worktree creation time). Never hardcode main as merge target.
 
-### Ticket Gate (Orchestrator Behavior Extension)
+> **Backward Compatibility**: The small+ baseline replaces the previous medium+ baseline for worktree and contract requirements. Existing trivial items and T1-tagged dispatches retain their prior behaviour.
+
+### Ticket Gate (Orchestrator Behavior Extension — Coordinator Flow)
+
+This rule governs the orchestrator reading a coordinator DispatchPlan for medium+ complexity. For plan-mode (ExitPlanMode) sequencing, see Plan Surfacing Gate in Orchestrator Behavior Rules.
+
 For medium+ complexity, after the coordinator produces a DispatchPlan:
-1. Surface the plan to the user immediately (visibility is non-blocking).
-2. Simultaneously dispatch a Ticket Gate board review (same board as Plan Gate Board) as an async parallel step.
-3. Incorporate board feedback before proceeding to dispatch any implementation agent.
+1. Dispatch a Ticket Gate board review (same board as Plan Gate Board) immediately — before surfacing the plan to the user.
+2. After all board verdicts are collected, incorporate feedback into the plan.
+3. Surface the plan WITH board verdicts to the user. Implementation dispatch is gated on both board clearance and user approval.
 4. If board blocks, revise the plan (max 2 revision cycles) before dispatching.
-5. Override note: This extends the existing rule that surfaces coordinator output for user approval — plan is visible immediately but implementation dispatch is gated on board clearance.
 
 ### Recursion Guard
 Gate reviews (Ticket Gate, Plan Gate, Code Gate) are read-only, depth-1 dispatches. They do NOT trigger further gate reviews. Maximum gate recursion depth: 1.
@@ -1323,7 +1509,7 @@ Gate reviews (Ticket Gate, Plan Gate, Code Gate) are read-only, depth-1 dispatch
 ### Named Board Compositions
 - **Ticket Gate Board** (identical to Plan Gate Board): tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx
 - **Plan Gate Board**: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx
-- **Code Gate Board**: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod; add tech-reviewer-dba if DB schema changes present; add tech-reviewer-security if authentication, secrets, or external data involved
+- **Code Gate Board**: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod, tech-reviewer-security; add tech-reviewer-dba if DB schema changes present
 
 ## External Action Rules
 

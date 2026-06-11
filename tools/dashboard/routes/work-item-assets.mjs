@@ -54,6 +54,11 @@ export default function workItemAssetsRoutes(deps) {
     [/^\/api\/work-items\/assets\/([^/]+)$/, 'GET', async (m, _req, res) => {
       const requestedFilename = decodeURIComponent(m[1]);
 
+      // Reject path traversal attempts before filesystem access.
+      if (requestedFilename.includes('/') || requestedFilename.includes('\\') || requestedFilename.includes('..')) {
+        return err(res, 'forbidden', 400);
+      }
+
       let resolvedPath;
       try {
         resolvedPath = await realpath(join(WORK_ASSETS_DIR, requestedFilename));

@@ -132,31 +132,31 @@ test('PP-UI-3: prompt preview overlay has role=dialog and aria-modal=true', asyn
 });
 
 test('PP-UI-4: prompt preview overlay has "Prompt Preview" title', async ({ page }) => {
-  await stubPreviewApi(page);
+  // Dispatch button uses the dynamic preview (preview-dynamic endpoint) — check dyn-preview-title
   await openDispatchModal(page);
   await page.click('#dispatch-preview-btn');
 
-  await expect(page.locator('#prompt-preview-title')).toBeVisible({ timeout: 5000 });
-  await expect(page.locator('#prompt-preview-title')).toContainText('Prompt Preview');
+  await expect(page.locator('#dyn-preview-title')).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('#dyn-preview-title')).toContainText('Prompt Preview');
 });
 
 test('PP-UI-5: prompt preview overlay has "Available tokens" section', async ({ page }) => {
-  await stubPreviewApi(page);
+  // Dispatch button uses the dynamic preview — check for Sections navigation panel
   await openDispatchModal(page);
   await page.click('#dispatch-preview-btn');
 
-  await expect(page.locator('.modal-prompt-preview')).toBeVisible({ timeout: 5000 });
-  await expect(page.locator('.preview-col-tokens')).toContainText('Available tokens');
-  await expect(page.locator('#prompt-preview-tokens')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator('.modal-prompt-preview')).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('#dyn-preview-nav')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator('#dyn-preview-content')).toBeVisible({ timeout: 5000 });
 });
 
 test('PP-UI-6: × button closes the prompt preview overlay', async ({ page }) => {
-  await stubPreviewApi(page);
+  // Dispatch button uses the dynamic preview — close via #dyn-preview-close
   await openDispatchModal(page);
   await page.click('#dispatch-preview-btn');
 
-  await expect(page.locator('.modal-prompt-preview')).toBeVisible({ timeout: 5000 });
-  await page.click('#prompt-preview-close');
+  await expect(page.locator('.modal-prompt-preview')).toBeVisible({ timeout: 15000 });
+  await page.click('#dyn-preview-close');
   await expect(page.locator('.modal-prompt-preview')).not.toBeVisible({ timeout: 3000 });
 });
 

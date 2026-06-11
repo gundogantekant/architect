@@ -33,7 +33,7 @@ test.describe('Progress Events @fast', () => {
 
     const resp = await fetch(`${base}/api/dispatch/${id}/progress`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Architect-Session-Depth': '1' },
       body: JSON.stringify({ phase: 'testing', message: '30/30 pass' }),
     });
     expect(resp.status).toBe(204);
@@ -44,7 +44,7 @@ test.describe('Progress Events @fast', () => {
 
     const resp = await fetch(`${base}/api/dispatch/D-nonexistent/progress`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Architect-Session-Depth': '1' },
       body: JSON.stringify({ phase: 'planning', message: 'should fail' }),
     });
     expect(resp.status).toBe(404);
@@ -57,7 +57,7 @@ test.describe('Progress Events @fast', () => {
 
     const resp = await fetch(`${base}/api/dispatch/${id}/progress`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Architect-Session-Depth': '1' },
       body: JSON.stringify({ message: 'no phase provided' }),
     });
     expect(resp.status).toBe(400);
@@ -70,7 +70,7 @@ test.describe('Progress Events @fast', () => {
 
     const resp = await fetch(`${base}/api/dispatch/${id}/progress`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Architect-Session-Depth': '1' },
       body: JSON.stringify({ phase: 'implementation', message: '' }),
     });
     expect(resp.status).toBe(400);
@@ -84,7 +84,7 @@ test.describe('Progress Events @fast', () => {
     const longMessage = 'x'.repeat(201);
     const resp = await fetch(`${base}/api/dispatch/${id}/progress`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Architect-Session-Depth': '1' },
       body: JSON.stringify({ phase: 'review', message: longMessage }),
     });
     expect(resp.status).toBe(400);

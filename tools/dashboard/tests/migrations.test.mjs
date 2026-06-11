@@ -5,6 +5,7 @@ import { mkdtempSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { initDatabaseAsync, closeDatabase } from '../db.mjs';
 
@@ -127,7 +128,7 @@ let tmpDir;
 let emptyMigsDir;
 
 beforeEach(async () => {
-  testDbName = `mg_test_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+  testDbName = `mg_test_${Date.now()}_${randomUUID().slice(0, 8)}`;
   await createDb(testDbName);
 
   // Override PG DB so initDatabaseAsync connects to the test database.

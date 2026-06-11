@@ -63,6 +63,7 @@ See `docs/architecture.md` for layer boundaries and dependency rules.
 | Tech review — systems engineering | tech-reviewer-systems | sonnet / opus* |
 | Tech review — IoT engineering | tech-reviewer-iot | sonnet |
 | Tech review — production readiness | tech-reviewer-prod | sonnet |
+| Tech review — security (diff-scoped, code gate) | tech-reviewer-security | sonnet |
 
 *Escalated to opus when dispatched for large or strategic artifacts.
 
@@ -94,9 +95,9 @@ classifier (haiku, fast triage) → [pre-dispatch check (orchestrator, if work t
 ```
 For simple cases (trivial/small, high confidence), the orchestrator skips the coordinator and constructs a dispatch plan directly from the classifier output. Pre-dispatch check runs in parallel with coordinator when both are needed. See `domain/rules.md` → Pre-Dispatch Check Rules.
 
-**Dispatch Contracts** (medium+ complexity): Each step in the coordinator's DispatchPlan includes a `DispatchContract` (Goal, Constraints, Expected Output, Failure Conditions + optional Scope Boundary, Stop Conditions) that defines clear success criteria and session governance for the dispatched agent. Contracts flow into sub-agent prompts and are used by the Review Board to evaluate whether implementation meets stated goals. For long-running sessions, the contract's scope_boundary and stop_conditions provide self-enforcement guardrails. Work items must have a valid contract (at minimum a goal) to transition from `open` to `ready` status; only `ready`+ items are dispatchable from the dashboard. See `domain/entities.md` → DispatchContract, `domain/rules.md` → Dispatch Contract Rules, and `domain/rules.md` → Long-Running Session Rules.
+**Dispatch Contracts** (small+ complexity; for trivial items the `goal` field in the step's `purpose` serves as the minimum success term): Each step in the coordinator's DispatchPlan includes a `DispatchContract` (Goal, Constraints, Expected Output, Failure Conditions + optional Scope Boundary, Stop Conditions) that defines clear success criteria and session governance for the dispatched agent. Contracts flow into sub-agent prompts and are used by the Review Board to evaluate whether implementation meets stated goals. For long-running sessions, the contract's scope_boundary and stop_conditions provide self-enforcement guardrails. Work items must have a valid contract (at minimum a goal) to transition from `open` to `ready` status; only `ready`+ items are dispatchable from the dashboard. See `domain/entities.md` → DispatchContract, `domain/rules.md` → Dispatch Contract Rules, and `domain/rules.md` → Long-Running Session Rules.
 
-**Review Board** (two-gate lifecycle for medium+ work):
+**Review Board** (two-gate lifecycle for small+ work):
 ```
 Plan Gate:  planner → [tech-reviewer-swe + tech-reviewer-arch + tech-reviewer-pm + (context-dependent: frontend, ux, dx, dba, systems, prod, iot)] (parallel)
   → aggregate verdicts → if block: revise + re-review (max 2 cycles) → status: ready
@@ -177,14 +178,15 @@ Use `/work list --org <name>` to scope work items to a specific organization. Se
 - Read-only agents do not modify code (see `domain/rules.md` → Agent Permission Model)
 - Implementation agents (coder-*, git-ops) use acceptEdits permission mode
 - The orchestrator delegates all git operations (commit, push, PR, branch, worktree) to the git-ops agent. The orchestrator only runs read-only git commands (status, log, diff) directly.
+- Architect self-implementations (ticari/architect/main): after tests pass (or Code Gate approves when no test suite applies) and no scope violations are present, merge directly to the originating branch. No GitHub PR is created or needed. On unresolvable merge conflict, leave the worktree open — do not offer `/pr` as a fallback.
 - Apply role-scoped context injection when dispatching agents — see `domain/rules.md` → Role-Scoped Context Injection for the tier mapping per agent role. Before each dispatch, look up the agent in `domain/rules.md` → Context Tier Mapping to determine which portfolio fields to include.
 - Use dynamic model selection per dispatch — see `domain/rules.md` → Model Selection Rules for complexity-to-model mapping
 - The orchestrator dispatches sub-agents for research, analysis, and investigation tasks. The main session decomposes, dispatches, and synthesizes — sub-agents execute. See `domain/rules.md` → Dispatch-First Rule for trigger criteria. Structure every Agent tool dispatch using the template in `domain/rules.md` → Agent Dispatch Standards.
 - All work on portfolio projects uses a git worktree by default — create one before making any code changes. Exception: projects with `worktree_mode: "explicit"` in their portfolio entry work in-place; worktrees are created only on explicit request. Skip only when the user explicitly opts out. See `domain/rules.md` → Worktree Rules.
 - Follow git standards defined in `domain/rules.md`
 - Before using Playwright MCP tools directly in the main session, follow Model Affinity Rules in `domain/rules.md` to prompt model switching
-- Plans that introduce new API endpoints, UI interactions, or dispatch flows must include contract tests written before implementation. See `domain/rules.md` → Contract-First Planning Rules.
-- For medium+ complexity dispatches, ensure DispatchContracts (Goal, Constraints, Expected Output, Failure Conditions + Scope Boundary, Stop Conditions for large) from the coordinator's plan are propagated to sub-agent prompts. See `domain/rules.md` → Dispatch Contract Rules and Long-Running Session Rules.
+- Every implementation plan must include `success_criteria` and `e2e_test_criteria` before any coding begins. Trivial changes use the `goal` field as the minimum success term; formal `e2e_test_criteria` entries are exempt for trivial. See `domain/rules.md` → Contract-First Planning Rules.
+- For small+ complexity dispatches, ensure DispatchContracts (all four core fields + `success_criteria` + `e2e_test_criteria` for small+; Scope Boundary + Stop Conditions for large) from the coordinator's or orchestrator's plan are propagated to sub-agent prompts. See `domain/rules.md` → Dispatch Contract Rules and Long-Running Session Rules.
 
 ## Dashboard (`tools/dashboard/`)
 
@@ -210,7 +212,7 @@ The dashboard supports dispatching Claude Code agents directly from work items:
 - **Foldable panels**: minimize/expand dispatch and terminal panels. Collapse state persisted to sessionStorage across navigation.
 - **Contextual placement**: session panels appear under their associated work item row in component/epic views. Standalone sessions fall back to a global container at the top.
 - **Permission modes**: dispatch modal includes permission mode selector ("Plan only", "Accept edits") and a separate "Skip permissions" checkbox (`--dangerously-skip-permissions`). Panels show `[plan]` badge for plan mode and `[skip-perms]` badge when skip permissions is enabled. Both settings have independent defaults configurable in `#settings`.
-- **Grouped sidebar**: sessions sidebar groups entries by epic, with standalone sessions below. Clicking navigates to the session's context view.
+- **DISPATCHES sidebar**: a single collapsible sidebar section (replaces the former AGENTS, AUTONOMOUS, and SESSIONS entries) with Active/Autonomous/All filter tabs. Tab selection persists in sessionStorage across the 3-second refresh interval. The `#autonomous` route pre-selects the Autonomous tab. Entries are grouped by project and epic; clicking navigates to the session's context view. `SESSION_AWARE_ROUTES` gates session panel visibility — analytical routes (time-report, costs) call `_hideSessionPanelsForCleanRoute()` and panels are restored via `display` toggle (never removed from DOM) when returning to a session-aware route.
 - **Architect-awareness**: dispatched agents receive `ARCHITECT_ROOT` env var, a `# Architect System` section (portfolio entry path, guides, domain rules pointers), role-scoped portfolio context (filtered by agent tier per `domain/rules.md` → Role-Scoped Context Injection), a `# Context Tiers` section for sub-agent dispatches, and `# Environment` / `# Tracking` sections with dashboard API endpoints for status updates and log entries.
 - **CLI session registration**: external CLI sessions can register as read-only entries via `POST /api/sessions/register`. The dashboard shows them with a `[CLI]` badge, teal left border, and no kill/focus buttons. PID liveness is checked every 60s; exited CLI sessions are auto-cleaned after 10min. Persisted in `work/sessions.json` under `cli_sessions`. See `domain/entities.md` → CliSession for schema.
 
@@ -232,6 +234,7 @@ Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/log` (plain text 
 | /status | Project health check |
 | /work [subcommand] [args] | Track work items across sessions |
 | /implement [W-XXX] | Implement a tracked work item end-to-end |
+| auto-implement-scheduler (paste prompt) | Continuous backlog driver — paste `usecases/auto-implement-scheduler.md` into dispatch modal Additional Instructions |
 | /migrate [from] [to] | Technology migration |
 | /explain [path] [--focus area] | Codebase walkthrough |
 | /release [version] [--publish github] | Version bump, changelog, git tag |
@@ -240,3 +243,32 @@ Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/log` (plain text 
 | /browse [task] | Perform a web automation task via browser agent |
 | /worktree [list\|cleanup] | Manage git worktrees for implementation isolation |
 | /review-board [gate] [scope] | Manually trigger the Technical Review Board on a plan or code diff |
+
+## CodeGraph
+
+`.codegraph/` is initialized at the architect project root. The index covers **code files only** — markdown files (agent prompts, use-case workflows, domain rules) are not indexed.
+
+**Indexed corpus** (~230 files):
+- `tools/dashboard/` — all `.mjs` files (server, dispatch manager, routes, DB, prompt builder, etc.)
+- `tools/temporal/` — TypeScript workflows and activities
+- `templates/` — scaffold TypeScript/TSX reference code
+- `tools/ble-relay/`, `tools/dart-debug/` — Python utilities
+
+### Tools and when to use them
+
+| Tool | Use for | Skip when |
+|------|---------|-----------|
+| `codegraph_search` | Find functions/constants in dashboard/temporal/templates code | Exploring .md artifacts — use grep instead |
+| `codegraph_callers` / `codegraph_callees` | Trace JS/TS function call chains | Prompt flow or .md-only investigation |
+| `codegraph_impact` | Blast radius for code changes before dispatch | Prompt-only or config-only changes |
+| `codegraph_context` | Pull relevant JS/TS context for a task | Non-code tasks |
+
+### Freshness
+
+- Check `codegraph_status` once at session start. Do not re-check per dispatch.
+- Refresh trigger: run `codegraph index` only when **code files** in `tools/dashboard/` are structurally changed (added, removed, renamed). Skip for prompt-only edits.
+- Fallback: if `codegraph_status` errors or is unavailable, use grep/find. Never block on CodeGraph availability.
+
+### Explore agents
+
+When spawning Explore agents for dashboard JS work, include: "Use codegraph tools (`.codegraph/` is present) for symbol lookup and caller tracing instead of grep."

@@ -164,7 +164,11 @@ export async function spawnTerminalSession(deps, params) {
   }, MAX_WAIT);
 
   terminals.set(id, terminal);
-  await saveTerminalToDb(terminal);
+  try {
+    await saveTerminalToDb(terminal);
+  } catch (dbErr) {
+    console.warn('[terminal-session] DB persist failed — session active in-memory only, will not survive restart:', dbErr.message);
+  }
 
   return terminal;
 }

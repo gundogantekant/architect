@@ -8,8 +8,10 @@ import { rename, unlink } from 'node:fs/promises';
 
 // Return TIMESTAMPTZ values as ISO strings instead of Date objects.
 // OID 1114 = TIMESTAMP WITHOUT TIME ZONE, OID 1184 = TIMESTAMP WITH TIME ZONE.
+// OID 1082 = DATE — all date/period columns return plain 'YYYY-MM-DD' strings.
 pg.types.setTypeParser(1114, (val) => val);
 pg.types.setTypeParser(1184, (val) => val);
+pg.types.setTypeParser(1082, (val) => val);
 
 // Return INT8/BIGSERIAL (OID 20) as JavaScript numbers. These are auto-increment IDs
 // that will never exceed Number.MAX_SAFE_INTEGER in this system.
@@ -29,6 +31,11 @@ function jsonb(val, fallback = null) {
 }
 
 let pool = null;
+let prefixCache = new Map(); // projectKey → { prefix, ticketStart }
+
+export function configurePrefixMap(map) {
+  prefixCache = map;
+}
 
 function buildPoolConfig() {
   return {
@@ -173,13 +180,13 @@ export async function assertSchema() {
       'tags', 'depends_on', 'created_at', 'updated_at', 'input_needed', 'input_needed_from',
       'input_needed_reason', 'input_needed_at', 'approval_active', 'approval_mode',
       'approval_requested_at', 'approval_resolved_at', 'released_at', 'released_version',
-      'done_at',
+      'done_at', 'contract',
     ],
     work_item_approvals: ['id', 'work_item_id', 'identity', 'status', 'sort_order', 'blocking_work_item_id', 'decided_at', 'reason', 'created_at'],
     work_item_logs: ['id', 'work_item_id', 'logged_at', 'summary'],
     epics: ['id', 'title', 'status', 'priority', 'description', 'acceptance_criteria', 'target_date', 'tags', 'created_at', 'updated_at'],
     epic_logs: ['id', 'epic_id', 'logged_at', 'summary'],
-    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'completion_summary_error', 'dry_run', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at', 'agent_phase', 'agent_phase_history', 'timeout_at', 'contract', 'exit_type', 'deleted_at', 'auto_extended', 'scope_violation', 'merged_at', 'merge_target'],
+    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'completion_summary_error', 'dry_run', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at', 'agent_phase', 'agent_phase_history', 'timeout_at', 'contract', 'exit_type', 'deleted_at', 'auto_extended', 'scope_violation', 'merged_at', 'merge_target', 'revoked_at', 'previous_dispatch_id'],
     terminals: ['id', 'type', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'exited_at', 'pid', 'tmux_session', 'claude_session_id', 'agent_type', 'head_seq', 'deleted_at', 'note'],
     cli_sessions: ['id', 'project_key', 'work_item_id', 'epic_id', 'title', 'pid', 'status', 'registered_at', 'exited_at'],
     preferences: ['key', 'value'],
@@ -353,7 +360,7 @@ export async function backupDatabase(workDir, backupDir) {
 
 // --- Sequences (atomic UPDATE…RETURNING prevents races) ---
 
-async function nextId(name) {
+async function nextId(name, start = 1) {
   const result = await pool.query(
     'UPDATE sequences SET next_val = next_val + 1 WHERE name = $1 RETURNING next_val - 1 AS val',
     [name]
@@ -361,16 +368,25 @@ async function nextId(name) {
   if (result.rows.length > 0) return Number(result.rows[0].val);
 
   // Sequences row missing — insert and atomically retrieve the allocated ID.
+  // start + 1 seeds next_val so the first returned value equals start.
   const fallback = await pool.query(
-    `INSERT INTO sequences (name, next_val) VALUES ($1, 2)
+    `INSERT INTO sequences (name, next_val) VALUES ($1, $2)
      ON CONFLICT (name) DO UPDATE SET next_val = sequences.next_val + 1
      RETURNING next_val - 1 AS val`,
-    [name]
+    [name, start + 1]
   );
   return Number(fallback.rows[0].val);
 }
 
-export async function nextWorkItemId() {
+export async function nextWorkItemId(projectKey) {
+  const cached = projectKey ? prefixCache.get(projectKey) : null;
+  if (cached) {
+    const val = await nextId(`prefix:${cached.prefix}`, cached.ticketStart);
+    return `${cached.prefix}-${val}`;
+  }
+  if (projectKey) {
+    console.warn(`[prefix-cache] WARN: project_key "${projectKey}" not in prefix cache, using default W- prefix`);
+  }
   const val = await nextId('work_item');
   return `W-${String(val).padStart(3, '0')}`;
 }
@@ -380,7 +396,21 @@ export async function nextEpicId() {
   return `E-${String(val).padStart(3, '0')}`;
 }
 
-export async function peekNextIds() {
+export async function peekNextIds(projectKey) {
+  const cached = projectKey ? prefixCache.get(projectKey) : null;
+  if (cached) {
+    const seqName = `prefix:${cached.prefix}`;
+    const result = await pool.query(
+      'SELECT name, next_val FROM sequences WHERE name = ANY($1)',
+      [[seqName, 'epic']]
+    );
+    const map = {};
+    for (const row of result.rows) map[row.name] = row.next_val;
+    return {
+      next_work_item_id: `${cached.prefix}-${map[seqName] ?? cached.ticketStart}`,
+      next_epic_id: `E-${String(map.epic ?? 1).padStart(3, '0')}`,
+    };
+  }
   const result = await pool.query('SELECT name, next_val FROM sequences WHERE name = ANY($1)', [['work_item', 'epic']]);
   const map = {};
   for (const row of result.rows) map[row.name] = row.next_val;
@@ -460,7 +490,7 @@ export async function searchWorkItems(keywords, projectKey) {
 }
 
 export async function createWorkItem({ project_key, title, status, priority, description, tags, epic_id }) {
-  const id = await nextWorkItemId();
+  const id = await nextWorkItemId(project_key);
   const now = new Date().toISOString();
   await pool.query(`
     INSERT INTO work_items (id, project_key, title, status, priority, description, epic_id, tags, depends_on, created_at, updated_at)
@@ -477,13 +507,13 @@ export async function updateWorkItem(id, fields) {
     'title', 'status', 'priority', 'description', 'tags', 'depends_on', 'epic_id',
     'input_needed', 'input_needed_from', 'input_needed_reason', 'input_needed_at',
     'approval_active', 'approval_mode', 'approval_requested_at', 'approval_resolved_at',
-    'released_at', 'released_version',
+    'released_at', 'released_version', 'contract',
   ];
   const sets = [];
   const values = [];
   let paramIdx = 1;
 
-  const WORK_ITEM_JSONB = new Set(['tags', 'depends_on']);
+  const WORK_ITEM_JSONB = new Set(['tags', 'depends_on', 'contract']);
   for (const key of allowed) {
     if (key in fields) {
       sets.push(`${key} = $${paramIdx++}`);
@@ -854,8 +884,8 @@ export async function getEpicProjectKeys(epicId) {
 
 export async function saveDispatch(d) {
   await pool.query(`
-    INSERT INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode, pipeline_stage, agent_phase, agent_phase_history, timeout_at, contract, exit_type, dry_run, auto_extended, contract_satisfied, contract_satisfied_at, scope_violation, merged_at, merge_target)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
+    INSERT INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode, pipeline_stage, agent_phase, agent_phase_history, timeout_at, contract, exit_type, dry_run, auto_extended, contract_satisfied, contract_satisfied_at, scope_violation, merged_at, merge_target, revoked_at, previous_dispatch_id)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
     ON CONFLICT (id) DO UPDATE SET
       work_item_id = EXCLUDED.work_item_id,
       epic_id = EXCLUDED.epic_id,
@@ -886,7 +916,9 @@ export async function saveDispatch(d) {
       contract_satisfied_at = EXCLUDED.contract_satisfied_at,
       scope_violation = EXCLUDED.scope_violation,
       merged_at = EXCLUDED.merged_at,
-      merge_target = EXCLUDED.merge_target
+      merge_target = EXCLUDED.merge_target,
+      revoked_at = COALESCE(EXCLUDED.revoked_at, dispatches.revoked_at),
+      previous_dispatch_id = COALESCE(EXCLUDED.previous_dispatch_id, dispatches.previous_dispatch_id)
   `, [
     d.id, d.work_item_id || null, d.epic_id || null, d.project_key, d.project_path || '',
     d.title || '', d.permission_mode || 'acceptEdits', d.skip_permissions ?? false,
@@ -903,6 +935,8 @@ export async function saveDispatch(d) {
     d.scope_violation ?? false,
     d.merged_at ?? null,
     d.merge_target ?? null,
+    d.revoked_at ?? null,
+    d.previous_dispatch_id ?? null,
   ]);
 }
 
@@ -946,6 +980,8 @@ export async function updatePipelineStage(id, stage) {
 
 export async function deleteDispatch(id) {
   await pool.query('UPDATE dispatches SET deleted_at = NOW() WHERE id = $1', [id]);
+  // Soft delete does not trigger the ON DELETE SET NULL FK — null out dispatch_id manually.
+  await pool.query('UPDATE dispatch_prompts SET dispatch_id = NULL WHERE dispatch_id = $1', [id]);
 }
 
 export async function getPersistedDispatches() {
@@ -955,7 +991,7 @@ export async function getPersistedDispatches() {
   // only when the user has them in active view. Interrupted sessions are kept
   // so the recovery banner can be surfaced.
   return pool.query(
-    `SELECT * FROM dispatches WHERE deleted_at IS NULL AND status NOT IN ('dismissed', 'superseded', 'completed', 'failed', 'killed')`
+    `SELECT * FROM dispatches WHERE deleted_at IS NULL AND revoked_at IS NULL AND status NOT IN ('dismissed', 'superseded', 'completed', 'failed', 'killed')`
   ).then(r => r.rows);
 }
 
@@ -1100,6 +1136,34 @@ export async function updateDispatchExitType(id, exitType) {
   await pool.query('UPDATE dispatches SET exit_type = $1 WHERE id = $2', [exitType, id]);
 }
 
+// Raw lookup for revoke endpoint: returns { id, status, revoked_at } or null.
+// Does NOT filter revoked_at — needed for disambiguating 404 from 409.
+export async function getRawDispatchForRevoke(id) {
+  return pool.query(
+    'SELECT id, status, revoked_at FROM dispatches WHERE id = $1 AND deleted_at IS NULL',
+    [id]
+  ).then(r => r.rows[0] || null);
+}
+
+// Atomic revoke: WHERE revoked_at IS NULL prevents concurrent double-revoke.
+// Returns true if this call set revoked_at, false if already set.
+export async function revokeDispatch(id) {
+  const result = await pool.query(
+    'UPDATE dispatches SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL',
+    [id]
+  );
+  return result.rowCount === 1;
+}
+
+// Load a finished dispatch not in the 30-min in-memory cache.
+// Filters deleted_at AND revoked_at: a revoked dispatch is not restartable.
+export async function getDispatchById(id) {
+  return pool.query(
+    'SELECT * FROM dispatches WHERE id = $1 AND deleted_at IS NULL AND revoked_at IS NULL',
+    [id]
+  ).then(r => r.rows[0] || null);
+}
+
 export async function updateDispatchMergeResult(id, { status, completed_at, completion_sha, completion_summary, completion_summary_error, merge_result } = {}) {
   const fields = [];
   const values = [];
@@ -1157,24 +1221,46 @@ export async function getAllPreferences() {
 
 // --- Backlog reconstruction (legacy shape for API compat) ---
 
-export async function getBacklog(orgFilter, includeArchived = false, dateFilter = {}) {
-  const archivedClause = includeArchived ? '' : " AND status != 'archived'";
+export async function getBacklog({ orgFilter, projectKey, includeArchived = false, dateFilter = {}, statusFilter, priorityFilter, tagsFilter, epicId } = {}) {
+  const conditions = [];
   const params = [];
-  let where = `1=1${archivedClause}`;
 
-  if (orgFilter) {
+  if (!includeArchived && !statusFilter?.length) {
+    conditions.push("status != 'archived'");
+  }
+  if (projectKey) {
+    params.push(projectKey);
+    conditions.push(`project_key = $${params.length}`);
+  } else if (orgFilter) {
     params.push(orgFilter.toLowerCase() + '/%');
-    where = `project_key LIKE $${params.length}${archivedClause}`;
+    conditions.push(`project_key LIKE $${params.length}`);
   }
   if (dateFilter.from) {
     params.push(dateFilter.from);
-    where += ` AND created_at >= $${params.length}::timestamptz`;
+    conditions.push(`created_at >= $${params.length}::timestamptz`);
   }
   if (dateFilter.to) {
     params.push(dateFilter.to);
-    where += ` AND created_at < ($${params.length}::date + INTERVAL '1 day')`;
+    conditions.push(`created_at < ($${params.length}::date + INTERVAL '1 day')`);
+  }
+  if (statusFilter?.length) {
+    params.push(statusFilter);
+    conditions.push(`status = ANY($${params.length}::text[])`);
+  }
+  if (priorityFilter?.length) {
+    params.push(priorityFilter);
+    conditions.push(`priority = ANY($${params.length}::text[])`);
+  }
+  if (tagsFilter?.length) {
+    params.push(tagsFilter);
+    conditions.push(`tags ?| $${params.length}::text[]`);
+  }
+  if (epicId) {
+    params.push(epicId);
+    conditions.push(`epic_id = $${params.length}`);
   }
 
+  const where = conditions.length ? conditions.join(' AND ') : '1=1';
   const rows = await pool.query(`SELECT * FROM work_items WHERE ${where}`, params).then(r => r.rows);
 
   const hydratedItems = await hydrateWorkItemsBatch(rows);
@@ -1197,24 +1283,89 @@ export async function getBacklog(orgFilter, includeArchived = false, dateFilter 
   }
 
   const epicList = await listEpics();
-  const epics = await Promise.all(epicList.map(async epic => {
+  const allEpics = await Promise.all(epicList.map(async epic => {
     epic.work_item_ids = await getEpicWorkItemIds(epic.id);
     epic.project_keys = await getEpicProjectKeys(epic.id);
     const epicLogs = await getEpicLogs(epic.id);
     epic.session_log = epicLogs.map(l => ({ date: l.logged_at, summary: l.summary }));
     return epic;
   }));
+  const epics = projectKey ? allEpics.filter(e => e.project_keys.includes(projectKey)) : allEpics;
 
-  const seqRows = await pool.query('SELECT name, next_val FROM sequences WHERE name = ANY($1)', [['work_item', 'epic']]).then(r => r.rows);
+  const cachedPrefix = projectKey ? prefixCache.get(projectKey) : null;
+  const seqName = cachedPrefix ? `prefix:${cachedPrefix.prefix}` : 'work_item';
+  const seqRows = await pool.query('SELECT name, next_val FROM sequences WHERE name = ANY($1)', [[seqName, 'epic']]).then(r => r.rows);
   const seqMap = {};
   for (const r of seqRows) seqMap[r.name] = r.next_val;
 
   return {
-    next_id: seqMap.work_item || 1,
+    next_id: cachedPrefix
+      ? `${cachedPrefix.prefix}-${seqMap[seqName] ?? cachedPrefix.ticketStart}`
+      : (seqMap[seqName] || 1),
     next_epic_id: seqMap.epic || 1,
     projects,
     epics,
   };
+}
+
+const ALLOWED_SORT_COLS = Object.freeze({
+  created_at: 'created_at',
+  updated_at: 'updated_at',
+  priority: 'priority',
+  status: 'status',
+  title: 'title',
+  done_at: 'done_at',
+});
+
+export async function getWorkItemsFiltered({
+  orgFilter, projectKey, statusFilter, priorityFilter, tagsFilter, epicId,
+  limit = 200, offset = 0, sortBy = 'created_at', sortDir = 'asc',
+} = {}) {
+  const conditions = [];
+  const params = [];
+
+  if (!statusFilter?.length) {
+    conditions.push("status != 'archived'");
+  }
+  if (projectKey) {
+    params.push(projectKey);
+    conditions.push(`project_key = $${params.length}`);
+  } else if (orgFilter) {
+    params.push(orgFilter.toLowerCase() + '/%');
+    conditions.push(`project_key LIKE $${params.length}`);
+  }
+  if (statusFilter?.length) {
+    params.push(statusFilter);
+    conditions.push(`status = ANY($${params.length}::text[])`);
+  }
+  if (priorityFilter?.length) {
+    params.push(priorityFilter);
+    conditions.push(`priority = ANY($${params.length}::text[])`);
+  }
+  if (tagsFilter?.length) {
+    params.push(tagsFilter);
+    conditions.push(`tags ?| $${params.length}::text[]`);
+  }
+  if (epicId) {
+    params.push(epicId);
+    conditions.push(`epic_id = $${params.length}`);
+  }
+
+  const where = conditions.length ? conditions.join(' AND ') : '1=1';
+  const total = await pool.query(`SELECT COUNT(*) FROM work_items WHERE ${where}`, params)
+    .then(r => parseInt(r.rows[0].count, 10));
+
+  const col = ALLOWED_SORT_COLS[sortBy] || 'created_at';
+  const dir = sortDir === 'desc' ? 'DESC' : 'ASC';
+  const nullsClause = col === 'done_at' ? ' NULLS LAST' : '';
+  const pageParams = [...params, limit, offset];
+  const rows = await pool.query(
+    `SELECT * FROM work_items WHERE ${where} ORDER BY ${col} ${dir}${nullsClause} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+    pageParams
+  ).then(r => r.rows);
+
+  const items = await hydrateWorkItemsBatch(rows);
+  return { items, total };
 }
 
 export async function backdateWorkItem(id, createdAt) {
@@ -1306,6 +1457,7 @@ function hydrateWorkItem(row, approvals = []) {
     },
     released_at: row.released_at || '',
     released_version: row.released_version || '',
+    contract: row.contract ?? null,
   };
 }
 
@@ -1453,7 +1605,7 @@ export async function getTimeReportDaily(days = 14) {
   const since = new Date(Date.now() - days * 86400000).toISOString();
   return pool.query(`
     SELECT sh.project_key, p.org, p.project, p.component,
-      (sh.ended_at::timestamptz)::date AS day,
+      TO_CHAR((sh.ended_at::timestamptz)::date, 'YYYY-MM-DD') AS day,
       COALESCE(SUM(sh.duration_seconds), 0) AS time_seconds,
       COALESCE(SUM(sh.cost_usd), 0) AS cost_usd
     FROM session_history sh JOIN projects p ON sh.project_key = p.key
@@ -1503,7 +1655,7 @@ export async function getTimeReportDailyByOrg(days = 14) {
   const since = new Date(Date.now() - days * 86400000).toISOString();
   return pool.query(`
     SELECT p.org, p.org AS project_key,
-      (sh.ended_at::timestamptz)::date AS day,
+      TO_CHAR((sh.ended_at::timestamptz)::date, 'YYYY-MM-DD') AS day,
       COALESCE(SUM(sh.duration_seconds), 0) AS time_seconds,
       COALESCE(SUM(sh.cost_usd), 0) AS cost_usd
     FROM session_history sh JOIN projects p ON sh.project_key = p.key
@@ -1559,6 +1711,19 @@ export async function hardDeleteAllTestData() {
     await client.query('DELETE FROM work_items WHERE created_at > $1', [cutoff]);
     await client.query('DELETE FROM epics WHERE created_at > $1', [cutoff]);
     await client.query('DELETE FROM session_history WHERE ended_at > $1', [cutoff]);
+    // dispatch_costs uses ON DELETE CASCADE, but dispatches are soft-deleted.
+    // Hard-delete dispatch_costs rows for dispatches soft-deleted during this test run
+    // so cost summary queries don't accumulate stale data across tests.
+    await client.query(`
+      DELETE FROM dispatch_costs dc
+      WHERE EXISTS (
+        SELECT 1 FROM dispatches d
+        WHERE d.id = dc.id AND d.deleted_at IS NOT NULL AND d.deleted_at > $1
+      )`, [cutoff]);
+    // Also hard-delete the soft-deleted dispatch rows themselves (test DBs only).
+    await client.query('DELETE FROM dispatches WHERE deleted_at > $1', [cutoff]);
+    // Clean dispatch_prompts for soft-deleted dispatches
+    await client.query('DELETE FROM dispatch_prompts WHERE dispatch_id IS NULL AND created_at > $1', [cutoff]);
   });
 }
 
@@ -1951,6 +2116,14 @@ export async function getPromptsByWorkItem(workItemId) {
     [workItemId]
   );
   return r.rows;
+}
+
+export async function getPromptByDispatchId(dispatchId) {
+  const r = await pool.query(
+    'SELECT * FROM dispatch_prompts WHERE dispatch_id = $1 ORDER BY created_at DESC LIMIT 1',
+    [dispatchId]
+  );
+  return r.rows[0] ?? null;
 }
 
 // --- Cost summary ---
