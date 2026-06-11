@@ -63,6 +63,7 @@ See `docs/architecture.md` for layer boundaries and dependency rules.
 | Tech review — systems engineering | tech-reviewer-systems | sonnet / opus* |
 | Tech review — IoT engineering | tech-reviewer-iot | sonnet |
 | Tech review — production readiness | tech-reviewer-prod | sonnet |
+| Tech review — security (diff-scoped, code gate) | tech-reviewer-security | sonnet |
 
 *Escalated to opus when dispatched for large or strategic artifacts.
 

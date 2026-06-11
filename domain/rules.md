@@ -98,7 +98,7 @@ These rules apply to ALL workflow patterns, not only `parallel-fan-out`:
 | planner | Medium+ complexity. For trivial/small: dispatched agent produces a brief inline plan (1–3 bullet points) directly — no planner agent required. |
 | tester | All code changes except trivial |
 | reviewer | All code changes except trivial |
-| security-auditor | Auth, secrets, input validation, or external data is involved |
+| security-auditor | Full-codebase OWASP audit, dependency CVE scan, infrastructure review — invoked via `/secure`. NOT dispatched at code gate (use tech-reviewer-security there) |
 | browser | E2E tests, visual regression, bug reproduction in browser, or web automation tasks requested by the user |
 | tech-reviewer-* | All plans from planner agent (medium+ complexity) and all non-trivial code changes. Dispatched as a context-filtered group (3–10 agents) in parallel per Review Board Rules |
 
@@ -106,7 +106,7 @@ These rules apply to ALL workflow patterns, not only `parallel-fan-out`:
 
 | Category | Agents | Can modify code | Can write data | Can interact with web | Uses worktree |
 |----------|--------|-----------------|----------------|-----------------------|---------------|
-| Read-only | reviewer, security-auditor, performance, strategist, classifier, coordinator, findings-coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod | No | No | No | No (main tree) |
+| Read-only | reviewer, security-auditor, performance, strategist, classifier, coordinator, findings-coordinator, scout, debugger, dependency-manager, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod, tech-reviewer-security | No | No | No | No (main tree) |
 | Interactive | browser | No | No | Yes | No |
 | Interactive | discuss | No | No | No | No |
 | Implementation | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, ci-cd, api-designer, documenter, refactorer, git-ops | Yes | No | No | Yes (worktree) |
@@ -1082,6 +1082,7 @@ Static defaults defined in each agent's frontmatter. The orchestrator overrides 
 | tech-reviewer-systems | sonnet | read-only |
 | tech-reviewer-iot | sonnet | read-only |
 | tech-reviewer-prod | sonnet | read-only |
+| tech-reviewer-security | sonnet | read-only |
 
 ### Review Board Escalation
 
@@ -1104,7 +1105,7 @@ Each agent receives only the context layers relevant to its role. This reduces t
 |--------------|--------|-----------------|
 | none | git-ops | Branch name and project path only |
 | minimal | classifier, scout, tracker, dependency-manager, browser, discuss | `guidance.stack_summary`, `scout_report.language`, `scout_report.framework` |
-| standard | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, coordinator, findings-coordinator, planner, debugger, documenter, api-designer, refactorer, strategist, profiler, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod | Minimal + `guidance.structure`, `guidance.conventions`, `custom_rules`, `agents.dispatch_notes`, `brief.purpose`, `brief.domain`, `brief.users`, `doc_paths`, `portfolio_guides` |
+| standard | coder, coder-frontend, coder-backend, coder-mobile, coder-infra, coordinator, findings-coordinator, planner, debugger, documenter, api-designer, refactorer, strategist, profiler, tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-dx, tech-reviewer-ux, tech-reviewer-frontend, tech-reviewer-dba, tech-reviewer-pm, tech-reviewer-systems, tech-reviewer-iot, tech-reviewer-prod, tech-reviewer-security | Minimal + `guidance.structure`, `guidance.conventions`, `custom_rules`, `agents.dispatch_notes`, `brief.purpose`, `brief.domain`, `brief.users`, `doc_paths`, `portfolio_guides` |
 | full | tester, reviewer, security-auditor, ci-cd, performance | Standard + `guidance.ci_cd`, `guidance.testing`, complete `brief` (all fields), `doc_paths` |
 
 ### Application
@@ -1414,6 +1415,7 @@ The Review Board is a context-filtered group of specialized review agents (3–1
 | tech-reviewer-systems | System boundaries, communication protocols, cross-subsystem failure modes, version compat | Project spans multiple subsystems OR artifact crosses system boundaries |
 | tech-reviewer-iot | Device provisioning, OTA, telemetry, power management, BLE, connectivity resilience | Project involves IoT/embedded devices OR artifact touches device-layer code |
 | tech-reviewer-prod | Logging, monitoring, health checks, deployment safety, config management, graceful degradation, operational documentation | Project has backend services or APIs OR artifact introduces new deployment units, secrets/config management, or changes to operational runbooks. Skip for purely frontend-only artifacts with no deployment changes. |
+| tech-reviewer-security | Diff-scoped OWASP A01–A10 review, secrets/auth/injection patterns visible in the changed code | **Code gate only — always dispatched unconditionally.** Replaces the `security-auditor` conditional at the code gate. `security-auditor` is for full standalone audits (`/secure`), not the Review Board. |
 
 All agents are read-only. tech-reviewer-arch and tech-reviewer-systems escalate to opus for large/strategic artifacts; all others use sonnet. See Model Selection Rules → Review Board Escalation.
 
@@ -1485,7 +1487,7 @@ These rules apply to all dispatches (except T1-tagged items) without exception. 
 1. **Worktree required**: Every small+ dispatch must execute in an isolated git worktree. The worktree branches off the currently checked-out branch at dispatch time (source_branch). Never branch off main by default. Trivial items (T1-tagged) are exempt from worktree isolation per the T1 Fast Path rule.
 2. **Complete contract required**: Every small+ dispatch must have a complete DispatchContract with all four core fields (goal, constraints, expected_output, failure_conditions) plus `success_criteria` (user-visible done conditions, required for small+) and `e2e_test_criteria` (minimum 1 entry for small and medium, 3+ for large complexity). Trivial items require only a non-empty goal. Test suite and build verification are required for all complexity including T1 — see Rule 5.
 3. **Plan Gate required**: Every DispatchPlan must include a plan-gate review step (Review Board) before any implementation agent runs. Applies to all complexity except T1. For trivial/small, the board reviews the inline plan produced per Rule 0.
-4. **Code Gate required**: Every small+ DispatchPlan must include a code-gate review step as the final pre-merge step. The code gate must verify contract satisfaction (each e2e_test_criteria item is implemented and passing). For small: lightweight board (swe + arch only). Trivial items skip the code gate board but are subject to Rule 5. Board for medium+: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod, plus tech-reviewer-dba if DB changes present, security-auditor if auth/secrets present.
+4. **Code Gate required**: Every small+ DispatchPlan must include a code-gate review step as the final pre-merge step. The code gate must verify contract satisfaction (each e2e_test_criteria item is implemented and passing). For small: lightweight board (swe + arch + security only). Trivial items skip the code gate board but are subject to Rule 5. Board for medium+: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod, tech-reviewer-security (always); plus tech-reviewer-dba if DB changes present.
 5. **Test + Build Gate required (all complexity including T1)**: Every dispatch regardless of complexity must report `test_suite_passed` and `build_verified` signals in the `POST /api/dispatch/:id/complete` payload before the merge path opens. The `/merge` handler reads these values from the dispatch record (set at `/complete` time). If no test framework is detected, the agent reports `test_framework_absent: true` (treated as gate satisfied with an informational note in the session log). If the portfolio entry has no `guidance.build_command`, build verification is a no-op (gate satisfied). When a regression is detected, the agent self-corrects within the same dispatch session (same process, extended turns — no new dispatch created), re-runs the suite, then reports. Maximum 2 self-correction cycles per the agent's `maxTurns` config; on second failure, agent halts and reports `tests_not_passed` with a blocking note.
 6. **Base branch merge**: Merge always targets source_branch (the originating branch captured at worktree creation time). Never hardcode main as merge target.
 
@@ -1507,7 +1509,7 @@ Gate reviews (Ticket Gate, Plan Gate, Code Gate) are read-only, depth-1 dispatch
 ### Named Board Compositions
 - **Ticket Gate Board** (identical to Plan Gate Board): tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx
 - **Plan Gate Board**: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx
-- **Code Gate Board**: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod; add tech-reviewer-dba if DB schema changes present; add security-auditor if authentication, secrets, or external data involved
+- **Code Gate Board**: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod, tech-reviewer-security; add tech-reviewer-dba if DB schema changes present
 
 ## External Action Rules
 
