@@ -245,27 +245,28 @@ test('DP-12: relevant panels auto-expand when navigating to their project view',
   await expect(page.locator(`#dispatch-${arch1.dispatch_id}`)).not.toHaveClass(/collapsed/);
   await expect(page.locator(`#dispatch-${arch2.dispatch_id}`)).not.toHaveClass(/collapsed/);
 
-  // Neuronic-cloud panels should be collapsed (non-matching project, collapsed by context-aware)
-  await expect(page.locator(`#dispatch-${nc1.dispatch_id}`)).toHaveClass(/collapsed/);
-  await expect(page.locator(`#dispatch-${nc2.dispatch_id}`)).toHaveClass(/collapsed/);
-  await expect(page.locator(`#dispatch-${nc3.dispatch_id}`)).toHaveClass(/collapsed/);
+  // Neuronic-cloud panels should not be visible (non-matching project, moved to hidden buffer)
+  await expect(page.locator(`#dispatch-${nc1.dispatch_id}`)).not.toBeVisible();
+  await expect(page.locator(`#dispatch-${nc2.dispatch_id}`)).not.toBeVisible();
+  await expect(page.locator(`#dispatch-${nc3.dispatch_id}`)).not.toBeVisible();
 });
 
 test('DP-13: navigating to a different project flips expand/collapse', async ({ page }) => {
   const arch = await seedDispatch({ status: 'running', project_key: 'ticari/architect/main', title: 'Arch flip' });
   const nc = await seedDispatch({ status: 'running', project_key: 'ticari/neuronic-cloud/main', title: 'NC flip' });
 
-  // Start on architect view — architect expanded, NC collapsed
+  // Start on architect view — architect expanded, NC hidden (off-DOM)
   await page.goto('/#component/ticari/architect/main');
   await expect(page.locator(`#dispatch-${arch.dispatch_id}`)).toBeVisible({ timeout: 5000 });
   await expect(page.locator(`#dispatch-${arch.dispatch_id}`)).not.toHaveClass(/collapsed/);
-  await expect(page.locator(`#dispatch-${nc.dispatch_id}`)).toHaveClass(/collapsed/);
+  await expect(page.locator(`#dispatch-${nc.dispatch_id}`)).not.toBeAttached({ timeout: 5000 });
 
-  // Navigate to neuronic-cloud view — NC expanded, architect collapsed
+  // Navigate to neuronic-cloud view — NC visible and expanded, arch hidden
   await page.evaluate(() => { location.hash = '#component/ticari/neuronic-cloud/main'; });
-  await page.waitForTimeout(500);
-  await expect(page.locator(`#dispatch-${nc.dispatch_id}`)).not.toHaveClass(/collapsed/);
-  await expect(page.locator(`#dispatch-${arch.dispatch_id}`)).toHaveClass(/collapsed/);
+  // Wait for NC panel to become visible first, then check it's not collapsed
+  await expect(page.locator(`#dispatch-${nc.dispatch_id}`)).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator(`#dispatch-${nc.dispatch_id}`)).not.toHaveClass(/collapsed/, { timeout: 5000 });
+  await expect(page.locator(`#dispatch-${arch.dispatch_id}`)).not.toBeAttached({ timeout: 5000 });
 });
 
 test('DP-14: manual toggle within a project view is respected', async ({ page }) => {

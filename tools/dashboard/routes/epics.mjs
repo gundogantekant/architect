@@ -1,10 +1,13 @@
+import { validateDocContent } from './work-items.mjs';
+
 export default function epicRoutes(deps) {
   const { db, json, text, err, parseBody, readFile, writeFile, mkdir, join, WORK, VALID_EPIC_STATUSES, VALID_PRIORITIES } = deps;
   return [
     // --- Epic endpoints ---
 
     // List epics
-    [/^\/api\/epics$/, 'GET', async (_m, _req, res) => {
+    [/^\/api\/epics$/, 'GET', async (_m, req, res) => {
+      const projectKey = new URL(req.url, 'http://x').searchParams.get('project_key') || null;
       const epicList = await db.listEpics();
       const epics = await Promise.all(epicList.map(async epic => {
         const items = await db.getWorkItemsByEpic(epic.id);
@@ -17,7 +20,8 @@ export default function epicRoutes(deps) {
           progress: { done, total: items.length },
         };
       }));
-      json(res, epics);
+      // Semantic: returns epics that touch the project (at least one work item in it)
+      json(res, projectKey ? epics.filter(e => e.project_keys.includes(projectKey)) : epics);
     }],
 
     // Get epic detail
@@ -118,7 +122,17 @@ export default function epicRoutes(deps) {
 
     // Write epic plan
     [/^\/api\/epics\/(E-\d+)\/plan$/, 'PUT', async (m, req, res) => {
-      const body = await parseBody(req);
+      let body;
+      try {
+        body = await parseBody(req);
+      } catch {
+        return err(res, 'invalid JSON body', 400);
+      }
+      try {
+        validateDocContent(body.content);
+      } catch (e) {
+        return err(res, e.message, e.status ?? 422);
+      }
       const dir = join(WORK, 'epics', m[1]);
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, 'plan.md'), body.content || '');
@@ -137,7 +151,17 @@ export default function epicRoutes(deps) {
 
     // Write epic doc
     [/^\/api\/epics\/(E-\d+)\/doc$/, 'PUT', async (m, req, res) => {
-      const body = await parseBody(req);
+      let body;
+      try {
+        body = await parseBody(req);
+      } catch {
+        return err(res, 'invalid JSON body', 400);
+      }
+      try {
+        validateDocContent(body.content);
+      } catch (e) {
+        return err(res, e.message, e.status ?? 422);
+      }
       const dir = join(WORK, 'epics', m[1]);
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, 'docs.md'), body.content || '');

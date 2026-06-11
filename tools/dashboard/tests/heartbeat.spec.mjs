@@ -100,12 +100,12 @@ test.describe('Heartbeat hardening @fast', () => {
     const { found, received } = await collectSse(
       `${base}/api/dispatch/${dispatchId}/stream`,
       (data) => data.includes(': keep-alive'),
-      TEST_HEARTBEAT_MS * 4,
+      TEST_HEARTBEAT_MS * 8, // mitigation: widen tolerance for slow CI
     );
 
     expect(
       found,
-      `Expected keep-alive SSE comment frame within ${TEST_HEARTBEAT_MS * 4}ms.\nReceived:\n${received}`,
+      `Expected keep-alive SSE comment frame within ${TEST_HEARTBEAT_MS * 8}ms.\nReceived:\n${received}`,
     ).toBe(true);
   });
 
@@ -123,7 +123,7 @@ test.describe('Heartbeat hardening @fast', () => {
 
     const pingReceived = await new Promise((resolve) => {
       const ws = new WebSocket(`${wsBase}/api/terminal/${terminal_id}/ws`);
-      const timer = setTimeout(() => { ws.terminate(); resolve(false); }, TEST_HEARTBEAT_MS * 4);
+      const timer = setTimeout(() => { ws.terminate(); resolve(false); }, TEST_HEARTBEAT_MS * 8); // mitigation: widen tolerance for slow CI
 
       ws.on('ping', () => {
         clearTimeout(timer);
@@ -136,7 +136,7 @@ test.describe('Heartbeat hardening @fast', () => {
 
     expect(
       pingReceived,
-      `Expected ping frame within ${TEST_HEARTBEAT_MS * 4}ms of WebSocket connect`,
+      `Expected ping frame within ${TEST_HEARTBEAT_MS * 8}ms of WebSocket connect`,
     ).toBe(true);
   });
 

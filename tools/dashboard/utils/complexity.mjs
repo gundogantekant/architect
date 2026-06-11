@@ -19,6 +19,14 @@ export function getComplexityLevel(workItem) {
   return 'small';
 }
 
+export function isSmallOrAbove(complexity) {
+  return ['small', 'medium', 'large'].includes(complexity);
+}
+
 export function isMediumOrAbove(workItem) {
   return ['medium', 'large'].includes(getComplexityLevel(workItem));
+}
+
+export function isLarge(workItem) {
+  return getComplexityLevel(workItem) === 'large';
 }

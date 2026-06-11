@@ -30,7 +30,7 @@ test.describe('Work item lifecycle @behavioral', () => {
   });
 
   test('WF-2: status update reflects after reload', async ({ page }) => {
-    const item = await seedWorkItem({ title: 'Status test', status: 'draft', project_key: 'ticari/architect/main' });
+    const item = await seedWorkItem({ title: 'Status test', status: 'draft', project_key: 'ticari/architect/main', tags: ['trivial'] });
     await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'planned' }) });
     await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'in-progress' }) });
     await page.goto('/#component/ticari/architect/main');
@@ -73,7 +73,7 @@ test.describe('Work item lifecycle @behavioral', () => {
   });
 
   test('WF-10: work item response includes CRUD timestamps', async () => {
-    const item = await seedWorkItem({ title: 'Timestamp test', status: 'draft', project_key: 'ticari/architect/main' });
+    const item = await seedWorkItem({ title: 'Timestamp test', status: 'draft', project_key: 'ticari/architect/main', tags: ['trivial'] });
     const full = await api(`work-items/${item.id}`);
     expect(full.created_at).toBeTruthy();
     expect(full.updated_at).toBeTruthy();

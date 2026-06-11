@@ -7,7 +7,7 @@
  * See domain/rules.md → Autonomous Pipeline Rules.
  */
 
-import { execFile as execFileCb } from 'node:child_process';
+import { execFile as execFileCb, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -82,18 +82,20 @@ export async function attemptMerge({ dispatchId, worktreePath, sourceBranch, pro
     const { stdout: shaStdout } = await execFile('git', ['rev-parse', 'HEAD'], { cwd: projectPath });
     const mergeSha = shaStdout.trim();
 
-    // 9. Remove the worktree (best-effort).
+    // 9. Remove the worktree (best-effort); fallback to rm -rf if git worktree remove fails.
     try {
       await execFile('git', ['worktree', 'remove', '--force', worktreePath], { cwd: projectPath });
     } catch {
-      // Ignore — worktree may already be gone or locked.
+      if (existsSync(worktreePath)) {
+        try { execFileSync('rm', ['-rf', worktreePath]); } catch { /* directory is gone */ }
+      }
     }
 
-    // 10. Delete the worktree branch (best-effort).
+    // 10. Force-delete the worktree branch (best-effort; -D skips the merged-into-HEAD check).
     try {
-      await execFile('git', ['branch', '-d', worktreeBranch], { cwd: projectPath });
+      await execFile('git', ['branch', '-D', worktreeBranch], { cwd: projectPath });
     } catch {
-      // Ignore — branch may already be deleted or unmerged check fails.
+      // Ignore — branch may already be deleted.
     }
 
     // 11. Return success.

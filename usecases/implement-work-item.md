@@ -14,7 +14,7 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 ## Preconditions
 - Follow `usecases/load-portfolio-context.md` with depth **standard** (fallback: run scout to detect the stack)
 - Dashboard must be running at `http://127.0.0.1:3777`
-- For medium+ complexity work items, the DispatchPlan must include a `contract` on each step per `domain/rules.md` → Dispatch Contract Rules. If contracts are missing, the orchestrator constructs them from the work item description before dispatching.
+- For small+ complexity work items, the DispatchPlan must include a `contract` on each step per `domain/rules.md` → Dispatch Contract Rules. If contracts are missing, the orchestrator constructs them from the work item description before dispatching.
 - **Autonomous mode**: When the prompt contains a `# Auto-Implement Mode` section, proceed through all steps without pausing for user confirmation at intermediate gates. The only exception: if a Technical Review Board gate returns `block` after 2 revision cycles, halt and mark the dispatch as failed. After step 12 (commit) succeeds, call `POST /api/dispatch/${DISPATCH_ID}/complete` (see step 12 sub-step below) and then **halt** — the dashboard handles steps 13–16 (merge-back, cleanup, status update) automatically.
 
 ## Agent(s)
@@ -54,15 +54,15 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 
 4. **Brief investigation**: Read relevant files based on work item description and portfolio context. Keep exploration to understanding the change surface — identify which files need changes, what patterns exist, any dependencies or constraints. Do not do a full codebase scan. **Auto-Implement Mode**: report stage — `PUT /api/dispatch/${DISPATCH_ID}/stage` with `{"stage": "investigating"}`.
 
-5. **Plan implementation**: Produce a bullet-point plan (max 5 points) covering: files to modify/create, approach summary, test strategy. If the work item has a stored `plan.md` artifact, use it as the basis instead of generating from scratch. Present to user for confirmation. If rejected, refine or abort.
+5. **Plan implementation**: Produce a bullet-point plan (max 7 points) covering: files to modify/create, approach summary, test strategy, **acceptance criteria** (1–3 sentences stating what must be observably true when done), and **E2E test scenarios** (required for small+, at minimum 1 scenario; 3+ for large; exempt for trivial). If the work item has a stored `plan.md` artifact, use it as the basis instead of generating from scratch. Do NOT present to user yet — board review runs first in step 6.
 
-6. **Review Board — Plan Gate** (if medium+ complexity per `domain/rules.md` → Review Board Rules): Assemble the review board using context-based composition rules (3–10 agents). Dispatch all selected tech-reviewer-* agents **in parallel** with the plan text, artifact_type=plan, and target project portfolio context. Collect `TechReviewVerdict` from each. Apply aggregation rules:
+6. **Review Board — Plan Gate** (all complexity except T1-tagged items per `domain/rules.md` → Review Board Rules): Assemble the review board using context-based composition rules (3–10 agents). Dispatch all selected tech-reviewer-* agents **in parallel** with the plan text, artifact_type=plan, and target project portfolio context. Collect `TechReviewVerdict` from each. Apply aggregation rules:
    - Any `block` → feed concerns back to planner for revision, re-review (max 2 cycles). If still blocked after 2 cycles, escalate to user.
    - Any `revise` (no `block`) → present plan to user WITH revision concerns highlighted. User decides: accept, revise, or override.
-   - All `approve` → update work item status to `ready`. Proceed to user confirmation (step 5 already handles this).
-   Skip this step for trivial/small complexity or when the plan was provided by the user.
+   - All `approve` → update work item status to `ready`. Present plan WITH board verdicts to user for confirmation. If rejected, refine or abort.
+   This step runs for all dispatched complexity levels except T1-tagged items. For trivial/small, the board evaluates the inline plan produced in step 5 — no DispatchContract is required for the board to evaluate these plans. The board reviews any plan regardless of complexity or origin (user-provided or agent-generated).
 
-7. **Write contract tests** (if applicable per `domain/rules.md` → Contract-First Planning Rules): When the plan introduces new API endpoints, UI interactions, or dispatch flows, write E2E/integration tests that encode the expected behavior before implementation. When `contract.e2e_test_criteria` is present, use each entry directly as a test scenario description — each criterion becomes one test case. Verify all tests fail (red) before implementation. Trivial changes are exempt.
+7. **Write contract tests** (per `domain/rules.md` → Contract-First Planning Rules): Write E2E/integration tests that encode the plan's `e2e_test_criteria` entries as test cases. This applies to every implementation plan, not only those introducing new API endpoints, UI interactions, or dispatch flows. When `contract.e2e_test_criteria` is present, use each entry directly as a test scenario description — each criterion becomes one test case. Verify all tests fail (red) before implementation. Trivial changes are exempt.
 
 8. **Worktree check**: If a `# Worktree Context` section is present in your prompt (i.e., the dispatch infrastructure already created a worktree and set your working directory to it), skip worktree creation and proceed to step 9. Otherwise, follow `usecases/manage-worktree.md` → create, using the work item ID as the ticket ID (branch and directory will be named `W-<id>`). Respect the portfolio entry's `worktree_mode` field — if `"explicit"`, work in-place.
 
@@ -108,9 +108,7 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
 
     **Log progress**: `POST /api/work-items/<id>/log` with `{"message": "Implemented: <summary>. Branch: <branch-name>"}`.
 
-14. **Merge-back confirmation**: Present a one-line summary: "Ready to merge <N> commit(s) from `<branch>` into `<originating_branch>`. Proceed?" Wait for user confirmation before continuing.
-
-    Before requesting confirmation, verify the **Merge-Back Checklist** — all 7 conditions are a hard gate; any unsatisfied condition blocks the merge:
+14. **Merge-back gate**: Verify the **Merge-Back Checklist** — all 7 conditions are a hard gate; any unsatisfied condition halts and surfaces the specific failing condition to the user before continuing:
     1. Code Gate aggregate verdict is `approve` (no outstanding `block` or `revise`).
     2. Full test suite is green.
     3. Contract tests pass green (or were exempted per step 7).
@@ -118,6 +116,8 @@ Implement a tracked work item end-to-end: investigate, plan, code, test, commit,
     5. When `contract.success_criteria` is non-null, each criterion is explicitly confirmed by the Code Gate board (per the coverage check in step 11).
     6. The work item's `input_needed` flag is not set.
     7. The worktree has no uncommitted changes.
+
+    On checklist pass: log merge intent — `POST /api/work-items/<id>/log` with `{"message": "Merging <branch> → <originating_branch>"}` — then proceed automatically to step 15. A log-write failure is non-blocking; emit a warning and proceed.
 
 15. **Merge-back**: Dispatch git-ops to merge the worktree branch into the originating branch (fast-forward preferred, merge commit fallback). On success: remove the worktree, delete the branch, then proceed to step 16. On conflict: dispatch the coder agent to attempt resolution — it must (a) identify the conflicting hunks, (b) produce a resolution, and (c) provide an impact analysis (what changed semantically, risk level). If the coder agent's resolution is clean and low-risk, apply it, complete the merge, and proceed to step 16. If the conflict cannot be meaningfully resolved (risk too high, intent unclear, or multiple overlapping changes), run `git merge --abort`, preserve the worktree intact, report the conflicting files with a brief conflict summary, and offer two options: (a) run `/pr` to push a pull request instead, or (b) leave the worktree open for manual resolution. Do not proceed to step 16 on unresolved conflict.
 

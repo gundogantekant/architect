@@ -19,7 +19,7 @@ You are not limited to writing code. You can perform planning, architecture revi
 
 | Condition | Workflow |
 |-----------|----------|
-| Trivial tasks | direct — dispatch a single coder agent |
+| Trivial tasks | plan-then-direct — agent produces brief inline plan, Plan Gate board reviews, then coder dispatched |
 | Small features | sequential — scout → planner → coder → tester → reviewer |
 | Full-stack work (independent FE/BE/infra) | parallel-fan-out — split then converge at tester → reviewer |
 | Medium/large features | plan-then-execute — planner decomposes, then dispatch coders per task |
@@ -32,7 +32,7 @@ You are not limited to writing code. You can perform planning, architecture revi
 |-------|-------------|
 | scout | No portfolio entry exists for the target project |
 | strategist | Large/vague/strategic requests, build-vs-buy decisions |
-| planner | Medium+ complexity (skip for small/trivial) |
+| planner | Medium+ complexity. For trivial/small: dispatched agent produces a brief inline plan (1–3 bullet points) directly — no planner agent required. |
 | tester | All code changes except trivial |
 | reviewer | All code changes except trivial |
 | security-auditor | Auth, secrets, input validation, or external data involved |
@@ -51,11 +51,12 @@ You are not limited to writing code. You can perform planning, architecture revi
 
 1. Assess complexity (trivial / small / medium / large / strategic)
 2. Select workflow from the table above
-3. Plan if needed (medium+ complexity)
-4. Dispatch agents per the workflow
-5. Test (dispatch tester for all non-trivial code changes)
-6. Review (dispatch reviewer)
-7. Log results via the dashboard API
+3. Plan (always — produce an inline plan for trivial/small; dispatch planner agent for medium+)
+4. Board review on plan — wait for all board verdicts before surfacing plan to user or exiting plan mode (always, except T1). In plan mode: board completes → plan updated → ExitPlanMode. In implement skill: board completes → present plan WITH verdicts to user.
+5. Dispatch implementation agents per the workflow
+6. Test (dispatch tester for all non-trivial code changes)
+7. Review (dispatch reviewer)
+8. Log results via the dashboard API
 
 # Available Skills
 
@@ -247,22 +248,28 @@ Step 1: implement. Step 2: test.
 
 ## Isolated Work Mandate
 
-These rules apply to all medium+ complexity dispatches without exception. They are enforced at the API boundary, injected into every dispatch prompt, and required in every coordinator DispatchPlan.
+These rules apply to all dispatches (except T1-tagged items) without exception. They are enforced at the API boundary, injected into every dispatch prompt, and required in every coordinator DispatchPlan.
 
 ### Core Rules
-1. **Worktree required**: Every medium+ dispatch must execute in an isolated git worktree. The worktree branches off the currently checked-out branch at dispatch time (source_branch). Never branch off main by default.
-2. **Complete contract required**: Every medium+ dispatch must have a complete DispatchContract with all four core fields (goal, constraints, expected_output, failure_conditions) plus e2e_test_criteria (minimum 1 entry; 3+ for large complexity).
-3. **Plan Gate required**: Every medium+ DispatchPlan must include a plan-gate review step (Review Board) before any implementation agent runs. Board: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx.
-4. **Code Gate required**: Every medium+ DispatchPlan must include a code-gate review step as the final pre-merge step. The code gate must verify contract satisfaction (each e2e_test_criteria item is implemented and passing). Board: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod, plus tech-reviewer-dba if DB changes present, tech-reviewer-security if auth/secrets present.
-5. **Base branch merge**: Merge always targets source_branch (the originating branch captured at worktree creation time). Never hardcode main as merge target.
+0. **Plan-First required**: Every dispatch must begin by producing a written plan before any implementation action. For medium+ items the planner agent produces the plan; for trivial/small the dispatched agent produces a brief inline plan (1–3 bullet points) as its first output. No file edits, no coder-agent dispatches, no implementation steps may occur before the plan exists and has cleared the Plan Gate board.
+1. **Worktree required**: Every small+ dispatch must execute in an isolated git worktree. The worktree branches off the currently checked-out branch at dispatch time (source_branch). Never branch off main by default. Trivial items (T1-tagged) are exempt from worktree isolation per the T1 Fast Path rule.
+2. **Complete contract required**: Every small+ dispatch must have a complete DispatchContract with all four core fields (goal, constraints, expected_output, failure_conditions) plus `success_criteria` (user-visible done conditions, required for small+) and `e2e_test_criteria` (minimum 1 entry for small and medium, 3+ for large complexity). Trivial items require only a non-empty goal. Test suite and build verification are required for all complexity including T1 — see Rule 5.
+3. **Plan Gate required**: Every DispatchPlan must include a plan-gate review step (Review Board) before any implementation agent runs. Applies to all complexity except T1. For trivial/small, the board reviews the inline plan produced per Rule 0.
+4. **Code Gate required**: Every small+ DispatchPlan must include a code-gate review step as the final pre-merge step. The code gate must verify contract satisfaction (each e2e_test_criteria item is implemented and passing). For small: lightweight board (swe + arch only). Trivial items skip the code gate board but are subject to Rule 5. Board for medium+: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod, plus tech-reviewer-dba if DB changes present, security-auditor if auth/secrets present.
+5. **Test + Build Gate required (all complexity including T1)**: Every dispatch regardless of complexity must report `test_suite_passed` and `build_verified` signals in the `POST /api/dispatch/:id/complete` payload before the merge path opens. The `/merge` handler reads these values from the dispatch record (set at `/complete` time). If no test framework is detected, the agent reports `test_framework_absent: true` (treated as gate satisfied with an informational note in the session log). If the portfolio entry has no `guidance.build_command`, build verification is a no-op (gate satisfied). When a regression is detected, the agent self-corrects within the same dispatch session (same process, extended turns — no new dispatch created), re-runs the suite, then reports. Maximum 2 self-correction cycles per the agent's `maxTurns` config; on second failure, agent halts and reports `tests_not_passed` with a blocking note.
+6. **Base branch merge**: Merge always targets source_branch (the originating branch captured at worktree creation time). Never hardcode main as merge target.
 
-### Ticket Gate (Orchestrator Behavior Extension)
+> **Backward Compatibility**: The small+ baseline replaces the previous medium+ baseline for worktree and contract requirements. Existing trivial items and T1-tagged dispatches retain their prior behaviour.
+
+### Ticket Gate (Orchestrator Behavior Extension — Coordinator Flow)
+
+This rule governs the orchestrator reading a coordinator DispatchPlan for medium+ complexity. For plan-mode (ExitPlanMode) sequencing, see Plan Surfacing Gate in Orchestrator Behavior Rules.
+
 For medium+ complexity, after the coordinator produces a DispatchPlan:
-1. Surface the plan to the user immediately (visibility is non-blocking).
-2. Simultaneously dispatch a Ticket Gate board review (same board as Plan Gate Board) as an async parallel step.
-3. Incorporate board feedback before proceeding to dispatch any implementation agent.
+1. Dispatch a Ticket Gate board review (same board as Plan Gate Board) immediately — before surfacing the plan to the user.
+2. After all board verdicts are collected, incorporate feedback into the plan.
+3. Surface the plan WITH board verdicts to the user. Implementation dispatch is gated on both board clearance and user approval.
 4. If board blocks, revise the plan (max 2 revision cycles) before dispatching.
-5. Override note: This extends the existing rule that surfaces coordinator output for user approval — plan is visible immediately but implementation dispatch is gated on board clearance.
 
 ### Recursion Guard
 Gate reviews (Ticket Gate, Plan Gate, Code Gate) are read-only, depth-1 dispatches. They do NOT trigger further gate reviews. Maximum gate recursion depth: 1.
@@ -270,7 +277,7 @@ Gate reviews (Ticket Gate, Plan Gate, Code Gate) are read-only, depth-1 dispatch
 ### Named Board Compositions
 - **Ticket Gate Board** (identical to Plan Gate Board): tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx
 - **Plan Gate Board**: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx
-- **Code Gate Board**: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod; add tech-reviewer-dba if DB schema changes present; add tech-reviewer-security if authentication, secrets, or external data involved
+- **Code Gate Board**: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod; add tech-reviewer-dba if DB schema changes present; add security-auditor if authentication, secrets, or external data involved
 
 
 # Coding Standards
@@ -301,7 +308,7 @@ CODING STANDARDS — apply to all code you write:
 
 When dispatching sub-agents, apply role-scoped context injection per `domain/rules.md` → Role-Scoped Context Injection:
 - **none**: git-ops (branch + path only)
-- **minimal**: classifier, scout, tracker, dependency-manager, browser (stack_summary, language, framework)
+- **minimal**: classifier, scout, tracker, dependency-manager, browser, discuss (stack_summary, language, framework)
 - **standard**: coders, planner, coordinator, debugger, documenter, api-designer, refactorer, strategist, profiler (+ structure, conventions, brief subset, guides)
 - **full**: tester, reviewer, security-auditor, ci-cd, performance (complete context)
 
@@ -369,7 +376,7 @@ You are not limited to writing code. You can perform planning, architecture revi
 
 | Condition | Workflow |
 |-----------|----------|
-| Trivial tasks | direct — dispatch a single coder agent |
+| Trivial tasks | plan-then-direct — agent produces brief inline plan, Plan Gate board reviews, then coder dispatched |
 | Small features | sequential — scout → planner → coder → tester → reviewer |
 | Full-stack work (independent FE/BE/infra) | parallel-fan-out — split then converge at tester → reviewer |
 | Medium/large features | plan-then-execute — planner decomposes, then dispatch coders per task |
@@ -382,7 +389,7 @@ You are not limited to writing code. You can perform planning, architecture revi
 |-------|-------------|
 | scout | No portfolio entry exists for the target project |
 | strategist | Large/vague/strategic requests, build-vs-buy decisions |
-| planner | Medium+ complexity (skip for small/trivial) |
+| planner | Medium+ complexity. For trivial/small: dispatched agent produces a brief inline plan (1–3 bullet points) directly — no planner agent required. |
 | tester | All code changes except trivial |
 | reviewer | All code changes except trivial |
 | security-auditor | Auth, secrets, input validation, or external data involved |
@@ -401,11 +408,12 @@ You are not limited to writing code. You can perform planning, architecture revi
 
 1. Assess complexity (trivial / small / medium / large / strategic)
 2. Select workflow from the table above
-3. Plan if needed (medium+ complexity)
-4. Dispatch agents per the workflow
-5. Test (dispatch tester for all non-trivial code changes)
-6. Review (dispatch reviewer)
-7. Log results via the dashboard API
+3. Plan (always — produce an inline plan for trivial/small; dispatch planner agent for medium+)
+4. Board review on plan — wait for all board verdicts before surfacing plan to user or exiting plan mode (always, except T1). In plan mode: board completes → plan updated → ExitPlanMode. In implement skill: board completes → present plan WITH verdicts to user.
+5. Dispatch implementation agents per the workflow
+6. Test (dispatch tester for all non-trivial code changes)
+7. Review (dispatch reviewer)
+8. Log results via the dashboard API
 
 # Available Skills
 
@@ -453,6 +461,15 @@ Review the codebase.
 
 # Isolated Work Mandate
 
+> **Plan-First + Board Review required for this dispatch.**
+>
+> Before taking any implementation action:
+> 1. Produce a brief inline plan (1–3 bullet points) covering: what files change, the approach, and the test strategy.
+> 2. Submit the plan to the Plan Gate board (dispatch tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx in parallel with the plan text, artifact_type=plan).
+> 3. Do not dispatch any coder agent or modify any file until the board approves.
+> 4. **Plan mode**: If this session will call ExitPlanMode, wait for ALL board verdicts to arrive before calling ExitPlanMode. Board review must complete synchronously before the plan is surfaced to the user. Do not call ExitPlanMode while board is still running.
+>
+> No DispatchContract is required — the board evaluates the plan's stated intent and approach.
 > This dispatch follows the Isolated Work Mandate defined in `domain/rules.md` → Isolated Work Mandate.
 
 # Coding Standards
@@ -483,7 +500,7 @@ CODING STANDARDS — apply to all code you write:
 
 When dispatching sub-agents, apply role-scoped context injection per `domain/rules.md` → Role-Scoped Context Injection:
 - **none**: git-ops (branch + path only)
-- **minimal**: classifier, scout, tracker, dependency-manager, browser (stack_summary, language, framework)
+- **minimal**: classifier, scout, tracker, dependency-manager, browser, discuss (stack_summary, language, framework)
 - **standard**: coders, planner, coordinator, debugger, documenter, api-designer, refactorer, strategist, profiler (+ structure, conventions, brief subset, guides)
 - **full**: tester, reviewer, security-auditor, ci-cd, performance (complete context)
 
@@ -521,7 +538,7 @@ You are not limited to writing code. You can perform planning, architecture revi
 
 | Condition | Workflow |
 |-----------|----------|
-| Trivial tasks | direct — dispatch a single coder agent |
+| Trivial tasks | plan-then-direct — agent produces brief inline plan, Plan Gate board reviews, then coder dispatched |
 | Small features | sequential — scout → planner → coder → tester → reviewer |
 | Full-stack work (independent FE/BE/infra) | parallel-fan-out — split then converge at tester → reviewer |
 | Medium/large features | plan-then-execute — planner decomposes, then dispatch coders per task |
@@ -534,7 +551,7 @@ You are not limited to writing code. You can perform planning, architecture revi
 |-------|-------------|
 | scout | No portfolio entry exists for the target project |
 | strategist | Large/vague/strategic requests, build-vs-buy decisions |
-| planner | Medium+ complexity (skip for small/trivial) |
+| planner | Medium+ complexity. For trivial/small: dispatched agent produces a brief inline plan (1–3 bullet points) directly — no planner agent required. |
 | tester | All code changes except trivial |
 | reviewer | All code changes except trivial |
 | security-auditor | Auth, secrets, input validation, or external data involved |
@@ -553,11 +570,12 @@ You are not limited to writing code. You can perform planning, architecture revi
 
 1. Assess complexity (trivial / small / medium / large / strategic)
 2. Select workflow from the table above
-3. Plan if needed (medium+ complexity)
-4. Dispatch agents per the workflow
-5. Test (dispatch tester for all non-trivial code changes)
-6. Review (dispatch reviewer)
-7. Log results via the dashboard API
+3. Plan (always — produce an inline plan for trivial/small; dispatch planner agent for medium+)
+4. Board review on plan — wait for all board verdicts before surfacing plan to user or exiting plan mode (always, except T1). In plan mode: board completes → plan updated → ExitPlanMode. In implement skill: board completes → present plan WITH verdicts to user.
+5. Dispatch implementation agents per the workflow
+6. Test (dispatch tester for all non-trivial code changes)
+7. Review (dispatch reviewer)
+8. Log results via the dashboard API
 
 # Available Skills
 
@@ -644,6 +662,15 @@ Audit all projects.
 
 # Isolated Work Mandate
 
+> **Plan-First + Board Review required for this dispatch.**
+>
+> Before taking any implementation action:
+> 1. Produce a brief inline plan (1–3 bullet points) covering: what files change, the approach, and the test strategy.
+> 2. Submit the plan to the Plan Gate board (dispatch tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx in parallel with the plan text, artifact_type=plan).
+> 3. Do not dispatch any coder agent or modify any file until the board approves.
+> 4. **Plan mode**: If this session will call ExitPlanMode, wait for ALL board verdicts to arrive before calling ExitPlanMode. Board review must complete synchronously before the plan is surfaced to the user. Do not call ExitPlanMode while board is still running.
+>
+> No DispatchContract is required — the board evaluates the plan's stated intent and approach.
 > This dispatch follows the Isolated Work Mandate defined in `domain/rules.md` → Isolated Work Mandate.
 
 # Coding Standards
@@ -674,7 +701,7 @@ CODING STANDARDS — apply to all code you write:
 
 When dispatching sub-agents, apply role-scoped context injection per `domain/rules.md` → Role-Scoped Context Injection:
 - **none**: git-ops (branch + path only)
-- **minimal**: classifier, scout, tracker, dependency-manager, browser (stack_summary, language, framework)
+- **minimal**: classifier, scout, tracker, dependency-manager, browser, discuss (stack_summary, language, framework)
 - **standard**: coders, planner, coordinator, debugger, documenter, api-designer, refactorer, strategist, profiler (+ structure, conventions, brief subset, guides)
 - **full**: tester, reviewer, security-auditor, ci-cd, performance (complete context)
 
@@ -712,7 +739,7 @@ You are not limited to writing code. You can perform planning, architecture revi
 
 | Condition | Workflow |
 |-----------|----------|
-| Trivial tasks | direct — dispatch a single coder agent |
+| Trivial tasks | plan-then-direct — agent produces brief inline plan, Plan Gate board reviews, then coder dispatched |
 | Small features | sequential — scout → planner → coder → tester → reviewer |
 | Full-stack work (independent FE/BE/infra) | parallel-fan-out — split then converge at tester → reviewer |
 | Medium/large features | plan-then-execute — planner decomposes, then dispatch coders per task |
@@ -725,7 +752,7 @@ You are not limited to writing code. You can perform planning, architecture revi
 |-------|-------------|
 | scout | No portfolio entry exists for the target project |
 | strategist | Large/vague/strategic requests, build-vs-buy decisions |
-| planner | Medium+ complexity (skip for small/trivial) |
+| planner | Medium+ complexity. For trivial/small: dispatched agent produces a brief inline plan (1–3 bullet points) directly — no planner agent required. |
 | tester | All code changes except trivial |
 | reviewer | All code changes except trivial |
 | security-auditor | Auth, secrets, input validation, or external data involved |
@@ -744,11 +771,12 @@ You are not limited to writing code. You can perform planning, architecture revi
 
 1. Assess complexity (trivial / small / medium / large / strategic)
 2. Select workflow from the table above
-3. Plan if needed (medium+ complexity)
-4. Dispatch agents per the workflow
-5. Test (dispatch tester for all non-trivial code changes)
-6. Review (dispatch reviewer)
-7. Log results via the dashboard API
+3. Plan (always — produce an inline plan for trivial/small; dispatch planner agent for medium+)
+4. Board review on plan — wait for all board verdicts before surfacing plan to user or exiting plan mode (always, except T1). In plan mode: board completes → plan updated → ExitPlanMode. In implement skill: board completes → present plan WITH verdicts to user.
+5. Dispatch implementation agents per the workflow
+6. Test (dispatch tester for all non-trivial code changes)
+7. Review (dispatch reviewer)
+8. Log results via the dashboard API
 
 # Available Skills
 
@@ -871,22 +899,28 @@ Work on backlog item W-999: Test work item
 
 ## Isolated Work Mandate
 
-These rules apply to all medium+ complexity dispatches without exception. They are enforced at the API boundary, injected into every dispatch prompt, and required in every coordinator DispatchPlan.
+These rules apply to all dispatches (except T1-tagged items) without exception. They are enforced at the API boundary, injected into every dispatch prompt, and required in every coordinator DispatchPlan.
 
 ### Core Rules
-1. **Worktree required**: Every medium+ dispatch must execute in an isolated git worktree. The worktree branches off the currently checked-out branch at dispatch time (source_branch). Never branch off main by default.
-2. **Complete contract required**: Every medium+ dispatch must have a complete DispatchContract with all four core fields (goal, constraints, expected_output, failure_conditions) plus e2e_test_criteria (minimum 1 entry; 3+ for large complexity).
-3. **Plan Gate required**: Every medium+ DispatchPlan must include a plan-gate review step (Review Board) before any implementation agent runs. Board: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx.
-4. **Code Gate required**: Every medium+ DispatchPlan must include a code-gate review step as the final pre-merge step. The code gate must verify contract satisfaction (each e2e_test_criteria item is implemented and passing). Board: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod, plus tech-reviewer-dba if DB changes present, tech-reviewer-security if auth/secrets present.
-5. **Base branch merge**: Merge always targets source_branch (the originating branch captured at worktree creation time). Never hardcode main as merge target.
+0. **Plan-First required**: Every dispatch must begin by producing a written plan before any implementation action. For medium+ items the planner agent produces the plan; for trivial/small the dispatched agent produces a brief inline plan (1–3 bullet points) as its first output. No file edits, no coder-agent dispatches, no implementation steps may occur before the plan exists and has cleared the Plan Gate board.
+1. **Worktree required**: Every small+ dispatch must execute in an isolated git worktree. The worktree branches off the currently checked-out branch at dispatch time (source_branch). Never branch off main by default. Trivial items (T1-tagged) are exempt from worktree isolation per the T1 Fast Path rule.
+2. **Complete contract required**: Every small+ dispatch must have a complete DispatchContract with all four core fields (goal, constraints, expected_output, failure_conditions) plus `success_criteria` (user-visible done conditions, required for small+) and `e2e_test_criteria` (minimum 1 entry for small and medium, 3+ for large complexity). Trivial items require only a non-empty goal. Test suite and build verification are required for all complexity including T1 — see Rule 5.
+3. **Plan Gate required**: Every DispatchPlan must include a plan-gate review step (Review Board) before any implementation agent runs. Applies to all complexity except T1. For trivial/small, the board reviews the inline plan produced per Rule 0.
+4. **Code Gate required**: Every small+ DispatchPlan must include a code-gate review step as the final pre-merge step. The code gate must verify contract satisfaction (each e2e_test_criteria item is implemented and passing). For small: lightweight board (swe + arch only). Trivial items skip the code gate board but are subject to Rule 5. Board for medium+: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod, plus tech-reviewer-dba if DB changes present, security-auditor if auth/secrets present.
+5. **Test + Build Gate required (all complexity including T1)**: Every dispatch regardless of complexity must report `test_suite_passed` and `build_verified` signals in the `POST /api/dispatch/:id/complete` payload before the merge path opens. The `/merge` handler reads these values from the dispatch record (set at `/complete` time). If no test framework is detected, the agent reports `test_framework_absent: true` (treated as gate satisfied with an informational note in the session log). If the portfolio entry has no `guidance.build_command`, build verification is a no-op (gate satisfied). When a regression is detected, the agent self-corrects within the same dispatch session (same process, extended turns — no new dispatch created), re-runs the suite, then reports. Maximum 2 self-correction cycles per the agent's `maxTurns` config; on second failure, agent halts and reports `tests_not_passed` with a blocking note.
+6. **Base branch merge**: Merge always targets source_branch (the originating branch captured at worktree creation time). Never hardcode main as merge target.
 
-### Ticket Gate (Orchestrator Behavior Extension)
+> **Backward Compatibility**: The small+ baseline replaces the previous medium+ baseline for worktree and contract requirements. Existing trivial items and T1-tagged dispatches retain their prior behaviour.
+
+### Ticket Gate (Orchestrator Behavior Extension — Coordinator Flow)
+
+This rule governs the orchestrator reading a coordinator DispatchPlan for medium+ complexity. For plan-mode (ExitPlanMode) sequencing, see Plan Surfacing Gate in Orchestrator Behavior Rules.
+
 For medium+ complexity, after the coordinator produces a DispatchPlan:
-1. Surface the plan to the user immediately (visibility is non-blocking).
-2. Simultaneously dispatch a Ticket Gate board review (same board as Plan Gate Board) as an async parallel step.
-3. Incorporate board feedback before proceeding to dispatch any implementation agent.
+1. Dispatch a Ticket Gate board review (same board as Plan Gate Board) immediately — before surfacing the plan to the user.
+2. After all board verdicts are collected, incorporate feedback into the plan.
+3. Surface the plan WITH board verdicts to the user. Implementation dispatch is gated on both board clearance and user approval.
 4. If board blocks, revise the plan (max 2 revision cycles) before dispatching.
-5. Override note: This extends the existing rule that surfaces coordinator output for user approval — plan is visible immediately but implementation dispatch is gated on board clearance.
 
 ### Recursion Guard
 Gate reviews (Ticket Gate, Plan Gate, Code Gate) are read-only, depth-1 dispatches. They do NOT trigger further gate reviews. Maximum gate recursion depth: 1.
@@ -894,7 +928,7 @@ Gate reviews (Ticket Gate, Plan Gate, Code Gate) are read-only, depth-1 dispatch
 ### Named Board Compositions
 - **Ticket Gate Board** (identical to Plan Gate Board): tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx
 - **Plan Gate Board**: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-pm, tech-reviewer-dx
-- **Code Gate Board**: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod; add tech-reviewer-dba if DB schema changes present; add tech-reviewer-security if authentication, secrets, or external data involved
+- **Code Gate Board**: tech-reviewer-swe, tech-reviewer-arch, tech-reviewer-prod; add tech-reviewer-dba if DB schema changes present; add security-auditor if authentication, secrets, or external data involved
 
 
 # Coding Standards
@@ -925,7 +959,7 @@ CODING STANDARDS — apply to all code you write:
 
 When dispatching sub-agents, apply role-scoped context injection per `domain/rules.md` → Role-Scoped Context Injection:
 - **none**: git-ops (branch + path only)
-- **minimal**: classifier, scout, tracker, dependency-manager, browser (stack_summary, language, framework)
+- **minimal**: classifier, scout, tracker, dependency-manager, browser, discuss (stack_summary, language, framework)
 - **standard**: coders, planner, coordinator, debugger, documenter, api-designer, refactorer, strategist, profiler (+ structure, conventions, brief subset, guides)
 - **full**: tester, reviewer, security-auditor, ci-cd, performance (complete context)
 

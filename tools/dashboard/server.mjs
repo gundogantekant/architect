@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { spawn, execFileSync } from 'node:child_process';
 import pty from 'node-pty';
 import * as db from './db.mjs';
+import { buildPrefixCache } from './portfolio-config.mjs';
 import { EventStream } from './event-stream.mjs';
 import { getAdapter } from './adapters/index.mjs';
 
@@ -40,6 +41,7 @@ import costsRoutes from './routes/costs.mjs';
 import assetsRoutes from './routes/assets.mjs';
 import promptsRoutes from './routes/prompts.mjs';
 import workItemAssetsRoutes from './routes/work-item-assets.mjs';
+import gitRoutes from './routes/git.mjs';
 import testEndpointRoutes from './routes/test-endpoints.mjs';
 import { attemptMerge, isMergeLocked } from './merge.mjs';
 
@@ -64,6 +66,7 @@ const deps = {
   spawn, execFileSync, readFile, writeFile, readFileSync, writeFileSync, appendFileSync, existsSync, createWriteStream,
   mkdir, stat, join, extname, dirname, homedir, rename, unlinkFile, renameSync, readdir,
   __dirname: import.meta.dirname,
+  buildPrefixCache,
 };
 
 const routes = [
@@ -85,6 +88,7 @@ const routes = [
   ...assetsRoutes(deps),
   ...promptsRoutes(deps),
   ...workItemAssetsRoutes(deps),
+  ...gitRoutes(deps),
   ...(process.env.WORK_DIR ? testEndpointRoutes(deps) : []),
 ];
 
@@ -229,6 +233,19 @@ async function main() {
     process.exit(1);
   }
 
+  // Data quality: log work items missing e2e_test_criteria that may fail stricter contract validation
+  const stale = await db.query(
+    `SELECT id, title FROM work_items
+     WHERE status IN ('open', 'ready', 'in-progress')
+       AND (contract->>'e2e_test_criteria' IS NULL
+            OR contract->>'e2e_test_criteria' = '[]'
+            OR contract->>'e2e_test_criteria' = 'null')`
+  );
+  if (stale.rows.length > 0) {
+    console.warn(`[contract-quality] ${stale.rows.length} active work item(s) have no e2e_test_criteria and may fail the updated contract validation gate:`);
+    for (const row of stale.rows) console.warn(`  ${row.id}: ${row.title}`);
+  }
+
   // Phase 2: Ensure logs directory, tmp directory, and work/assets directory
   await mkdir(LOGS_DIR, { recursive: true });
   await mkdir(TMP_DIR, { recursive: true });
@@ -239,6 +256,8 @@ async function main() {
 
   // Phase 2.5: Sync projects from portfolio registry
   migrateLegacyPortfolio({ legacyPath: LEGACY_PORTFOLIO, targetPath: PORTFOLIO });
+  const prefixMap = await buildPrefixCache(PORTFOLIO);
+  db.configurePrefixMap(prefixMap);
   const syncResult = await syncProjectsFromRegistry();
   syncWarnings = syncResult.skippedEntries || [];
 

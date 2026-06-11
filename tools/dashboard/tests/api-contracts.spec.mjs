@@ -33,7 +33,7 @@ test.describe('API contracts @fast', () => {
   });
 
   test('AC-4: PATCH /api/work-items/:id updates status', async () => {
-    const item = await seedWorkItem({ title: 'PATCH test' });
+    const item = await seedWorkItem({ title: 'PATCH test', tags: ['trivial'] });
     await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'planned' }) });
     await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'in-progress' }) });
     await api(`work-items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'in-review' }) });
@@ -634,6 +634,36 @@ test.describe('API contracts @fast', () => {
     expect(withDeleted.length).toBeGreaterThanOrEqual(
       active.filter(x => x.id === keep.dispatch_id).length
     );
+  });
+
+  // --- Tags filter ---
+
+  test('TF-1: GET /api/work-items?tags= filters by tag (OR semantics)', async () => {
+    const tagA = `tf-1-alpha-${Date.now()}`;
+    const tagB = `tf-1-beta-${Date.now()}`;
+    const itemA = await seedWorkItem({ title: 'TF-1 item tagA', tags: [tagA] });
+    const itemB = await seedWorkItem({ title: 'TF-1 item tagB', tags: [tagB] });
+    await seedWorkItem({ title: 'TF-1 item no match', tags: ['unrelated-tf1'] });
+
+    const result = await api(`work-items?tags=${tagA}&tags=${tagB}`);
+    const ids = result.items.map(i => i.id);
+    expect(ids).toContain(itemA.id);
+    expect(ids).toContain(itemB.id);
+    expect(result._meta.filters.tags).toEqual([tagA, tagB]);
+  });
+
+  test('TF-2: GET /api/backlog?tags= filters by tag', async () => {
+    const tag = `tf-2-tag-${Date.now()}`;
+    const item = await seedWorkItem({ title: 'TF-2 item', tags: [tag] });
+    await seedWorkItem({ title: 'TF-2 untagged', tags: [] });
+
+    const backlog = await api(`backlog?tags=${tag}`);
+    const allItems = Object.values(backlog.projects || {}).flatMap(p => p.items || []);
+    const ids = allItems.map(i => i.id);
+    expect(ids).toContain(item.id);
+    // Items without the tag must not appear
+    const untaggedInResult = allItems.filter(i => !i.tags?.includes(tag));
+    expect(untaggedInResult).toHaveLength(0);
   });
 
   test('SD-5: dispatches and terminals schema includes deleted_at column', async () => {

@@ -2,6 +2,16 @@ export const $ = s => document.querySelector(s);
 
 export function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
+export function stripAnsiForDisplay(s) {
+  if (!s) return s;
+  return s
+    .replace(/\x1b\[[\x20-\x3f]*[\x40-\x7e]/g, '')
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b[\x20-\x7e]/g, '')
+    .replace(/\x1b/g, '')
+    .replace(/[\x07\x08]/g, '');
+}
+
 export const ACTIVE_DOT_CLASSES = ['running', 'generating', 'tool-running', 'needs-input'];
 
 export function clearActiveDotClasses(dot) { dot.classList.remove(...ACTIVE_DOT_CLASSES); }

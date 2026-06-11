@@ -330,6 +330,184 @@ async function postRefineTerminal(org = 'testorg', proj = 'testproj', comp = 'ma
   return resp;
 }
 
+// ---------------------------------------------------------------------------
+// Component view stub — routes used by renderComponentView
+// ---------------------------------------------------------------------------
+async function stubComponentView(page, org = 'testorg', proj = 'testproj', comp = 'main', workItems = []) {
+  const projectKey = `${org}/${proj}/${comp}`;
+  const componentStub = {
+    org, project: proj, component: comp,
+    path: '/tmp/testproj', onboarded_at: '2024-01-01', last_scanned: '2024-01-01',
+    stack: [], agents: [], guidance: [], name: `${proj}/${comp}`, role: 'backend',
+  };
+  const backlogStub = {
+    projects: { [projectKey]: { items: workItems } },
+    epics: [],
+  };
+  const registryStub = {
+    entries: { '/tmp/testproj': { org, project: proj, component: comp } },
+  };
+
+  await page.route(/\/api\/orgs$/, route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify([]),
+  }));
+  await page.route(new RegExp(`/api/component/${org}/${proj}/${comp}$`), route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(componentStub),
+  }));
+  await page.route(new RegExp(`/api/project/${org}/${proj}$`), route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify([]),
+  }));
+  await page.route(/\/api\/backlog/, route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(backlogStub),
+  }));
+  await page.route(/\/api\/registry$/, route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(registryStub),
+  }));
+  await page.route(/\/api\/sync\/status/, route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'fresh', last_synced_at: null }),
+  }));
+  await page.route(/\/api\/terminal\/active$/, route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify([]),
+  }));
+  await page.route(/\/api\/dispatch\/active$/, route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify([]),
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// E2E browser tests: client-side interactive terminal dispatch (RT-UI-*)
+// These tests verify that selecting "Interactive terminal" in the Refine Project
+// modal correctly wires up the client side — terminal panel created in the DOM,
+// modal closed, no broken "Unknown route" navigation.
+// ---------------------------------------------------------------------------
+
+test.describe('Refine Project modal — interactive terminal UI @fast', () => {
+  const ORG = 'testorg';
+  const PROJ = 'testproj';
+  const COMP = 'main';
+  const TERMINAL_ID = 'T-rt-ui-001';
+
+  async function submitInteractiveTerminalModal(page) {
+    await page.waitForSelector('#refine-project', { timeout: 15000 });
+    await page.click('#refine-project');
+    await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 5000 });
+    // Select "Interactive terminal" radio
+    await page.click('input[name="refine-mode"][value="terminal"]');
+    // Confirm
+    await page.click('#refine-project-submit');
+  }
+
+  test('RT-UI-1: terminal panel created in DOM after interactive submit — no "Unknown route"', async ({ page }) => {
+    await stubComponentView(page, ORG, PROJ, COMP, [
+      { id: 'W-1', title: 'Draft item', status: 'draft', priority: 'medium', depends_on: [] },
+    ]);
+    // Mock the refine-terminal POST to return a fake terminal_id
+    await page.route(/\/api\/projects\/testorg\/testproj\/main\/refine-terminal$/, route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ terminal_id: TERMINAL_ID, accepted: true }),
+    }));
+
+    await page.goto(`/#component/${ORG}/${PROJ}/${COMP}`);
+    await submitInteractiveTerminalModal(page);
+
+    // Terminal panel must exist in the DOM
+    await expect(page.locator(`#terminal-${TERMINAL_ID}`)).toBeVisible({ timeout: 8000 });
+
+    // Page must NOT show the "Unknown route" fallback
+    await expect(page.locator('#main')).not.toContainText('Unknown route', { timeout: 3000 });
+  });
+
+  test('RT-UI-2: modal closes after interactive submit', async ({ page }) => {
+    await stubComponentView(page, ORG, PROJ, COMP, [
+      { id: 'W-2', title: 'Draft item', status: 'draft', priority: 'medium', depends_on: [] },
+    ]);
+    await page.route(/\/api\/projects\/testorg\/testproj\/main\/refine-terminal$/, route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ terminal_id: TERMINAL_ID, accepted: true }),
+    }));
+
+    await page.goto(`/#component/${ORG}/${PROJ}/${COMP}`);
+    await submitInteractiveTerminalModal(page);
+
+    // Modal overlay must be gone
+    await expect(page.locator('.modal-overlay')).not.toBeVisible({ timeout: 6000 });
+  });
+
+  test('RT-UI-3: terminal panel has correct Refine title', async ({ page }) => {
+    await stubComponentView(page, ORG, PROJ, COMP, [
+      { id: 'W-3', title: 'Draft item', status: 'draft', priority: 'medium', depends_on: [] },
+    ]);
+    await page.route(/\/api\/projects\/testorg\/testproj\/main\/refine-terminal$/, route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ terminal_id: TERMINAL_ID, accepted: true }),
+    }));
+
+    await page.goto(`/#component/${ORG}/${PROJ}/${COMP}`);
+    await submitInteractiveTerminalModal(page);
+
+    await expect(page.locator(`#terminal-${TERMINAL_ID}`)).toBeVisible({ timeout: 8000 });
+    // Panel header must contain the expected title
+    const panelText = await page.locator(`#terminal-${TERMINAL_ID}`).textContent();
+    expect(panelText).toContain(`Refine: ${ORG}/${PROJ}/${COMP}`);
+  });
+
+  test('RT-UI-4: page hash does not navigate to #terminal/... after interactive submit', async ({ page }) => {
+    await stubComponentView(page, ORG, PROJ, COMP, [
+      { id: 'W-4', title: 'Draft item', status: 'draft', priority: 'medium', depends_on: [] },
+    ]);
+    await page.route(/\/api\/projects\/testorg\/testproj\/main\/refine-terminal$/, route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ terminal_id: TERMINAL_ID, accepted: true }),
+    }));
+
+    await page.goto(`/#component/${ORG}/${PROJ}/${COMP}`);
+    await submitInteractiveTerminalModal(page);
+
+    await expect(page.locator(`#terminal-${TERMINAL_ID}`)).toBeVisible({ timeout: 8000 });
+    // Hash must remain on the component route, not jump to #terminal/...
+    const hash = await page.evaluate(() => location.hash);
+    expect(hash).not.toMatch(/^#terminal\//);
+    expect(hash).toContain('component');
+  });
+
+  test('RT-UI-5: 409 conflict response is handled gracefully — no spurious terminal panel created', async ({ page }) => {
+    await stubComponentView(page, ORG, PROJ, COMP, [
+      { id: 'W-5', title: 'Draft item', status: 'draft', priority: 'medium', depends_on: [] },
+    ]);
+    await page.route(/\/api\/projects\/testorg\/testproj\/main\/refine-terminal$/, route => route.fulfill({
+      status: 409,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        error: 'live terminal session already running for this project',
+        blocking_terminal_id: 'T-existing-001',
+        conflict_type: 'terminal',
+      }),
+    }));
+
+    const consoleErrors = [];
+    page.on('console', msg => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
+
+    await page.goto(`/#component/${ORG}/${PROJ}/${COMP}`);
+    await submitInteractiveTerminalModal(page);
+
+    // Modal closes (onSubmit returns without throw → createDispatchOverlay calls close())
+    await expect(page.locator('.modal-overlay')).not.toBeVisible({ timeout: 5000 });
+
+    // No terminal panel must have been created for the conflict case
+    await expect(page.locator(`#terminal-${TERMINAL_ID}`)).not.toBeVisible({ timeout: 2000 });
+
+    // No unhandled JS errors (exclude expected network-level messages from browser)
+    const relevantErrors = consoleErrors.filter(e =>
+      !e.includes('favicon') && !e.includes('ws://') && !e.includes('Failed to load resource')
+    );
+    expect(relevantErrors).toHaveLength(0);
+  });
+});
+
 test.describe('Interactive terminal refine — /refine-terminal @fast', () => {
   // RT-1: POST /refine-terminal on registered project returns 200 with terminal_id and accepted:true
   test('RT-1: POST /refine-terminal on registered project returns 200 with terminal_id and accepted:true', async () => {

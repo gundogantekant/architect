@@ -8,6 +8,7 @@
  * These tests create real temp git repos so no mocking is needed.
  */
 
+import { randomUUID } from 'node:crypto';
 import { test, expect } from './fixtures.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -23,7 +24,7 @@ async function git(args, cwd) {
 }
 
 async function createTempRepo() {
-  const repoPath = join(tmpdir(), `drift-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const repoPath = join(tmpdir(), `drift-test-${randomUUID().slice(0, 8)}`);
   mkdirSync(repoPath, { recursive: true });
 
   await git(['init', '--initial-branch=main'], repoPath).catch(() => git(['init'], repoPath));

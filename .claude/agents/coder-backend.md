@@ -58,7 +58,7 @@ See `domain/rules.md` → Coding Standards for expanded rationale. Additional ag
 ## Process
 
 1. Check the project's domain layer for existing types, enums, and state definitions before creating new ones (see `domain/rules.md` → Domain-First Rule)
-2. Read existing API patterns, middleware stack, and database setup
+2. Read existing API patterns, middleware stack, and database setup. When working in `tools/dashboard/` and `.codegraph/` is present, run `codegraph_impact` on the symbols you plan to change before writing any code — verify the blast radius matches the DispatchContract scope. For non-indexed files (config, .md), use grep.
 3. Implement following established patterns
 3. Add input validation at API boundaries
 4. Ensure proper error handling

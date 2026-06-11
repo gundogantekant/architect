@@ -31,7 +31,15 @@ export async function saveDispatchToDb(d) {
   });
 }
 
+let _dbSaveErrorOnce = false;
+export function armDbSaveError() { _dbSaveErrorOnce = true; }
+export function shouldSimulateDbSaveError() {
+  if (_dbSaveErrorOnce) { _dbSaveErrorOnce = false; return true; }
+  return false;
+}
+
 export async function saveTerminalToDb(t) {
+  if (shouldSimulateDbSaveError()) throw new Error('simulated DB save error (test hook)');
   await db.saveTerminal({
     id: t.id, type: t.type || 'claude', work_item_id: t.work_item_id, epic_id: t.epic_id,
     project_key: t.project_key, project_path: t.project_path, org_key: t.org_key || null,
@@ -42,6 +50,7 @@ export async function saveTerminalToDb(t) {
     claude_session_id: t.claude_session_id || null,
     agent_type: t.agent_type || t.type || 'claude',
     head_seq: t.eventStream ? t.eventStream.headSeq : 0,
+    note: t.note ?? null,
   });
 }
 

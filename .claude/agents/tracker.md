@@ -29,8 +29,14 @@ The backlog endpoint returns `{projects: {key: {items: [...]}}, epics: [...]}` �
 You will receive a command string. Parse and execute it:
 
 ### `list` (default) or `list --status X --project Y[,Y2] --org O --tag Z`
-- `curl -s 'http://127.0.0.1:3777/api/backlog'` (append `?org=O` if `--org` is provided)
-- Apply client-side filters for `--project`, `--status`, `--tag` on the returned JSON
+- Build the API URL:
+  - If `--project` is provided (single value): `http://127.0.0.1:3777/api/backlog?project_key=<key>`
+  - Else if the orchestrator passed `--project <key>` (injected from session project context): `http://127.0.0.1:3777/api/backlog?project_key=<key>`
+  - Else if `--org` is provided: `http://127.0.0.1:3777/api/backlog?org=<O>`
+  - Else (cross-project): `http://127.0.0.1:3777/api/backlog`
+- Emit a **scope header** as the first line of output: `Showing: <project_key>` or `Showing: <org>/*` or `Showing: all projects`
+- If querying all projects and no `--project`, no `--org`, and no explicit cross-project override was signaled by the orchestrator: emit a warning line: `No project scope — showing all projects. Use --project <key> or ask the orchestrator to set session scope.`
+- Apply additional client-side filters for `--project` (multi-value), `--status`, `--tag` on the returned JSON
 - If no status filter: show items with status `open` or `in-progress`
 - Sort items using topological sort (Kahn's algorithm): items with no `depends_on` first, then items whose deps are all listed. Within the same level, sort by priority desc (critical > high > medium > low) then ID asc. Items with external deps (outside the filtered set) go at the end.
 - Output grouped by project with a header per project:
@@ -66,6 +72,8 @@ You will receive a command string. Parse and execute it:
 - If the item has an `epic_id`, check epic progress and suggest status transition if appropriate (but do not auto-change)
 - Output confirmation
 
+> **Contract gate**: For work items with complexity `small` or higher, all four core contract fields (`goal`, `constraints`, `expected_output`, `failure_conditions`) + `success_criteria` + at least one `e2e_test_criteria` entry are required before the item can advance to `planned` status. The API returns HTTP 422 with `error: "contract_required"` and a `violations` array if these are missing. Tracker must surface this error and instruct the user to populate the contract fields before retrying the status update.
+
 ### `log <W-XXX> <message>`
 - `curl -s -X POST 'http://127.0.0.1:3777/api/work-items/<W-XXX>/log' -H 'Content-Type: application/json' -d '{"message": "<message>"}'`
 - Output confirmation
@@ -87,11 +95,22 @@ You will receive a command string. Parse and execute it:
 
 ### `plan <W-XXX> [--edit]`
 - Without `--edit`: `curl -s 'http://127.0.0.1:3777/api/work-items/<W-XXX>/plan'` — output contents (or "No plan yet." if empty/missing)
-- With `--edit`: `curl -s -X PUT 'http://127.0.0.1:3777/api/work-items/<W-XXX>/plan' -H 'Content-Type: application/json' -d '{"content": "<content>"}'`
+- With `--edit`: Write content to `/tmp/tracker-payload.md` using the Write tool, then send:
+  ```bash
+  node -e "const fs=require('fs');const c=fs.readFileSync('/tmp/tracker-payload.md','utf8');process.stdout.write(JSON.stringify({content:c}));" \
+    | curl -s -X PUT 'http://127.0.0.1:3777/api/work-items/<W-XXX>/plan' \
+           -H 'Content-Type: application/json' -d @-
+  ```
+  Never embed multi-line content directly in `-d '{"content": "..."}'` — shell expansion breaks JSON for any content containing newlines.
 
 ### `docs <W-XXX> [--edit]`
 - Without `--edit`: `curl -s 'http://127.0.0.1:3777/api/work-items/<W-XXX>/doc'` — output contents (or "No documentation yet." if empty/missing)
-- With `--edit`: `curl -s -X PUT 'http://127.0.0.1:3777/api/work-items/<W-XXX>/doc' -H 'Content-Type: application/json' -d '{"content": "<content>"}'`
+- With `--edit`: Write content to `/tmp/tracker-payload.md` using the Write tool, then send:
+  ```bash
+  node -e "const fs=require('fs');const c=fs.readFileSync('/tmp/tracker-payload.md','utf8');process.stdout.write(JSON.stringify({content:c}));" \
+    | curl -s -X PUT 'http://127.0.0.1:3777/api/work-items/<W-XXX>/doc' \
+           -H 'Content-Type: application/json' -d @-
+  ```
 
 ### `files <W-XXX>`
 - `curl -s 'http://127.0.0.1:3777/api/work-items/<W-XXX>/artifacts'`
@@ -101,7 +120,12 @@ You will receive a command string. Parse and execute it:
 ### `file <W-XXX> <filename> [--edit]`
 - `<filename>` must end with `.md`; reject other extensions
 - Without `--edit`: `curl -s 'http://127.0.0.1:3777/api/work-items/<W-XXX>/artifacts/<filename>'` — output contents (or "File not found." if missing)
-- With `--edit`: `curl -s -X PUT 'http://127.0.0.1:3777/api/work-items/<W-XXX>/artifacts/<filename>' -H 'Content-Type: application/json' -d '{"content": "<content>"}'`
+- With `--edit`: Write content to `/tmp/tracker-payload.md` using the Write tool, then send:
+  ```bash
+  node -e "const fs=require('fs');const c=fs.readFileSync('/tmp/tracker-payload.md','utf8');process.stdout.write(JSON.stringify({content:c}));" \
+    | curl -s -X PUT 'http://127.0.0.1:3777/api/work-items/<W-XXX>/artifacts/<filename>' \
+           -H 'Content-Type: application/json' -d @-
+  ```
 - To delete: `curl -s -X DELETE 'http://127.0.0.1:3777/api/work-items/<W-XXX>/artifacts/<filename>'`
 
 ## Epic Operations
@@ -147,11 +171,21 @@ You will receive a command string. Parse and execute it:
 
 ### `epic plan <E-XXX> [--edit]`
 - Without `--edit`: `curl -s 'http://127.0.0.1:3777/api/epics/<E-XXX>/plan'` — output contents (or "No plan yet." if empty/missing)
-- With `--edit`: `curl -s -X PUT 'http://127.0.0.1:3777/api/epics/<E-XXX>/plan' -H 'Content-Type: application/json' -d '{"content": "<content>"}'`
+- With `--edit`: Write content to `/tmp/tracker-payload.md` using the Write tool, then send:
+  ```bash
+  node -e "const fs=require('fs');const c=fs.readFileSync('/tmp/tracker-payload.md','utf8');process.stdout.write(JSON.stringify({content:c}));" \
+    | curl -s -X PUT 'http://127.0.0.1:3777/api/epics/<E-XXX>/plan' \
+           -H 'Content-Type: application/json' -d @-
+  ```
 
 ### `epic doc <E-XXX> [--edit]`
 - Without `--edit`: `curl -s 'http://127.0.0.1:3777/api/epics/<E-XXX>/doc'` — output contents (or "No documentation yet." if empty/missing)
-- With `--edit`: `curl -s -X PUT 'http://127.0.0.1:3777/api/epics/<E-XXX>/doc' -H 'Content-Type: application/json' -d '{"content": "<content>"}'`
+- With `--edit`: Write content to `/tmp/tracker-payload.md` using the Write tool, then send:
+  ```bash
+  node -e "const fs=require('fs');const c=fs.readFileSync('/tmp/tracker-payload.md','utf8');process.stdout.write(JSON.stringify({content:c}));" \
+    | curl -s -X PUT 'http://127.0.0.1:3777/api/epics/<E-XXX>/doc' \
+           -H 'Content-Type: application/json' -d @-
+  ```
 
 ## Helper: Recompute project_keys
 

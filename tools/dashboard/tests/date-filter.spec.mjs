@@ -89,9 +89,6 @@ test.describe('Date Filter @fast', () => {
     await page.fill('#wi-filter-date-from', yesterday);
     await page.fill('#wi-filter-date-to', todayUTCString());
 
-    // Wait for 300ms debounce
-    await page.waitForTimeout(400);
-
     await expect(page.locator('[data-wi-row]').filter({ hasText: 'DF-2 recent item' })).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('[data-wi-row]').filter({ hasText: 'DF-2 old item' })).not.toBeVisible({ timeout: 5_000 });
 
@@ -111,9 +108,11 @@ test.describe('Date Filter @fast', () => {
     await expect(page.locator('[data-wi-row]').filter({ hasText: 'DF-3 recent item' })).toBeVisible({ timeout: 10_000 });
 
     // Apply Last 30d filter and wait for it to save to prefs
-    await page.selectOption('#wi-filter-date-preset', '30d');
+    const [_saveDF3] = await Promise.all([
+      page.waitForResponse(resp => resp.url().includes('/api/settings/preferences') && resp.status() === 200),
+      page.selectOption('#wi-filter-date-preset', '30d'),
+    ]);
     await expect(page.locator('[data-wi-row]').filter({ hasText: 'DF-3 old item' })).not.toBeVisible({ timeout: 5_000 });
-    await page.waitForTimeout(200); // Allow save to complete
 
     // Reload and verify preset is restored and filter is applied
     await page.reload();
@@ -153,14 +152,14 @@ test.describe('Date Filter @fast', () => {
     await expect(page.locator('[data-ef-row]').filter({ hasText: 'DF-5 recent task' })).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('[data-ef-row]').filter({ hasText: 'DF-5 old task' })).toBeVisible({ timeout: 5_000 });
 
-    // Apply Last 7d filter
-    await page.selectOption('#ef-filter-date-preset', '7d');
+    // Apply Last 7d filter and wait for preferences save to complete
+    const [_saveDF5] = await Promise.all([
+      page.waitForResponse(resp => resp.url().includes('/api/settings/preferences') && resp.status() === 200),
+      page.selectOption('#ef-filter-date-preset', '7d'),
+    ]);
 
     await expect(page.locator('[data-ef-row]').filter({ hasText: 'DF-5 recent task' })).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('[data-ef-row]').filter({ hasText: 'DF-5 old task' })).not.toBeVisible({ timeout: 5_000 });
-
-    // Wait for save
-    await page.waitForTimeout(200);
 
     // Reload — ef_filters must restore the filter
     await page.reload();

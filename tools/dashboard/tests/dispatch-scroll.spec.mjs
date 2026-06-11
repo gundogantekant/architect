@@ -191,7 +191,14 @@ test('DS-3. Auto-scroll resumes when user returns to bottom', async ({ page }) =
     const el = document.getElementById(`log-${id}`);
     if (el) el.scrollTop = el.scrollHeight;
   }, id);
-  await page.waitForTimeout(300);
+  await page.waitForFunction(
+    (id) => {
+      const el = document.getElementById(`log-${id}`);
+      return el && (el.scrollHeight - el.scrollTop - el.clientHeight) < 50;
+    },
+    id,
+    { timeout: 5_000 },
+  );
 
   const metricsBottom = await getDispatchLogScrollMetrics(page, id);
   expect(metricsBottom.atBottom).toBe(true);
@@ -207,7 +214,14 @@ test('DS-3. Auto-scroll resumes when user returns to bottom', async ({ page }) =
     id,
     { timeout: 10_000 },
   );
-  await page.waitForTimeout(300);
+  await page.waitForFunction(
+    (id) => {
+      const el = document.getElementById(`log-${id}`);
+      return el && (el.scrollHeight - el.scrollTop - el.clientHeight) < 50;
+    },
+    id,
+    { timeout: 5_000 },
+  );
 
   const metricsAfter = await getDispatchLogScrollMetrics(page, id);
   expect(metricsAfter.atBottom).toBe(true);

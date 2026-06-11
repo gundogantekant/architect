@@ -1,4 +1,6 @@
+import { existsSync } from 'node:fs';
 import { spawnTerminalSession } from '../terminal-session.mjs';
+import { updateTerminalTitle, updateTerminalNote } from '../db.mjs';
 
 export default function terminalRoutes(deps) {
   const {
@@ -37,10 +39,12 @@ export default function terminalRoutes(deps) {
       if (org_key && !project_key) {
         projectPath = await resolveOrgPath(org_key);
         if (!projectPath) return err(res, `Could not resolve path for organization: ${org_key}`, 400);
+        if (!existsSync(projectPath)) return err(res, `Organization path does not exist: ${projectPath} — check if the volume or drive is mounted`, 400);
         orgContext = await loadOrgContext(org_key);
       } else {
         projectPath = await resolveProjectPath(project_key);
         if (!projectPath) return err(res, `Could not resolve path for project: ${project_key}`, 400);
+        if (!existsSync(projectPath)) return err(res, `Project path does not exist: ${projectPath} — check if the volume or drive is mounted`, 400);
         portfolio = await loadPortfolioContext(project_key);
       }
 
@@ -206,6 +210,8 @@ export default function terminalRoutes(deps) {
         _permissionMode: resolvedTermPermMode,
         _skipPermissions: resolvedTermSkipPerms,
         _testWorkerId,
+        _goalSummarized: false,
+        _inputBuffer: '',
         started_at: new Date().toISOString(),
         exited_at: null,
       };
@@ -213,7 +219,11 @@ export default function terminalRoutes(deps) {
       wireTerminalHandlers(terminal);
 
       terminals.set(id, terminal);
-      await saveTerminalToDb(terminal);
+      try {
+        await saveTerminalToDb(terminal);
+      } catch (dbErr) {
+        console.warn('[terminal-create] DB persist failed — session active in-memory only, will not survive restart:', dbErr.message);
+      }
       json(res, { terminal_id: id, status: 'running' });
     }],
 
@@ -307,6 +317,8 @@ export default function terminalRoutes(deps) {
         _accumulated: '',
         _pendingPrompt: null,
         _readyForPrompt: true,
+        _goalSummarized: false,
+        _inputBuffer: '',
         started_at: new Date().toISOString(),
         exited_at: null,
       };
@@ -320,7 +332,9 @@ export default function terminalRoutes(deps) {
     // List active terminals
     [/^\/api\/terminal\/active$/, 'GET', async (_m, req, res) => {
       const workerId = req.headers['x-test-worker-id'];
-      const includeDeleted = new URL(req.url, 'http://x').searchParams.get('include_deleted') === 'true';
+      const reqUrl = new URL(req.url, 'http://x');
+      const includeDeleted = reqUrl.searchParams.get('include_deleted') === 'true';
+      const projectKey = reqUrl.searchParams.get('project_key') || null;
       const list = await Promise.all([...terminals].map(async ([id, t]) => {
         if (workerId !== undefined && t._testWorkerId !== workerId) return null;
         return {
@@ -346,15 +360,17 @@ export default function terminalRoutes(deps) {
           claude_session_id: t.claude_session_id || null,
           head_seq: t.eventStream ? t.eventStream.headSeq : 0,
           deleted_at: null,
+          note: t.note ?? null,
         };
       }));
-      const active = list.filter(Boolean);
+      const active = list.filter(Boolean).filter(t => !projectKey || t.project_key === projectKey);
       if (!includeDeleted) {
         json(res, active);
         return;
       }
       const deleted = await db.getDeletedTerminals();
       const deletedRows = deleted
+        .filter(t => !projectKey || t.project_key === projectKey)
         .map(t => ({
           id: t.id,
           type: t.type || 'claude',
@@ -378,6 +394,7 @@ export default function terminalRoutes(deps) {
           claude_session_id: t.claude_session_id || null,
           head_seq: 0,
           deleted_at: t.deleted_at,
+          note: t.note ?? null,
         }));
       json(res, [...active, ...deletedRows]);
     }],
@@ -623,6 +640,8 @@ export default function terminalRoutes(deps) {
         _accumulated: '',
         _pendingPrompt: null,
         _readyForPrompt: true,
+        _goalSummarized: true,  // resumed session: title already populated, skip summarization
+        _inputBuffer: '',
         started_at: new Date().toISOString(),
         exited_at: null,
       };
@@ -650,6 +669,37 @@ export default function terminalRoutes(deps) {
         snapshot_seq: snapshotSeq,
         events: filtered,
       });
+    }],
+
+    // Update terminal goal title (derived from first user input)
+    [/^\/api\/terminal\/([A-Za-z0-9_-]+)\/title$/, 'PATCH', async (m, req, res) => {
+      const terminal = terminals.get(m[1]);
+      if (!terminal) return err(res, 'Not found', 404);
+      const body = await parseBody(req);
+      const { title } = body;
+      if (!title || typeof title !== 'string' || title.trim().length === 0)
+        return err(res, 'title required', 400);
+      const trimmed = title.trim().substring(0, 120);
+      terminal.title = trimmed;
+      await updateTerminalTitle(terminal.id, trimmed);
+      json(res, { ok: true, title: trimmed });
+    }],
+
+    // Update terminal user note (free-text coordination annotation)
+    // UI label = domain field 'note' — intentional alias; no schema change needed.
+    [/^\/api\/terminal\/([A-Za-z0-9_-]+)\/note$/, 'PATCH', async (m, req, res) => {
+      const terminal = terminals.get(m[1]);
+      if (!terminal) return err(res, 'Not found', 404);
+      const body = await parseBody(req);
+      const raw = body?.note ?? null;
+      if (raw !== null) {
+        if (typeof raw !== 'string') return err(res, 'note must be a string', 400);
+        if (raw.length > 200) return err(res, 'note exceeds 200-character limit', 400);
+      }
+      const note = (typeof raw === 'string' ? raw.trim() : null) || null;
+      await updateTerminalNote(terminal.id, note);
+      terminal.note = note;
+      json(res, { ok: true, note });
     }],
 
     // Inject a prompt into a running terminal

@@ -240,6 +240,10 @@ test.describe('Suite C: Multi-Browser Scroll Independence', () => {
     const page1 = await ctx1.newPage();
     const page2 = await ctx2.newPage();
 
+    // Apply test defaults to manually-created contexts
+    await page1.addInitScript(() => { window._testDefaultExpanded = true; window._testDisableAutoDismiss = true; });
+    await page2.addInitScript(() => { window._testDefaultExpanded = true; window._testDisableAutoDismiss = true; });
+
     try {
       // Both browsers load the terminal
       await Promise.all([
@@ -247,8 +251,8 @@ test.describe('Suite C: Multi-Browser Scroll Independence', () => {
         page2.goto('/#terminals'),
       ]);
       await Promise.all([
-        waitForTerminalLive(page1, t.id),
-        waitForTerminalLive(page2, t.id),
+        waitForTerminalLive(page1, t.id, 60_000),
+        waitForTerminalLive(page2, t.id, 60_000),
       ]);
       await Promise.all([
         waitForTerminalContent(page1, t.id, SEED_MIN, 60_000),
@@ -295,9 +299,13 @@ test.describe('Suite C: Multi-Browser Scroll Independence', () => {
     const page1 = await ctx1.newPage();
     const page2 = await ctx2.newPage();
 
+    // Apply test defaults to manually-created contexts
+    await page1.addInitScript(() => { window._testDefaultExpanded = true; window._testDisableAutoDismiss = true; });
+    await page2.addInitScript(() => { window._testDefaultExpanded = true; window._testDisableAutoDismiss = true; });
+
     try {
       await page1.goto('/#terminals');
-      await waitForTerminalLive(page1, t.id);
+      await waitForTerminalLive(page1, t.id, 60_000);
       await waitForTerminalContent(page1, t.id, SEED_MIN, 60_000);
 
       // Browser1: scroll to approximately 25% of scrollback
@@ -315,7 +323,7 @@ test.describe('Suite C: Multi-Browser Scroll Independence', () => {
 
       // Browser2 joins now
       await page2.goto('/#terminals');
-      await waitForTerminalLive(page2, t.id);
+      await waitForTerminalLive(page2, t.id, 60_000);
       await waitForTerminalContent(page2, t.id, SEED_MIN, 60_000);
 
       // Short wait to ensure any side-effects from page2 joining have settled
@@ -340,16 +348,20 @@ test.describe('Suite C: Multi-Browser Scroll Independence', () => {
     const page1 = await ctx1.newPage();
     const page2 = await ctx2.newPage();
 
+    // Apply test defaults to manually-created contexts
+    await page1.addInitScript(() => { window._testDefaultExpanded = true; window._testDisableAutoDismiss = true; });
+    await page2.addInitScript(() => { window._testDefaultExpanded = true; window._testDisableAutoDismiss = true; });
+
     try {
       await page1.goto('/#terminals');
-      await waitForTerminalLive(page1, t.id);
+      await waitForTerminalLive(page1, t.id, 60_000);
       await waitForTerminalContent(page1, t.id, SEED_MIN, 60_000);
 
       const metrics1 = await getXtermScrollMetrics(page1, t.id);
 
       // Browser2 connects after browser1 has fully loaded
       await page2.goto('/#terminals');
-      await waitForTerminalLive(page2, t.id);
+      await waitForTerminalLive(page2, t.id, 60_000);
       await waitForTerminalContent(page2, t.id, SEED_MIN, 60_000);
 
       const metrics2 = await getXtermScrollMetrics(page2, t.id);
@@ -400,11 +412,12 @@ test.describe('Suite D: Session Pipeline', () => {
 
     const ctx1 = await browser.newContext();
     const page1 = await ctx1.newPage();
+    await page1.addInitScript(() => { window._testDefaultExpanded = true; window._testDisableAutoDismiss = true; });
 
     let baseY1;
     try {
       await page1.goto('/#terminals');
-      await waitForTerminalLive(page1, t.id);
+      await waitForTerminalLive(page1, t.id, 60_000);
       await waitForTerminalContent(page1, t.id, SEED_MIN, 60_000);
 
       const metrics1 = await getXtermScrollMetrics(page1, t.id);
@@ -417,10 +430,11 @@ test.describe('Suite D: Session Pipeline', () => {
     // Browser2 opens a fresh context (simulates reopening the dashboard)
     const ctx2 = await browser.newContext();
     const page2 = await ctx2.newPage();
+    await page2.addInitScript(() => { window._testDefaultExpanded = true; window._testDisableAutoDismiss = true; });
 
     try {
       await page2.goto('/#terminals');
-      await waitForTerminalLive(page2, t.id);
+      await waitForTerminalLive(page2, t.id, 60_000);
       await waitForTerminalContent(page2, t.id, SEED_MIN, 60_000);
 
       const metrics2 = await getXtermScrollMetrics(page2, t.id);

@@ -116,6 +116,8 @@ test('AP-4: POST /complete transitions dispatch to merge_pending and stores sha/
   const resp = await rawPost(`dispatch/${dispatch_id}/complete`, {
     sha: 'deadbeef',
     summary: 'implemented feature',
+    test_suite_passed: true,
+    contract_satisfied: true,
   }, {
     'X-Architect-Session-Depth': '1',
   });
