@@ -21,6 +21,10 @@ ROOT="$(cd "$DASHBOARD_DIR/../.." && pwd -P)"
 SERVER_SCRIPT="$DASHBOARD_DIR/server.mjs"
 PORT="${DASHCTL_PORT:-3777}"
 HOST="${DASHCTL_HOST:-127.0.0.1}"
+# LAN exposure is opt-in. The dashboard has NO authentication and can dispatch agents /
+# open terminals (effectively remote code execution), so a LAN IP in DASHCTL_HOST alone
+# does not expose it — the operator must explicitly set DASHCTL_BIND_ALL=1 (or HOST=0.0.0.0).
+BIND_ALL="${DASHCTL_BIND_ALL:-0}"
 PID_FILE="${DASHCTL_PID_FILE:-$ROOT/tmp/dashboard.pid}"
 LOG_FILE="${DASHCTL_LOG_FILE:-$ROOT/tmp/dashboard.log}"
 SESSIONS_FILE="$ROOT/work/sessions.json"
@@ -96,7 +100,21 @@ get_port_pid() {
 }
 
 health_check() {
+  # Always loopback: even on a LAN bind the server listens on 0.0.0.0, which accepts
+  # loopback traffic, so this stays valid and is the guaranteed local recovery path.
   curl -sf "http://127.0.0.1:$PORT/api/server/status" >/dev/null 2>&1
+}
+
+# Best-effort routable LAN IP, for display only (never used as the bind address).
+lan_ip() {
+  local ip=""
+  if command -v ipconfig >/dev/null 2>&1; then
+    ip="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)"
+  fi
+  if [ -z "$ip" ] && command -v hostname >/dev/null 2>&1; then
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  if [ -n "$ip" ]; then echo "$ip"; else echo "127.0.0.1"; fi
 }
 
 find_node() {
@@ -196,8 +214,27 @@ cmd_start() {
     echo "Dependencies installed."
   fi
 
+  # Resolve bind address vs. display URL. Bind 0.0.0.0 only on explicit opt-in (reachable
+  # from loopback + LAN, survives DHCP/VPN IP changes); otherwise stay loopback-only.
+  local BIND_HOST="127.0.0.1"
+  local DISPLAY_HOST="127.0.0.1"
+  if [ "$BIND_ALL" = "1" ] || [ "$HOST" = "0.0.0.0" ]; then
+    BIND_HOST="0.0.0.0"
+    DISPLAY_HOST="$(lan_ip)"
+    echo "WARNING: Dashboard has no authentication and exposes dispatch/terminal"
+    echo "         (remote code execution) to the network. Trusted LAN only."
+  elif [ "$HOST" != "127.0.0.1" ] && [ "$HOST" != "localhost" ] && [ "$HOST" != "::1" ]; then
+    echo "Note: DASHCTL_HOST=$HOST is set but DASHCTL_BIND_ALL is not enabled;"
+    echo "      staying loopback-only. Set DASHCTL_BIND_ALL=1 to expose on the LAN."
+  fi
+
   echo "Starting dashboard server..."
-  nohup ARCHITECT_HOST="$HOST" "$NODE_BIN" "$SERVER_SCRIPT" --port "$PORT" >> "$LOG_FILE" 2>&1 &
+  # NOTE: the env assignment MUST come before `nohup` (it sets nohup's environment, which
+  # node inherits). `nohup VAR=value node ...` would make nohup try to execute a program
+  # literally named "VAR=value" and the server would never start. Keep this a simple
+  # backgrounded command (no subshell/pipe) so `$!` is the node PID.
+  export ARCHITECT_HOST="$BIND_HOST"
+  nohup "$NODE_BIN" "$SERVER_SCRIPT" --port "$PORT" >> "$LOG_FILE" 2>&1 &
   local pid=$!
   echo "$pid" > "$PID_FILE"
 
@@ -205,13 +242,14 @@ cmd_start() {
   local tries=0
   while [ $tries -lt 10 ]; do
     if health_check; then
-      echo "Dashboard running at http://$HOST:$PORT (PID $pid)"
+      echo "Dashboard running at http://$DISPLAY_HOST:$PORT (PID $pid)"
       return 0
     fi
     # Check if process is still alive
     if ! kill -0 "$pid" 2>/dev/null; then
-      echo "Server process exited unexpectedly. Check logs:"
-      echo "  $LOG_FILE"
+      echo "Server process exited unexpectedly. Check logs:" >&2
+      tail -n 15 "$LOG_FILE" >&2
+      echo "  $LOG_FILE" >&2
       rm -f "$PID_FILE"
       return 1
     fi
@@ -219,9 +257,14 @@ cmd_start() {
     tries=$((tries + 1))
   done
 
-  echo "Dashboard started (PID $pid) but health check not responding yet"
-  echo "  URL: http://$HOST:$PORT"
-  echo "  Log: $LOG_FILE"
+  # Fail loudly: a server that started but never became healthy is a failure, not a soft
+  # success (the original LAN-change regression was effectively silent here).
+  echo "Dashboard started (PID $pid) but failed health check within timeout." >&2
+  echo "Last log lines:" >&2
+  tail -n 15 "$LOG_FILE" >&2
+  echo "  URL: http://$DISPLAY_HOST:$PORT" >&2
+  echo "  Log: $LOG_FILE" >&2
+  return 1
 }
 
 _stop_postgres() {
@@ -799,7 +842,8 @@ Environment:
   PID file: $PID_FILE
   Log file: $LOG_FILE
   Port:     $PORT
-  Host:     $HOST (set via DASHCTL_HOST, default: 127.0.0.1)
+  Host:     $HOST (display/health; bind is loopback unless DASHCTL_BIND_ALL=1)
+  LAN bind: $([ "$BIND_ALL" = "1" ] && echo "0.0.0.0 (DASHCTL_BIND_ALL=1) — NO AUTH, trusted LAN only" || echo "loopback-only (set DASHCTL_BIND_ALL=1 to expose; service installs stay loopback-only)")
   PG host:  $PG_HOST
   PG port:  $PG_PORT
   PG user:  $PG_USER

@@ -1,10 +1,10 @@
 const blockedIps = new Set();
 
-function normalizeIp(ip) {
+export function normalizeIp(ip) {
   return ip.startsWith('::ffff:') ? ip.slice(7) : ip;
 }
 
-function isLoopback(ip) {
+export function isLoopback(ip) {
   const normalized = normalizeIp(ip);
   return normalized === '::1' || /^127\./.test(normalized);
 }

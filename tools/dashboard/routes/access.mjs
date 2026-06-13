@@ -13,6 +13,12 @@ export default function accessRoutes(deps) {
       try {
         const { ip, reason } = await parseBody(req);
         if (!ip) return err(res, 'ip is required', 400);
+        // Prevent self-lockout: an operator cannot block the IP they are connecting
+        // from (covers a non-loopback LAN IP, which the loopback guard does not catch).
+        const requesterIp = blocklist.normalizeIp(req.socket.remoteAddress ?? '');
+        if (blocklist.normalizeIp(ip) === requesterIp) {
+          return err(res, 'cannot block your own address', 400);
+        }
         await blocklist.block(db.getPool(), ip, reason ?? '');
         json(res, { ok: true });
       } catch (e) {
