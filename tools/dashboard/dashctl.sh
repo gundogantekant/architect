@@ -20,6 +20,7 @@ ROOT="$(cd "$DASHBOARD_DIR/../.." && pwd -P)"
 
 SERVER_SCRIPT="$DASHBOARD_DIR/server.mjs"
 PORT="${DASHCTL_PORT:-3777}"
+HOST="${DASHCTL_HOST:-127.0.0.1}"
 PID_FILE="${DASHCTL_PID_FILE:-$ROOT/tmp/dashboard.pid}"
 LOG_FILE="${DASHCTL_LOG_FILE:-$ROOT/tmp/dashboard.log}"
 SESSIONS_FILE="$ROOT/work/sessions.json"
@@ -196,7 +197,7 @@ cmd_start() {
   fi
 
   echo "Starting dashboard server..."
-  nohup "$NODE_BIN" "$SERVER_SCRIPT" --port "$PORT" >> "$LOG_FILE" 2>&1 &
+  nohup ARCHITECT_HOST="$HOST" "$NODE_BIN" "$SERVER_SCRIPT" --port "$PORT" >> "$LOG_FILE" 2>&1 &
   local pid=$!
   echo "$pid" > "$PID_FILE"
 
@@ -204,7 +205,7 @@ cmd_start() {
   local tries=0
   while [ $tries -lt 10 ]; do
     if health_check; then
-      echo "Dashboard running at http://127.0.0.1:$PORT (PID $pid)"
+      echo "Dashboard running at http://$HOST:$PORT (PID $pid)"
       return 0
     fi
     # Check if process is still alive
@@ -219,7 +220,7 @@ cmd_start() {
   done
 
   echo "Dashboard started (PID $pid) but health check not responding yet"
-  echo "  URL: http://127.0.0.1:$PORT"
+  echo "  URL: http://$HOST:$PORT"
   echo "  Log: $LOG_FILE"
 }
 
@@ -798,6 +799,7 @@ Environment:
   PID file: $PID_FILE
   Log file: $LOG_FILE
   Port:     $PORT
+  Host:     $HOST (set via DASHCTL_HOST, default: 127.0.0.1)
   PG host:  $PG_HOST
   PG port:  $PG_PORT
   PG user:  $PG_USER

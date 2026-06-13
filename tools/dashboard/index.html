@@ -71,6 +71,7 @@
   <div class="sidebar-settings" onclick="location.hash='#time-report'"><span class="nav-icon">&#9202;</span> <span>Time Report</span></div>
   <div class="sidebar-settings" onclick="location.hash='#costs'"><span class="nav-icon">&#128176;</span> <span>Cost Report</span></div>
   <div class="sidebar-settings" onclick="location.hash='#audit'"><span class="nav-icon">&#128269;</span> <span>Audit</span></div>
+  <div class="sidebar-settings" onclick="location.hash='#access'"><span class="nav-icon">&#128274;</span> <span>Access</span></div>
   <div class="sidebar-settings" onclick="location.hash='#settings'"><span class="nav-icon">&#9881;</span> <span>Settings</span></div>
   <a href="#" class="notes-toggle-btn sidebar-settings" data-notes-toggle title="Toggle notes panel" aria-label="Toggle notes panel">
     <span class="nav-icon">📝</span>
@@ -9687,6 +9688,176 @@ function renderAuditView(data) {
   return html;
 }
 
+// --- Access Control Page ---
+async function renderAccessPage() {
+  const main = $('#main');
+  main.innerHTML = `
+    <div style="max-width:900px;margin:0 auto;padding:24px">
+      <h2 style="margin:0 0 24px">Access Control</h2>
+      <p style="color:var(--text-light,#6B7280);margin:0 0 24px;font-size:13px">
+        Blocklist applies to the dashboard HTTP API only. PostgreSQL and other services are not covered.
+      </p>
+      <div style="display:grid;gap:24px">
+        <section>
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+            <h3 style="margin:0;font-size:15px">Access Log</h3>
+            <span id="access-log-status" style="font-size:12px;color:var(--text-light,#6B7280)"></span>
+          </div>
+          <div id="access-log-table">Loading…</div>
+        </section>
+        <section>
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+            <h3 style="margin:0;font-size:15px">Blocklist</h3>
+            <form id="block-ip-form" style="display:flex;gap:8px;margin-left:auto">
+              <input id="block-ip-input" type="text" placeholder="IP address" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;width:140px">
+              <input id="block-reason-input" type="text" placeholder="Reason (optional)" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;width:160px">
+              <button type="submit" style="padding:4px 12px;background:var(--danger,#EF4444);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px">Block</button>
+            </form>
+          </div>
+          <div id="block-error" style="color:var(--danger,#EF4444);font-size:13px;margin-bottom:8px;display:none"></div>
+          <div id="blocklist-table">Loading…</div>
+        </section>
+      </div>
+    </div>
+  `;
+
+  let autoRefreshTimer = null;
+
+  async function loadAccessLog() {
+    try {
+      const rows = await api('access/requesters');
+      const el = document.getElementById('access-log-table');
+      if (!el) return;
+      if (!rows.length) {
+        el.innerHTML = '<p style="color:var(--text-light,#6B7280);font-size:13px">No requests logged yet.</p>';
+        return;
+      }
+      el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr>
+          <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">IP</th>
+          <th style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--border)">Requests</th>
+          <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Last Seen</th>
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border)"></th>
+        </tr></thead>
+        <tbody>${rows.map(r => `
+          <tr>
+            <td style="padding:6px 8px;font-family:monospace">${esc(r.ip)}</td>
+            <td style="padding:6px 8px;text-align:right">${r.count}</td>
+            <td style="padding:6px 8px;color:var(--text-light,#6B7280)">${r.last_seen ? new Date(r.last_seen).toLocaleString() : '—'}</td>
+            <td style="padding:6px 8px">
+              <button onclick="blockIpFromLog(${JSON.stringify(r.ip)})"
+                style="padding:2px 8px;border:1px solid var(--danger,#EF4444);color:var(--danger,#EF4444);background:none;border-radius:4px;cursor:pointer;font-size:12px">
+                Block
+              </button>
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+    } catch(e) {
+      const el = document.getElementById('access-log-status');
+      if (el) el.textContent = 'Failed to load';
+    }
+  }
+
+  async function loadBlocklist() {
+    try {
+      const rows = await api('access/blocklist');
+      const el = document.getElementById('blocklist-table');
+      if (!el) return;
+      if (!rows.length) {
+        el.innerHTML = '<p style="color:var(--text-light,#6B7280);font-size:13px">No IPs blocked.</p>';
+        return;
+      }
+      el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr>
+          <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">IP</th>
+          <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Reason</th>
+          <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Blocked At</th>
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border)"></th>
+        </tr></thead>
+        <tbody>${rows.map(r => `
+          <tr>
+            <td style="padding:6px 8px;font-family:monospace">${esc(r.ip)}</td>
+            <td style="padding:6px 8px;color:var(--text-light,#6B7280)">${r.reason ? esc(r.reason) : '—'}</td>
+            <td style="padding:6px 8px;color:var(--text-light,#6B7280)">${r.blocked_at ? new Date(r.blocked_at).toLocaleString() : '—'}</td>
+            <td style="padding:6px 8px">
+              <button onclick="unblockIp(${JSON.stringify(r.ip)})"
+                style="padding:2px 8px;border:1px solid var(--border);color:var(--text,#1F2937);background:none;border-radius:4px;cursor:pointer;font-size:12px">
+                Unblock
+              </button>
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+    } catch {}
+  }
+
+  async function refreshAll() {
+    await Promise.all([loadAccessLog(), loadBlocklist()]);
+  }
+
+  window.blockIpFromLog = async (ip) => {
+    const errEl = document.getElementById('block-error');
+    try {
+      const res = await fetch('/api/access/block', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ip }),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        let msg = text;
+        try { msg = JSON.parse(text).error || text; } catch {}
+        throw new Error(msg);
+      }
+      await refreshAll();
+    } catch(e) {
+      if (errEl) { errEl.textContent = e.message || 'Block failed'; errEl.style.display = ''; }
+    }
+  };
+
+  window.unblockIp = async (ip) => {
+    try {
+      await fetch(`/api/access/block/${encodeURIComponent(ip)}`, { method: 'DELETE' });
+      await refreshAll();
+    } catch {}
+  };
+
+  document.getElementById('block-ip-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById('block-error');
+    const ip = document.getElementById('block-ip-input')?.value?.trim();
+    const reason = document.getElementById('block-reason-input')?.value?.trim();
+    if (!ip) return;
+    try {
+      if (errEl) errEl.style.display = 'none';
+      const body = { ip };
+      if (reason) body.reason = reason;
+      const res = await fetch('/api/access/block', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        let msg = text;
+        try { msg = JSON.parse(text).error || text; } catch {}
+        throw new Error(msg);
+      }
+      document.getElementById('block-ip-input').value = '';
+      document.getElementById('block-reason-input').value = '';
+      await refreshAll();
+    } catch(e) {
+      if (errEl) { errEl.textContent = e.message || 'Block failed'; errEl.style.display = ''; }
+    }
+  });
+
+  await refreshAll();
+  autoRefreshTimer = setInterval(refreshAll, 10000);
+
+  window._accessPageCleanup = () => { if (autoRefreshTimer) clearInterval(autoRefreshTimer); };
+}
+
 // --- Router ---
 async function route() {
   const hash = location.hash.slice(1);
@@ -9696,6 +9867,7 @@ async function route() {
   stopAgentsTileRefresh();
   if (settingsRefreshTimer) { clearInterval(settingsRefreshTimer); setSettingsRefreshTimer(null); }
   if (syncPollInterval) { clearInterval(syncPollInterval); setSyncPollInterval(null); }
+  if (window._accessPageCleanup) { window._accessPageCleanup(); window._accessPageCleanup = null; }
 
   if (!hash) {
     main.innerHTML = `<div class="card"><h2>Portfolio Dashboard</h2><p style="color:var(--text-light);font-size:14px">Select an organization or project from the sidebar.</p></div>`;
@@ -9804,6 +9976,13 @@ async function route() {
     } catch (e) {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading settings: ${esc(String(e))}</p></div>`;
     }
+    setActive('');
+    placeSessionPanels();
+    return;
+  }
+
+  if (parts[0] === 'access') {
+    await renderAccessPage();
     setActive('');
     placeSessionPanels();
     return;

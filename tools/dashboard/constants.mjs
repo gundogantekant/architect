@@ -27,6 +27,8 @@ export const port = (() => {
   return 3777;
 })();
 
+export const DEFAULT_HOST = process.env.ARCHITECT_HOST ?? '127.0.0.1';
+
 // Valid status values — canonical source: domain/entities.md and domain/rules.md
 export const VALID_WORK_ITEM_STATUSES = new Set([
   'draft', 'planned', 'in-progress', 'blocked',
