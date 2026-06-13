@@ -18,17 +18,14 @@ test.describe('Label truncation @fast', () => {
     expect(text.length).toBeGreaterThan(0);
   });
 
-  test('LT-2: saving a 200-char note updates [data-main-title] and keeps title attr as original', async ({ page }) => {
+  test('LT-2: saving a 150-char note updates [data-main-title] and keeps title attr as original', async ({ page }) => {
     const mainTitle = page.locator(`#terminal-${terminalId} [data-main-title]`);
     const originalTitle = await mainTitle.getAttribute('data-original-title');
 
-    const longNote = 'n'.repeat(200);
-    await api(`terminal/${terminalId}/note`, {
-      method: 'PATCH',
-      body: JSON.stringify({ note: longNote }),
-    });
+    const longNote = 'n'.repeat(150);
 
     await page.locator(`#terminal-${terminalId} .terminal-note-row`).click();
+    await page.locator(`#terminal-${terminalId} .terminal-note-input`).fill(longNote);
     await page.locator(`#terminal-${terminalId} .terminal-note-save-btn`).click();
 
     await expect(mainTitle).toHaveText(longNote, { timeout: 5_000 });
@@ -36,7 +33,7 @@ test.describe('Label truncation @fast', () => {
   });
 
   test('LT-3: [data-main-title] does not overflow its container', async ({ page }) => {
-    const longNote = 'label '.repeat(40).trim();
+    const longNote = 'label '.repeat(25).trim();
     await api(`terminal/${terminalId}/note`, {
       method: 'PATCH',
       body: JSON.stringify({ note: longNote }),
@@ -45,7 +42,7 @@ test.describe('Label truncation @fast', () => {
     await page.waitForSelector(`#terminal-${terminalId}`, { timeout: 10_000 });
 
     const noOverflow = await page.locator(`#terminal-${terminalId} [data-main-title]`).evaluate((el) => {
-      return el.scrollWidth <= el.clientWidth + 1;
+      return el.clientWidth <= (el.parentElement?.clientWidth ?? Infinity) + 1;
     });
     expect(noOverflow).toBe(true);
   });

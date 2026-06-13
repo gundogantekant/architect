@@ -1734,10 +1734,10 @@ async function initSession(terminalInfo) {
           containerEl.classList.toggle('terminal-light', resolveTermTheme() === 'light');
           term.open(containerEl);
           term.reset();
-          window.dispatchEvent(new CustomEvent('terminal-ready', { detail: { cols: term.cols } }));
           requestAnimationFrame(() => {
             if (containerEl.isConnected) {
               fitAddon.fit();
+              window.dispatchEvent(new CustomEvent('terminal-ready', { detail: { cols: term.cols } }));
               window.dispatchEvent(new CustomEvent('terminal-fit-stable', { detail: { cols: term.cols } }));
             }
           });
@@ -9330,6 +9330,7 @@ function navigate(fragment) {
   location.hash = '#' + fragment;
 }
 window.navigate = navigate;
+window.placeSessionPanels = placeSessionPanels;
 
 // --- Git log section ---
 const _gitLogCache = new Map();

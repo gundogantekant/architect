@@ -26,7 +26,7 @@ async function stubPortfolioApi(page) {
 async function openDispatchModal(page) {
   const workItem = await seedWorkItem({
     title: 'Model selector test item',
-    status: 'open',
+    status: 'planned',
     priority: 'medium',
     project_key: PROJECT_KEY,
   });
