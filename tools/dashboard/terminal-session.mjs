@@ -34,7 +34,7 @@ export async function spawnTerminalSession(deps, params) {
     id, projectPath, prompt, agentDefs = [], permissionMode = 'acceptEdits',
     skipPermissions = false, workItemId = null, epicId = null,
     projectKey = null, orgKey = null, title = 'Interactive session',
-    testWorkerId = null, skip_seed = false,
+    testWorkerId = null, skip_seed = false, model = 'sonnet',
   } = params;
 
   const adapter = getAdapter('claude');
@@ -58,7 +58,7 @@ export async function spawnTerminalSession(deps, params) {
     skipPermissions,
     addDir: ROOT,
     agentsJson: null,
-    model: 'sonnet',
+    model,
   });
 
   let ptyProcess;

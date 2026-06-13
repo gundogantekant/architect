@@ -91,6 +91,10 @@ export const SPEC_FILES = [
   'session-resurrection',
   'sync-contracts',
   'epic-fold-done',
+  'label-truncation',
+  'route-visibility',
+  'terminal-init-width',
+  'model-selector',
 ];
 
 function getLiveDashboardPorts() {

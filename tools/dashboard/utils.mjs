@@ -20,6 +20,10 @@ export function safe(segment) {
   return !segment.includes('..') && !segment.includes('/') && !segment.includes('\\');
 }
 
+export function validateModel(value) {
+  return ['sonnet', 'opus', 'haiku'].includes(value) ? value : 'sonnet';
+}
+
 export async function readJson(path) {
   return JSON.parse(await readFile(path, 'utf8'));
 }

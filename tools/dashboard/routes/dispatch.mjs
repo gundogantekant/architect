@@ -6,6 +6,7 @@ import { isMediumOrAbove, isSmallOrAbove, getComplexityLevel } from '../utils/co
 import { validateContract } from '../utils/contract-validation.mjs';
 import { writePromptFile, deletePromptFile } from '../prompt-file.mjs';
 import { createDispatch, createResumeDispatch } from '../utils/dispatch-factory.mjs';
+import { validateModel } from '../utils.mjs';
 
 const SKILL_REGISTRY = {
   'project-refine-tasks': (workItemId) => workItemId ? `/project-refine-tasks ${workItemId}` : '/project-refine-tasks',
@@ -152,7 +153,8 @@ export default function dispatchRoutes(deps) {
     // Create dispatch
     [/^\/api\/dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode, contract: rawContract, dispatch_mode: rawDispatchMode, skill_id } = body;
+      const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode, contract: rawContract, dispatch_mode: rawDispatchMode, skill_id, model: bodyModel } = body;
+      const model = validateModel(bodyModel);
       const dispatch_mode = rawDispatchMode || 'standard';
 
       // Strip empty-string contract fields per domain/rules.md → Dispatch Contract Rules
@@ -368,7 +370,7 @@ export default function dispatchRoutes(deps) {
 
       let proc;
       try {
-        const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet'];
+        const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', model];
         args.push('--permission-mode', resolvedPermMode === 'plan' ? 'plan' : 'acceptEdits');
         if (resolvedSkipPerms) {
           args.push('--dangerously-skip-permissions');
@@ -1197,7 +1199,7 @@ export default function dispatchRoutes(deps) {
 
       const { workItem: freshWorkItem, portfolio } = await loadResumeContext({ work_item_id, project_key });
 
-      const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet'];
+      const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', validateModel(old?.model)];
       args.push('--resume', resumeSessionId);
       args.push('--permission-mode', resolvedPermMode === 'plan' ? 'plan' : 'acceptEdits');
       if (resolvedSkipPerms) args.push('--dangerously-skip-permissions');
