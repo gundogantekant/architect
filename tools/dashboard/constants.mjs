@@ -27,7 +27,17 @@ export const port = (() => {
   return 3777;
 })();
 
-export const DEFAULT_HOST = process.env.ARCHITECT_HOST ?? '127.0.0.1';
+// Resolve the address the server binds to. Loopback-only by default; LAN exposure is
+// opt-in (ARCHITECT_HOST=0.0.0.0 passed by dashctl, or ARCHITECT_BIND_ALL=1 for a direct
+// `node server.mjs` launch). The dashboard has no auth, so this must never default to a
+// wide bind. Exported as a pure function so the derivation can be unit-tested.
+export function resolveBindHost(env = process.env) {
+  if (env.ARCHITECT_HOST) return env.ARCHITECT_HOST;
+  if (env.ARCHITECT_BIND_ALL === '1') return '0.0.0.0';
+  return '127.0.0.1';
+}
+
+export const DEFAULT_HOST = resolveBindHost();
 
 // Valid status values — canonical source: domain/entities.md and domain/rules.md
 export const VALID_WORK_ITEM_STATUSES = new Set([

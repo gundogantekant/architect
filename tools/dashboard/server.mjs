@@ -104,8 +104,16 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const path = url.pathname;
 
+  // Access-control identity MUST come from the socket peer (req.socket.remoteAddress),
+  // never from X-Forwarded-For or any client-supplied header: this server binds directly,
+  // so the socket peer is trustworthy while forwarded headers are spoofable. If a trusted
+  // reverse proxy is ever introduced, add an explicit trusted-proxy allowlist before using
+  // forwarded headers — otherwise any LAN client could forge 127.0.0.1 and bypass this.
   const clientIp = normalizeIp(req.socket.remoteAddress ?? '');
-  if (blocklist.isBlocked(clientIp)) {
+  // Loopback is always exempt from the blocklist so the host machine can reach
+  // /api/access/* to recover even if the blocklist is misconfigured (guaranteed
+  // recovery path; mirrors blocklist.block() refusing to block loopback).
+  if (!blocklist.isLoopback(clientIp) && blocklist.isBlocked(clientIp)) {
     res.writeHead(403, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Forbidden' }));
     return;
