@@ -20,11 +20,15 @@ ROOT="$(cd "$DASHBOARD_DIR/../.." && pwd -P)"
 
 SERVER_SCRIPT="$DASHBOARD_DIR/server.mjs"
 PORT="${DASHCTL_PORT:-3777}"
-HOST="${DASHCTL_HOST:-127.0.0.1}"
-# LAN exposure is opt-in. The dashboard has NO authentication and can dispatch agents /
-# open terminals (effectively remote code execution), so a LAN IP in DASHCTL_HOST alone
-# does not expose it — the operator must explicitly set DASHCTL_BIND_ALL=1 (or HOST=0.0.0.0).
-BIND_ALL="${DASHCTL_BIND_ALL:-0}"
+HOST="${DASHCTL_HOST:-0.0.0.0}"
+# LAN exposure is the DEFAULT: the dashboard binds 0.0.0.0 so it is reachable from other
+# trusted-LAN devices without per-host config and survives DHCP/VPN IP changes. It has NO
+# authentication and can dispatch agents / open terminals (effectively remote code
+# execution), so the bind is paired with the server-side Host/Origin access guard and a
+# no-auth startup warning. Opt OUT with DASHCTL_BIND_ALL=0 or DASHCTL_LOOPBACK_ONLY=1
+# (or DASHCTL_HOST=127.0.0.1/localhost) to stay loopback-only.
+BIND_ALL="${DASHCTL_BIND_ALL:-1}"
+LOOPBACK_ONLY="${DASHCTL_LOOPBACK_ONLY:-0}"
 PID_FILE="${DASHCTL_PID_FILE:-$ROOT/tmp/dashboard.pid}"
 LOG_FILE="${DASHCTL_LOG_FILE:-$ROOT/tmp/dashboard.log}"
 SESSIONS_FILE="$ROOT/work/sessions.json"
@@ -115,6 +119,22 @@ lan_ip() {
     ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
   fi
   if [ -n "$ip" ]; then echo "$ip"; else echo "127.0.0.1"; fi
+}
+
+# Resolve the address the server should bind to, mirroring constants.mjs resolveBindHost().
+# Default: 0.0.0.0 (LAN). Opt out via DASHCTL_LOOPBACK_ONLY=1, DASHCTL_BIND_ALL=0, or an
+# explicit loopback DASHCTL_HOST. Hoisted so cmd_start AND the install commands write the
+# same resolved value into the service definition unconditionally.
+resolve_bind_host() {
+  if [ "$LOOPBACK_ONLY" = "1" ]; then
+    echo "127.0.0.1"
+  elif [ "$BIND_ALL" = "0" ]; then
+    echo "127.0.0.1"
+  elif [ "$HOST" = "127.0.0.1" ] || [ "$HOST" = "localhost" ] || [ "$HOST" = "::1" ]; then
+    echo "127.0.0.1"
+  else
+    echo "0.0.0.0"
+  fi
 }
 
 find_node() {
@@ -214,18 +234,20 @@ cmd_start() {
     echo "Dependencies installed."
   fi
 
-  # Resolve bind address vs. display URL. Bind 0.0.0.0 only on explicit opt-in (reachable
-  # from loopback + LAN, survives DHCP/VPN IP changes); otherwise stay loopback-only.
-  local BIND_HOST="127.0.0.1"
+  # Resolve bind address vs. display URL. LAN bind (0.0.0.0) is the DEFAULT — reachable
+  # from loopback + LAN and survives DHCP/VPN IP changes; opt out to stay loopback-only.
+  local BIND_HOST
+  BIND_HOST="$(resolve_bind_host)"
   local DISPLAY_HOST="127.0.0.1"
-  if [ "$BIND_ALL" = "1" ] || [ "$HOST" = "0.0.0.0" ]; then
-    BIND_HOST="0.0.0.0"
+  if [ "$BIND_HOST" = "0.0.0.0" ]; then
     DISPLAY_HOST="$(lan_ip)"
     echo "WARNING: Dashboard has no authentication and exposes dispatch/terminal"
     echo "         (remote code execution) to the network. Trusted LAN only."
-  elif [ "$HOST" != "127.0.0.1" ] && [ "$HOST" != "localhost" ] && [ "$HOST" != "::1" ]; then
-    echo "Note: DASHCTL_HOST=$HOST is set but DASHCTL_BIND_ALL is not enabled;"
-    echo "      staying loopback-only. Set DASHCTL_BIND_ALL=1 to expose on the LAN."
+    echo "         LAN URL: http://$DISPLAY_HOST:$PORT"
+    echo "         To restrict to loopback, set DASHCTL_LOOPBACK_ONLY=1."
+  else
+    echo "Note: binding loopback-only (http://127.0.0.1:$PORT); not reachable from the LAN."
+    echo "      Unset DASHCTL_LOOPBACK_ONLY / DASHCTL_BIND_ALL=0 to expose on the LAN."
   fi
 
   echo "Starting dashboard server..."
@@ -519,6 +541,8 @@ cmd_install() {
 install_launchd() {
   local NODE_BIN
   NODE_BIN="$(find_node)"
+  local BIND_HOST
+  BIND_HOST="$(resolve_bind_host)"
 
   mkdir -p "$(dirname "$LAUNCHD_PLIST")"
 
@@ -560,11 +584,19 @@ install_launchd() {
 </plist>
 PLIST
 
+  # Pin the resolved bind host into the plist EnvironmentVariables dict so the installed
+  # service binds to exactly what was resolved at install time (not the runtime default).
+  python3 -c "
+import plistlib
+with open('$LAUNCHD_PLIST', 'rb') as f: p = plistlib.load(f)
+p.setdefault('EnvironmentVariables', {})['ARCHITECT_HOST'] = '${BIND_HOST}'
+with open('$LAUNCHD_PLIST', 'wb') as f: plistlib.dump(p, f)
+" 2>/dev/null || true
+
   if [ -n "${PORTFOLIO_DIR:-}" ]; then
     # Inject PORTFOLIO_DIR into the plist EnvironmentVariables dict before closing </dict>
-    sed -i '' 's|    <key>PATH</key>|    <key>PATH</key>|' "$LAUNCHD_PLIST"
     python3 -c "
-import plistlib, sys
+import plistlib
 with open('$LAUNCHD_PLIST', 'rb') as f: p = plistlib.load(f)
 p.setdefault('EnvironmentVariables', {})['PORTFOLIO_DIR'] = '${PORTFOLIO_DIR}'
 with open('$LAUNCHD_PLIST', 'wb') as f: plistlib.dump(p, f)
@@ -583,6 +615,8 @@ with open('$LAUNCHD_PLIST', 'wb') as f: plistlib.dump(p, f)
 install_systemd() {
   local NODE_BIN
   NODE_BIN="$(find_node)"
+  local BIND_HOST
+  BIND_HOST="$(resolve_bind_host)"
 
   mkdir -p "$(dirname "$SYSTEMD_UNIT")"
 
@@ -600,6 +634,10 @@ RestartSec=10
 StandardOutput=append:${LOG_FILE}
 StandardError=append:${LOG_FILE}
 UNIT
+
+  # Pin the resolved bind host so the installed service binds to exactly what was resolved
+  # at install time (not the runtime default).
+  echo "Environment=ARCHITECT_HOST=${BIND_HOST}" >> "$SYSTEMD_UNIT"
 
   if [ -n "${PORTFOLIO_DIR:-}" ]; then
     echo "Environment=PORTFOLIO_DIR=${PORTFOLIO_DIR}" >> "$SYSTEMD_UNIT"
@@ -842,8 +880,8 @@ Environment:
   PID file: $PID_FILE
   Log file: $LOG_FILE
   Port:     $PORT
-  Host:     $HOST (display/health; bind is loopback unless DASHCTL_BIND_ALL=1)
-  LAN bind: $([ "$BIND_ALL" = "1" ] && echo "0.0.0.0 (DASHCTL_BIND_ALL=1) — NO AUTH, trusted LAN only" || echo "loopback-only (set DASHCTL_BIND_ALL=1 to expose; service installs stay loopback-only)")
+  Host:     $HOST (health checks always use loopback)
+  Bind:     $(resolve_bind_host) $([ "$(resolve_bind_host)" = "0.0.0.0" ] && echo "(LAN default — NO AUTH, trusted LAN only; set DASHCTL_LOOPBACK_ONLY=1 to restrict)" || echo "(loopback-only)")
   PG host:  $PG_HOST
   PG port:  $PG_PORT
   PG user:  $PG_USER

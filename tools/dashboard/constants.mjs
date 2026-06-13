@@ -27,17 +27,42 @@ export const port = (() => {
   return 3777;
 })();
 
-// Resolve the address the server binds to. Loopback-only by default; LAN exposure is
-// opt-in (ARCHITECT_HOST=0.0.0.0 passed by dashctl, or ARCHITECT_BIND_ALL=1 for a direct
-// `node server.mjs` launch). The dashboard has no auth, so this must never default to a
-// wide bind. Exported as a pure function so the derivation can be unit-tested.
+// Resolve the address the server binds to. LAN-exposed by default (0.0.0.0) so the
+// dashboard is reachable from other devices on the trusted LAN without per-host config,
+// and survives DHCP/VPN IP changes. The dashboard has NO authentication and can dispatch
+// agents / open terminals (effectively remote code execution), so the bind is paired with
+// the Host/Origin access guard (lib/access-guard.mjs) and a startup no-auth warning.
+// Opt out of LAN exposure with ARCHITECT_LOOPBACK_ONLY=1 or ARCHITECT_BIND_ALL=0, or pin
+// a specific address with ARCHITECT_HOST. Exported as a pure function so the derivation
+// can be unit-tested.
 export function resolveBindHost(env = process.env) {
   if (env.ARCHITECT_HOST) return env.ARCHITECT_HOST;
-  if (env.ARCHITECT_BIND_ALL === '1') return '0.0.0.0';
-  return '127.0.0.1';
+  if (env.ARCHITECT_LOOPBACK_ONLY === '1') return '127.0.0.1';
+  if (env.ARCHITECT_BIND_ALL === '0') return '127.0.0.1';
+  return '0.0.0.0';
 }
 
 export const DEFAULT_HOST = resolveBindHost();
+
+// Parse a comma-separated env list (allowed hosts / allowed IPs) into a trimmed,
+// non-empty array. Consumed by the access guard (lib/access-guard.mjs) via server.mjs.
+export function parseList(value) {
+  if (!value) return [];
+  return String(value)
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+// Access-guard configuration derived from the environment. ARCHITECT_ALLOWED_HOSTS is an
+// allow-list of Host-header hostnames (in addition to loopback names + the server's own LAN
+// IPs); ARCHITECT_ALLOW_IPS is an opt-in client-IP allow-list (empty = allow any non-blocked).
+export function resolveAccessConfig(env = process.env) {
+  return {
+    allowedHosts: parseList(env.ARCHITECT_ALLOWED_HOSTS),
+    allowIps: parseList(env.ARCHITECT_ALLOW_IPS),
+  };
+}
 
 // Valid status values — canonical source: domain/entities.md and domain/rules.md
 export const VALID_WORK_ITEM_STATUSES = new Set([

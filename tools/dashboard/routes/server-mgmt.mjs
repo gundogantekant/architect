@@ -2,6 +2,7 @@ export default function serverMgmtRoutes(deps) {
   const {
     db, json, text, err, parseBody,
     port, ROOT, PORTFOLIO, WORK, LOG_FILE, PID_FILE, DASHCTL_PATH, SERVER_START_TIME,
+    bindHost, lanExposed, lanUrl,
     dispatches, terminals, cliSessions,
     syncProjectsFromRegistry, getSyncWarnings,
     spawn, execFileSync, readFile, homedir, existsSync, join,
@@ -73,6 +74,9 @@ export default function serverMgmtRoutes(deps) {
         uptime_seconds: uptimeSeconds,
         node_version: process.version,
         platform: process.platform,
+        bindHost,
+        lanExposed,
+        lanUrl,
         sessions: {
           dispatches_active: dispatchesActive,
           terminals_active: terminalsActive,

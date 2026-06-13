@@ -42,3 +42,44 @@ test('SM-19: AUTO_IMPLEMENTABLE_STATUSES is a strict subset of DISPATCHABLE_STAT
     'DISPATCHABLE_STATUSES must be strictly larger than AUTO_IMPLEMENTABLE_STATUSES',
   );
 });
+
+/**
+ * E2: resolveBindHost defaults to LAN (0.0.0.0); loopback is opt-in.
+ * Test the pure function with injected env, not the load-time DEFAULT_HOST.
+ */
+test('E2: resolveBindHost defaults to 0.0.0.0 (LAN)', async () => {
+  const { resolveBindHost } = await import(join(ROOT, 'tools/dashboard/constants.mjs'));
+  assert.equal(resolveBindHost({}), '0.0.0.0');
+});
+
+test('E2: ARCHITECT_LOOPBACK_ONLY=1 → 127.0.0.1', async () => {
+  const { resolveBindHost } = await import(join(ROOT, 'tools/dashboard/constants.mjs'));
+  assert.equal(resolveBindHost({ ARCHITECT_LOOPBACK_ONLY: '1' }), '127.0.0.1');
+});
+
+test('E2: ARCHITECT_BIND_ALL=0 → 127.0.0.1', async () => {
+  const { resolveBindHost } = await import(join(ROOT, 'tools/dashboard/constants.mjs'));
+  assert.equal(resolveBindHost({ ARCHITECT_BIND_ALL: '0' }), '127.0.0.1');
+});
+
+test('E2: ARCHITECT_HOST=127.0.0.1 pins loopback', async () => {
+  const { resolveBindHost } = await import(join(ROOT, 'tools/dashboard/constants.mjs'));
+  assert.equal(resolveBindHost({ ARCHITECT_HOST: '127.0.0.1' }), '127.0.0.1');
+});
+
+test('E2: ARCHITECT_HOST=0.0.0.0 pins LAN', async () => {
+  const { resolveBindHost } = await import(join(ROOT, 'tools/dashboard/constants.mjs'));
+  assert.equal(resolveBindHost({ ARCHITECT_HOST: '0.0.0.0' }), '0.0.0.0');
+});
+
+test('E2: ARCHITECT_HOST precedence beats ARCHITECT_LOOPBACK_ONLY', async () => {
+  const { resolveBindHost } = await import(join(ROOT, 'tools/dashboard/constants.mjs'));
+  assert.equal(resolveBindHost({ ARCHITECT_HOST: '0.0.0.0', ARCHITECT_LOOPBACK_ONLY: '1' }), '0.0.0.0');
+});
+
+test('E2: parseList trims and drops empties', async () => {
+  const { parseList } = await import(join(ROOT, 'tools/dashboard/constants.mjs'));
+  assert.deepStrictEqual(parseList(' a.local , b.local ,, '), ['a.local', 'b.local']);
+  assert.deepStrictEqual(parseList(''), []);
+  assert.deepStrictEqual(parseList(undefined), []);
+});

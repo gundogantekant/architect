@@ -11,6 +11,9 @@ export function setupWebSocket(server) {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (req, socket, head) => {
+    // The access-guard upgrade listener (registered first in server.mjs) destroys the
+    // socket on an Origin/host mismatch. Bail out if that already happened.
+    if (socket.destroyed) return;
     const url = new URL(req.url, 'http://localhost');
 
     // Dispatch WebSocket: replay output from memory, then broadcast live updates
