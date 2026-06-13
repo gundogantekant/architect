@@ -200,6 +200,8 @@ export async function assertSchema() {
     dispatch_costs: ['id', 'model', 'agent_role', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'cost_usd_breakdown', 'recorded_at'],
     model_pricing: ['model_id', 'input_cost_per_mtok', 'output_cost_per_mtok', 'cache_read_cost_per_mtok', 'cache_write_cost_per_mtok', 'updated_at'],
     dispatch_prompts: ['id', 'dispatch_id', 'work_item_id', 'project_key', 'prompt_text', 'char_count', 'truncated', 'created_at'],
+    access_log: ['ip', 'path', 'method', 'status_code', 'requested_at'],
+    ip_blocklist: ['ip', 'reason', 'blocked_at'],
   };
 
   const missing = [];
@@ -2240,4 +2242,26 @@ export async function getDistinctWorkItemProjectKeys() {
      ORDER BY project_key`
   );
   return r.rows;
+}
+
+export async function getAccessLogRequesters() {
+  const { rows } = await pool.query(
+    `SELECT ip, COUNT(*)::int AS count, MAX(requested_at) AS last_seen
+     FROM access_log
+     GROUP BY ip
+     ORDER BY count DESC`
+  );
+  return rows;
+}
+
+export function getPool() {
+  return pool;
+}
+
+export async function logAccess(ip, path, method, statusCode) {
+  await pool.query(
+    `INSERT INTO access_log (ip, path, method, status_code, requested_at)
+     VALUES ($1, $2, $3, $4, NOW())`,
+    [ip, path, method, statusCode]
+  );
 }

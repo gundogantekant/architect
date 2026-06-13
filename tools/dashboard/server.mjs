@@ -11,7 +11,7 @@ import { buildPrefixCache } from './portfolio-config.mjs';
 import { EventStream } from './event-stream.mjs';
 import { getAdapter } from './adapters/index.mjs';
 
-import { CLAUDE_BIN, ROOT, PORTFOLIO, LEGACY_PORTFOLIO, WORK, LOGS_DIR, ARCHITECT_KEY, port, VALID_WORK_ITEM_STATUSES, VALID_EPIC_STATUSES, VALID_PRIORITIES, SERVER_START_TIME, DASHCTL_PATH, PID_FILE, LOG_FILE, MIGRATIONS_DIR, TMUX_AVAILABLE, BACKUP_DIR } from './constants.mjs';
+import { CLAUDE_BIN, ROOT, PORTFOLIO, LEGACY_PORTFOLIO, WORK, LOGS_DIR, ARCHITECT_KEY, port, VALID_WORK_ITEM_STATUSES, VALID_EPIC_STATUSES, VALID_PRIORITIES, SERVER_START_TIME, DASHCTL_PATH, PID_FILE, LOG_FILE, MIGRATIONS_DIR, TMUX_AVAILABLE, BACKUP_DIR, DEFAULT_HOST } from './constants.mjs';
 import { migrateLegacyPortfolio } from './portfolio-migration.mjs';
 import { json, text, err, safe, readJson, listDirs, listFiles, parseBody, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture, termEventLogPath, generateSeedContent, sleep } from './utils.mjs';
 
@@ -43,9 +43,15 @@ import promptsRoutes from './routes/prompts.mjs';
 import workItemAssetsRoutes from './routes/work-item-assets.mjs';
 import gitRoutes from './routes/git.mjs';
 import testEndpointRoutes from './routes/test-endpoints.mjs';
+import * as blocklist from './lib/blocklist.mjs';
+import accessRoutes from './routes/access.mjs';
 import { attemptMerge, isMergeLocked } from './merge.mjs';
 
 const TMP_DIR = join(ROOT, 'tmp');
+
+function normalizeIp(ip) {
+  return ip.startsWith('::ffff:') ? ip.slice(7) : ip;
+}
 
 let syncWarnings = [];
 
@@ -62,6 +68,7 @@ const deps = {
   termEventLogPath, generateSeedContent, sleep, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture,
   CLAUDE_BIN, TMUX_AVAILABLE, SERVER_START_TIME, DASHCTL_PATH, PID_FILE, LOG_FILE, MIGRATIONS_DIR,
   attemptMerge, isMergeLocked,
+  blocklist,
   EventStream, getAdapter, pty,
   spawn, execFileSync, readFile, writeFile, readFileSync, writeFileSync, appendFileSync, existsSync, createWriteStream,
   mkdir, stat, join, extname, dirname, homedir, rename, unlinkFile, renameSync, readdir,
@@ -90,11 +97,24 @@ const routes = [
   ...workItemAssetsRoutes(deps),
   ...gitRoutes(deps),
   ...(process.env.WORK_DIR ? testEndpointRoutes(deps) : []),
+  ...accessRoutes(deps),
 ];
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const path = url.pathname;
+
+  const clientIp = normalizeIp(req.socket.remoteAddress ?? '');
+  if (blocklist.isBlocked(clientIp)) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Forbidden' }));
+    return;
+  }
+
+  res.on('finish', () => {
+    db.logAccess(clientIp, path, req.method, res.statusCode)
+      .catch(e => console.warn('[access_log] write failed:', e.message));
+  });
 
   for (const [pattern, method, handler] of routes) {
     const match = path.match(pattern);
@@ -233,6 +253,14 @@ async function main() {
     process.exit(1);
   }
 
+  try {
+    await blocklist.load(db.getPool());
+    console.log('IP blocklist loaded');
+  } catch (e) {
+    console.error(`Fatal: failed to load IP blocklist: ${e.message}`);
+    process.exit(1);
+  }
+
   // Data quality: log work items missing e2e_test_criteria that may fail stricter contract validation
   const stale = await db.query(
     `SELECT id, title FROM work_items
@@ -273,8 +301,8 @@ async function main() {
   } catch {}
 
   // Phase 4: Start server (PG is healthy — ordering enforced by initDatabaseAsync above)
-  server.listen(port, '127.0.0.1', () => {
-    console.log(`Dashboard: http://127.0.0.1:${port}`);
+  server.listen(port, DEFAULT_HOST, () => {
+    console.log(`Dashboard: http://${DEFAULT_HOST}:${port}`);
   });
 }
 
