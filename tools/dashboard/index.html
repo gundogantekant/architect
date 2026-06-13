@@ -10,6 +10,10 @@
 <link rel="stylesheet" href="/styles/dashboard.css">
 <link rel="stylesheet" href="/vendor/xterm.css">
 <style>
+/* LAN warning banner is position:fixed (full-width, out of the body flex-row so it
+   does not steal horizontal space from #main / the terminal). When visible, push the
+   sidebar+main flex-row down by the banner height instead of shrinking content width. */
+body.lan-banner-visible { padding-top: 37px; }
 .phase-timeline { display: flex; align-items: center; gap: 3px; padding: 4px 16px 2px; min-height: 20px; }
 .phase-dot { width: 8px; height: 8px; border-radius: 50%; cursor: default; flex-shrink: 0; }
 .org-repos-section { margin-top: 8px; }
@@ -60,6 +64,11 @@
 </head>
 <body>
 
+<div id="lan-warning-banner" role="alert" style="display:none;position:fixed;top:0;left:0;right:0;z-index:300;align-items:center;gap:12px;padding:8px 16px;background:var(--danger,#EF4444);color:#fff;font-size:13px;font-weight:500">
+  <span id="lan-warning-text" style="flex:1"></span>
+  <button id="lan-warning-dismiss" aria-label="Dismiss warning" style="background:none;border:none;color:#fff;font-size:18px;line-height:1;cursor:pointer;padding:0 4px">&times;</button>
+</div>
+
 <nav id="sidebar">
   <h1><span class="sidebar-title">Architect</span> <span id="dispatch-badge" class="dispatch-count empty"></span><button class="sidebar-toggle" data-sidebar-toggle aria-label="Toggle sidebar" title="Toggle sidebar"><span class="sidebar-toggle-icon"></span></button></h1>
   <div id="epic-tree"></div>
@@ -88,7 +97,7 @@
 
 <script type="module">
 import { api, apiText } from '/js/api.mjs';
-import { $, esc, stripAnsiForDisplay, ACTIVE_DOT_CLASSES, clearActiveDotClasses, fmtDate, fmtTimestamp,
+import { $, esc, escAttr, stripAnsiForDisplay, ACTIVE_DOT_CLASSES, clearActiveDotClasses, fmtDate, fmtTimestamp,
          getRouteTitle, updateTitle, topoSort, isBlockedByDeps, epicSignalColor } from '/js/utils.mjs';
 import {
   backlog, setBacklog,
@@ -309,12 +318,14 @@ function openPromptPreview(templateId, variables, triggerEl) {
   const firstFocusable = dialog.querySelector('button');
   if (firstFocusable) firstFocusable.focus();
 
-  dialog.querySelector('#prompt-preview-copy').addEventListener('click', () => {
-    navigator.clipboard.writeText(renderedText).then(() => {
-      const copied = dialog.querySelector('#prompt-preview-copied');
-      copied.style.display = 'inline';
-      setTimeout(() => { copied.style.display = 'none'; }, 2000);
-    });
+  dialog.querySelector('#prompt-preview-copy').addEventListener('click', async (e) => {
+    const trigger = e.currentTarget;
+    const ok = await copyToClipboard(renderedText);
+    const copied = dialog.querySelector('#prompt-preview-copied');
+    copied.textContent = ok ? 'Copied!' : 'Copy failed — select manually';
+    copied.style.display = 'inline';
+    trigger.focus();
+    setTimeout(() => { copied.style.display = 'none'; copied.textContent = 'Copied!'; }, 2000);
   });
 
   abortCtrl = new AbortController();
@@ -421,12 +432,14 @@ function openDynamicPromptPreview(dynamicBody, triggerEl) {
   const onEsc = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onEsc); } };
   document.addEventListener('keydown', onEsc);
 
-  dialog.querySelector('#dyn-preview-copy').addEventListener('click', () => {
-    navigator.clipboard.writeText(renderedText).then(() => {
-      const copied = dialog.querySelector('#dyn-preview-copied');
-      copied.style.display = 'inline';
-      setTimeout(() => { copied.style.display = 'none'; }, 2000);
-    });
+  dialog.querySelector('#dyn-preview-copy').addEventListener('click', async (e) => {
+    const trigger = e.currentTarget;
+    const ok = await copyToClipboard(renderedText);
+    const copied = dialog.querySelector('#dyn-preview-copied');
+    copied.textContent = ok ? 'Copied!' : 'Copy failed — select manually';
+    copied.style.display = 'inline';
+    trigger.focus();
+    setTimeout(() => { copied.style.display = 'none'; copied.textContent = 'Copied!'; }, 2000);
   });
 
   abortCtrl = new AbortController();
@@ -7304,12 +7317,33 @@ function buildSessionsSidebar() {
   container.appendChild(divider);
 }
 
-function copySessionId(sessionId, el) {
-  navigator.clipboard.writeText(sessionId).then(() => {
-    const orig = el.textContent;
-    el.textContent = 'Copied!';
-    setTimeout(() => { el.textContent = orig; }, 1200);
-  }).catch(() => {});
+async function copyToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try { await navigator.clipboard.writeText(text); return true; } catch {}
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');           // prevents iOS keyboard popping
+    ta.style.position = 'fixed';
+    ta.style.top = '0'; ta.style.left = '0';
+    ta.style.width = '1px'; ta.style.height = '1px';
+    ta.style.opacity = '0';
+    const host = (document.querySelector('dialog[open]')) || document.body;  // top-layer safe
+    host.appendChild(ta);
+    ta.focus(); ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch { return false; }
+}
+
+async function copySessionId(sessionId, el) {
+  const orig = el.textContent;
+  const ok = await copyToClipboard(sessionId);
+  el.textContent = ok ? 'Copied!' : 'Copy failed';
+  el.focus?.();
+  setTimeout(() => { el.textContent = orig; }, 1200);
 }
 
 function sessionIdTag(sessionId) {
@@ -9736,6 +9770,9 @@ async function renderAccessPage() {
   main.innerHTML = `
     <div style="max-width:900px;margin:0 auto;padding:24px">
       <h2 style="margin:0 0 24px">Access Control</h2>
+      <div style="border-left:3px solid var(--danger,#EF4444);background:var(--surface2,#F3F4F6);padding:10px 14px;margin:0 0 16px;font-size:13px;color:var(--text,#1F2937)">
+        ⚠ The dashboard has <strong>no authentication</strong>. The blocklist and allow-list below are the only access controls. When bound to a LAN address, anyone on the network can reach it.
+      </div>
       <p style="color:var(--text-light,#6B7280);margin:0 0 24px;font-size:13px">
         Blocklist applies to the dashboard HTTP API only. PostgreSQL and other services are not covered.
       </p>
@@ -9756,7 +9793,7 @@ async function renderAccessPage() {
               <button type="submit" style="padding:4px 12px;background:var(--danger,#EF4444);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px">Block</button>
             </form>
           </div>
-          <div id="block-error" style="color:var(--danger,#EF4444);font-size:13px;margin-bottom:8px;display:none"></div>
+          <div id="block-error" role="alert" aria-live="assertive" style="color:var(--danger,#EF4444);font-size:13px;margin-bottom:8px;display:none"></div>
           <div id="blocklist-table">Loading…</div>
         </section>
       </div>
@@ -9787,7 +9824,7 @@ async function renderAccessPage() {
             <td style="padding:6px 8px;text-align:right">${r.count}</td>
             <td style="padding:6px 8px;color:var(--text-light,#6B7280)">${r.last_seen ? new Date(r.last_seen).toLocaleString() : '—'}</td>
             <td style="padding:6px 8px">
-              <button onclick="blockIpFromLog(${JSON.stringify(r.ip)})"
+              <button class="block-btn" data-ip="${escAttr(r.ip)}"
                 style="padding:2px 8px;border:1px solid var(--danger,#EF4444);color:var(--danger,#EF4444);background:none;border-radius:4px;cursor:pointer;font-size:12px">
                 Block
               </button>
@@ -9823,7 +9860,7 @@ async function renderAccessPage() {
             <td style="padding:6px 8px;color:var(--text-light,#6B7280)">${r.reason ? esc(r.reason) : '—'}</td>
             <td style="padding:6px 8px;color:var(--text-light,#6B7280)">${r.blocked_at ? new Date(r.blocked_at).toLocaleString() : '—'}</td>
             <td style="padding:6px 8px">
-              <button onclick="unblockIp(${JSON.stringify(r.ip)})"
+              <button class="unblock-btn" data-ip="${escAttr(r.ip)}"
                 style="padding:2px 8px;border:1px solid var(--border);color:var(--text,#1F2937);background:none;border-radius:4px;cursor:pointer;font-size:12px">
                 Unblock
               </button>
@@ -9831,7 +9868,10 @@ async function renderAccessPage() {
           </tr>`).join('')}
         </tbody>
       </table>`;
-    } catch {}
+    } catch {
+      const el = document.getElementById('blocklist-table');
+      if (el) el.innerHTML = '<p style="color:var(--danger,#EF4444);font-size:13px">Failed to load blocklist.</p>';
+    }
   }
 
   async function refreshAll() {
@@ -9852,17 +9892,35 @@ async function renderAccessPage() {
         try { msg = JSON.parse(text).error || text; } catch {}
         throw new Error(msg);
       }
+      if (errEl) errEl.style.display = 'none';
       await refreshAll();
     } catch(e) {
       if (errEl) { errEl.textContent = e.message || 'Block failed'; errEl.style.display = ''; }
     }
   };
 
-  window.unblockIp = async (ip) => {
+  window.unblockIp = async (ip, ev) => {
+    const errEl = document.getElementById('block-error');
+    // Derive the button from the (possibly delegated) event. With event delegation
+    // currentTarget is the container, so resolve the actual .unblock-btn via closest().
+    const btn = ev?.target?.closest?.('.unblock-btn') || (ev?.currentTarget?.classList?.contains?.('unblock-btn') ? ev.currentTarget : null);
+    if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
     try {
-      await fetch(`/api/access/block/${encodeURIComponent(ip)}`, { method: 'DELETE' });
+      const res = await fetch(`/api/access/block/${encodeURIComponent(ip)}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const text = await res.text();
+        let msg = text;
+        try { msg = JSON.parse(text).error || text; } catch {}
+        if (errEl) { errEl.textContent = msg || 'Unblock failed'; errEl.style.display = ''; }
+        if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
+        return;
+      }
+      if (errEl) errEl.style.display = 'none';
       await refreshAll();
-    } catch {}
+    } catch(e) {
+      if (errEl) { errEl.textContent = e.message || 'Unblock failed'; errEl.style.display = ''; }
+      if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
+    }
   };
 
   document.getElementById('block-ip-form')?.addEventListener('submit', async (e) => {
@@ -9893,6 +9951,21 @@ async function renderAccessPage() {
       if (errEl) { errEl.textContent = e.message || 'Block failed'; errEl.style.display = ''; }
     }
   });
+
+  // Delegated click handler for Block/Unblock buttons. Attached once to the
+  // persistent #main element (the tables re-render their innerHTML on refresh, so
+  // we must not bind to the table markup itself). Guard against double-registration
+  // on repeat navigation to the access page.
+  if (!main.dataset.accessDelegated) {
+    main.dataset.accessDelegated = '1';
+    main.addEventListener('click', (e) => {
+      const btn = e.target.closest('.unblock-btn, .block-btn');
+      if (!btn || !main.contains(btn)) return;
+      const ip = btn.dataset.ip;
+      if (btn.classList.contains('unblock-btn')) window.unblockIp(ip, e);
+      else window.blockIpFromLog(ip);
+    });
+  }
 
   await refreshAll();
   autoRefreshTimer = setInterval(refreshAll, 10000);
@@ -10301,6 +10374,37 @@ window.__testDispatchTerminal = async (info) => {
   });
 })();
 
+const LAN_WARNING_DISMISS_KEY = 'lan-warning-dismissed';
+
+async function loadLanWarningBanner() {
+  const banner = document.getElementById('lan-warning-banner');
+  if (!banner) return;
+  let status;
+  try {
+    status = await api('server/status');
+  } catch { return; }
+  if (!status || status.lanExposed !== true) {
+    banner.style.display = 'none';
+    document.body.classList.remove('lan-banner-visible');
+    return;
+  }
+  if (sessionStorage.getItem(LAN_WARNING_DISMISS_KEY) === 'true') return;
+  const url = status.lanUrl || `the LAN`;
+  const textEl = document.getElementById('lan-warning-text');
+  if (textEl) textEl.textContent = `⚠ Dashboard reachable on your LAN at ${url} — NO authentication. Trusted networks only.`;
+  banner.style.display = 'flex';
+  document.body.classList.add('lan-banner-visible');
+}
+
+document.getElementById('lan-warning-dismiss')?.addEventListener('click', () => {
+  const banner = document.getElementById('lan-warning-banner');
+  if (banner) banner.style.display = 'none';
+  document.body.classList.remove('lan-banner-visible');
+  sessionStorage.setItem(LAN_WARNING_DISMISS_KEY, 'true');
+});
+
+loadLanWarningBanner();
+
 const _restorePromise = Promise.all([
   restoreDispatches(),
   restoreTerminals(),
@@ -10352,6 +10456,8 @@ Promise.all([buildTree(), buildEpicTree()]).catch(err => { console.error('[start
 if (window._testDisableAutoDismiss !== undefined) {
   window.renderPhaseTimeline = renderPhaseTimeline;
   window.renderSettingsView = renderSettingsView;
+  window.openPromptPreview = openPromptPreview;
+  window.copyToClipboard = copyToClipboard;
 }
 </script>
 

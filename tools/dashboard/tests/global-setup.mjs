@@ -95,6 +95,9 @@ export const SPEC_FILES = [
   'route-visibility',
   'terminal-init-width',
   'model-selector',
+  'clipboard-copy',
+  'access-unblock-ui',
+  'access-control',
 ];
 
 function getLiveDashboardPorts() {
