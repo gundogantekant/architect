@@ -168,12 +168,17 @@ function skipPermissionsCheckbox(id) {
   </div>`;
 }
 
+function modelSelect(id) {
+  const def = window._prefs?.default_model || 'sonnet';
+  return `<div class="field"><label for="${id}">Model</label><select id="${id}"><option value="sonnet"${def === 'sonnet' ? ' selected' : ''}>Sonnet (latest)</option><option value="opus"${def === 'opus' ? ' selected' : ''}>Opus (latest)</option><option value="haiku"${def === 'haiku' ? ' selected' : ''}>Haiku (latest)</option></select><span class="field-hint">Model choice is not preserved on restart</span></div>`;
+}
+
 function getPermissionMode(overlay, selectId) {
   return overlay.querySelector('#' + selectId).value;
 }
 
 /** Wire an agent-type dropdown to show/hide permission fields for non-Claude agents. */
-function wireAgentTypeToggle(overlay, agentTypeId, permModeId, skipPermsId) {
+function wireAgentTypeToggle(overlay, agentTypeId, permModeId, skipPermsId, modelId = null) {
   const agentSelect = overlay.querySelector('#' + agentTypeId);
   const permField = overlay.querySelector('#' + permModeId)?.closest('.field');
   const skipField = overlay.querySelector('#' + skipPermsId)?.closest('.interactive-toggle');
@@ -182,6 +187,10 @@ function wireAgentTypeToggle(overlay, agentTypeId, permModeId, skipPermsId) {
     const show = agentSelect.value !== 'shell';
     if (permField) permField.style.display = show ? '' : 'none';
     if (skipField) skipField.style.display = show ? '' : 'none';
+    if (modelId) {
+      const modelField = overlay.querySelector('#' + modelId)?.closest('.field');
+      if (modelField) modelField.style.display = agentSelect.value === 'claude' ? '' : 'none';
+    }
   };
   agentSelect.addEventListener('change', toggle);
   toggle(); // Set initial state
@@ -1055,6 +1064,9 @@ function _hideSessionPanelsForCleanRoute() {
   if (globalContainer) globalContainer.style.display = 'none';
   if (_suspendedContainer) _suspendedContainer.style.display = 'none';
   if (_recentContainer) _recentContainer.style.display = 'none';
+  for (const panel of sessionPanels.values()) {
+    if (panel.parentElement !== _hiddenPanelBuffer) _hiddenPanelBuffer.appendChild(panel);
+  }
 }
 
 function placeSessionPanels() {
@@ -1086,6 +1098,7 @@ function _isProjectMatch(sessionProjectKey, activeProjectKey) {
 }
 
 function _placeSessionPanelsNow() {
+  if (!_isSessionAwareRoute(location.hash)) { _hideSessionPanelsForCleanRoute(); return; }
   if (_isSessionAwareRoute(location.hash)) {
     const globalContainer = document.getElementById('dispatch-panels');
     if (globalContainer) globalContainer.style.display = '';
@@ -1721,7 +1734,13 @@ async function initSession(terminalInfo) {
           containerEl.classList.toggle('terminal-light', resolveTermTheme() === 'light');
           term.open(containerEl);
           term.reset();
-          fitAddon.fit();
+          requestAnimationFrame(() => {
+            if (containerEl.isConnected) {
+              fitAddon.fit();
+              window.dispatchEvent(new CustomEvent('terminal-ready', { detail: { cols: term.cols } }));
+              window.dispatchEvent(new CustomEvent('terminal-fit-stable', { detail: { cols: term.cols } }));
+            }
+          });
 
           sessionState._term = term;
           sessionState._fitAddon = fitAddon;
@@ -1936,7 +1955,7 @@ function renderNoteRow(row, note, terminalId) {
   if (note) {
     const span = document.createElement('span');
     span.className = 'terminal-note';
-    span.textContent = truncateNote(note, 40);
+    span.textContent = note;
     span.title = note;
     row.appendChild(span);
   } else {
@@ -2062,6 +2081,9 @@ function activateNoteEdit(row, terminalId, currentNote) {
       if (resp.ok) {
         const liveTerminal = activeTerminals.find(t => t.id === terminalId);
         if (liveTerminal) liveTerminal.note = note;
+        const panel = sessionPanels.get(`terminal:${terminalId}`);
+        const mainTitleEl = panel?.querySelector('[data-main-title]');
+        if (mainTitleEl) mainTitleEl.textContent = note?.trim() || mainTitleEl.dataset.originalTitle || 'Terminal';
         renderNoteRow(liveRow, note, terminalId);
         flashSaved(liveRow);
       }
@@ -2646,7 +2668,8 @@ function createSessionPanel(type, info) {
       contextBadges.push(`<span class="context-badge" title="${epicText}">${epicText}</span>`);
     }
     const titleDisplayText = stripAnsiForDisplay(terminalInfo.title);
-    const termTitleContent = `<span class="terminal-main-title" data-main-title>${esc(titleDisplayText || 'Terminal')}</span>${contextBadges.join('')}`;
+    const mainLabel = (terminalInfo.note?.trim()) || titleDisplayText || 'Terminal';
+    const termTitleContent = `<span class="terminal-main-title" data-main-title data-original-title="${esc(titleDisplayText || 'Terminal')}" title="${esc(titleDisplayText || 'Terminal')}">${esc(mainLabel)}</span>${contextBadges.join('')}`;
     panel.dataset.terminalTitle = terminalInfo.title || '';
     const termContainerBody = isSuspended
       ? '<div class="terminal-suspended-placeholder">Session suspended — click Resume to continue</div>'
@@ -2930,9 +2953,10 @@ async function dispatchWorkItem(workItem, projectKey) {
         </div>
         ${permissionModeSelect('dispatch-perm-mode')}
         ${skipPermissionsCheckbox('dispatch-skip-perms')}
+        ${modelSelect('dispatch-model')}
       `,
       afterMount: (o) => {
-        wireAgentTypeToggle(o, 'dispatch-agent-type', 'dispatch-perm-mode', 'dispatch-skip-perms');
+        wireAgentTypeToggle(o, 'dispatch-agent-type', 'dispatch-perm-mode', 'dispatch-skip-perms', 'dispatch-model');
 
         const previewBtn = document.createElement('button');
         previewBtn.type = 'button';
@@ -2997,6 +3021,7 @@ async function dispatchWorkItem(workItem, projectKey) {
         const agentType = overlay.querySelector('#dispatch-agent-type')?.value || 'claude';
         const permMode = getPermissionMode(overlay, 'dispatch-perm-mode');
         const skipPerms = overlay.querySelector('#dispatch-skip-perms').checked;
+        const model = overlay.querySelector('#dispatch-model')?.value || 'sonnet';
 
         // Collect contract fields
         const contractGoal = overlay.querySelector('#contract-goal')?.value?.trim() || '';
@@ -3032,6 +3057,7 @@ async function dispatchWorkItem(workItem, projectKey) {
               permission_mode: permMode,
               skip_permissions: skipPerms,
               agentType,
+              model,
               ...(Object.keys(contract).length ? { contract } : {}),
             };
         const resp = await fetch(endpoint, {
@@ -5387,14 +5413,16 @@ function showDiscussModal() {
       </div>
       ${permissionModeSelect('discuss-perm-mode')}
       ${skipPermissionsCheckbox('discuss-skip-perms')}
+      ${modelSelect('discuss-model')}
     `,
-    afterMount: (o) => wireAgentTypeToggle(o, 'discuss-agent-type', 'discuss-perm-mode', 'discuss-skip-perms'),
+    afterMount: (o) => wireAgentTypeToggle(o, 'discuss-agent-type', 'discuss-perm-mode', 'discuss-skip-perms', 'discuss-model'),
     onSubmit: async (overlay) => {
       const instructions = overlay.querySelector('#discuss-instructions').value.trim();
       if (!instructions) { throw new Error('Instructions are required'); }
       const agentType = overlay.querySelector('#discuss-agent-type')?.value || 'claude';
       const permMode = getPermissionMode(overlay, 'discuss-perm-mode');
       const skipPerms = overlay.querySelector('#discuss-skip-perms').checked;
+      const model = overlay.querySelector('#discuss-model')?.value || 'sonnet';
 
       const body = {
         project_key: currentProjectKey,
@@ -5402,6 +5430,7 @@ function showDiscussModal() {
         permission_mode: permMode,
         skip_permissions: skipPerms,
         agentType,
+        model,
       };
       const resp = await fetch('/api/terminal', {
         method: 'POST',
@@ -5473,14 +5502,16 @@ function showOrgDiscussModal(orgName) {
       </div>
       ${permissionModeSelect('discuss-org-perm-mode')}
       ${skipPermissionsCheckbox('discuss-org-skip-perms')}
+      ${modelSelect('discuss-org-model')}
     `,
-    afterMount: (o) => wireAgentTypeToggle(o, 'discuss-org-agent-type', 'discuss-org-perm-mode', 'discuss-org-skip-perms'),
+    afterMount: (o) => wireAgentTypeToggle(o, 'discuss-org-agent-type', 'discuss-org-perm-mode', 'discuss-org-skip-perms', 'discuss-org-model'),
     onSubmit: async (overlay) => {
       const instructions = overlay.querySelector('#discuss-org-instructions').value.trim();
       if (!instructions) { throw new Error('Instructions are required'); }
       const agentType = overlay.querySelector('#discuss-org-agent-type')?.value || 'claude';
       const permMode = getPermissionMode(overlay, 'discuss-org-perm-mode');
       const skipPerms = overlay.querySelector('#discuss-org-skip-perms').checked;
+      const model = overlay.querySelector('#discuss-org-model')?.value || 'sonnet';
 
       const body = {
         org_key: orgName,
@@ -5488,6 +5519,7 @@ function showOrgDiscussModal(orgName) {
         permission_mode: permMode,
         skip_permissions: skipPerms,
         agentType,
+        model,
       };
       const resp = await fetch('/api/terminal', {
         method: 'POST',
@@ -5884,14 +5916,16 @@ async function showEpicDiscussModal(epicId) {
       </div>
       ${permissionModeSelect('epic-discuss-perm-mode')}
       ${skipPermissionsCheckbox('epic-discuss-skip-perms')}
+      ${modelSelect('epic-discuss-model')}
     `,
-    afterMount: (o) => wireAgentTypeToggle(o, 'epic-discuss-agent-type', 'epic-discuss-perm-mode', 'epic-discuss-skip-perms'),
+    afterMount: (o) => wireAgentTypeToggle(o, 'epic-discuss-agent-type', 'epic-discuss-perm-mode', 'epic-discuss-skip-perms', 'epic-discuss-model'),
     onSubmit: async (overlay) => {
       const instructions = overlay.querySelector('#epic-discuss-instructions').value.trim();
       if (!instructions) { throw new Error('Instructions are required'); }
       const agentType = overlay.querySelector('#epic-discuss-agent-type')?.value || 'claude';
       const permMode = getPermissionMode(overlay, 'epic-discuss-perm-mode');
       const skipPerms = overlay.querySelector('#epic-discuss-skip-perms').checked;
+      const model = overlay.querySelector('#epic-discuss-model')?.value || 'sonnet';
       const pk = overlay.querySelector('#epic-discuss-project').value || projectKeys[0];
 
       if (!pk) { throw new Error('No project key available. Onboard a project first.'); }
@@ -5903,6 +5937,7 @@ async function showEpicDiscussModal(epicId) {
         permission_mode: permMode,
         skip_permissions: skipPerms,
         agentType,
+        model,
       };
 
       const resp = await fetch('/api/terminal', {
@@ -7028,6 +7063,7 @@ async function showEpicDispatchModal(epicId) {
       </div>
       ${permissionModeSelect('epic-dispatch-perm-mode')}
       ${skipPermissionsCheckbox('epic-dispatch-skip-perms')}
+      ${modelSelect('epic-dispatch-model')}
     `,
     afterMount: (o) => wireInstructionCounter(o, 'epic-dispatch-instructions'),
     onSubmit: async (overlay) => {
@@ -7037,6 +7073,7 @@ async function showEpicDispatchModal(epicId) {
       const instructions = overlay.querySelector('#epic-dispatch-instructions').value.trim();
       const permMode = getPermissionMode(overlay, 'epic-dispatch-perm-mode');
       const skipPerms = overlay.querySelector('#epic-dispatch-skip-perms').checked;
+      const model = overlay.querySelector('#epic-dispatch-model')?.value || 'sonnet';
 
       let pk, wid;
       if (mode === 'general') {
@@ -7058,6 +7095,7 @@ async function showEpicDispatchModal(epicId) {
         additional_instructions: instructions,
         permission_mode: permMode,
         skip_permissions: skipPerms,
+        model,
       };
       const resp = await fetch('/api/dispatch', {
         method: 'POST',
@@ -8321,9 +8359,10 @@ async function showQuickDispatchModal() {
       </div>
       ${permissionModeSelect('qd-perm-mode')}
       ${skipPermissionsCheckbox('qd-skip-perms')}
+      ${modelSelect('qd-model')}
     `,
     afterMount: (o) => {
-      wireAgentTypeToggle(o, 'qd-agent-type', 'qd-perm-mode', 'qd-skip-perms');
+      wireAgentTypeToggle(o, 'qd-agent-type', 'qd-perm-mode', 'qd-skip-perms', 'qd-model');
       wireInstructionCounter(o, 'qd-instructions');
     },
     onSubmit: async (overlay) => {
@@ -8335,6 +8374,7 @@ async function showQuickDispatchModal() {
       const agentType = overlay.querySelector('#qd-agent-type')?.value || 'claude';
       const permMode = getPermissionMode(overlay, 'qd-perm-mode');
       const skipPerms = overlay.querySelector('#qd-skip-perms').checked;
+      const model = overlay.querySelector('#qd-model')?.value || 'sonnet';
 
       if (!pk) { throw new Error('Project is required'); }
       if (!plainTerminal && !wid && !instructions) { throw new Error('Work item or instructions required'); }
@@ -8352,6 +8392,7 @@ async function showQuickDispatchModal() {
             permission_mode: permMode,
             skip_permissions: skipPerms,
             agentType,
+            model,
           };
       const resp = await fetch(endpoint, {
         method: 'POST',
@@ -9289,6 +9330,7 @@ function navigate(fragment) {
   location.hash = '#' + fragment;
 }
 window.navigate = navigate;
+window.placeSessionPanels = placeSessionPanels;
 
 // --- Git log section ---
 const _gitLogCache = new Map();

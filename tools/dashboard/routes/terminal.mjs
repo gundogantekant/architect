@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { spawnTerminalSession } from '../terminal-session.mjs';
 import { updateTerminalTitle, updateTerminalNote } from '../db.mjs';
+import { validateModel } from '../utils.mjs';
 
 export default function terminalRoutes(deps) {
   const {
@@ -21,8 +22,9 @@ export default function terminalRoutes(deps) {
     // Create terminal session
     [/^\/api\/terminal$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { work_item_id, epic_id, project_key, org_key, title, description, additional_instructions, skip_permissions, permission_mode, agentType: bodyAgentType, skip_seed, contract: rawTermContract } = body;
+      const { work_item_id, epic_id, project_key, org_key, title, description, additional_instructions, skip_permissions, permission_mode, agentType: bodyAgentType, skip_seed, contract: rawTermContract, model: bodyModel } = body;
       const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
+      const model = validateModel(bodyModel);
 
       if (!project_key && !org_key) return err(res, 'project_key or org_key is required', 400);
 
@@ -122,6 +124,7 @@ export default function terminalRoutes(deps) {
             title: title || additional_instructions?.slice(0, 60) || 'Interactive session',
             testWorkerId: _testWorkerId,
             skip_seed: !!skip_seed,
+            model,
           });
         } catch (spawnErr) {
           return json(res, { error: `Failed to spawn terminal: ${spawnErr.message}` }, 500);
