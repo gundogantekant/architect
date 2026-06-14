@@ -84,4 +84,13 @@ test.describe('Model selector @fast', () => {
 
     await expect(modelField).not.toBeVisible();
   });
+
+  test('DM-3: validateModel maps short names to full model IDs', async () => {
+    const { validateModel } = await import('../utils.mjs');
+    expect(validateModel('sonnet')).toBe('claude-sonnet-4-6');
+    expect(validateModel('opus')).toBe('claude-opus-4-8');
+    expect(validateModel('haiku')).toBe('claude-haiku-4-5-20251001');
+    expect(validateModel('unknown')).toBe('claude-sonnet-4-6');
+    expect(validateModel(undefined)).toBe('claude-sonnet-4-6');
+  });
 });

@@ -20,8 +20,14 @@ export function safe(segment) {
   return !segment.includes('..') && !segment.includes('/') && !segment.includes('\\');
 }
 
+const MODEL_ALIASES = {
+  sonnet: 'claude-sonnet-4-6',
+  opus:   'claude-opus-4-8',
+  haiku:  'claude-haiku-4-5-20251001',
+};
+
 export function validateModel(value) {
-  return ['sonnet', 'opus', 'haiku'].includes(value) ? value : 'sonnet';
+  return MODEL_ALIASES[value] ?? MODEL_ALIASES.sonnet;
 }
 
 export async function readJson(path) {
