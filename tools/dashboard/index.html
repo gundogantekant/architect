@@ -4288,7 +4288,7 @@ function renderComponentView(org, proj, comp, data, workItems, files, projectEpi
 
   html += `<div class="tab-content active" data-panel="0">`;
   html += `<button class="btn-add-wi" id="add-work-item">+ Add Task</button>`;
-  html += `<button class="btn-add-wi" id="discuss-agent" style="background:var(--teal);margin-left:8px">Discuss with Agent</button>`;
+  html += `<button class="btn-add-wi" id="discuss-agent" title="Discuss with Agent (⌘D / Ctrl+D)" style="background:var(--teal);margin-left:8px">Discuss with Agent</button>`;
   html += `<button class="btn-add-wi" id="review-prs" style="background:var(--blue);margin-left:8px">Review PRs</button>`;
   html += `<button class="btn-add-wi" id="refine-project" style="background:var(--accent);margin-left:8px">Refine Project</button>`;
   html += `<a href="#agents?project=${esc(currentProjectKey)}" style="margin-left:8px;font-size:12px;color:var(--accent)">View agents</a>`;
@@ -5169,8 +5169,18 @@ async function startAgentTaskCreation(projectKey) {
 }
 
 document.addEventListener('keydown', (e) => {
-  if (e.shiftKey && e.key === 'N') {
+  const tag = document.activeElement?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+  if (e.ctrlKey && !e.metaKey && e.key === 'n') {
+    e.preventDefault();
     showWorkItemModal(null);
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+    if (document.getElementById('discuss-agent')) {
+      e.preventDefault();
+      showDiscussModal();
+    }
   }
 });
 
