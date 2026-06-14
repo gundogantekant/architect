@@ -47,8 +47,11 @@ export function wireTerminalHandlers(terminal) {
       }
     }
 
-    // Readiness detection for prompt injection
-    if (terminal._pendingPrompt && !terminal._readyForPrompt && terminal._adapter) {
+    // Readiness detection for prompt injection (non-tmux only).
+    // tmux sessions are driven by the capture-based state machine in
+    // injection/index.mjs — the early pre-mount ?2004h must NOT trigger a blind
+    // PTY write here, or the paste lands before Ink mounts and is discarded.
+    if (!terminal.tmux_session && terminal._pendingPrompt && !terminal._readyForPrompt && terminal._adapter) {
       if (terminal._adapter.detectReadiness(terminal._accumulated || '', data)) {
         terminal._readyForPrompt = true;
         const delay = terminal._adapter.injectionDelay ?? 0;

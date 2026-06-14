@@ -13,12 +13,13 @@ import { getAdapter } from './adapters/index.mjs';
 
 import { CLAUDE_BIN, ROOT, PORTFOLIO, LEGACY_PORTFOLIO, WORK, LOGS_DIR, ARCHITECT_KEY, port, VALID_WORK_ITEM_STATUSES, VALID_EPIC_STATUSES, VALID_PRIORITIES, SERVER_START_TIME, DASHCTL_PATH, PID_FILE, LOG_FILE, MIGRATIONS_DIR, TMUX_AVAILABLE, BACKUP_DIR, DEFAULT_HOST, resolveAccessConfig } from './constants.mjs';
 import { migrateLegacyPortfolio } from './portfolio-migration.mjs';
-import { json, text, err, safe, readJson, listDirs, listFiles, parseBody, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture, termEventLogPath, generateSeedContent, sleep } from './utils.mjs';
+import { json, text, err, safe, readJson, listDirs, listFiles, parseBody, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture, tmuxCapturePane, tmuxPasteStdin, tmuxClearInput, tmuxSendEnter, termEventLogPath, generateSeedContent, sleep } from './utils.mjs';
 
 import { dispatches, terminals, cliSessions, saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession } from './state.mjs';
 import { resolveProjectPath, resolveOrgPath, loadPortfolioContext, loadOrgContext, loadWorkItem, loadResumeContext, topoSort, loadEpicPlanSnippet, selectAgentsForDispatch, buildDispatchPrompt, buildResumePrompt, buildAutoImplementPrompt, buildRefinementPrompt, buildTaskCreationPrompt, buildProjectRefinementPrompt } from './prompt-builder.mjs';
 
 import { wireTerminalHandlers, injectPrompt } from './pty-manager.mjs';
+import { startInjection } from './injection/index.mjs';
 import { syncProjectsFromRegistry, broadcastDispatchLine, broadcastDispatchDone, tailLogFile, restoreSessions, extractStreamText, killProcess, killProcessGraceful, wireDispatchHandlers } from './dispatch-manager.mjs';
 import { sweepOrphanedPromptFiles } from './prompt-file.mjs';
 import { setupWebSocket } from './ws-router.mjs';
@@ -87,7 +88,8 @@ const deps = {
   PORTFOLIO, ROOT, WORK, LOGS_DIR, TMP_DIR, ARCHITECT_KEY, port,
   VALID_WORK_ITEM_STATUSES, VALID_EPIC_STATUSES, VALID_PRIORITIES,
   dispatches, terminals, cliSessions,
-  wireTerminalHandlers, wireDispatchHandlers, injectPrompt,
+  wireTerminalHandlers, wireDispatchHandlers, injectPrompt, startInjection,
+  tmuxCapturePane, tmuxPasteStdin, tmuxClearInput, tmuxSendEnter,
   buildDispatchPrompt, buildResumePrompt, buildAutoImplementPrompt, buildRefinementPrompt, buildTaskCreationPrompt, buildProjectRefinementPrompt, resolveProjectPath, resolveOrgPath, loadPortfolioContext, loadOrgContext, loadWorkItem, loadResumeContext, selectAgentsForDispatch, loadEpicPlanSnippet,
   broadcastDispatchLine, broadcastDispatchDone, tailLogFile, killProcess, killProcessGraceful, extractStreamText, syncProjectsFromRegistry, getSyncWarnings: () => syncWarnings,
   saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession,
