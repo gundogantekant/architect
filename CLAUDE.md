@@ -254,21 +254,48 @@ Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/log` (plain text 
 - `templates/` — scaffold TypeScript/TSX reference code
 - `tools/ble-relay/`, `tools/dart-debug/` — Python utilities
 
+### Code Discovery Preference (applies to orchestrator AND all dispatched agents)
+
+**For any code-related discovery in architect's own indexed corpus** (`tools/dashboard/`, `tools/temporal/`, `templates/`, `tools/ble-relay/`, `tools/dart-debug/`):
+
+| Task | Preferred tool | Fallback |
+|------|---------------|----------|
+| Find a function/constant/symbol | `codegraph_search` | grep / search_files |
+| Trace who calls a function | `codegraph_callers` | grep -r |
+| Trace what a function calls | `codegraph_callees` | manual read_file |
+| Assess blast radius of a change | `codegraph_impact` | manual trace |
+| Pull relevant context for a task | `codegraph_context` | search_files + read_file |
+
+**Rationale**: CodeGraph tokenizes symbol-level queries and returns targeted results. Grep/search_files return raw text matches that consume 5–50x more tokens and require follow-up reads. Always reach for CodeGraph first when exploring indexed code files.
+
 ### Tools and when to use them
 
 | Tool | Use for | Skip when |
 |------|---------|-----------|
-| `codegraph_search` | Find functions/constants in dashboard/temporal/templates code | Exploring .md artifacts — use grep instead |
-| `codegraph_callers` / `codegraph_callees` | Trace JS/TS function call chains | Prompt flow or .md-only investigation |
+| `codegraph_search` | Find functions/constants in indexed code (dashboard/temporal/templates/ble-relay/dart-debug) | Exploring .md artifacts — use grep instead |
+| `codegraph_callers` / `codegraph_callees` | Trace JS/TS function call chains in indexed code | Prompt flow or .md-only investigation |
 | `codegraph_impact` | Blast radius for code changes before dispatch | Prompt-only or config-only changes |
-| `codegraph_context` | Pull relevant JS/TS context for a task | Non-code tasks |
+| `codegraph_context` | Pull relevant JS/TS context for a task in indexed code | Non-code tasks |
 
 ### Freshness
 
 - Check `codegraph_status` once at session start. Do not re-check per dispatch.
-- Refresh trigger: run `codegraph index` only when **code files** in `tools/dashboard/` are structurally changed (added, removed, renamed). Skip for prompt-only edits.
+- Refresh trigger: run `codegraph index` only when **code files** in the indexed corpus (`tools/dashboard/`, `tools/temporal/`, `templates/`, `tools/ble-relay/`, `tools/dart-debug/`) are structurally changed (added, removed, renamed). Skip for prompt-only edits.
+- **Freshness gate before trust**: before relying on CodeGraph results for discovery, verify `codegraph_status` reports the index is current. If stale, run `codegraph index` before using CodeGraph tools. An outdated index means stale call graphs and missing symbols — worse than grep because the results look authoritative but are wrong.
 - Fallback: if `codegraph_status` errors or is unavailable, use grep/find. Never block on CodeGraph availability.
 
 ### Explore agents
 
-When spawning Explore agents for dashboard JS work, include: "Use codegraph tools (`.codegraph/` is present) for symbol lookup and caller tracing instead of grep."
+Explore agents are lightweight read-only subagents the orchestrator dispatches for code discovery (reading >3 files, tracing call chains, understanding patterns). They are not named agents — the orchestrator dispatches them inline via `delegate_task` with code-reading instructions.
+
+When spawning an Explore agent for architect's own indexed code:
+- **Before dispatching**: check `codegraph_status` — if the index is stale, run `codegraph index` first. Do not dispatch an agent with an outdated code graph.
+- Include the full **Code Discovery Preference** table above in the agent's context. The table is your prompt-injection — paste it verbatim.
+- Add: "Prefer CodeGraph tools over grep/search_files for all symbol lookup in indexed code. Fall back to grep only for .md artifacts or when CodeGraph is unavailable."
+
+When spawning an Explore agent for a **target project** with `.codegraph/` present (per `load-portfolio-context.md` → Step 5):
+- Include the CodeGraph subsection from the portfolio context in the agent's prompt.
+- Add: "Use codegraph_search, codegraph_callers, codegraph_callees for JS/TS symbol lookups. Fall back to grep for .md artifacts."
+
+When spawning an Explore agent for a project WITHOUT CodeGraph:
+- Use search_files and read_file as usual. No CodeGraph instructions needed.

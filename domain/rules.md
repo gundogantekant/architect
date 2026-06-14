@@ -496,6 +496,24 @@ When both the pre-dispatch check and the coordinator are needed (`needs_coordina
 
 For medium+ changes to code files in the target project, consult available static analysis tools before dispatch. When `.codegraph/` is present and the task touches code files, run `codegraph_impact` on the proposed symbols and surface the affected component list in the DispatchContract `constraints` field. Skip for prompt-only or config-only changes — the graph does not index .md files.
 
+### Code Discovery Preference (indexed code only)
+
+When exploring code inside a project with `.codegraph/` present (architect's own indexed corpus or a target project with a verified CodeGraph index per `load-portfolio-context.md` → Step 5):
+
+**Freshness gate**: Before relying on CodeGraph results, verify `codegraph_status` reports the index is current. If stale, run `codegraph index` first. An outdated index produces stale call graphs and missing symbols — worse than grep because the results appear authoritative but are wrong. If `codegraph_status` errors, fall back to grep/search_files.
+
+| Task | Tool | Why |
+|------|------|-----|
+| Find a function/constant/symbol | `codegraph_search` | Symbol-level results — avoids raw text noise |
+| Trace callers of a function | `codegraph_callers` | Returns all call sites instantly |
+| Trace what a function calls | `codegraph_callees` | Full call graph in one query |
+| Understand blast radius | `codegraph_impact` | Affected files + call chain depth |
+| Pull task-relevant context | `codegraph_context` | Packages related symbols together |
+
+Always reach for the CodeGraph tool first. Fall back to grep/search_files only when: (a) searching .md/prompt/config files (not indexed), (b) CodeGraph is unavailable or errors after freshness check, or (c) you need raw text not symbol-level results.
+
+This rule applies to the orchestrator, Explore agents, and all dispatched agents (coder, coder-backend, coder-frontend, coder-mobile, coder-infra, debugger, planner). See `CLAUDE.md` → Code Discovery Preference for the orchestrator-side prompt template.
+
 ## Coding Standards
 
 Shared standards enforced by all implementation agents. These rules apply to every line of code written by the system.
@@ -1145,7 +1163,8 @@ The orchestrator dispatches sub-agents for research, analysis, and investigation
 | Condition | Action |
 |-----------|--------|
 | Task classified as `small+` work type by classifier or orchestrator | Dispatch to appropriate agent |
-| Task requires reading >3 files | Dispatch Explore agent(s) |
+| Task requires reading >3 files | Dispatch Explore agent(s) — include CodeGraph instructions per `CLAUDE.md` → Explore agents |
+| Task targets indexed code files and `.codegraph/` is present | Prefer `codegraph_search`/`codegraph_callers` over grep/search_files for all symbol-level discovery. See Code Discovery Preference. |
 | Task spans >1 component or project | Dispatch with full project context |
 | Task is pure analysis/research (no code modification) | Dispatch read-only agent at sonnet tier |
 | Investigation spans >2 files or >1 component | Dispatch multiple read-only agents in parallel |
