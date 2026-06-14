@@ -414,6 +414,10 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
             };
             wireTerminalHandlers(terminal);
             terminals.set(t.id, terminal);
+            // Re-attach only: do NOT carry _pendingPrompt or call startInjection.
+            // The original delivery already ran (its prompt_injection_status is in
+            // the event log); a re-attached, already-running session must never be
+            // re-delivered.
             console.log(`Terminal ${t.id}: tmux session ${t.tmux_session} re-attached`);
           } catch (e) {
             interruptedTerminals++;

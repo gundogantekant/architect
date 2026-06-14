@@ -23,7 +23,8 @@
 export async function spawnTerminalSession(deps, params) {
   const {
     ROOT, PORTFOLIO, CLAUDE_BIN, TMUX_AVAILABLE, LOGS_DIR,
-    wireTerminalHandlers, injectPrompt,
+    wireTerminalHandlers, injectPrompt, startInjection,
+    tmuxCapturePane, tmuxPasteStdin, tmuxClearInput, tmuxSendEnter,
     terminals, saveTerminalToDb, termEventLogPath, generateSeedContent,
     EventStream, getAdapter,
     pty,
@@ -87,6 +88,10 @@ export async function spawnTerminalSession(deps, params) {
         'sh', '-c', shellCmd,
       ], { cwd: projectPath, env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO } });
       try { execFileSync('tmux', ['set-option', '-t', tmuxName, '-g', 'mouse', 'on']); } catch {}
+      // Harden against a user's ~/.tmux.conf injecting focus sequences (\x1b[I/O)
+      // or paste-time chunking that would perturb capture comparison.
+      try { execFileSync('tmux', ['set-option', '-t', tmuxName, 'focus-events', 'off']); } catch {}
+      try { execFileSync('tmux', ['set-option', '-t', tmuxName, 'assume-paste-time', '1']); } catch {}
       ptyProcess = pty.spawn('tmux', ['attach-session', '-t', tmuxName], {
         name: 'xterm-256color', cols: 80, rows: 24,
         cwd: projectPath,
@@ -140,6 +145,7 @@ export async function spawnTerminalSession(deps, params) {
     _accumulated: '',
     _pendingPrompt: prompt,
     _readyForPrompt: false,
+    _delivering: false,
     _permissionMode: permissionMode,
     _skipPermissions: skipPermissions,
     _testWorkerId: testWorkerId,
@@ -152,16 +158,25 @@ export async function spawnTerminalSession(deps, params) {
   // Wire handlers BEFORE returning — required constraint
   wireTerminalHandlers(terminal);
 
-  // Fallback: inject prompt if readiness detection never fires.
-  // If injection fails, injectPrompt kills the session and emits session_status:failed —
-  // this path inherits that kill-on-failure behavior automatically; no separate handling needed.
-  const MAX_WAIT = tmuxName ? 8000 : 5000;
-  setTimeout(() => {
-    if (terminal._pendingPrompt && terminal.ptyProcess) {
-      terminal._readyForPrompt = true;
-      injectPrompt(terminal);
-    }
-  }, MAX_WAIT);
+  if (tmuxName) {
+    // tmux path: the capture-based state machine owns delivery + the 8s hard cap.
+    startInjection(terminal, {
+      tmuxCapturePane, tmuxPasteStdin, tmuxClearInput, tmuxSendEnter,
+      injectPrompt,
+      setTimeout, clearTimeout,
+      appendFileSync, termEventLogPath,
+      capMs: 8000,
+    });
+  } else {
+    // Non-tmux fallback: inject prompt if stream-readiness detection never fires.
+    // If injection fails, injectPrompt kills the session and emits session_status:failed.
+    setTimeout(() => {
+      if (terminal._pendingPrompt && terminal.ptyProcess) {
+        terminal._readyForPrompt = true;
+        injectPrompt(terminal);
+      }
+    }, 5000);
+  }
 
   terminals.set(id, terminal);
   try {

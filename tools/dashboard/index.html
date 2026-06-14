@@ -1615,8 +1615,12 @@ function updatePanelMeta(sessionState, key, value) {
       else if (value === 'injecting') indicator.textContent = '⟳ injecting...';
       else if (value === 'done') indicator.textContent = '✓ injected';
       else if (value === 'failed') indicator.textContent = '✗ injection failed';
-      indicator.style.display = value ? '' : 'none';
+      else indicator.textContent = ''; // unknown value → no dead indicator
+      indicator.style.display = value && indicator.textContent ? '' : 'none';
     }
+  } else if (key === 'prompt_injection_detail') {
+    const indicator = panel.querySelector('.injection-indicator');
+    if (indicator) indicator.title = value || '';
   } else if (key === 'status') {
     sessionState.status = value;
     if (value === 'completed' || value === 'failed' || value === 'killed') {

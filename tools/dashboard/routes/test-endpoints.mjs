@@ -452,11 +452,26 @@ export default function testEndpointRoutes(deps) {
         try { appendFileSync(termEventLogPath(id), JSON.stringify(metaEvent) + '\n'); } catch {}
       }
 
-      // Inject prompt injection lifecycle events if requested
+      // Inject prompt injection lifecycle events if requested.
+      // withInjectionEvents: true → legacy injecting/done status pair.
+      // withInjectionEvents: an array → emit each entry verbatim, supporting both
+      // prompt_injection_status and the additive prompt_injection_detail key
+      // (entries may be a plain status string or { status, detail }).
       if (withInjectionEvents) {
-        for (const val of ['injecting', 'done']) {
-          const evt = eventStream.append('meta', { key: 'prompt_injection_status', value: val });
-          try { appendFileSync(termEventLogPath(id), JSON.stringify(evt) + '\n'); } catch {}
+        const steps = Array.isArray(withInjectionEvents)
+          ? withInjectionEvents
+          : ['injecting', 'done'];
+        for (const step of steps) {
+          const status = typeof step === 'string' ? step : step.status;
+          const detail = typeof step === 'string' ? null : step.detail;
+          if (status) {
+            const evt = eventStream.append('meta', { key: 'prompt_injection_status', value: status });
+            try { appendFileSync(termEventLogPath(id), JSON.stringify(evt) + '\n'); } catch {}
+          }
+          if (detail) {
+            const evt = eventStream.append('meta', { key: 'prompt_injection_detail', value: detail });
+            try { appendFileSync(termEventLogPath(id), JSON.stringify(evt) + '\n'); } catch {}
+          }
         }
       }
 
