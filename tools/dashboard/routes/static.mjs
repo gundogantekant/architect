@@ -5,7 +5,7 @@ const MIME_TYPES = {
 };
 
 export default function staticRoutes(deps) {
-  const { readFile, stat, join, __dirname } = deps;
+  const { readFile, stat, join, __dirname, terminals, db } = deps;
   return [
     // Static: index.html (ETag + no-cache to force Chrome revalidation)
     [/^\/$/, 'GET', async (_m, _req, res) => {
@@ -14,6 +14,31 @@ export default function staticRoutes(deps) {
       const mtime = (await stat(htmlPath)).mtimeMs;
       res.writeHead(200, {
         'Content-Type': 'text/html',
+        'Cache-Control': 'no-cache, must-revalidate',
+        'ETag': `"${mtime.toString(36)}"`,
+      });
+      res.end(html);
+    }],
+
+    // Standalone mobile terminal page (/t/<id>). Serves the static, self-contained
+    // page that opens one interactive terminal session. The id is validated against
+    // the live terminals map (DB fallback), but the id is NOT templated into the HTML —
+    // the page reads it client-side from location.pathname.
+    // SECURITY: like the terminal WS, this assumes single-user/local deployment and
+    // performs no per-session ownership or auth check.
+    [/^\/t\/([A-Za-z0-9_-]+)$/, 'GET', async (m, _req, res) => {
+      const id = m[1];
+      const exists = (terminals && terminals.has(id)) || !!(await db.getTerminalById(id).catch(() => null));
+      if (!exists) {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Terminal not found');
+        return;
+      }
+      const htmlPath = join(__dirname, 'standalone-terminal.html');
+      const html = await readFile(htmlPath, 'utf8');
+      const mtime = (await stat(htmlPath)).mtimeMs;
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-cache, must-revalidate',
         'ETag': `"${mtime.toString(36)}"`,
       });

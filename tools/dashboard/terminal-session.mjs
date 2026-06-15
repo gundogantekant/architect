@@ -54,6 +54,9 @@ export async function spawnTerminalSession(deps, params) {
     try { appendFileSync(termEventLogPath(id), jsonlLines.join('\n') + '\n'); } catch {}
   }
 
+  const sessionIdMeta = eventStream.append('meta', { key: 'claude_session_id', value: claudeSessionId });
+  try { appendFileSync(termEventLogPath(id), JSON.stringify(sessionIdMeta) + '\n'); } catch {}
+
   const ptyArgs = adapter.buildArgs(claudeSessionId, {
     permissionMode,
     skipPermissions,
