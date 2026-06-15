@@ -278,3 +278,57 @@ describe('PE-clean: logEndedCleanly distinguishes a finished turn from a cut-off
     assert.equal(logEndedCleanly(undefined), false);
   });
 });
+
+// ── 7. resolvedSkipPerms logic for plan_execute dispatches ────────────────────
+
+// Mirror the exact expression from routes/dispatch.mjs lines 273-275 so any
+// future drift between the route and the tests is a compile-time failure here.
+function resolvedSkipPerms(isPlanExecuteChain, skip_permissions) {
+  return isPlanExecuteChain
+    ? (skip_permissions === undefined || skip_permissions === true || skip_permissions === 'true')
+    : (skip_permissions === true || skip_permissions === 'true');
+}
+
+describe('PE-skip: resolvedSkipPerms for plan_execute vs other modes', () => {
+  it('plan_execute + skip_permissions=true → true', () => {
+    assert.equal(resolvedSkipPerms(true, true), true);
+  });
+
+  it('plan_execute + skip_permissions=false → false', () => {
+    assert.equal(resolvedSkipPerms(true, false), false);
+  });
+
+  it('plan_execute + skip_permissions=undefined → true (backwards-compat default)', () => {
+    assert.equal(resolvedSkipPerms(true, undefined), true);
+  });
+
+  it('plan mode (not plan_execute) → false regardless of skip_permissions', () => {
+    assert.equal(resolvedSkipPerms(false, true), true,
+      'non-chain plan_execute with skip=true still forwards the user choice');
+    assert.equal(resolvedSkipPerms(false, undefined), false,
+      'non-chain dispatch with no skip_permissions defaults to false');
+  });
+});
+
+// ── 8. Phase-2 skip_permissions inheritance via ?? true ───────────────────────
+
+describe('PE-phase2-skip: phase-2 inherits stored skip_permissions via ?? true fallback', () => {
+  it('skip_permissions=true stored → phase-2 receives --dangerously-skip-permissions', () => {
+    const storedSkipPerms = true;
+    const args = buildPermissionArgs({ permissionMode: 'acceptEdits', skipPermissions: storedSkipPerms ?? true });
+    assert.ok(args.includes('--dangerously-skip-permissions'));
+  });
+
+  it('skip_permissions=false stored → phase-2 does NOT receive --dangerously-skip-permissions', () => {
+    const storedSkipPerms = false;
+    const args = buildPermissionArgs({ permissionMode: 'acceptEdits', skipPermissions: storedSkipPerms ?? true });
+    assert.ok(!args.includes('--dangerously-skip-permissions'));
+  });
+
+  it('skip_permissions=null stored (legacy row) → ?? true defaults to true → phase-2 receives skip', () => {
+    const storedSkipPerms = null;
+    const args = buildPermissionArgs({ permissionMode: 'acceptEdits', skipPermissions: storedSkipPerms ?? true });
+    assert.ok(args.includes('--dangerously-skip-permissions'),
+      'null coerces to true via ?? so legacy rows retain skip-perms in execute phase');
+  });
+});

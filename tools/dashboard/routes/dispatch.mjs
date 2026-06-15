@@ -270,7 +270,9 @@ export default function dispatchRoutes(deps) {
       // Resolve permission mode and skip_permissions independently. A plan_execute chain runs
       // phase 1 in plan mode (skip-perms suppressed); phase 2 is spawned later by startExecutePhase.
       const resolvedPermMode = isPlanExecuteChain ? 'plan' : (permission_mode || 'acceptEdits');
-      const resolvedSkipPerms = isPlanExecuteChain ? false : (skip_permissions === true || skip_permissions === 'true');
+      const resolvedSkipPerms = isPlanExecuteChain
+        ? (skip_permissions === undefined || skip_permissions === true || skip_permissions === 'true')
+        : (skip_permissions === true || skip_permissions === 'true');
 
       // --- Dispatch-level worktree creation (W-927) ---
       const featureFlag = ((await db.getPreference('worktree_at_dispatch')) ?? 'true') === 'true';
