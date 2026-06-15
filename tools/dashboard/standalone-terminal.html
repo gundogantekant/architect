@@ -81,6 +81,7 @@
     <div id="keybar">
       <button data-key="esc">Esc</button>
       <button data-key="tab">Tab</button>
+      <button data-key="shift-tab">&#8679;Tab</button>
       <button data-key="ctrl">Ctrl</button>
       <button data-key="up">&#8593;</button>
       <button data-key="down">&#8595;</button>
@@ -184,7 +185,7 @@
     const KEY_BYTES = {
       esc: '\x1b', tab: '\t', enter: '\r',
       up: '\x1b[A', down: '\x1b[B', right: '\x1b[C', left: '\x1b[D',
-      'ctrl-c': '\x03',
+      'ctrl-c': '\x03', 'shift-tab': '\x1b[Z',
     };
 
     // Sticky Ctrl: intercept the next device-keyboard character and convert to its control code.
