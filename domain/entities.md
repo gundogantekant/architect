@@ -671,6 +671,33 @@ Record for a CLI session registered externally via the dashboard API. Read-only 
 }
 ```
 
+## TelegramBridgeConfig
+
+Configuration for the Telegram terminal bridge — relays terminal questions and lifecycle events to a Telegram chat and routes replies back to the waiting terminal. Toggles are stored in `preferences`; the bot token lives in env / a local file (`work/telegram.env`), never in the database.
+
+```json
+{
+  "enabled": "boolean (preference telegram_enabled)",
+  "trigger": "questions|questions_lifecycle (preference telegram_trigger)",
+  "allowlist": "array of number (numeric chat_id permitted inbound)",
+  "default_chat_id": "number (chat_id for outbound notifications)"
+}
+```
+
+## TelegramMessageBinding
+
+Maps an outbound Telegram message to the terminal it notified, so an inbound reply-to message can be routed back to the correct terminal. Stored in the `telegram_messages` table. Bindings are retained for 7 days, then pruned.
+
+```json
+{
+  "message_id": "number (BIGINT, primary key — Telegram message id)",
+  "terminal_id": "string (refs TerminalSession.id, soft reference)",
+  "chat_id": "number (BIGINT)",
+  "kind": "question|lifecycle",
+  "created_at": "string (ISO 8601)"
+}
+```
+
 ## SessionsFile
 
 Sessions are persisted in PostgreSQL tables (`dispatches`, `terminals`, `cli_sessions`). Dispatch output is logged to `work/logs/D-xxx.jsonl` files. On startup, sessions with live PIDs (or tmux sessions) are reconnected; legacy sessions without PIDs are marked `interrupted`. The API returns this shape:

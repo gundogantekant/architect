@@ -6,7 +6,7 @@
     "test": "npx playwright test",
     "test:fast": "npx playwright test --grep @fast",
     "test:dashctl": "bash tests/dashctl.test.sh",
-    "test:unit": "node --test tests/contract-validation.spec.mjs tests/dispatch-factory.spec.mjs tests/findings-coordinator-schema.spec.mjs tests/migrations.test.mjs tests/backup.test.mjs tests/access-guard.test.mjs tests/constants.test.mjs",
+    "test:unit": "node --test tests/contract-validation.spec.mjs tests/dispatch-factory.spec.mjs tests/findings-coordinator-schema.spec.mjs tests/migrations.test.mjs tests/backup.test.mjs tests/access-guard.test.mjs tests/constants.test.mjs tests/telegram-format.test.mjs tests/telegram-detector.test.mjs tests/telegram-bridge.test.mjs tests/inject-into-terminal.test.mjs",
     "test:integration": "node --test tests/ticket-prefix.spec.mjs"
   },
   "dependencies": {

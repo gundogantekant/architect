@@ -1,10 +1,13 @@
 import { appendFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { saveTerminalToDb, archiveSession } from './state.mjs';
 import { termEventLogPath, isPidAlive } from './utils.mjs';
 import { EventStream } from './event-stream.mjs';
 import * as db from './db.mjs';
 import { stripAnsi } from './lib/ansi.mjs';
+
+export const terminalEvents = new EventEmitter();
 
 // Shared terminal handler wiring (used for fresh spawn and restore)
 export function wireTerminalHandlers(terminal) {
@@ -79,6 +82,7 @@ export function wireTerminalHandlers(terminal) {
       try { sub.ws.send(exitMsg); } catch {}
     }
     terminal.eventStream.subscribers.clear();
+    try { terminalEvents.emit('exit', terminal); } catch {}
 
     terminal.ptyProcess = null;
     if (terminal.tmux_session) {
@@ -154,4 +158,13 @@ export async function injectPrompt(terminal) {
       try { process.kill(terminal.pid, 'SIGTERM'); } catch {}
     }
   }
+}
+
+export async function injectIntoTerminal(terminal, prompt) {
+  if (!terminal || terminal.status !== 'running') return { ok: false, reason: 'not_running' };
+  if (terminal._pendingPrompt) return { ok: false, reason: 'busy' };
+  terminal._pendingPrompt = prompt;
+  terminal._readyForPrompt = true;
+  await injectPrompt(terminal);
+  return { ok: true };
 }
