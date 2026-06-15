@@ -101,6 +101,7 @@ export const SPEC_FILES = [
   'terminal-sidebar-label',
   'terminal-session-id',
   'standalone-terminal',
+  'plan-execute-chain',
 ];
 
 function getLiveDashboardPorts() {

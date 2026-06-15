@@ -128,6 +128,9 @@ test('ML-3: status and priority elements share the same parent data-field-group=
 test('ML-4: dispatching via the modal submit button creates a session', async ({ page }) => {
   await openDispatchModal(page);
 
+  // The architect project defaults to plan_execute (headless /api/dispatch). This test stubs
+  // /api/terminal and exercises the interactive path, so explicitly select Accept edits.
+  await page.locator('#dispatch-perm-mode').selectOption('acceptEdits');
   // Submit the dispatch
   await page.click('#modal-dispatch');
 

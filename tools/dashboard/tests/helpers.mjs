@@ -303,6 +303,7 @@ export async function seedDispatch(opts = {}) {
     title: opts.title || id,
     work_item_id: opts.work_item_id || null,
     log_lines: logLines,
+    ...(opts.model !== undefined && { model: opts.model }),
     claude_session_id: opts.claude_session_id || null,
     dispatch_mode: opts.dispatch_mode || 'standard',
     ...(opts.agent_phase !== undefined && { agent_phase: opts.agent_phase }),
@@ -311,6 +312,12 @@ export async function seedDispatch(opts = {}) {
     ...(opts.started_at !== undefined && { started_at: opts.started_at }),
     ...(opts.worktree_path !== undefined && { worktree_path: opts.worktree_path }),
     ...(opts.project_path !== undefined && { project_path: opts.project_path }),
+    ...(opts.pid !== undefined && { pid: opts.pid }),
+    ...(opts.chain_mode !== undefined && { chain_mode: opts.chain_mode }),
+    ...(opts.chain_phase !== undefined && { chain_phase: opts.chain_phase }),
+    ...(opts.chain_autostart !== undefined && { chain_autostart: opts.chain_autostart }),
+    ...(opts.chain_parent_id !== undefined && { chain_parent_id: opts.chain_parent_id }),
+    ...(opts.contract !== undefined && { contract: opts.contract }),
   };
   const res = await api('test/seed-dispatch', {
     method: 'POST',

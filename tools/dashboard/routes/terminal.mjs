@@ -23,11 +23,17 @@ export default function terminalRoutes(deps) {
     // Create terminal session
     [/^\/api\/terminal$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { work_item_id, epic_id, project_key, org_key, title, description, additional_instructions, skip_permissions, permission_mode, agentType: bodyAgentType, skip_seed, contract: rawTermContract, model: bodyModel } = body;
+      const { work_item_id, epic_id, project_key, org_key, title, description, additional_instructions, skip_permissions, permission_mode, agentType: bodyAgentType, skip_seed, contract: rawTermContract, model: bodyModel, dispatch_mode } = body;
       const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
       const model = validateModel(bodyModel);
 
       if (!project_key && !org_key) return err(res, 'project_key or org_key is required', 400);
+      // plan_execute is a headless two-phase chained dispatch (plan → --resume execute) that
+      // lives on /api/dispatch + dispatch-manager. The interactive PTY path cannot chain it, so
+      // refuse it loudly rather than silently running plan-only phase 1 with no execute phase.
+      if (dispatch_mode === 'plan_execute') {
+        return err(res, 'plan_execute is a headless dispatch mode; route to /api/dispatch', 400);
+      }
 
       const agentType = bodyAgentType || 'claude';
       let adapter;

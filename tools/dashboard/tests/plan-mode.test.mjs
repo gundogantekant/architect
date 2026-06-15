@@ -30,11 +30,14 @@ describe('PM-1: CLI flag passed when plan mode selected', () => {
     assert.equal(args[idx + 1], 'acceptEdits');
   });
 
-  it('defaults to acceptEdits when no permissionMode provided', () => {
-    const args = claudeAdapter.buildArgs('session-123', {});
-    const idx = args.indexOf('--permission-mode');
-    assert.ok(idx >= 0);
-    assert.equal(args[idx + 1], 'acceptEdits');
+  it('throws when no permissionMode provided (throw-on-unknown contract, not silent coerce)', () => {
+    // Per plan Success #5 + domain/rules.md → Permission Mode Rules, buildPermissionArgs throws
+    // on an unrecognized mode rather than coercing to acceptEdits. Every production caller
+    // resolves an explicit mode before reaching here, so this only fires on a routing bug.
+    assert.throws(
+      () => claudeAdapter.buildArgs('session-123', {}),
+      /unsupported permissionMode/,
+    );
   });
 
   it('does NOT include --dangerously-skip-permissions in plan mode even when skip requested (plan supersedes skip)', () => {
@@ -70,9 +73,11 @@ describe('buildPermissionArgs: plan supersedes skip-permissions', () => {
     assert.deepEqual(args, ['--permission-mode', 'plan']);
   });
 
-  it('undefined mode defaults to acceptEdits', () => {
-    const args = buildPermissionArgs({ skipPermissions: false });
-    assert.deepEqual(args, ['--permission-mode', 'acceptEdits']);
+  it('undefined mode throws (throw-on-unknown replaces the old coerce-to-acceptEdits)', () => {
+    assert.throws(
+      () => buildPermissionArgs({ skipPermissions: false }),
+      /unsupported permissionMode/,
+    );
   });
 });
 

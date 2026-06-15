@@ -33,7 +33,13 @@ const MODEL_ALIASES = {
   haiku:  'claude-haiku-4-5-20251001',
 };
 
+const RESOLVED_MODELS = new Set(Object.values(MODEL_ALIASES));
+
+// Idempotent: accepts a short alias ('opus') or an already-resolved id ('claude-opus-4-8').
+// A resolved id passes through unchanged so re-validating a persisted model (e.g. when a
+// plan_execute phase-2 inherits its phase-1 model) does not silently fall back to sonnet.
 export function validateModel(value) {
+  if (RESOLVED_MODELS.has(value)) return value;
   return MODEL_ALIASES[value] ?? MODEL_ALIASES.sonnet;
 }
 

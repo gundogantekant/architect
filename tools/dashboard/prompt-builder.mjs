@@ -469,6 +469,17 @@ function buildPlanOnlySection() {
   }
 }
 
+// Phase-2 prompt for a plan_execute chain. Resumes the plan-phase session with full edit
+// permissions and instructs the agent to implement the already-approved plan in place.
+export function buildExecutePhaseSection() {
+  return [
+    '# Execute Phase',
+    '',
+    'Your plan from the previous turn is approved. Implement it now with full edit permissions, inside this worktree.',
+    'Do not re-plan. Honor your scope_boundary/stop_conditions. Follow the architect merge/commit rules.',
+  ].join('\n');
+}
+
 export function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInstructions, portfolio, epicContext, relatedProjects, orgContext, worktreeContext, contract, planMode = false }) {
   const sections = [];
 

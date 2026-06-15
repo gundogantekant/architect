@@ -120,6 +120,23 @@ These rules apply to ALL workflow patterns, not only `parallel-fan-out`:
 
 Plan mode supersedes skip-permissions. The `--dangerously-skip-permissions` flag is **never** emitted when the permission mode is `plan`, because that flag is equivalent to `bypassPermissions` and would defeat plan mode — the agent would execute actions instead of only planning. When the permission mode is `plan`, the spawn argv carries `--permission-mode plan` and nothing else permission-related; `--dangerously-skip-permissions` is emitted only when the mode is not `plan` and skip-permissions is requested.
 
+The arg builder (`buildPermissionArgs`) accepts only the flag-level modes `plan` and `acceptEdits` and **throws** on any other value. It must never silently coerce an unrecognized mode — a coercion would mask a routing bug and risk an unintended bypass.
+
+### Plan-Then-Execute (chained)
+
+`plan_execute` is a **dashboard-only chain mode**, not a flag mode. It is **never** written to the `permission_mode` column and **never** emitted as a `--permission-mode` value. It is realized as two separate `claude` processes so the per-process invariant above is never violated:
+
+- **Phase 1 (plan)** — a normal plan-only process: `--permission-mode plan`, no skip-perms, plan-only prompt injected. The agent produces a plan and exits. Persisted with `permission_mode='plan'`, `chain_mode='plan_execute'`, `chain_phase='plan'`.
+- **Phase 2 (execute)** — a separate process that resumes the same claude session (`--resume <claude_session_id>`) with `--permission-mode acceptEdits --dangerously-skip-permissions`, running in the **same isolated worktree** as phase 1. A new dispatch record is created with `chain_phase='execute'` and `chain_parent_id` set to the phase-1 id. The execute-phase prompt instructs the agent to implement its approved plan and not re-plan.
+
+Combining `--permission-mode plan` with `--dangerously-skip-permissions` on a single process is forbidden (claude bug #17544: skip-perms silently overrides plan mode → full bypass with no planning gate). The two-process split is the only feasible mechanism.
+
+**Isolation**: a `plan_execute` chain always runs in a git worktree, created up front at phase-1 dispatch time and evaluated against the chain's *effective* mode (`acceptEdits`), even though phase 1 is plan mode. Both phases pin `cwd` to that worktree. The chain must carry a minimal DispatchContract with a `scope_boundary` so the scope-violation detector fires on the autonomous phase; autostart is refused without it.
+
+**Autostart vs gated**: when `chain_autostart=true` (and a `scope_boundary` is present, the claude session is captured, and the session is not revoked), phase 2 spawns automatically from the live in-process close handler on phase-1 completion. When `chain_autostart=false`, phase-1 completion sets `status='execute_pending'` (a durable checkpoint) and phase 2 is spawned only by `POST /api/dispatch/:id/execute`. Restart recovery of a cleanly-finished phase-1 also lands at `execute_pending` — autostart never fires from restore. A missing/revoked session at transition time fails loudly (`status='failed'`), never an unscoped spawn.
+
+**Default**: the architect project (`ticari/architect/main`) defaults to `plan_execute` with autostart on (`plan_execute_autostart='true'`); other projects keep `acceptEdits`. `plan_execute` is supported only on the standard `/api/dispatch` route — the `/auto-implement` route hardwires `acceptEdits` and is out of scope.
+
 ## Plan-Only Dispatch
 
 When an agent is dispatched in plan mode it produces a plan and stops. The following directive is injected at the top of the dispatch prompt and takes precedence over any implementation-oriented guidance elsewhere in the prompt:

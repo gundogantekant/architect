@@ -232,6 +232,9 @@ test('M-3-3: dispatchWorkItem submit creates session and closes modal', async ({
   await page.click('.dispatch-btn[data-wi-idx]');
   await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
 
+  // The architect project defaults to plan_execute (headless /api/dispatch). This test
+  // exercises the interactive dispatch path, so explicitly select Accept edits.
+  await page.locator('#dispatch-perm-mode').selectOption('acceptEdits');
   await page.click('#modal-dispatch');
 
   await expect(page.locator('.modal-overlay')).not.toBeVisible({ timeout: 8000 });
@@ -413,6 +416,9 @@ test('M-6-3: showQuickDispatchModal submit creates session and closes modal', as
   await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
 
   await page.fill('#qd-instructions', 'Quick dispatch test for modal lifecycle');
+  // When the pre-selected project is architect, the mode defaults to plan_execute (headless
+  // /api/dispatch). This test exercises the interactive path, so select Accept edits.
+  await page.locator('#qd-perm-mode').selectOption('acceptEdits');
   await page.click('#qd-go');
 
   await expect(page.locator('.modal-overlay')).not.toBeVisible({ timeout: 8000 });
