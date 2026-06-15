@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Terminal</title>
   <link rel="stylesheet" href="/vendor/xterm.css">
   <style>
@@ -40,8 +40,12 @@
     #term-container,
     #term-container .xterm,
     #term-container .xterm-viewport {
-      touch-action: none;
-      overscroll-behavior: none;
+      touch-action: pan-y pinch-zoom;
+      overscroll-behavior: contain;
+    }
+    #term-container .xterm-screen {
+      transform: translateZ(0);
+      -webkit-transform: translateZ(0);
     }
     #keybar {
       flex: 0 0 auto;
@@ -107,6 +111,7 @@
       fontSize: 12,
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       scrollback: 50000,
+      theme: { background: '#1e1e1e', foreground: '#d0d0d0' },
     });
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
@@ -225,38 +230,6 @@
       }
       term.focus();
     });
-
-    // Touch scrollback: xterm.js has no native touch scrolling, so map one-finger
-    // drag distance to scrollLines(). Drag down reveals earlier history.
-    const TAP_SLOP = 10;
-    let touchY = null;
-    let touchAccum = 0;
-    let isScrollGesture = false;
-
-    containerEl.addEventListener('touchstart', (e) => {
-      if (e.touches.length !== 1) { touchY = null; return; }
-      touchY = e.touches[0].clientY;
-      touchAccum = 0;
-      isScrollGesture = false;
-    }, { passive: true });
-
-    containerEl.addEventListener('touchmove', (e) => {
-      if (touchY === null || e.touches.length !== 1) return;
-      const y = e.touches[0].clientY;
-      touchAccum += y - touchY;
-      touchY = y;
-      if (!isScrollGesture && Math.abs(touchAccum) < TAP_SLOP) return;
-      isScrollGesture = true;
-      e.preventDefault();
-      const rowPx = (term.rows > 0 ? containerEl.clientHeight / term.rows : 0) || 18;
-      const lines = Math.trunc(touchAccum / rowPx);
-      if (lines !== 0) {
-        term.scrollLines(-lines);
-        touchAccum -= lines * rowPx;
-      }
-    }, { passive: false });
-
-    containerEl.addEventListener('touchend', () => { touchY = null; }, { passive: true });
 
     let resizeTimer = null;
     const ro = new ResizeObserver(() => {
