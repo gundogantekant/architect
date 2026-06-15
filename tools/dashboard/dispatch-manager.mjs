@@ -14,6 +14,7 @@ import { getAdapter } from './adapters/index.mjs';
 import { buildPermissionArgs } from './permission-args.mjs';
 import { createResumeDispatch } from './utils/dispatch-factory.mjs';
 import { validateModel } from './utils.mjs';
+import { classifyDispatchClose } from './session-status.mjs';
 import pty from 'node-pty';
 
 // --- Project sync from portfolio registry ---
@@ -729,6 +730,19 @@ export function wireDispatchHandlers(dispatch, proc) {
       return;
     }
 
+    // Guard: if the dispatch was deliberately suspended before this close fired, preserve
+    // the suspended status. The suspend endpoint already set status, completed_at, broadcast
+    // done, and persisted — there is nothing left to do except release handles.
+    // exit_type is intentionally NOT written: no existing bucket describes a suspended exit.
+    const classification = classifyDispatchClose(dispatch, code);
+    if (classification.preserve) {
+      console.log(`[dispatch close] preserving suspended status for ${dispatch.id}`);
+      dispatch.process = null;
+      if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
+      if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
+      return;
+    }
+
     // User initiated a graceful interrupt (POST /interrupt sent SIGINT).
     // Classify exit_type explicitly for observability. Fall through to normal DB write path.
     if (dispatch._gracefulInterrupt) {
@@ -739,30 +753,12 @@ export function wireDispatchHandlers(dispatch, proc) {
       }
     }
 
-    // Classify exit type before overwriting status.
-    // _killedIntentionally is set by the DELETE endpoint before sending SIGTERM.
-    // _timedOut is set by killOnTimeout before sending SIGTERM.
-    if (dispatch._killedIntentionally) {
-      dispatch.exit_type = 'killed';
-    } else if (dispatch._timedOut) {
-      dispatch.exit_type = 'timeout';
-    } else if (code === 0) {
-      dispatch.exit_type = 'graceful';
-    } else {
-      // Non-zero exit without intentional kill: crash, SIGKILL, OOM, or other ungraceful termination.
-      dispatch.exit_type = 'interrupted';
-    }
+    dispatch.exit_type = classification.exit_type;
     db.updateDispatchExitType(dispatch.id, dispatch.exit_type).catch(e =>
       console.error('[dispatch close] updateDispatchExitType:', e.message)
     );
 
-    // User-initiated interrupt: set status 'interrupted' so the session appears in the
-    // recovery surface and is restartable. Kill intent overrides (status = 'killed' below).
-    if (dispatch._gracefulInterrupt && !dispatch._killedIntentionally) {
-      dispatch.status = 'interrupted';
-    } else {
-      dispatch.status = code === 0 ? 'completed' : 'failed';
-    }
+    dispatch.status = classification.status;
     if (code === 0 && dispatch.dispatch_mode === 'auto_implement') {
       dispatch._exitedWithoutSignal = true;
     }

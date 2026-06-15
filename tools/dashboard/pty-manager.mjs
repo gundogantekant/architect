@@ -6,6 +6,7 @@ import { termEventLogPath, isPidAlive } from './utils.mjs';
 import { EventStream } from './event-stream.mjs';
 import * as db from './db.mjs';
 import { stripAnsi } from './lib/ansi.mjs';
+import { classifyTerminalExit } from './session-status.mjs';
 
 export const terminalEvents = new EventEmitter();
 
@@ -68,7 +69,18 @@ export function wireTerminalHandlers(terminal) {
   });
 
   terminal.ptyProcess.onExit(({ exitCode }) => {
-    terminal.status = exitCode === 0 ? 'completed' : 'failed';
+    // Guard: if the terminal was deliberately suspended before this exit fired, preserve
+    // the suspended status. The suspend endpoint already broadcast {type:'suspended'},
+    // closed subscribers, reaped tmux, archived, and persisted — repeating those steps
+    // would emit a stale meta event and duplicate writes.
+    const { status, preserve } = classifyTerminalExit(terminal.status, exitCode);
+    if (preserve) {
+      console.log(`[onExit] preserving suspended status for ${terminal.id}`);
+      terminal.ptyProcess = null;
+      return;
+    }
+
+    terminal.status = status;
     terminal.exited_at = new Date().toISOString();
 
     // Emit meta exit event
