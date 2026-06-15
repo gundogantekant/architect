@@ -37,6 +37,12 @@
       min-height: 0;
       width: 100%;
     }
+    #term-container,
+    #term-container .xterm,
+    #term-container .xterm-viewport {
+      touch-action: none;
+      overscroll-behavior: none;
+    }
     #keybar {
       flex: 0 0 auto;
       display: flex;
@@ -218,6 +224,38 @@
       }
       term.focus();
     });
+
+    // Touch scrollback: xterm.js has no native touch scrolling, so map one-finger
+    // drag distance to scrollLines(). Drag down reveals earlier history.
+    const TAP_SLOP = 10;
+    let touchY = null;
+    let touchAccum = 0;
+    let isScrollGesture = false;
+
+    containerEl.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) { touchY = null; return; }
+      touchY = e.touches[0].clientY;
+      touchAccum = 0;
+      isScrollGesture = false;
+    }, { passive: true });
+
+    containerEl.addEventListener('touchmove', (e) => {
+      if (touchY === null || e.touches.length !== 1) return;
+      const y = e.touches[0].clientY;
+      touchAccum += y - touchY;
+      touchY = y;
+      if (!isScrollGesture && Math.abs(touchAccum) < TAP_SLOP) return;
+      isScrollGesture = true;
+      e.preventDefault();
+      const rowPx = (term.rows > 0 ? containerEl.clientHeight / term.rows : 0) || 18;
+      const lines = Math.trunc(touchAccum / rowPx);
+      if (lines !== 0) {
+        term.scrollLines(-lines);
+        touchAccum -= lines * rowPx;
+      }
+    }, { passive: false });
+
+    containerEl.addEventListener('touchend', () => { touchY = null; }, { passive: true });
 
     let resizeTimer = null;
     const ro = new ResizeObserver(() => {
