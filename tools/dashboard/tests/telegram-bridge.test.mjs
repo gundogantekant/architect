@@ -82,7 +82,9 @@ function buildHandle(overrides = {}) {
     db,
     config: {
       enabled: false,
-      trigger: 'questions',
+      notify_questions: true,
+      notify_idle: false,
+      notify_lifecycle: false,
       allowlist: [ALLOWED_CHAT],
       default_chat_id: ALLOWED_CHAT,
       ...overrides.config,
@@ -168,6 +170,75 @@ describe('telegram bridge inbound loop', () => {
   });
 });
 
+describe('telegram bridge notification gating', () => {
+  function buildGated(config) {
+    const client = fakeClient();
+    const db = fakeDb();
+    const terminalEvents = fakeTerminalEvents();
+    let callbacks = null;
+    const handle = startTelegramBridge({
+      client,
+      terminals: new Map(),
+      injectIntoTerminal: async () => ({ ok: true }),
+      terminalEvents,
+      makeDetector: (cbs) => { callbacks = cbs; return fakeDetector(); },
+      db,
+      config: { enabled: true, allowlist: [ALLOWED_CHAT], default_chat_id: ALLOWED_CHAT, ...config },
+      setTimeoutFn: (fn) => setTimeout(fn, 0),
+      setIntervalFn: () => 0,
+      clearIntervalFn: () => {},
+      logger: { warn() {} },
+    });
+    return { client, terminalEvents, callbacks, handle };
+  }
+
+  const terminal = { id: 'T-7', status: 'exited' };
+
+  it('suppresses an idle event when notify_idle is false', async () => {
+    const { client, callbacks, handle } = buildGated({ notify_questions: true, notify_idle: false });
+    await callbacks.onNeedsInput(terminal, 'idle text', 'idle');
+    handle.stop();
+    assert.equal(client.sent.length, 0);
+  });
+
+  it('sends an idle event when notify_idle is true', async () => {
+    const { client, callbacks, handle } = buildGated({ notify_questions: true, notify_idle: true });
+    await callbacks.onNeedsInput(terminal, 'idle text', 'idle');
+    handle.stop();
+    assert.equal(client.sent.length, 1);
+  });
+
+  it('sends a question event when notify_questions is true', async () => {
+    const { client, callbacks, handle } = buildGated({ notify_questions: true, notify_idle: false });
+    await callbacks.onNeedsInput(terminal, 'q text', 'question');
+    handle.stop();
+    assert.equal(client.sent.length, 1);
+  });
+
+  it('suppresses a question event when notify_questions is false', async () => {
+    const { client, callbacks, handle } = buildGated({ notify_questions: false, notify_idle: false });
+    await callbacks.onNeedsInput(terminal, 'q text', 'question');
+    handle.stop();
+    assert.equal(client.sent.length, 0);
+  });
+
+  it('does not emit a lifecycle ping on exit when notify_lifecycle is false', async () => {
+    const { client, terminalEvents, handle } = buildGated({ notify_lifecycle: false });
+    terminalEvents.emit('exit', terminal);
+    await new Promise(r => setTimeout(r, 5));
+    handle.stop();
+    assert.equal(client.sent.length, 0);
+  });
+
+  it('emits a lifecycle ping on exit when notify_lifecycle is true', async () => {
+    const { client, terminalEvents, handle } = buildGated({ notify_lifecycle: true });
+    terminalEvents.emit('exit', terminal);
+    await new Promise(r => setTimeout(r, 5));
+    handle.stop();
+    assert.equal(client.sent.length, 1);
+  });
+});
+
 describe('telegram bridge startup reclassification', () => {
   it('emits a question ping for an already-waiting terminal on start', async () => {
     const client = fakeClient();
@@ -188,7 +259,7 @@ describe('telegram bridge startup reclassification', () => {
       terminalEvents: fakeTerminalEvents(),
       makeDetector: () => detector,
       db,
-      config: { enabled: true, trigger: 'questions', allowlist: [ALLOWED_CHAT], default_chat_id: ALLOWED_CHAT },
+      config: { enabled: true, notify_questions: true, notify_idle: false, notify_lifecycle: false, allowlist: [ALLOWED_CHAT], default_chat_id: ALLOWED_CHAT },
       setTimeoutFn: () => 0,
       setIntervalFn: () => 0,
       clearIntervalFn: () => {},
