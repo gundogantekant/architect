@@ -104,4 +104,79 @@ test.describe('Standalone mobile terminal @fast', () => {
     expect(hasBackTab).toBe(true);
   });
 
+  test('ST-5: viewport meta allows pinch-zoom (no maximum-scale / user-scalable=no)', async () => {
+    const t = await seedTerminal({ skip_seed: true });
+    const resp = await fetch(`${getBase()}/t/${t.id}`);
+    expect(resp.status).toBe(200);
+    const body = await resp.text();
+    // Must declare a device-width viewport so the page is mobile-friendly.
+    expect(body).toContain('width=device-width');
+    // Must NOT lock zoom — these attributes prevent pinch-zoom on mobile.
+    expect(body).not.toContain('maximum-scale');
+    expect(body).not.toContain('user-scalable=no');
+  });
+
+  test('ST-6: .xterm-viewport touch-action allows pan-y and pinch-zoom', async ({ page }) => {
+    const t = await seedTerminal({ skip_seed: true });
+    await page.goto(getBase() + '/t/' + t.id);
+    await page.waitForSelector('.xterm-viewport', { timeout: 15_000 });
+
+    const touchAction = await page.evaluate(() =>
+      getComputedStyle(document.querySelector('.xterm-viewport')).touchAction
+    );
+
+    // Must not be 'none' — that would block all touch interaction.
+    expect(touchAction).not.toBe('none');
+    // Must allow vertical panning so native momentum scrolling works on iOS/Android.
+    expect(touchAction.includes('pan-y')).toBe(true);
+    // Must allow pinch-zoom so the user can zoom the terminal content.
+    expect(touchAction.includes('pinch-zoom')).toBe(true);
+  });
+
+  test('ST-7: .xterm-viewport is a native scroll container', async ({ page }) => {
+    const t = await seedTerminal({ skip_seed: true });
+    await page.goto(getBase() + '/t/' + t.id);
+    await page.waitForSelector('.xterm-viewport', { timeout: 15_000 });
+
+    // scrollHeight must be a positive integer — proves the element is a scroll container.
+    const scrollHeight = await page.evaluate(() =>
+      document.querySelector('.xterm-viewport').scrollHeight
+    );
+    expect(typeof scrollHeight).toBe('number');
+    expect(scrollHeight).toBeGreaterThan(0);
+
+    // Conditional scroll-position test: only meaningful when there is overflow to scroll.
+    const hasOverflow = await page.evaluate(() => {
+      const vp = document.querySelector('.xterm-viewport');
+      return vp.scrollHeight > vp.clientHeight;
+    });
+
+    if (hasOverflow) {
+      // Reset to top, confirm position, then scroll down and confirm it moved.
+      await page.evaluate(() => { document.querySelector('.xterm-viewport').scrollTop = 0; });
+      const topBefore = await page.evaluate(() =>
+        document.querySelector('.xterm-viewport').scrollTop
+      );
+      expect(topBefore).toBe(0);
+
+      await page.evaluate(() => { document.querySelector('.xterm-viewport').scrollTop = 999; });
+      const topAfter = await page.evaluate(() =>
+        document.querySelector('.xterm-viewport').scrollTop
+      );
+      // scrollTop must have moved — proves the native scroll path is wired.
+      expect(topAfter).toBeGreaterThan(0);
+    }
+  });
+
+  test('ST-8: page source does not contain deleted custom touch-scroll handler', async () => {
+    const t = await seedTerminal({ skip_seed: true });
+    const resp = await fetch(`${getBase()}/t/${t.id}`);
+    expect(resp.status).toBe(200);
+    const body = await resp.text();
+    // scrollLines was the custom touch handler that hijacked native scroll.
+    expect(body).not.toContain('scrollLines');
+    // TAP_SLOP was a constant used by the deleted touch handler.
+    expect(body).not.toContain('TAP_SLOP');
+  });
+
 });
