@@ -10,6 +10,12 @@
 
 import {
   buildNotification,
+  buildQuestionNotification,
+  confirmMsg,
+  cancelledMsg,
+  expiredMsg,
+  selectedMsg,
+  staleScreenMsg,
   resolveTarget,
   deliveredMsg,
   busyMsg,
@@ -17,11 +23,16 @@ import {
   unresolvedMsg,
   sessionsListMsg,
 } from './format.mjs';
+import { extractQuestion } from './detector.mjs';
+import { classifyClaudeScreen } from '../injection/claude-tmux.mjs';
 
 const PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const PRUNE_MAX_AGE_DAYS = 7;
 const POLL_TIMEOUT_SECONDS = 25;
 const POLL_ERROR_BACKOFF_MS = 3000;
+const PENDING_TTL_MS = 5 * 60 * 1000;
+const AFFIRM = /^(ok|yes|y|✅|confirm|go)$/i;
+const CANCEL = /^(cancel|stop|no|n)$/i;
 const START_HELP =
   'Reply to a notification to answer that session. Use T-id: text to target a session, /sessions to list waiting sessions.';
 
@@ -79,6 +90,11 @@ export function startTelegramBridge(deps) {
     makeDetector,
     db,
     config,
+    explainQuestion,
+    mapReplyToDecision,
+    sendKeysToTerminal,
+    capturePane,
+    nowFn = () => Date.now(),
     setTimeoutFn = setTimeout,
     setIntervalFn = setInterval,
     clearIntervalFn = clearInterval,
@@ -118,12 +134,39 @@ export function startTelegramBridge(deps) {
     return config.notify_questions === true;
   }
 
-  async function onNeedsInput(terminal, questionText, kind = 'question') {
+  async function sendQuestion(terminal) {
+    const chatId = defaultChatId();
+    if (chatId === undefined || chatId === null) return;
+    const explained = await explainQuestion({
+      prompt: terminal._tgPrompt,
+      options: terminal._tgOptions,
+      projectKey: terminal.project_key,
+      workItemId: terminal.work_item_id,
+    });
+    const sent = await client.sendMessage({
+      chat_id: chatId,
+      text: buildQuestionNotification(terminal, explained, terminal._tgOptions, terminal._tgQuestion),
+    });
+    const messageId = sent?.message_id;
+    if (messageId === undefined) return;
+    await db.saveTelegramBinding({
+      message_id: messageId,
+      terminal_id: terminal.id,
+      chat_id: chatId,
+      kind: 'question',
+    });
+  }
+
+  async function onNeedsInput(terminal, question, kind = 'question') {
     waiting.add(terminal.id);
-    terminal._tgQuestion = questionText;
+    terminal._tgQuestion = question.text;
+    terminal._tgPrompt = question.prompt;
+    terminal._tgOptions = question.options;
+    terminal._tgAnswerKind = question.answerKind;
     if (!kindIsNotifiable(kind)) return;
     try {
-      await notify(terminal, 'question', questionText, 'question');
+      if (kind === 'idle') await notify(terminal, 'question', question.text, 'question');
+      else await sendQuestion(terminal);
     } catch (e) {
       logger.warn(`[telegram] question notify failed: ${e.message}`);
     }
@@ -157,11 +200,87 @@ export function startTelegramBridge(deps) {
     }
   }
 
-  async function handleInjection(update, target) {
+  function unresolvedAnswerMsg(terminal) {
+    return buildQuestionNotification(terminal, null, terminal._tgOptions || [], terminal._tgQuestion);
+  }
+
+  function optionLabel(terminal, index) {
+    return ((terminal._tgOptions || []).find(o => o.n === index) || {}).label;
+  }
+
+  async function actuateMenu(update, terminal, decision) {
+    const capture = await capturePane(terminal);
+    const screenMoved =
+      classifyClaudeScreen(capture) !== 'dialog' ||
+      extractQuestion(capture).options.length !== (terminal._tgOptions || []).length;
+    if (screenMoved) {
+      waiting.delete(terminal.id);
+      await replyTo(update, staleScreenMsg(terminal.id));
+      return;
+    }
+    await sendKeysToTerminal(terminal, [String(decision.index)]);
+    await sendKeysToTerminal(terminal, ['Enter']);
+    waiting.delete(terminal.id);
+    await replyTo(update, selectedMsg(terminal.id, decision.index, optionLabel(terminal, decision.index)));
+  }
+
+  async function actuateText(update, terminal, decision, kind) {
+    const text = decision.type === 'text' ? decision.value : String(decision.index);
+    const result = await injectIntoTerminal(terminal, text);
+    if (result.ok) {
+      waiting.delete(terminal.id);
+      await replyTo(update, selectedMsg(terminal.id, null, text));
+      return;
+    }
+    await replyTo(update, injectionReply(kind, terminal.id, result));
+  }
+
+  async function actuate(update, terminal, decision, kind) {
+    if (!terminal || terminal.status !== 'running') {
+      await replyTo(update, exitedMsg(terminal?.id ?? 'session'));
+      return;
+    }
+    if (terminal._tgAnswerKind === 'menu') {
+      await actuateMenu(update, terminal, decision);
+      return;
+    }
+    await actuateText(update, terminal, decision, kind);
+  }
+
+  async function handleAnswer(update, target) {
     const terminal = terminals.get(target.terminalId);
-    const result = await injectIntoTerminal(terminal, target.text);
-    if (result.ok) waiting.delete(target.terminalId);
-    await replyTo(update, injectionReply(target.kind, target.terminalId, result));
+    const text = target.text;
+    const pending = terminal?._tgPending;
+    if (pending && nowFn() > pending.expiresAt) {
+      delete terminal._tgPending;
+      await replyTo(update, expiredMsg(terminal, terminal._tgOptions || []));
+      return;
+    }
+    if (pending && AFFIRM.test(text.trim())) {
+      await actuate(update, terminal, pending.decision, target.kind);
+      delete terminal._tgPending;
+      return;
+    }
+    if (pending && CANCEL.test(text.trim())) {
+      delete terminal._tgPending;
+      await replyTo(update, cancelledMsg(terminal.id));
+      return;
+    }
+    const decision = await mapReplyToDecision(text, {
+      prompt: terminal?._tgPrompt || '',
+      options: terminal?._tgOptions || [],
+    });
+    if (decision.type === 'option') {
+      terminal._tgPending = { decision, expiresAt: nowFn() + PENDING_TTL_MS };
+      await replyTo(update, confirmMsg(terminal, decision.index, optionLabel(terminal, decision.index)));
+      return;
+    }
+    if (decision.type === 'text') {
+      terminal._tgPending = { decision, expiresAt: nowFn() + PENDING_TTL_MS };
+      await replyTo(update, confirmMsg(terminal, null, decision.value));
+      return;
+    }
+    await replyTo(update, unresolvedAnswerMsg(terminal));
   }
 
   async function handleCommand(update, target) {
@@ -175,7 +294,7 @@ export function startTelegramBridge(deps) {
 
   async function dispatchTarget(update, target) {
     if (target.kind === 'reply' || target.kind === 'single' || target.kind === 'prefix') {
-      await handleInjection(update, target);
+      await handleAnswer(update, target);
       return;
     }
     if (target.kind === 'command') {
@@ -234,7 +353,7 @@ export function startTelegramBridge(deps) {
       detector.track(terminal);
       try {
         const result = await detector.scanOnce(terminal);
-        if (result?.fired) await onNeedsInput(terminal, result.questionText, result.kind);
+        if (result?.fired) await onNeedsInput(terminal, result.question, result.kind);
       } catch (e) {
         logger.warn(`[telegram] startup scan failed: ${e.message}`);
       }

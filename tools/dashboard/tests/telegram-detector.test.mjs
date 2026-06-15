@@ -13,6 +13,7 @@ import {
   createQuestionDetector,
   nextDetectorState,
   extractQuestionText,
+  extractQuestion,
 } from '../telegram/detector.mjs';
 
 const RULE = '────────────────────────────────────────────────────────────────────────────────';
@@ -59,7 +60,8 @@ describe('nextDetectorState', () => {
     assert.equal(results[1].fired, true);
     assert.equal(results[1].state, 'dialog');
     assert.equal(results[1].kind, 'question');
-    assert.ok(results[1].questionText.includes('Do you trust'));
+    assert.ok(results[1].question.text.includes('Do you trust'));
+    assert.equal(results[1].question.answerKind, 'menu');
     assert.equal(results[2].fired, false);
   });
 
@@ -68,6 +70,8 @@ describe('nextDetectorState', () => {
     const firedFlags = results.map(r => r.fired);
     assert.deepEqual(firedFlags, [false, false, true, false]);
     assert.equal(results[2].kind, 'idle');
+    assert.equal(results[2].question.answerKind, 'text');
+    assert.deepEqual(results[2].question.options, []);
   });
 
   it('does not extra-fire or suppress when a spinner line above the composer changes', () => {
@@ -83,7 +87,7 @@ describe('nextDetectorState', () => {
     assert.equal(results[1].fired, false);
     assert.equal(results[1].cleared, true);
     assert.equal(results[2].fired, true);
-    assert.ok(results[2].questionText.includes('Select login method'));
+    assert.ok(results[2].question.text.includes('Select login method'));
   });
 
   it('re-arms when a dialog clears straight to an input composer', () => {
@@ -115,6 +119,33 @@ describe('extractQuestionText', () => {
   });
 });
 
+describe('extractQuestion', () => {
+  it('parses a dialog into prompt plus numbered options', () => {
+    const q = extractQuestion(DIALOG_LOGIN);
+    assert.equal(q.kind, 'dialog');
+    assert.ok(q.prompt.includes('Select login method'));
+    assert.deepEqual(q.options, [
+      { n: 1, label: 'Claude account with subscription' },
+      { n: 2, label: 'Anthropic Console account' },
+    ]);
+  });
+
+  it('strips the ❯ selector arrow from the selected option label', () => {
+    const q = extractQuestion(DIALOG_TRUST);
+    assert.deepEqual(q.options, [
+      { n: 1, label: 'Yes, proceed' },
+      { n: 2, label: 'No, exit' },
+    ]);
+  });
+
+  it('returns kind input with empty options for an input screen', () => {
+    const q = extractQuestion(INPUT_IDLE);
+    assert.equal(q.kind, 'input');
+    assert.deepEqual(q.options, []);
+    assert.ok(q.prompt.includes('❯'));
+  });
+});
+
 describe('createQuestionDetector scanOnce', () => {
   function fakeTmux(sequence) {
     let i = 0;
@@ -141,10 +172,13 @@ describe('createQuestionDetector scanOnce', () => {
     assert.equal(r1.fired, false);
     assert.equal(r2.fired, true);
     assert.equal(r2.kind, 'idle');
+    assert.equal(r2.question.answerKind, 'text');
     assert.equal(r3.fired, false);
     assert.equal(needs.length, 1);
     assert.equal(needs[0].id, 'T-1');
     assert.equal(needs[0].kind, 'idle');
+    assert.equal(needs[0].q.answerKind, 'text');
+    assert.deepEqual(needs[0].q.options, []);
     detector.untrack(terminal.id);
   });
 
@@ -153,7 +187,7 @@ describe('createQuestionDetector scanOnce', () => {
     const needs = [];
     const detector = createQuestionDetector({
       tmuxCapturePane: fakeTmux(captures),
-      onNeedsInput: (terminal, q, kind) => needs.push({ id: terminal.id, kind }),
+      onNeedsInput: (terminal, q, kind) => needs.push({ id: terminal.id, q, kind }),
       setIntervalFn: () => null,
       clearIntervalFn: () => {},
     });
@@ -162,7 +196,15 @@ describe('createQuestionDetector scanOnce', () => {
     const r0 = await detector.scanOnce(terminal);
     assert.equal(r0.fired, true);
     assert.equal(r0.kind, 'question');
-    assert.deepEqual(needs, [{ id: 'T-5', kind: 'question' }]);
+    assert.equal(r0.question.answerKind, 'menu');
+    assert.equal(needs.length, 1);
+    assert.equal(needs[0].id, 'T-5');
+    assert.equal(needs[0].kind, 'question');
+    assert.equal(needs[0].q.answerKind, 'menu');
+    assert.deepEqual(needs[0].q.options, [
+      { n: 1, label: 'Yes, proceed' },
+      { n: 2, label: 'No, exit' },
+    ]);
     detector.untrack(terminal.id);
   });
 

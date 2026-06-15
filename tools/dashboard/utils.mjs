@@ -143,6 +143,19 @@ export async function tmuxSendEnter(name) {
   }
 }
 
+// Send one or more tmux key tokens to the session (e.g. ['2'], ['Down','Down','Enter'],
+// ['y']). Each token is a separate send-keys argument so tmux interprets named keys.
+// Returns true on success, false on exec error — callers verify before claiming the
+// keypress landed. Never throws.
+export async function tmuxSendKeys(session, keys) {
+  try {
+    await execFileAsync('tmux', ['send-keys', '-t', session, ...keys], { timeout: TMUX_EXEC_TIMEOUT_MS });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Clean tmux capture-pane plain text output: strip trailing whitespace, collapse blank runs, trim */
 export function cleanTmuxCapture(text) {
   const lines = text.split('\n').map(l => l.trimEnd());

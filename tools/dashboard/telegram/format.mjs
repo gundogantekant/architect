@@ -114,3 +114,48 @@ export function sessionsListMsg(waitingList) {
 export function failureMsg(reason) {
   return `⚠️ injection failed: ${reason}`;
 }
+
+function numberedOptions(options, explained) {
+  const blurbs = explained?.options ?? [];
+  return options
+    .map(({ n, label }, i) => {
+      const blurb = blurbs[i]?.blurb;
+      return blurb ? `${n}. ${label} — ${blurb}` : `${n}. ${label}`;
+    })
+    .join('\n');
+}
+
+export function buildQuestionNotification(terminal, explained, options, rawText) {
+  const body = explained ? explained.summary : rawText;
+  const header = notificationHeader(terminal);
+  if (options.length === 0) {
+    return `${header}\n\n${body}`;
+  }
+  return `${header}\n\n${body}\n\n${numberedOptions(options, explained)}`;
+}
+
+export function confirmMsg(terminal, index, label) {
+  const header = notificationHeader(terminal);
+  const choice = index === null ? `→ "${label}"` : `→ ${index}. ${label}`;
+  return `${header}\n${choice}\nSend \`ok\` to confirm, \`cancel\` to abort, or rephrase.`;
+}
+
+export function cancelledMsg(id) {
+  return `${id}: cancelled — reply again to answer`;
+}
+
+export function expiredMsg(terminal, options) {
+  const header = notificationHeader(terminal);
+  return `${header}\nthat question expired — here are the options again:\n${numberedOptions(options, null)}`;
+}
+
+export function selectedMsg(id, index, label) {
+  if (index === null) {
+    return `✅ sent: "${label}" (verify in dashboard if it didn't take)`;
+  }
+  return `✅ selected → ${index}. ${label} (verify in dashboard if it didn't take)`;
+}
+
+export function staleScreenMsg(id) {
+  return `⚠️ ${id} — session moved on; re-check in dashboard`;
+}
