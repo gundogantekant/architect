@@ -87,6 +87,7 @@ export function nextDetectorState(prevState, capture, stableN = 2) {
       state,
       questionText: fired ? extractQuestionText(capture) : '',
       fired,
+      kind: fired ? 'question' : undefined,
       cleared: false,
       next: { lastClass: state, prevCapture: capture, stableCount: 0, armed: false },
     };
@@ -112,6 +113,7 @@ export function nextDetectorState(prevState, capture, stableN = 2) {
       state,
       questionText: fired ? extractQuestionText(capture) : '',
       fired,
+      kind: fired ? 'idle' : undefined,
       cleared: false,
       next: {
         lastClass: state,
@@ -142,7 +144,7 @@ function initialState() {
  *
  * @param {{
  *   tmuxCapturePane:(session:string)=>Promise<string>,
- *   onNeedsInput?:(terminal:object, questionText:string)=>void,
+ *   onNeedsInput?:(terminal:object, questionText:string, kind:string)=>void,
  *   onCleared?:(terminal:object)=>void,
  *   intervalMs?:number,
  *   stableN?:number,
@@ -167,9 +169,9 @@ export function createQuestionDetector({
     const capture = await tmuxCapturePane(terminal.tmux_session);
     const result = nextDetectorState(prevState, capture, stableN);
     states.set(terminal.id, result.next);
-    if (result.fired) onNeedsInput(terminal, result.questionText);
+    if (result.fired) onNeedsInput(terminal, result.questionText, result.kind);
     if (result.cleared) onCleared(terminal);
-    return { state: result.state, questionText: result.questionText, fired: result.fired };
+    return { state: result.state, questionText: result.questionText, fired: result.fired, kind: result.kind };
   }
 
   function ensureTimer() {

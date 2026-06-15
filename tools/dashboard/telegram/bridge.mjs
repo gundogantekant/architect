@@ -25,14 +25,6 @@ const POLL_ERROR_BACKOFF_MS = 3000;
 const START_HELP =
   'Reply to a notification to answer that session. Use T-id: text to target a session, /sessions to list waiting sessions.';
 
-function triggerSendsQuestions(trigger) {
-  return trigger === 'questions' || trigger === 'questions_lifecycle';
-}
-
-function triggerSendsLifecycle(trigger) {
-  return trigger === 'questions_lifecycle';
-}
-
 function waitingTerminalList(terminals, waiting) {
   const list = [];
   for (const id of waiting) {
@@ -121,10 +113,15 @@ export function startTelegramBridge(deps) {
     });
   }
 
-  async function onNeedsInput(terminal, questionText) {
+  function kindIsNotifiable(kind) {
+    if (kind === 'idle') return config.notify_idle === true;
+    return config.notify_questions === true;
+  }
+
+  async function onNeedsInput(terminal, questionText, kind = 'question') {
     waiting.add(terminal.id);
     terminal._tgQuestion = questionText;
-    if (!triggerSendsQuestions(config.trigger)) return;
+    if (!kindIsNotifiable(kind)) return;
     try {
       await notify(terminal, 'question', questionText, 'question');
     } catch (e) {
@@ -138,7 +135,7 @@ export function startTelegramBridge(deps) {
 
   async function onExit(terminal) {
     waiting.delete(terminal.id);
-    if (!triggerSendsLifecycle(config.trigger)) return;
+    if (config.notify_lifecycle !== true) return;
     try {
       await notify(terminal, 'lifecycle', terminal.status, 'lifecycle');
     } catch (e) {
@@ -237,7 +234,7 @@ export function startTelegramBridge(deps) {
       detector.track(terminal);
       try {
         const result = await detector.scanOnce(terminal);
-        if (result?.fired) await onNeedsInput(terminal, result.questionText);
+        if (result?.fired) await onNeedsInput(terminal, result.questionText, result.kind);
       } catch (e) {
         logger.warn(`[telegram] startup scan failed: ${e.message}`);
       }
