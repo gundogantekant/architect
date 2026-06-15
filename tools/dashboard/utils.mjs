@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { execFileSync, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { LOGS_DIR } from './constants.mjs';
+import { MODEL_ALIASES, MODEL_CATALOG } from './model-catalog.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -27,13 +28,7 @@ export function safe(segment) {
   return !segment.includes('..') && !segment.includes('/') && !segment.includes('\\');
 }
 
-const MODEL_ALIASES = {
-  sonnet: 'claude-sonnet-4-6',
-  opus:   'claude-opus-4-8',
-  haiku:  'claude-haiku-4-5-20251001',
-};
-
-const RESOLVED_MODELS = new Set(Object.values(MODEL_ALIASES));
+const KNOWN_MODELS = new Set([...MODEL_CATALOG.map(m => m.id), ...Object.values(MODEL_ALIASES)]);
 
 // Idempotent: accepts a short alias ('opus') or an already-resolved id ('claude-opus-4-8').
 // A resolved id passes through unchanged so re-validating a persisted model (e.g. when a
@@ -46,7 +41,7 @@ export function validateModel(value) {
   const hasSuffix = s.endsWith('[1m]');
   const base = hasSuffix ? s.slice(0, -4) : s;
   const suffix = hasSuffix ? '[1m]' : '';
-  if (RESOLVED_MODELS.has(base)) return base + suffix;
+  if (KNOWN_MODELS.has(base)) return base + suffix;
   if (MODEL_ALIASES[base]) return MODEL_ALIASES[base] + suffix;
   return MODEL_ALIASES.sonnet;
 }

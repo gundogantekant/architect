@@ -215,7 +215,46 @@ function resolveDispatchModelDefault(projectKey) {
 
 function modelSelect(id, projectKey) {
   const def = resolveDispatchModelDefault(projectKey);
-  return `<div class="field"><label for="${id}">Model</label><select id="${id}"><option value="sonnet"${def === 'sonnet' ? ' selected' : ''}>Sonnet (latest)</option><option value="opus"${def === 'opus' ? ' selected' : ''}>Opus (latest)</option><option value="haiku"${def === 'haiku' ? ' selected' : ''}>Haiku (latest)</option><option value="claude-opus-4-8[1m]"${def === 'claude-opus-4-8[1m]' ? ' selected' : ''}>Opus 4.8 (1M context)</option></select><span class="field-hint">Opus 1M uses additional usage credits</span></div>`;
+  const catalog = (window._prefs && window._prefs._models_catalog) || null;
+
+  // Exactly one option must end up selected. We match the literal `def` string against each
+  // option's literal value: `def` may be an alias (e.g. 'opus') or a resolved id (e.g.
+  // 'claude-opus-4-8[1m]'). If nothing matches (stale/unknown pref), fall back to the sonnet
+  // alias so the picker never diverges to the browser-default first item.
+  const matched = { hit: false };
+  const opt = (value, label) => {
+    const isSel = !matched.hit && value === def;
+    if (isSel) matched.hit = true;
+    return `<option value="${escAttr(value)}"${isSel ? ' selected' : ''}>${esc(label)}</option>`;
+  };
+
+  let options;
+  if (catalog) {
+    const latest = [
+      opt('sonnet', 'Sonnet'),
+      opt('opus', 'Opus'),
+      opt('haiku', 'Haiku'),
+    ].join('');
+    const pinned = catalog.map(m => opt(m.id, m.label)).join('');
+    const oneM = catalog.filter(m => m.supports1m === true)
+      .map(m => opt(`${m.id}[1m]`, m.label)).join('');
+    options = `<optgroup label="Latest (auto-updating)">${latest}</optgroup>`
+      + `<optgroup label="Pinned versions">${pinned}</optgroup>`
+      + `<optgroup label="1M context">${oneM}</optgroup>`;
+  } else {
+    options = [
+      opt('sonnet', 'Sonnet (latest)'),
+      opt('opus', 'Opus (latest)'),
+      opt('haiku', 'Haiku (latest)'),
+      opt('claude-opus-4-8[1m]', 'Opus 4.8 (1M context)'),
+    ].join('');
+  }
+
+  if (!matched.hit) {
+    options = options.replace('<option value="sonnet"', '<option value="sonnet" selected');
+  }
+
+  return `<div class="field"><label for="${id}">Model</label><select id="${id}">${options}</select><span class="field-hint">Opus 1M uses additional usage credits</span></div>`;
 }
 
 function getPermissionMode(overlay, selectId) {

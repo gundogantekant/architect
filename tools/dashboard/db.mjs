@@ -2090,7 +2090,8 @@ export async function unlinkRepoByPortfolioKey(portfolioKey) {
 // --- Cost tracking ---
 
 export async function insertDispatchCost({ id, model, agentRole, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens }) {
-  const pricing = await pool.query('SELECT * FROM model_pricing WHERE model_id = $1', [model]);
+  const lookupModel = (typeof model === 'string' && model.endsWith('[1m]')) ? model.slice(0, -4) : model;
+  const pricing = await pool.query('SELECT * FROM model_pricing WHERE model_id = $1', [lookupModel]);
   if (!pricing.rows[0]) return;
   const p = pricing.rows[0];
   const cost =

@@ -1,4 +1,5 @@
 import { ARCHITECT_KEY } from '../constants.mjs';
+import { MODEL_CATALOG } from '../model-catalog.mjs';
 
 export default function serverMgmtRoutes(deps) {
   const {
@@ -146,12 +147,16 @@ export default function serverMgmtRoutes(deps) {
         _dispatch_mode_default_by_project: byProject,
         _dispatch_model_default_global: db.resolveDispatchModelDefault(null, prefs),
         _dispatch_model_default_by_project: byProjectModel,
+        _models_catalog: MODEL_CATALOG,
       });
     }],
 
     [/^\/api\/settings\/preferences$/, 'PUT', async (_m, req, res) => {
       const body = await parseBody(req);
       for (const [key, value] of Object.entries(body)) {
+        // Underscore-prefixed keys are computed/response-only fields (e.g. _models_catalog,
+        // _dispatch_model_default_*) — never persist them back into the preferences table.
+        if (key.startsWith('_')) continue;
         await db.setPreference(key, String(value));
       }
       json(res, await db.getAllPreferences());

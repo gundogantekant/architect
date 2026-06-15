@@ -1080,6 +1080,8 @@ Additional inclusion conditions beyond the base Agent Inclusion Rules table.
 
 The orchestrator evaluates task complexity before each dispatch and sets the model explicitly. No agent uses `inherit` — every agent has an explicit default model, and the orchestrator overrides dynamically based on the task at hand.
 
+> **Catalog vs. policy.** The canonical model catalog — model ids, context windows, 1M-context capability, and per-MTok pricing — lives in code at `tools/dashboard/model-catalog.mjs` (`MODEL_CATALOG`), the single source of truth consumed by dispatch model validation (`validateModel`), the dashboard dispatch picker, and the cost-pricing migration. This `Model Selection Rules` section governs **selection policy** (task-complexity → model tier, agent defaults), not the catalog of available models or their prices. The three tier aliases used throughout this section — `haiku`, `sonnet`, `opus` — resolve to the latest model id of each tier via `MODEL_ALIASES` in that same module, and the `[1m]` suffix (e.g. `claude-opus-4-8[1m]`) selects the 1M-context variant.
+
 ### Complexity-to-Model Mapping
 
 | Task Complexity | Default Model | Override Condition |

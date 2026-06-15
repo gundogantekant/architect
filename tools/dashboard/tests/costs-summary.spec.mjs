@@ -94,9 +94,9 @@ test.describe('Cost summary @fast', () => {
     expect(sonnet.sessions).toBe(1);
     expect(sonnet.tokens).toBe(1000 + 500);
 
-    // Haiku: (2000*0.8 + 800*4.0)/1e6 = 0.004800
+    // Haiku: (2000*1.0 + 800*5.0)/1e6 = 0.006000 (model-catalog / migration 046)
     const haiku = summary.breakdown.find(e => e.label === 'claude-haiku-4-5-20251001');
-    const expectedHaikuCost = (2000 * 0.8 + 800 * 4.0) / 1_000_000;
+    const expectedHaikuCost = (2000 * 1.0 + 800 * 5.0) / 1_000_000;
     expect(Math.abs(haiku.cost_usd - expectedHaikuCost)).toBeLessThan(0.00005);
     expect(haiku.sessions).toBe(1);
     expect(haiku.tokens).toBe(2000 + 800);

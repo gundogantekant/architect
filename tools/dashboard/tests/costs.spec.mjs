@@ -158,7 +158,7 @@ test.describe('Cost tracking @fast', () => {
     const d1 = await seedDispatch({ status: 'completed', project_key: projectKey });
     const d2 = await seedDispatch({ status: 'completed', project_key: projectKey });
 
-    // Haiku prices: input=0.8, output=4.0 per Mtok
+    // Haiku prices: input=1.0, output=5.0 per Mtok (model-catalog / migration 046)
     await api('test/seed-dispatch-cost', {
       method: 'POST',
       body: JSON.stringify({
@@ -187,7 +187,7 @@ test.describe('Cost tracking @fast', () => {
     const rollup = await api(`costs/project/${encodeURIComponent(projectKey)}`);
 
     const expectedCost =
-      (1000 * 0.8 + 300 * 4.0 + 2000 * 0.8 + 600 * 4.0) / 1_000_000;
+      (1000 * 1.0 + 300 * 5.0 + 2000 * 1.0 + 600 * 5.0) / 1_000_000;
     const expectedTokens = 1000 + 300 + 2000 + 600;
 
     expect(rollup.sessions).toBe(2);
