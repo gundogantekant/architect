@@ -58,6 +58,7 @@ describe('nextDetectorState', () => {
     assert.equal(results[0].fired, false);
     assert.equal(results[1].fired, true);
     assert.equal(results[1].state, 'dialog');
+    assert.equal(results[1].kind, 'question');
     assert.ok(results[1].questionText.includes('Do you trust'));
     assert.equal(results[2].fired, false);
   });
@@ -66,6 +67,7 @@ describe('nextDetectorState', () => {
     const results = runSequence([INPUT_IDLE, INPUT_IDLE, INPUT_IDLE, INPUT_IDLE], 2);
     const firedFlags = results.map(r => r.fired);
     assert.deepEqual(firedFlags, [false, false, true, false]);
+    assert.equal(results[2].kind, 'idle');
   });
 
   it('does not extra-fire or suppress when a spinner line above the composer changes', () => {
@@ -124,7 +126,7 @@ describe('createQuestionDetector scanOnce', () => {
     const needs = [];
     const detector = createQuestionDetector({
       tmuxCapturePane: fakeTmux(captures),
-      onNeedsInput: (terminal, q) => needs.push({ id: terminal.id, q }),
+      onNeedsInput: (terminal, q, kind) => needs.push({ id: terminal.id, q, kind }),
       stableN: 2,
       setIntervalFn: () => null,
       clearIntervalFn: () => {},
@@ -138,9 +140,29 @@ describe('createQuestionDetector scanOnce', () => {
     assert.equal(r0.fired, false);
     assert.equal(r1.fired, false);
     assert.equal(r2.fired, true);
+    assert.equal(r2.kind, 'idle');
     assert.equal(r3.fired, false);
     assert.equal(needs.length, 1);
     assert.equal(needs[0].id, 'T-1');
+    assert.equal(needs[0].kind, 'idle');
+    detector.untrack(terminal.id);
+  });
+
+  it('reports kind question and passes it to onNeedsInput for a dialog', async () => {
+    const captures = [DIALOG_TRUST];
+    const needs = [];
+    const detector = createQuestionDetector({
+      tmuxCapturePane: fakeTmux(captures),
+      onNeedsInput: (terminal, q, kind) => needs.push({ id: terminal.id, kind }),
+      setIntervalFn: () => null,
+      clearIntervalFn: () => {},
+    });
+    const terminal = { id: 'T-5', tmux_session: 'sess-5' };
+    detector.track(terminal);
+    const r0 = await detector.scanOnce(terminal);
+    assert.equal(r0.fired, true);
+    assert.equal(r0.kind, 'question');
+    assert.deepEqual(needs, [{ id: 'T-5', kind: 'question' }]);
     detector.untrack(terminal.id);
   });
 

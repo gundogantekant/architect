@@ -678,11 +678,15 @@ Configuration for the Telegram terminal bridge — relays terminal questions and
 ```json
 {
   "enabled": "boolean (preference telegram_enabled)",
-  "trigger": "questions|questions_lifecycle (preference telegram_trigger)",
+  "notify_questions": "boolean, default true (preference telegram_notify_questions) — ping when an agent shows a question (dialog screen)",
+  "notify_idle": "boolean, default false (preference telegram_notify_idle) — ping when an agent sits idle at its input composer",
+  "notify_lifecycle": "boolean, default false (preference telegram_notify_lifecycle) — ping when a terminal exits",
   "allowlist": "array of number (numeric chat_id permitted inbound)",
   "default_chat_id": "number (chat_id for outbound notifications)"
 }
 ```
+
+Back-compat: the legacy `telegram_trigger` preference is read only when none of the three `telegram_notify_*` preferences exist (`questions_lifecycle`→questions+lifecycle, `questions`→questions only). All toggles are persisted in the `preferences` table.
 
 ## TelegramMessageBinding
 

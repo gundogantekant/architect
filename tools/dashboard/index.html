@@ -9450,13 +9450,19 @@ function renderSettingsView(status, config) {
   html += '</select></div>';
   html += '</div></div>';
 
-  // Card 5: Refinement Templates
+  // Card 5: Telegram Notifications
+  html += '<div class="settings-card">';
+  html += '<h3>Telegram</h3>';
+  html += '<div id="telegram-settings-body" style="font-size:13px;color:var(--text-light)">Loading...</div>';
+  html += '</div>';
+
+  // Card 6: Refinement Templates
   html += '<div class="settings-card">';
   html += '<h3>Refinement Templates</h3>';
   html += '<div id="refinement-templates-list">Loading...</div>';
   html += '</div>';
 
-  // Card 6: Recent Logs
+  // Card 7: Recent Logs
   html += '<div class="settings-card">';
   html += '<h3>Recent Logs <button class="settings-btn" id="settings-refresh-logs" style="float:right;padding:4px 12px;font-size:12px">Refresh</button></h3>';
   html += '<div class="settings-log-box" id="settings-log-box">(loading...)</div>';
@@ -9470,6 +9476,7 @@ function renderSettingsView(status, config) {
 function bindSettingsEvents(status, config) {
   loadSettingsLogs();
   loadRefinementTemplates();
+  loadTelegramSettings();
   document.getElementById('settings-log-box')?.classList.toggle('log-light', resolveTermTheme() === 'light');
 
   if (settingsRefreshTimer) clearInterval(settingsRefreshTimer);
@@ -9677,6 +9684,62 @@ async function loadSettingsLogs() {
     const box = document.getElementById('settings-log-box');
     if (box) box.textContent = '(could not load logs)';
   }
+}
+
+async function loadTelegramSettings() {
+  const container = document.getElementById('telegram-settings-body');
+  if (!container) return;
+  let config, status;
+  try {
+    const res = await fetch('/api/telegram/config');
+    if (!res.ok) { container.textContent = '(could not load Telegram config)'; return; }
+    config = await res.json();
+  } catch {
+    container.textContent = '(could not load Telegram config)';
+    return;
+  }
+  try {
+    const sres = await fetch('/api/telegram/status');
+    if (sres.ok) status = await sres.json();
+  } catch {}
+
+  const toggle = (id, checked, title, desc) =>
+    '<div style="margin-top:8px"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">' +
+    '<input type="checkbox" id="' + id + '"' + (checked ? ' checked' : '') + ' />' +
+    '<span class="key">' + esc(title) + '</span>' +
+    (desc ? '<span style="font-size:11px;color:var(--text-light)">(' + esc(desc) + ')</span>' : '') +
+    '</label></div>';
+
+  let html = '';
+  if (status) {
+    const dot = status.running ? 'green' : 'red';
+    const label = status.running ? 'Bridge running' : (status.enabled ? 'Bridge enabled (not running)' : 'Bridge stopped');
+    html += '<div class="status-indicator"><span class="dot ' + dot + '"></span><span class="label">' + esc(label) + '</span></div>';
+  }
+  html += toggle('telegram-enabled', config.enabled, 'Enabled', 'turn Telegram notifications on or off');
+  html += toggle('telegram-notify-questions', config.notify_questions, 'Question prompts', 'ping when an agent asks a question');
+  html += toggle('telegram-notify-idle', config.notify_idle, 'Idle prompts', 'ping when an agent goes idle at its prompt');
+  html += toggle('telegram-notify-lifecycle', config.notify_lifecycle, 'Agent exit', 'ping when a terminal finishes/exits');
+  container.innerHTML = html;
+
+  const bindTelegramToggle = (id, field) => {
+    document.getElementById(id)?.addEventListener('change', async (e) => {
+      try {
+        await fetch('/api/telegram/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [field]: e.target.checked }),
+        });
+      } catch (err) {
+        alert('Failed to save Telegram setting: ' + err.message);
+        e.target.checked = !e.target.checked;
+      }
+    });
+  };
+  bindTelegramToggle('telegram-enabled', 'enabled');
+  bindTelegramToggle('telegram-notify-questions', 'notify_questions');
+  bindTelegramToggle('telegram-notify-idle', 'notify_idle');
+  bindTelegramToggle('telegram-notify-lifecycle', 'notify_lifecycle');
 }
 
 async function loadRefinementTemplates() {

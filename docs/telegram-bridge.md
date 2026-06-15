@@ -39,6 +39,16 @@ Relays interactive terminal (`T-xxx`) questions and lifecycle events to a Telegr
 - If exactly one terminal is waiting, a plain message (no reply-to) is routed to it (single-waiting fallback).
 - The bridge sends a confirmation when a reply is injected, and a failure message (e.g. `target gone`) when the terminal is no longer running.
 
+## Notifications
+
+Three independent toggles control which events fire a ping. Set them in `#settings` → Telegram, or via `PUT /api/telegram/config` with `{ "notify_questions": true, "notify_idle": false, "notify_lifecycle": false }`:
+
+- **Question prompts** (`notify_questions`, default **on**) — ping when an agent shows a question (dialog screen).
+- **Idle prompts** (`notify_idle`, default **off**) — ping when an agent sits idle at its input composer.
+- **Agent exit** (`notify_lifecycle`, default **off**) — ping when a terminal exits.
+
+Back-compat: the legacy single `telegram_trigger` preference is honored only when none of the three `notify_*` preferences exist (`questions_lifecycle` → questions + exit, `questions` → questions only).
+
 ## Limitations
 
 - Detection is tmux-only; non-tmux terminals get lifecycle pings, not question pings.
