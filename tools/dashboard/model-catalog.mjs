@@ -1,7 +1,7 @@
 // Single source of truth for the model catalog: ids, labels, context window, 1M
 // capability, and per-MTok pricing. Consumed by validateModel (utils.mjs), the
 // dispatch picker (index.html, via the /api/settings/preferences payload), and the
-// pricing migration (045-model-pricing-refresh.mjs).
+// pricing migration (046-model-pricing-refresh.mjs).
 
 export const MODEL_ALIASES = {
   sonnet: 'claude-sonnet-4-6',
