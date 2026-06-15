@@ -99,6 +99,7 @@ body.lan-banner-visible { padding-top: 37px; }
 import { api, apiText } from '/js/api.mjs';
 import { $, esc, escAttr, stripAnsiForDisplay, ACTIVE_DOT_CLASSES, clearActiveDotClasses, fmtDate, fmtTimestamp,
          getRouteTitle, updateTitle, topoSort, isBlockedByDeps, epicSignalColor } from '/js/utils.mjs';
+import { sessionNeedsInput, newlyNeedingInput, notificationDecision } from '/js/session-state.mjs';
 import {
   backlog, setBacklog,
   orgCache, setOrgCache, resetOrgCache,
@@ -2432,7 +2433,7 @@ async function restoreTerminals() {
 
 function renderPhaseTimeline(history) {
   if (!history || history.length < 2) return '';
-  const phaseColors = { generating: '#4A9EFF', tool_running: '#F59E0B', waiting_for_input: '#F59E0B' };
+  const phaseColors = { generating: '#4A9EFF', tool_running: '#F59E0B', waiting_for_input: '#22c55e' };
   const dots = history.map(entry => {
     const color = phaseColors[entry.phase] || '#6B7280';
     const time = entry.at ? new Date(entry.at).toLocaleTimeString() : '';
@@ -3760,7 +3761,6 @@ async function restoreDispatches() {
     for (const d of list) {
       const existing = activeDispatches.find(a => a.id === d.id);
       if (existing) {
-        const prevPhase = existing.agent_phase;
         existing.agent_phase = d.agent_phase || null;
         existing.agent_phase_history = d.agent_phase_history || existing.agent_phase_history || [];
         existing.status = d.status;
@@ -3794,9 +3794,6 @@ async function restoreDispatches() {
               panelEl.querySelector(`[data-revoke-dispatch]`)?.remove();
             }
           }
-        }
-        if (prevPhase !== 'waiting_for_input' && existing.agent_phase === 'waiting_for_input' && existing.project_key) {
-          scheduleAwaitingActionRefresh(existing.project_key);
         }
         continue;
       }
@@ -3837,6 +3834,7 @@ async function restoreDispatches() {
     }
     placeSessionPanels();
     syncSessionState();
+    processNeedsInputNotifications();
   } catch {}
 }
 
@@ -3870,8 +3868,8 @@ function buildSessionsByProjectMap() {
 function signalColor(bl, key, sessionsByProject) {
   const sessions = sessionsByProject?.get(key) || [];
   // Priority: waiting_for_input > tool_running > generating
-  if (sessions.some(s => s.agent_phase === 'waiting_for_input' && s.status === 'running'))
-    return { color: 'green', title: 'Agent needs input' };
+  if (sessions.some(sessionNeedsInput))
+    return { color: 'needs-input', title: 'Agent needs input' };
   if (sessions.some(s => s.agent_phase === 'tool_running' && s.status === 'running'))
     return { color: 'blue', title: 'Agent running tool' };
   if (sessions.some(s => s.status === 'running'))
@@ -5078,6 +5076,62 @@ function showStatusDropdown(badge, itemId, currentStatus) {
 }
 
 // --- Awaiting Action widget ---
+let notifiedNeedsInput = new Set();
+let needsInputBaselineSeeded = false;
+const lastNotifiedAt = new Map();
+
+let _audioCtx = null;
+function primeAudio() {
+  if (!_audioCtx) { try { _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} }
+  if (_audioCtx && _audioCtx.state === 'suspended') _audioCtx.resume().catch(() => {});
+}
+window.addEventListener('pointerdown', primeAudio, { once: false });
+window.addEventListener('keydown', primeAudio, { once: false });
+
+function playInputNeededSound() {
+  if (!_audioCtx || _audioCtx.state !== 'running') return;
+  try {
+    const o = _audioCtx.createOscillator(); const g = _audioCtx.createGain();
+    o.type = 'sine'; o.frequency.value = 880;
+    g.gain.value = 0.05; o.connect(g); g.connect(_audioCtx.destination);
+    o.start(); o.stop(_audioCtx.currentTime + 0.18);
+  } catch {}
+}
+
+function notifyInputNeeded(d) {
+  try {
+    const label = (d.work_item_id || d.label || d.project_key || 'A session');
+    new Notification('Session needs input', { body: `${label} is waiting for your input`, tag: `needs-input-${d.id}` });
+  } catch {}
+}
+
+function processNeedsInputNotifications() {
+  const needingNow = new Set(activeDispatches.filter(sessionNeedsInput).map(d => d.id));
+  if (!needsInputBaselineSeeded) {
+    notifiedNeedsInput = needingNow;
+    needsInputBaselineSeeded = true;
+    return;
+  }
+  const fresh = newlyNeedingInput(notifiedNeedsInput, activeDispatches);
+  if (fresh.length) {
+    const decision = notificationDecision(window._prefs || {}, (typeof Notification !== 'undefined' ? Notification.permission : 'denied'));
+    for (const id of fresh) {
+      const d = activeDispatches.find(x => x.id === id);
+      if (!d) continue;
+      const now = performance.now();
+      const prev = lastNotifiedAt.get(id) || 0;
+      if (now - prev > 12000) {
+        if (decision.os) notifyInputNeeded(d);
+        if (decision.sound) playInputNeededSound();
+        lastNotifiedAt.set(id, now);
+      }
+      if (d.project_key) scheduleAwaitingActionRefresh(d.project_key);
+    }
+    notifiedNeedsInput = new Set([...notifiedNeedsInput, ...fresh]);
+  }
+  notifiedNeedsInput = new Set([...notifiedNeedsInput].filter(id => needingNow.has(id)));
+}
+
 let _awaitingActionDebounceTimer = null;
 function scheduleAwaitingActionRefresh(projectKey) {
   clearTimeout(_awaitingActionDebounceTimer);
@@ -7709,7 +7763,7 @@ function refreshSessionsSidebar() {
   list.innerHTML = '';
 
   const filter = sessionStorage.getItem('dispatches-sidebar-filter') || 'active';
-  const allDispatches = activeDispatches.map(d => ({ type: 'dispatch', id: d.id, status: d.status, label: d.work_item_id || d.title || d.id, started_at: d.started_at, epic_id: d.epic_id, work_item_id: d.work_item_id, project_key: d.project_key, dispatch_mode: d.dispatch_mode, chain_mode: d.chain_mode, chain_phase: d.chain_phase }));
+  const allDispatches = activeDispatches.map(d => ({ type: 'dispatch', id: d.id, status: d.status, label: d.work_item_id || d.title || d.id, started_at: d.started_at, epic_id: d.epic_id, work_item_id: d.work_item_id, project_key: d.project_key, dispatch_mode: d.dispatch_mode, chain_mode: d.chain_mode, chain_phase: d.chain_phase, agent_phase: d.agent_phase, work_item_input_needed: d.work_item_input_needed }));
   const allTerminals = activeTerminals.map(t => ({ type: 'terminal', id: t.id, status: t.status, label: (t.note?.trim()) || t.title || t.id, started_at: t.started_at, epic_id: t.epic_id, work_item_id: t.work_item_id, project_key: t.project_key, dispatch_mode: null }));
   const allCli = activeCliSessions.map(c => ({ type: 'cli', id: c.id, status: c.status, label: `[CLI] ${c.title}`, started_at: c.registered_at, epic_id: c.epic_id, work_item_id: c.work_item_id, project_key: c.project_key, dispatch_mode: null }));
 
@@ -7750,11 +7804,12 @@ function refreshSessionsSidebar() {
   function renderEntry(s, indented) {
     const entry = document.createElement('div');
     entry.className = 'session-entry' + (indented ? ' indented' : '');
-    const dotClass = s.status === 'running' ? 'running' : (s.status === 'suspended' ? 'suspended' : (s.status === 'execute_pending' ? 'needs-input' : (s.status === 'completed' ? 'completed' : (s.status === 'interrupted' ? 'interrupted' : 'failed'))));
+    const dotClass = sessionNeedsInput(s) ? 'needs-input' : (s.status === 'running' ? 'running' : (s.status === 'suspended' ? 'suspended' : (s.status === 'execute_pending' ? 'needs-input' : (s.status === 'completed' ? 'completed' : (s.status === 'interrupted' ? 'interrupted' : 'failed')))));
+    const dotTitle = dotClass === 'needs-input' ? ' title="Waiting for input" aria-label="Waiting for input"' : '';
     const chainTag = s.chain_phase === 'execute' ? ' <span class="plan-badge" style="font-size:9px">[exec]</span>'
       : s.chain_mode === 'plan_execute' ? ' <span class="plan-badge" style="font-size:9px">[plan&rarr;exec]</span>' : '';
     const elapsed = formatElapsed(s.started_at);
-    entry.innerHTML = `<span class="status-dot ${dotClass}" style="width:8px;height:8px"></span><span class="session-label">${esc(s.label)}${chainTag}</span><span class="session-meta">${elapsed}</span>`;
+    entry.innerHTML = `<span class="status-dot ${dotClass}" style="width:8px;height:8px"${dotTitle}></span><span class="session-label">${esc(s.label)}${chainTag}</span><span class="session-meta">${elapsed}</span>`;
     entry.onclick = () => navigateToSession(s);
 
     if (s.type !== 'cli') {
@@ -7824,12 +7879,13 @@ function refreshSessionsSidebar() {
     projLabel.appendChild(projNameSpan);
     const projSessions = [...(pg.noEpic || []), ...[...pg.epics.values()].flat()];
     const projSuspCount = projSessions.filter(s => s.status === 'suspended').length;
-    const projInputNeeded = activeDispatches.some(d => d.project_key === pk && d.work_item_input_needed);
+    const projInputNeeded = projSessions.some(sessionNeedsInput);
     const badgeGroup = document.createElement('span');
     badgeGroup.style.cssText = 'display:flex;align-items:center;gap:4px';
     if (projInputNeeded) {
       const dot = document.createElement('span');
-      dot.style.cssText = 'width:7px;height:7px;border-radius:50%;background:#F59E0B;display:inline-block;flex-shrink:0';
+      dot.className = 'signal-dot needs-input';
+      dot.style.cssText = 'width:7px;height:7px;display:inline-block;flex-shrink:0;margin-right:0';
       dot.title = 'Agent waiting for input';
       badgeGroup.appendChild(dot);
     }
@@ -9361,6 +9417,16 @@ function renderSettingsView(status, config) {
   html += '<span class="key">Skip permissions by default</span>';
   html += '<span style="font-size:11px;color:var(--text-light)">(--dangerously-skip-permissions)</span>';
   html += '</label></div>';
+  const curNotifyOs = (window._prefs.notify_input_os) !== 'false';
+  const curNotifySound = (window._prefs.notify_input_sound) !== 'false';
+  html += '<div style="margin-top:8px"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">';
+  html += '<input type="checkbox" id="settings-notify-os"' + (curNotifyOs ? ' checked' : '') + ' />';
+  html += '<span class="key">OS notification when a session needs input</span>';
+  html += '</label><span id="settings-notify-os-hint" style="display:none;font-size:11px;color:var(--text-light);margin-left:26px">Browser notifications are blocked</span></div>';
+  html += '<div style="margin-top:8px"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">';
+  html += '<input type="checkbox" id="settings-notify-sound"' + (curNotifySound ? ' checked' : '') + ' />';
+  html += '<span class="key">Sound when a session needs input</span>';
+  html += '</label></div>';
   // Terminal theme
   const curTheme = window._prefs.terminal_theme || 'system';
   html += '<div style="margin-top:12px"><span class="key">Terminal &amp; Log Theme</span> ';
@@ -9516,6 +9582,42 @@ function bindSettingsEvents(status, config) {
         body: JSON.stringify({ default_skip_permissions: String(e.target.checked) }),
       });
       window._prefs.default_skip_permissions = String(e.target.checked);
+    } catch (err) {
+      alert('Failed to save preference: ' + err.message);
+    }
+  });
+
+  document.getElementById('settings-notify-os')?.addEventListener('change', async (e) => {
+    const hint = document.getElementById('settings-notify-os-hint');
+    if (e.target.checked && typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+      try {
+        const perm = await Notification.requestPermission();
+        if (perm === 'denied' && hint) hint.style.display = 'block';
+        else if (hint) hint.style.display = 'none';
+      } catch {}
+    } else if (hint) {
+      hint.style.display = 'none';
+    }
+    try {
+      await fetch('/api/settings/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notify_input_os: e.target.checked ? 'true' : 'false' }),
+      });
+      window._prefs.notify_input_os = e.target.checked ? 'true' : 'false';
+    } catch (err) {
+      alert('Failed to save preference: ' + err.message);
+    }
+  });
+
+  document.getElementById('settings-notify-sound')?.addEventListener('change', async (e) => {
+    try {
+      await fetch('/api/settings/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notify_input_sound: e.target.checked ? 'true' : 'false' }),
+      });
+      window._prefs.notify_input_sound = e.target.checked ? 'true' : 'false';
     } catch (err) {
       alert('Failed to save preference: ' + err.message);
     }
