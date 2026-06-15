@@ -255,6 +255,14 @@ cmd_start() {
   # node inherits). `nohup VAR=value node ...` would make nohup try to execute a program
   # literally named "VAR=value" and the server would never start. Keep this a simple
   # backgrounded command (no subshell/pipe) so `$!` is the node PID.
+  # Load dashboard secrets (e.g. ARCHITECT_TELEGRAM_BOT_TOKEN) from the gitignored
+  # work/telegram.env if present, so the Telegram bridge can start. Exported so node inherits them.
+  if [ -f "$ROOT/work/telegram.env" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$ROOT/work/telegram.env"
+    set +a
+  fi
   export ARCHITECT_HOST="$BIND_HOST"
   nohup "$NODE_BIN" "$SERVER_SCRIPT" --port "$PORT" >> "$LOG_FILE" 2>&1 &
   local pid=$!
