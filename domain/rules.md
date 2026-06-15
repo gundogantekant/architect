@@ -116,6 +116,24 @@ These rules apply to ALL workflow patterns, not only `parallel-fan-out`:
 **Exception**: strategist can write decision docs to `docs/`.
 **Exception**: profiler writes only `CLAUDE.md` to the target project during onboarding.
 
+## Permission Mode Rules
+
+Plan mode supersedes skip-permissions. The `--dangerously-skip-permissions` flag is **never** emitted when the permission mode is `plan`, because that flag is equivalent to `bypassPermissions` and would defeat plan mode — the agent would execute actions instead of only planning. When the permission mode is `plan`, the spawn argv carries `--permission-mode plan` and nothing else permission-related; `--dangerously-skip-permissions` is emitted only when the mode is not `plan` and skip-permissions is requested.
+
+## Plan-Only Dispatch
+
+When an agent is dispatched in plan mode it produces a plan and stops. The following directive is injected at the top of the dispatch prompt and takes precedence over any implementation-oriented guidance elsewhere in the prompt:
+
+> **Plan-Only Mode — this directive takes precedence over any implementation-oriented guidance below.**
+>
+> You are in plan-only mode. You MUST:
+> - Produce a plan only. Read-only investigation (reading files, searching, inspecting git history) is allowed.
+> - NOT modify, create, or delete any files.
+> - NOT run build, test, or other code-executing commands.
+> - NOT commit, push, branch, create worktrees, or merge.
+> - NOT dispatch implementation sub-agents (coder, coder-*, tester, git-ops).
+> - Report the plan and STOP.
+
 ## Workable Item Rules
 
 A work item's "workable" state is computed at render time — it is never stored.

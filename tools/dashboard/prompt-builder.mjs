@@ -436,8 +436,46 @@ function buildMandateSection(complexity) {
   }
 }
 
-export function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInstructions, portfolio, epicContext, relatedProjects, orgContext, worktreeContext, contract }) {
+function buildPlanOnlySection() {
+  const fallback = [
+    '**Plan-Only Mode — this directive takes precedence over any implementation-oriented guidance below.**',
+    '',
+    'You are in plan-only mode. You MUST:',
+    '- Produce a plan only. Read-only investigation (reading files, searching, inspecting git history) is allowed.',
+    '- NOT modify, create, or delete any files.',
+    '- NOT run build, test, or other code-executing commands.',
+    '- NOT commit, push, branch, create worktrees, or merge.',
+    '- NOT dispatch implementation sub-agents (coder, coder-*, tester, git-ops).',
+    '- Report the plan and STOP.',
+  ].join('\n');
+  try {
+    const rulesPath = join(ROOT, 'domain', 'rules.md');
+    const content = readFileSync(rulesPath, 'utf8');
+    const start = content.indexOf('## Plan-Only Dispatch');
+    if (start === -1) return fallback;
+    const bodyStart = content.indexOf('> ', start);
+    if (bodyStart === -1) return fallback;
+    const nextSection = content.indexOf('\n## ', start + 1);
+    const block = (nextSection === -1 ? content.slice(bodyStart) : content.slice(bodyStart, nextSection));
+    const directive = block
+      .split('\n')
+      .filter(line => line.startsWith('>'))
+      .map(line => line.replace(/^>\s?/, ''))
+      .join('\n')
+      .trim();
+    return directive || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function buildDispatchPrompt({ workItem, projectKey, projectPath, additionalInstructions, portfolio, epicContext, relatedProjects, orgContext, worktreeContext, contract, planMode = false }) {
   const sections = [];
+
+  // --- Plan-Only Mode (injected at top; supersedes implementation-push guidance below) ---
+  if (planMode) {
+    sections.push(`# Plan-Only Mode\n\n${buildPlanOnlySection()}`);
+  }
 
   // --- Identity ---
   sections.push([
@@ -455,53 +493,68 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     'You are not limited to writing code. You can perform planning, architecture review, security audit, testing strategy, documentation, and project management.',
   ].join('\n'));
 
-  // --- SDLC Guide ---
-  sections.push([
-    '# SDLC Guide',
-    '',
-    '## Workflow Selection',
-    '',
-    '| Condition | Workflow |',
-    '|-----------|----------|',
-    '| Trivial tasks | plan-then-direct — agent produces brief inline plan, Plan Gate board reviews, then coder dispatched |',
-    '| Small features | sequential — scout → planner → coder → tester → reviewer |',
-    '| Full-stack work (independent FE/BE/infra) | parallel-fan-out — split then converge at tester → reviewer |',
-    '| Medium/large features | plan-then-execute — planner decomposes, then dispatch coders per task |',
-    '| Bugfixes | investigate-then-fix — debugger/scout → coder → tester |',
-    '| Vague scope, strategic decisions | strategic-evaluation — strategist evaluates first |',
-    '',
-    '## Agent Inclusion Rules',
-    '',
-    '| Agent | Include when |',
-    '|-------|-------------|',
-    '| scout | No portfolio entry exists for the target project |',
-    '| strategist | Large/vague/strategic requests, build-vs-buy decisions |',
-    '| planner | Medium+ complexity. For trivial/small: dispatched agent produces a brief inline plan (1–3 bullet points) directly — no planner agent required. |',
-    '| tester | All code changes except trivial |',
-    '| reviewer | All code changes except trivial |',
-    '| security-auditor | Auth, secrets, input validation, or external data involved |',
-    '',
-    '## Coordination Rules',
-    '',
-    '- You act as the orchestrator. Dispatch sub-agents using the Agent tool.',
-    '- Sub-agents cannot spawn their own sub-agents — only you orchestrate.',
-    '- Read-only agents (reviewer, security-auditor, scout, debugger, classifier, coordinator, strategist) do not modify code.',
-    '- Implementation agents (coder, coder-frontend, coder-backend, coder-infra, coder-mobile) modify code. git-ops handles git commands.',
-    '- Run scout or load portfolio context before dispatching implementation agents on a new project.',
-    '- Use parallel fan-out when tasks are independent; sequential pipeline when output feeds the next step.',
-    '- When dispatching sub-agents, include the Coding Standards block from this prompt in the Agent tool\'s prompt parameter. Sub-agents do not inherit it automatically.',
-    '',
-    '## Process for Any Work Item',
-    '',
-    '1. Assess complexity (trivial / small / medium / large / strategic)',
-    '2. Select workflow from the table above',
-    '3. Plan (always — produce an inline plan for trivial/small; dispatch planner agent for medium+)',
-    '4. Board review on plan — wait for all board verdicts before surfacing plan to user or exiting plan mode (always, except T1). In plan mode: board completes → plan updated → ExitPlanMode. In implement skill: board completes → present plan WITH verdicts to user.',
-    '5. Dispatch implementation agents per the workflow',
-    '6. Test (dispatch tester for all non-trivial code changes)',
-    '7. Review (dispatch reviewer)',
-    '8. Log results via the dashboard API',
-  ].join('\n'));
+  // --- SDLC Guide (implementation-push steps suppressed in plan-only mode) ---
+  {
+    const sdlc = [
+      '# SDLC Guide',
+      '',
+      '## Workflow Selection',
+      '',
+      '| Condition | Workflow |',
+      '|-----------|----------|',
+      '| Trivial tasks | plan-then-direct — agent produces brief inline plan, Plan Gate board reviews, then coder dispatched |',
+      '| Small features | sequential — scout → planner → coder → tester → reviewer |',
+      '| Full-stack work (independent FE/BE/infra) | parallel-fan-out — split then converge at tester → reviewer |',
+      '| Medium/large features | plan-then-execute — planner decomposes, then dispatch coders per task |',
+      '| Bugfixes | investigate-then-fix — debugger/scout → coder → tester |',
+      '| Vague scope, strategic decisions | strategic-evaluation — strategist evaluates first |',
+      '',
+      '## Agent Inclusion Rules',
+      '',
+      '| Agent | Include when |',
+      '|-------|-------------|',
+      '| scout | No portfolio entry exists for the target project |',
+      '| strategist | Large/vague/strategic requests, build-vs-buy decisions |',
+      '| planner | Medium+ complexity. For trivial/small: dispatched agent produces a brief inline plan (1–3 bullet points) directly — no planner agent required. |',
+      '| tester | All code changes except trivial |',
+      '| reviewer | All code changes except trivial |',
+      '| security-auditor | Auth, secrets, input validation, or external data involved |',
+      '',
+      '## Coordination Rules',
+      '',
+      '- You act as the orchestrator. Dispatch sub-agents using the Agent tool.',
+      '- Sub-agents cannot spawn their own sub-agents — only you orchestrate.',
+      '- Read-only agents (reviewer, security-auditor, scout, debugger, classifier, coordinator, strategist) do not modify code.',
+      '- Implementation agents (coder, coder-frontend, coder-backend, coder-infra, coder-mobile) modify code. git-ops handles git commands.',
+      '- Run scout or load portfolio context before dispatching implementation agents on a new project.',
+      '- Use parallel fan-out when tasks are independent; sequential pipeline when output feeds the next step.',
+      '- When dispatching sub-agents, include the Coding Standards block from this prompt in the Agent tool\'s prompt parameter. Sub-agents do not inherit it automatically.',
+      '',
+      '## Process for Any Work Item',
+      '',
+    ];
+    if (planMode) {
+      sdlc.push(
+        '1. Assess complexity (trivial / small / medium / large / strategic)',
+        '2. Select workflow from the table above',
+        '3. Produce a plan. Plan-Only Mode is in effect — do NOT dispatch implementation agents, run code, or modify files.',
+        '4. Board review on plan — wait for all board verdicts before surfacing the plan.',
+        '5. Report the plan and STOP.',
+      );
+    } else {
+      sdlc.push(
+        '1. Assess complexity (trivial / small / medium / large / strategic)',
+        '2. Select workflow from the table above',
+        '3. Plan (always — produce an inline plan for trivial/small; dispatch planner agent for medium+)',
+        '4. Board review on plan — wait for all board verdicts before surfacing plan to user or exiting plan mode (always, except T1). In plan mode: board completes → plan updated → ExitPlanMode. In implement skill: board completes → present plan WITH verdicts to user.',
+        '5. Dispatch implementation agents per the workflow',
+        '6. Test (dispatch tester for all non-trivial code changes)',
+        '7. Review (dispatch reviewer)',
+        '8. Log results via the dashboard API',
+      );
+    }
+    sections.push(sdlc.join('\n'));
+  }
 
   // --- Available Skills ---
   sections.push([
@@ -848,8 +901,8 @@ export function buildDispatchPrompt({ workItem, projectKey, projectPath, additio
     sections.push(lines.join('\n'));
   }
 
-  // --- Isolated Work Mandate (always present; full section for medium+, one-liner for trivial/small) ---
-  {
+  // --- Isolated Work Mandate (suppressed in plan-only mode — its implementation push contradicts Plan-Only Mode) ---
+  if (!planMode) {
     const complexity = isMediumOrAbove(workItem) ? 'medium' : 'small';
     const mandateContent = buildMandateSection(complexity);
     sections.push(`# Isolated Work Mandate\n\n${mandateContent}`);

@@ -7,6 +7,7 @@ import { validateContract } from '../utils/contract-validation.mjs';
 import { writePromptFile, deletePromptFile } from '../prompt-file.mjs';
 import { createDispatch, createResumeDispatch } from '../utils/dispatch-factory.mjs';
 import { validateModel } from '../utils.mjs';
+import { buildPermissionArgs } from '../permission-args.mjs';
 
 const SKILL_REGISTRY = {
   'project-refine-tasks': (workItemId) => workItemId ? `/project-refine-tasks ${workItemId}` : '/project-refine-tasks',
@@ -339,6 +340,7 @@ export default function dispatchRoutes(deps) {
               relatedProjects,
               worktreeContext,
               contract: contract && Object.keys(contract).length ? contract : null,
+              planMode: resolvedPermMode === 'plan',
             }));
 
       // Select sub-agents based on work item and portfolio context
@@ -371,10 +373,7 @@ export default function dispatchRoutes(deps) {
       let proc;
       try {
         const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', model];
-        args.push('--permission-mode', resolvedPermMode === 'plan' ? 'plan' : 'acceptEdits');
-        if (resolvedSkipPerms) {
-          args.push('--dangerously-skip-permissions');
-        }
+        args.push(...buildPermissionArgs({ permissionMode: resolvedPermMode, skipPermissions: resolvedSkipPerms }));
         args.push('--add-dir', ROOT);
         if (agentDefs.length) {
           args.push('--agents', JSON.stringify(agentDefs));
@@ -528,8 +527,7 @@ export default function dispatchRoutes(deps) {
       let proc;
       try {
         const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet',
-          '--permission-mode', 'acceptEdits',
-          '--dangerously-skip-permissions',
+          ...buildPermissionArgs({ permissionMode: 'acceptEdits', skipPermissions: true }),
           '--add-dir', ROOT,
         ];
         if (agentDefs.length) {
@@ -1201,8 +1199,7 @@ export default function dispatchRoutes(deps) {
 
       const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', validateModel(old?.model)];
       args.push('--resume', resumeSessionId);
-      args.push('--permission-mode', resolvedPermMode === 'plan' ? 'plan' : 'acceptEdits');
-      if (resolvedSkipPerms) args.push('--dangerously-skip-permissions');
+      args.push(...buildPermissionArgs({ permissionMode: resolvedPermMode, skipPermissions: resolvedSkipPerms }));
       args.push('--add-dir', ROOT);
 
       const agentDefs = await selectAgentsForDispatch({ workItem: freshWorkItem, portfolio });

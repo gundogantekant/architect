@@ -2,17 +2,14 @@
  * Claude adapter — wraps the claude CLI PTY process.
  * Provides arg construction, readiness detection, and session ID extraction.
  */
+import { buildPermissionArgs } from '../permission-args.mjs';
+
 export default {
   name: 'claude',
 
   buildArgs(claudeSessionId, flags) {
     const args = ['--session-id', claudeSessionId];
-    if (flags.permissionMode === 'plan') {
-      args.push('--permission-mode', 'plan');
-    } else {
-      args.push('--permission-mode', 'acceptEdits');
-    }
-    if (flags.skipPermissions) args.push('--dangerously-skip-permissions');
+    args.push(...buildPermissionArgs({ permissionMode: flags.permissionMode, skipPermissions: flags.skipPermissions }));
     if (flags.addDir) args.push('--add-dir', flags.addDir);
     if (flags.agentsJson) args.push('--agents', flags.agentsJson);
     if (flags.model) args.push('--model', flags.model);
