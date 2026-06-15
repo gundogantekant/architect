@@ -119,7 +119,10 @@ export function nextDetectorState(prevState, capture, stableN = 2) {
   const state = classifyClaudeScreen(capture);
 
   if (state === 'dialog') {
-    const fired = armed;
+    // Re-arm when transitioning from input (idle) to dialog — idle fires disarm,
+    // but a dialog appearing after an idle should still trigger a question ping.
+    const reArmed = prevState.lastClass === 'input' ? true : armed;
+    const fired = reArmed;
     return {
       state,
       question: fired ? buildQuestion(capture) : null,
