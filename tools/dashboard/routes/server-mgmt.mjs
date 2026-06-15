@@ -131,10 +131,21 @@ export default function serverMgmtRoutes(deps) {
       // is the en-dash ARCHITECT_KEY rather than the canonical 'ticari/architect/main'.
       // Add an entry keyed by ARCHITECT_KEY so the lookup hits the architect default.
       byProject[ARCHITECT_KEY] = db.resolveDispatchModeDefault(ARCHITECT_KEY, prefs);
+      // Parallel block for the dispatch MODEL default (mirrors the mode block above).
+      const byProjectModel = {};
+      for (const key of Object.keys(prefs)) {
+        if (key.startsWith('default_dispatch_model:')) {
+          const projectKey = key.slice('default_dispatch_model:'.length);
+          byProjectModel[projectKey] = db.resolveDispatchModelDefault(projectKey, prefs);
+        }
+      }
+      byProjectModel[ARCHITECT_KEY] = db.resolveDispatchModelDefault(ARCHITECT_KEY, prefs);
       json(res, {
         ...prefs,
         _dispatch_mode_default_global: db.resolveDispatchModeDefault(null, prefs),
         _dispatch_mode_default_by_project: byProject,
+        _dispatch_model_default_global: db.resolveDispatchModelDefault(null, prefs),
+        _dispatch_model_default_by_project: byProjectModel,
       });
     }],
 

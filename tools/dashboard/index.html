@@ -203,9 +203,19 @@ function skipPermissionsCheckbox(id) {
   </div>`;
 }
 
-function modelSelect(id) {
-  const def = window._prefs?.default_model || 'sonnet';
-  return `<div class="field"><label for="${id}">Model</label><select id="${id}"><option value="sonnet"${def === 'sonnet' ? ' selected' : ''}>Sonnet (latest)</option><option value="opus"${def === 'opus' ? ' selected' : ''}>Opus (latest)</option><option value="haiku"${def === 'haiku' ? ' selected' : ''}>Haiku (latest)</option></select><span class="field-hint">Model choice is not preserved on restart</span></div>`;
+/** Resolve the default dispatch model for a project: per-project override → global → default_model
+ *  → sonnet. Mirrors resolveDispatchModeDefault, reading the backend's resolved-default payload. */
+function resolveDispatchModelDefault(projectKey) {
+  const p = window._prefs || {};
+  return (projectKey && p._dispatch_model_default_by_project && p._dispatch_model_default_by_project[projectKey])
+    ?? p._dispatch_model_default_global
+    ?? p.default_model
+    ?? 'sonnet';
+}
+
+function modelSelect(id, projectKey) {
+  const def = resolveDispatchModelDefault(projectKey);
+  return `<div class="field"><label for="${id}">Model</label><select id="${id}"><option value="sonnet"${def === 'sonnet' ? ' selected' : ''}>Sonnet (latest)</option><option value="opus"${def === 'opus' ? ' selected' : ''}>Opus (latest)</option><option value="haiku"${def === 'haiku' ? ' selected' : ''}>Haiku (latest)</option><option value="claude-opus-4-8[1m]"${def === 'claude-opus-4-8[1m]' ? ' selected' : ''}>Opus 4.8 (1M context)</option></select><span class="field-hint">Opus 1M uses additional usage credits</span></div>`;
 }
 
 function getPermissionMode(overlay, selectId) {
@@ -3127,7 +3137,7 @@ async function dispatchWorkItem(workItem, projectKey) {
         ${permissionModeSelect('dispatch-perm-mode', null, projectKey)}
         ${skipPermissionsCheckbox('dispatch-skip-perms')}
         ${autostartToggle('dispatch-autostart')}
-        ${modelSelect('dispatch-model')}
+        ${modelSelect('dispatch-model', projectKey)}
       `,
       afterMount: (o) => {
         wireAgentTypeToggle(o, 'dispatch-agent-type', 'dispatch-perm-mode', 'dispatch-skip-perms', 'dispatch-model');
