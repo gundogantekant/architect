@@ -186,6 +186,31 @@ function getPermissionMode(overlay, selectId) {
   return overlay.querySelector('#' + selectId).value;
 }
 
+/** Disable + uncheck the skip-permissions checkbox while Plan-only mode is selected (plan suppresses --dangerously-skip-permissions). */
+function wirePlanModeSkipGuard(overlay, permModeId, skipPermsId) {
+  const permSelect = overlay.querySelector('#' + permModeId);
+  const skipInput = overlay.querySelector('#' + skipPermsId);
+  if (!permSelect || !skipInput) return;
+  const skipField = skipInput.closest('.interactive-toggle');
+  let helper = skipField?.querySelector('._plan-skip-helper');
+  if (skipField && !helper) {
+    helper = document.createElement('div');
+    helper.className = '_plan-skip-helper';
+    helper.style.cssText = 'font-size:11px;color:var(--text-light);margin-top:2px';
+    helper.textContent = 'Disabled in Plan only mode — plan suppresses --dangerously-skip-permissions';
+    skipField.appendChild(helper);
+  }
+  const apply = () => {
+    const planMode = permSelect.value === 'plan';
+    skipInput.disabled = planMode;
+    if (planMode) skipInput.checked = false;
+    if (skipField) skipField.style.opacity = planMode ? '0.5' : '';
+    if (helper) helper.style.display = planMode ? '' : 'none';
+  };
+  permSelect.addEventListener('change', apply);
+  apply();
+}
+
 /** Wire an agent-type dropdown to show/hide permission fields for non-Claude agents. */
 function wireAgentTypeToggle(overlay, agentTypeId, permModeId, skipPermsId, modelId = null) {
   const agentSelect = overlay.querySelector('#' + agentTypeId);
@@ -203,6 +228,7 @@ function wireAgentTypeToggle(overlay, agentTypeId, permModeId, skipPermsId, mode
   };
   agentSelect.addEventListener('change', toggle);
   toggle(); // Set initial state
+  wirePlanModeSkipGuard(overlay, permModeId, skipPermsId);
 }
 
 function wireInstructionCounter(overlay, textareaId) {
@@ -2331,7 +2357,7 @@ function createSessionPanel(type, info) {
     const isRestartable = ['interrupted', 'suspended', 'failed'].includes(dispatch.status) && hasClaude && !isRevoked;
     const isRevokable   = ['interrupted', 'suspended', 'failed'].includes(dispatch.status) && hasClaude && !isRevoked;
     const showInterrupt = dispatch.status === 'running';
-    const skipBadge = dispatch.skip_permissions ? '<span class="auto-badge">[skip-perms]</span>' : '';
+    const skipBadge = dispatch.skip_permissions && dispatch.permission_mode !== 'plan' ? '<span class="auto-badge">[skip-perms]</span>' : '';
     const planBadge = dispatch.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
     const suspendedBadge = isSuspended ? '<span class="suspended-badge">[suspended]</span>' : '';
     const autoImplementBadge = dispatch.dispatch_mode === 'auto_implement' ? '<span class="status-badge badge-open badge-auto">[auto]</span>' : '';
@@ -2662,7 +2688,7 @@ function createSessionPanel(type, info) {
     const isRunning = terminalInfo.status === 'running';
     const isSuspended = terminalInfo.status === 'suspended';
     const shellBadge = terminalInfo.type === 'shell' ? '<span class="auto-badge" style="background:#2d7d46">[shell]</span>' : '';
-    const skipBadge = terminalInfo.skip_permissions ? '<span class="auto-badge">[skip-perms]</span>' : '';
+    const skipBadge = terminalInfo.skip_permissions && terminalInfo.permission_mode !== 'plan' ? '<span class="auto-badge">[skip-perms]</span>' : '';
     const planBadge = terminalInfo.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
     const suspendedBadge = isSuspended ? '<span class="suspended-badge">[suspended]</span>' : '';
     // Context badges are creation-time-only; work_item_id/epic_id are immutable after dispatch.
@@ -5808,6 +5834,7 @@ async function showReviewModal(projectKey) {
       ${permissionModeSelect('review-perm-mode')}
       ${skipPermissionsCheckbox('review-skip-perms')}
     `,
+    afterMount: (o) => wirePlanModeSkipGuard(o, 'review-perm-mode', 'review-skip-perms'),
     onSubmit: async (overlay) => {
       const checked = overlay.querySelectorAll('[data-pr-number]:checked');
       const instructions = overlay.querySelector('#review-instructions').value.trim();
@@ -7092,7 +7119,10 @@ async function showEpicDispatchModal(epicId) {
       ${skipPermissionsCheckbox('epic-dispatch-skip-perms')}
       ${modelSelect('epic-dispatch-model')}
     `,
-    afterMount: (o) => wireInstructionCounter(o, 'epic-dispatch-instructions'),
+    afterMount: (o) => {
+      wireInstructionCounter(o, 'epic-dispatch-instructions');
+      wirePlanModeSkipGuard(o, 'epic-dispatch-perm-mode', 'epic-dispatch-skip-perms');
+    },
     onSubmit: async (overlay) => {
       const modeSelect = overlay.querySelector('#epic-dispatch-mode');
       const projectSelect = overlay.querySelector('#epic-dispatch-project');

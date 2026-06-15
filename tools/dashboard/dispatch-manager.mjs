@@ -11,6 +11,7 @@ import { loadResumeContext, buildResumePrompt, selectAgentsForDispatch } from '.
 import * as db from './db.mjs';
 import { EventStream } from './event-stream.mjs';
 import { getAdapter } from './adapters/index.mjs';
+import { buildPermissionArgs } from './permission-args.mjs';
 import pty from 'node-pty';
 
 // --- Project sync from portfolio registry ---
@@ -998,9 +999,8 @@ export async function restartDispatch(id, opts, inMemoryDispatches, dbModule) {
 
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet',
     '--resume', original.claude_session_id,
-    '--permission-mode', resolvedPermMode === 'plan' ? 'plan' : 'acceptEdits',
+    ...buildPermissionArgs({ permissionMode: resolvedPermMode, skipPermissions: resolvedSkipPerms }),
   ];
-  if (resolvedSkipPerms) args.push('--dangerously-skip-permissions');
   args.push('--add-dir', ROOT);
 
   const { workItem, portfolio } = await loadResumeContext({ work_item_id, project_key });

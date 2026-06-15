@@ -1,5 +1,6 @@
 import { spawnTerminalSession } from '../terminal-session.mjs';
 import { selectAgentsForDispatch } from '../prompt-builder.mjs';
+import { buildPermissionArgs } from '../permission-args.mjs';
 
 export default function projectsRoutes(deps) {
   const {
@@ -108,7 +109,7 @@ export default function projectsRoutes(deps) {
 
       let proc;
       try {
-        proc = spawn(CLAUDE_BIN, ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet', '--permission-mode', 'plan'], {
+        proc = spawn(CLAUDE_BIN, ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet', ...buildPermissionArgs({ permissionMode: 'plan' })], {
           cwd: effectiveCwd,
           stdio: ['pipe', 'pipe', 'pipe'],
           env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },

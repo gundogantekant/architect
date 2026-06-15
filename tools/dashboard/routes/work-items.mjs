@@ -9,6 +9,7 @@ import {
   isAdministrativeTransition,
 } from '../constants.mjs';
 import { validateWorkItemTitle } from '../lib/work-item-validation.mjs';
+import { buildPermissionArgs } from '../permission-args.mjs';
 import { isSmallOrAbove, getComplexityLevel } from '../utils/complexity.mjs';
 import { validateContract } from '../utils/contract-validation.mjs';
 
@@ -563,7 +564,7 @@ export default function workItemRoutes(deps) {
 
       let proc;
       try {
-        proc = spawn(CLAUDE_BIN, ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet', '--permission-mode', 'plan'], {
+        proc = spawn(CLAUDE_BIN, ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet', ...buildPermissionArgs({ permissionMode: 'plan' })], {
           cwd: ROOT,
           stdio: ['pipe', 'pipe', 'pipe'],
           env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },

@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { spawnTerminalSession } from '../terminal-session.mjs';
 import { updateTerminalTitle, updateTerminalNote } from '../db.mjs';
 import { validateModel } from '../utils.mjs';
+import { buildPermissionArgs } from '../permission-args.mjs';
 
 export default function terminalRoutes(deps) {
   const {
@@ -88,6 +89,10 @@ export default function terminalRoutes(deps) {
         termContract = Object.keys(cleaned).length ? cleaned : null;
       }
 
+      // Resolve permission mode and skip_permissions independently (before prompt build — planMode feeds the prompt)
+      const resolvedTermPermMode = permission_mode || 'acceptEdits';
+      const resolvedTermSkipPerms = skip_permissions === true || skip_permissions === 'true';
+
       const prompt = buildDispatchPrompt({
         workItem: effectiveTermWorkItem,
         projectKey: project_key || `${org_key}/*`,
@@ -97,14 +102,11 @@ export default function terminalRoutes(deps) {
         epicContext,
         orgContext,
         contract: termContract,
+        planMode: resolvedTermPermMode === 'plan',
       });
 
       // Select sub-agents for terminal session
       const termAgentDefs = await selectAgentsForDispatch({ workItem: effectiveTermWorkItem, portfolio });
-
-      // Resolve permission mode and skip_permissions independently
-      const resolvedTermPermMode = permission_mode || 'acceptEdits';
-      const resolvedTermSkipPerms = skip_permissions === true || skip_permissions === 'true';
 
       if (agentType === 'claude') {
         // Delegate to shared module for claude PTY spawn
@@ -572,7 +574,7 @@ export default function terminalRoutes(deps) {
       try {
         const ptyArgs = ['--resume', resumeSessionId];
         ptyArgs.push('--model', 'sonnet');
-        if (resolvedSkipPerms) ptyArgs.push('--dangerously-skip-permissions');
+        ptyArgs.push(...buildPermissionArgs({ permissionMode: resolvedPermMode, skipPermissions: resolvedSkipPerms }));
         ptyArgs.push('--add-dir', ROOT);
 
         if (TMUX_AVAILABLE) {
