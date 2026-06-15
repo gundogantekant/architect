@@ -18,7 +18,10 @@ import { json, text, err, safe, readJson, listDirs, listFiles, parseBody, isPidA
 import { dispatches, terminals, cliSessions, saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession } from './state.mjs';
 import { resolveProjectPath, resolveOrgPath, loadPortfolioContext, loadOrgContext, loadWorkItem, loadResumeContext, topoSort, loadEpicPlanSnippet, selectAgentsForDispatch, buildDispatchPrompt, buildResumePrompt, buildAutoImplementPrompt, buildRefinementPrompt, buildTaskCreationPrompt, buildProjectRefinementPrompt } from './prompt-builder.mjs';
 
-import { wireTerminalHandlers, injectPrompt } from './pty-manager.mjs';
+import { wireTerminalHandlers, injectPrompt, injectIntoTerminal, terminalEvents } from './pty-manager.mjs';
+import { startTelegramBridge } from './telegram/bridge.mjs';
+import { createTelegramClient } from './telegram/client.mjs';
+import { createQuestionDetector } from './telegram/detector.mjs';
 import { startInjection } from './injection/index.mjs';
 import { syncProjectsFromRegistry, broadcastDispatchLine, broadcastDispatchDone, tailLogFile, restoreSessions, extractStreamText, killProcess, killProcessGraceful, wireDispatchHandlers } from './dispatch-manager.mjs';
 import { sweepOrphanedPromptFiles } from './prompt-file.mjs';
@@ -47,6 +50,7 @@ import testEndpointRoutes from './routes/test-endpoints.mjs';
 import * as blocklist from './lib/blocklist.mjs';
 import { evaluateRequest } from './lib/access-guard.mjs';
 import accessRoutes from './routes/access.mjs';
+import telegramRoutes from './routes/telegram.mjs';
 import { attemptMerge, isMergeLocked } from './merge.mjs';
 
 const TMP_DIR = join(ROOT, 'tmp');
@@ -82,6 +86,7 @@ const LAN_EXPOSED = DEFAULT_HOST !== '127.0.0.1' && DEFAULT_HOST !== 'localhost'
 const LAN_URL = LAN_EXPOSED ? `http://${SERVER_LAN_IPS[0] || DEFAULT_HOST}:${port}` : null;
 
 let syncWarnings = [];
+let telegramHandle = null;
 
 const deps = {
   db, json, text, err, safe, parseBody, readJson, listDirs, listFiles,
@@ -104,6 +109,7 @@ const deps = {
   mkdir, stat, join, extname, dirname, homedir, rename, unlinkFile, renameSync, readdir,
   __dirname: import.meta.dirname,
   buildPrefixCache,
+  getTelegramHandle: () => telegramHandle,
 };
 
 const routes = [
@@ -128,6 +134,7 @@ const routes = [
   ...gitRoutes(deps),
   ...(process.env.WORK_DIR ? testEndpointRoutes(deps) : []),
   ...accessRoutes(deps),
+  ...telegramRoutes(deps),
 ];
 
 const server = createServer(async (req, res) => {
@@ -273,6 +280,8 @@ setInterval(async () => {
 async function shutdownFlush() {
   const now = new Date().toISOString();
 
+  try { telegramHandle?.stop(); } catch {}
+
   // Dispatches: leave alive processes as running, mark dead ones as interrupted
   for (const [, d] of dispatches) {
     if (d.status !== 'running') continue;
@@ -321,6 +330,40 @@ process.on('SIGTERM', async () => {
   shutdownFlush().finally(() => process.exit(0));
 });
 process.on('SIGINT', () => { server.close(); shutdownFlush().finally(() => process.exit(0)); });
+
+async function readTelegramConfig() {
+  const enabled = (await db.getPreference('telegram_enabled')) === 'true';
+  const trigger = (await db.getPreference('telegram_trigger')) || 'questions';
+  const rawAllowlist = await db.getPreference('telegram_allowlist');
+  const defaultChat = await db.getPreference('telegram_default_chat_id');
+  let allowlist = [];
+  if (rawAllowlist) {
+    try { allowlist = JSON.parse(rawAllowlist); } catch { allowlist = []; }
+  }
+  return {
+    enabled,
+    trigger,
+    allowlist: Array.isArray(allowlist) ? allowlist.map(Number) : [],
+    default_chat_id: defaultChat ? Number(defaultChat) : null,
+  };
+}
+
+async function startTelegramBridgeIfConfigured() {
+  const token = process.env.ARCHITECT_TELEGRAM_BOT_TOKEN;
+  const config = await readTelegramConfig();
+  if (!token || !config.enabled) return;
+  const client = createTelegramClient(token, {});
+  telegramHandle = startTelegramBridge({
+    client,
+    terminals,
+    injectIntoTerminal,
+    terminalEvents,
+    makeDetector: ({ onNeedsInput, onCleared }) =>
+      createQuestionDetector({ tmuxCapturePane, onNeedsInput, onCleared }),
+    db,
+    config,
+  });
+}
 
 async function main() {
   // Phase 0: Backup database (best-effort — do not block startup on failure)
@@ -378,6 +421,10 @@ async function main() {
 
   // Phase 3: Restore sessions
   restoreSessions(wireTerminalHandlers, deps);
+
+  // Phase 3.4: Start Telegram bridge if a token is present and the feature is enabled.
+  // Routes are always registered (status returns running:false when no bridge is active).
+  await startTelegramBridgeIfConfigured();
 
   // Phase 3.5: Warn about orphaned worktrees
   try {

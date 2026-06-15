@@ -3,13 +3,14 @@ import { spawnTerminalSession } from '../terminal-session.mjs';
 import { updateTerminalTitle, updateTerminalNote } from '../db.mjs';
 import { validateModel } from '../utils.mjs';
 import { buildPermissionArgs } from '../permission-args.mjs';
+import { injectIntoTerminal } from '../pty-manager.mjs';
 
 export default function terminalRoutes(deps) {
   const {
     db, json, err, parseBody,
     ROOT, PORTFOLIO, LOGS_DIR, CLAUDE_BIN, TMUX_AVAILABLE,
     terminals,
-    wireTerminalHandlers, injectPrompt,
+    wireTerminalHandlers,
     buildDispatchPrompt, resolveProjectPath, resolveOrgPath, loadPortfolioContext, loadOrgContext, loadWorkItem, selectAgentsForDispatch, loadEpicPlanSnippet,
     saveTerminalToDb, archiveSession,
     termEventLogPath, generateSeedContent, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture,
@@ -717,16 +718,14 @@ export default function terminalRoutes(deps) {
     [/^\/api\/terminal\/([A-Za-z0-9_-]+)\/inject$/, 'POST', async (m, req, res) => {
       const terminal = terminals.get(m[1]);
       if (!terminal) return err(res, 'terminal not found', 404);
-      if (terminal.status !== 'running') return err(res, 'terminal not running', 400);
-      if (terminal._pendingPrompt) return err(res, 'injection already pending', 409);
 
       const body = await parseBody(req);
       const { prompt } = body;
       if (!prompt) return err(res, 'prompt required', 400);
 
-      terminal._pendingPrompt = prompt;
-      terminal._readyForPrompt = true;
-      await injectPrompt(terminal);
+      const result = await injectIntoTerminal(terminal, prompt);
+      if (result.reason === 'not_running') return err(res, 'terminal not running', 400);
+      if (result.reason === 'busy') return err(res, 'injection already pending', 409);
       json(res, { status: 'done' });
     }],
   ];

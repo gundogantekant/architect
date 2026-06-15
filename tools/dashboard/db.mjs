@@ -190,6 +190,7 @@ export async function assertSchema() {
     dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'model', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'completion_summary_error', 'dry_run', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at', 'agent_phase', 'agent_phase_history', 'timeout_at', 'contract', 'exit_type', 'deleted_at', 'auto_extended', 'scope_violation', 'merged_at', 'merge_target', 'revoked_at', 'previous_dispatch_id', 'chain_mode', 'chain_phase', 'chain_autostart', 'chain_parent_id'],
     terminals: ['id', 'type', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'exited_at', 'pid', 'tmux_session', 'claude_session_id', 'agent_type', 'head_seq', 'deleted_at', 'note'],
     cli_sessions: ['id', 'project_key', 'work_item_id', 'epic_id', 'title', 'pid', 'status', 'registered_at', 'exited_at'],
+    telegram_messages: ['message_id', 'terminal_id', 'chat_id', 'kind', 'created_at'],
     preferences: ['key', 'value'],
     projects: ['key', 'org', 'project', 'component', 'path', 'role', 'synced_at'],
     session_history: ['id', 'type', 'project_key', 'work_item_id', 'epic_id', 'title', 'status', 'permission_mode', 'started_at', 'ended_at', 'duration_seconds', 'cost_usd'],
@@ -1125,6 +1126,37 @@ export async function deleteCliSession(id) {
 
 export async function getPersistedCliSessions() {
   return pool.query('SELECT * FROM cli_sessions').then(r => r.rows);
+}
+
+// --- Telegram bridge: message bindings ---
+
+// Map an outbound Telegram message to the terminal it notified, so inbound
+// reply-to messages can be routed back. ON CONFLICT keeps the latest binding.
+export async function saveTelegramBinding({ message_id, terminal_id, chat_id, kind }) {
+  await pool.query(`
+    INSERT INTO telegram_messages (message_id, terminal_id, chat_id, kind)
+    VALUES ($1, $2, $3, $4)
+    ON CONFLICT (message_id) DO UPDATE SET
+      terminal_id = EXCLUDED.terminal_id,
+      chat_id = EXCLUDED.chat_id,
+      kind = EXCLUDED.kind
+  `, [message_id, terminal_id || null, chat_id || null, kind || null]);
+}
+
+export async function getTelegramBindingByMessageId(message_id) {
+  return pool.query(
+    'SELECT * FROM telegram_messages WHERE message_id = $1',
+    [message_id],
+  ).then(r => r.rows[0] || null);
+}
+
+// Retention: drop bindings older than maxAgeDays (default 7). Returns rowCount.
+export async function pruneTelegramBindings(maxAgeDays = 7) {
+  const result = await pool.query(
+    `DELETE FROM telegram_messages WHERE created_at < now() - ($1 || ' days')::interval`,
+    [String(maxAgeDays)],
+  );
+  return result.rowCount;
 }
 
 // --- Lightweight title-only lookups ---

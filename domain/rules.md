@@ -1576,3 +1576,12 @@ Gate reviews (Ticket Gate, Plan Gate, Code Gate) are read-only, depth-1 dispatch
 - When performing any named action on behalf of the user — creating accounts, registering webhooks, naming cloud resources, generating SSH keys — ask for the preferred name or confirm a suggestion before proceeding.
 - Token names must be identifiable and traceable: a person reading the token name later should understand who created it, from which device/context, for which service, and for what purpose.
 - This rule applies to all agents, skills, and orchestrator actions across all portfolio projects.
+
+## Telegram Bridge Rules
+
+- **Terminals only.** The bridge attaches to interactive terminal sessions (`T-xxx`). Dispatches (`D-xxx`) are out of scope — their stdin is closed once the initial prompt is consumed, so a relayed reply cannot be injected.
+- **Inbound allowlist gating is MANDATORY.** Only messages from an allowlisted `chat_id` are processed. Messages from any other chat are dropped and logged WITHOUT their content (record the rejected `chat_id` only, never the message body).
+- **Bot token handling.** The bot token is read from env / a local file (`work/telegram.env`), NEVER stored in PostgreSQL and NEVER written to logs. See `## Token & Credential Management Rules` and `## External Action Rules` for the governing credential and external-action constraints — those rules apply in full and are not restated here.
+- **Detection is tmux-only.** Question detection relies on capturing the tmux pane; non-tmux terminals receive lifecycle pings only (start/exit), never question notifications.
+- **Reply routing precedence.** Resolve the target terminal in this order: (1) Telegram reply-to a tracked notification → its bound terminal; (2) explicit command; (3) `T-id:` text prefix; (4) the single terminal currently waiting for input; (5) otherwise ask for clarification. Never inject a reply into a terminal that is not running — if the bound terminal is gone, respond `target gone`.
+- **Offset persistence.** The `getUpdates` offset is persisted in the `telegram_offset` preference and advanced only after an update has been fully handled, so a crash mid-handling re-delivers the update rather than dropping it.
