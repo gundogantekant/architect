@@ -163,7 +163,7 @@ export function startTelegramBridge(deps) {
     terminal._tgPrompt = question.prompt;
     terminal._tgOptions = question.options;
     terminal._tgAnswerKind = question.answerKind;
-    if (!kindIsNotifiable(kind)) return;
+if (!kindIsNotifiable(kind)) return;
     try {
       if (kind === 'idle') await notify(terminal, 'question', question.text, 'question');
       else await sendQuestion(terminal);
@@ -188,16 +188,28 @@ export function startTelegramBridge(deps) {
 
   async function replyTo(update, text) {
     const chatId = update.message?.chat?.id;
-    if (chatId === undefined) return;
+    if (chatId === undefined) return null;
     try {
-      await client.sendMessage({
+      return await client.sendMessage({
         chat_id: chatId,
         text,
         reply_to_message_id: update.message.message_id,
       });
     } catch (e) {
       logger.warn(`[telegram] reply failed: ${e.message}`);
+      return null;
     }
+  }
+
+  async function saveConfirmBinding(sent, terminal, chatId) {
+    const messageId = sent?.message_id;
+    if (messageId === undefined) return;
+    await db.saveTelegramBinding({
+      message_id: messageId,
+      terminal_id: terminal.id,
+      chat_id: chatId,
+      kind: 'question',
+    }).catch(() => {});
   }
 
   function unresolvedAnswerMsg(terminal) {
@@ -272,12 +284,14 @@ export function startTelegramBridge(deps) {
     });
     if (decision.type === 'option') {
       terminal._tgPending = { decision, expiresAt: nowFn() + PENDING_TTL_MS };
-      await replyTo(update, confirmMsg(terminal, decision.index, optionLabel(terminal, decision.index)));
+      const sent = await replyTo(update, confirmMsg(terminal, decision.index, optionLabel(terminal, decision.index)));
+      await saveConfirmBinding(sent, terminal, update.message?.chat?.id);
       return;
     }
     if (decision.type === 'text') {
       terminal._tgPending = { decision, expiresAt: nowFn() + PENDING_TTL_MS };
-      await replyTo(update, confirmMsg(terminal, null, decision.value));
+      const sent = await replyTo(update, confirmMsg(terminal, null, decision.value));
+      await saveConfirmBinding(sent, terminal, update.message?.chat?.id);
       return;
     }
     await replyTo(update, unresolvedAnswerMsg(terminal));
