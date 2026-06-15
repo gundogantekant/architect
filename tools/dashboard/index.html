@@ -240,8 +240,10 @@ function dispatchModeFields(overlay, permModeId, autostartId, scopeBoundary) {
   return { permission_mode: selected };
 }
 
-/** Disable + uncheck the skip-permissions checkbox while a plan-phase mode is selected
- *  (plan and plan_execute both run phase 1 as plan-only, which suppresses --dangerously-skip-permissions).
+/** Manage the skip-permissions checkbox state based on the selected permission mode.
+ *  - plan: disable + uncheck (phase 1 suppresses --dangerously-skip-permissions)
+ *  - plan_execute: enable + auto-check (applies to execute phase only)
+ *  - other: enable, hide helper
  *  Also shows the auto-start-execute toggle only while plan_execute is selected. */
 function wirePlanModeSkipGuard(overlay, permModeId, skipPermsId) {
   const permSelect = overlay.querySelector('#' + permModeId);
@@ -254,15 +256,30 @@ function wirePlanModeSkipGuard(overlay, permModeId, skipPermsId) {
     helper = document.createElement('div');
     helper.className = '_plan-skip-helper';
     helper.style.cssText = 'font-size:11px;color:var(--text-light);margin-top:2px';
-    helper.textContent = 'Disabled in plan phase — plan suppresses --dangerously-skip-permissions';
     skipField.appendChild(helper);
   }
   const apply = () => {
-    const planPhase = permSelect.value === 'plan' || permSelect.value === 'plan_execute';
-    skipInput.disabled = planPhase;
-    if (planPhase) skipInput.checked = false;
-    if (skipField) skipField.style.opacity = planPhase ? '0.5' : '';
-    if (helper) helper.style.display = planPhase ? '' : 'none';
+    if (permSelect.value === 'plan') {
+      skipInput.disabled = true;
+      skipInput.checked = false;
+      if (skipField) skipField.style.opacity = '0.5';
+      if (helper) {
+        helper.textContent = 'Disabled in plan phase — plan suppresses --dangerously-skip-permissions';
+        helper.style.display = '';
+      }
+    } else if (permSelect.value === 'plan_execute') {
+      skipInput.disabled = false;
+      skipInput.checked = true;
+      if (skipField) skipField.style.opacity = '';
+      if (helper) {
+        helper.textContent = 'Execute phase only — uncheck to require permission prompts during auto-execute';
+        helper.style.display = '';
+      }
+    } else {
+      skipInput.disabled = false;
+      if (skipField) skipField.style.opacity = '';
+      if (helper) helper.style.display = 'none';
+    }
     if (autostartField) autostartField.style.display = permSelect.value === 'plan_execute' ? '' : 'none';
   };
   permSelect.addEventListener('change', apply);
@@ -3244,6 +3261,7 @@ async function dispatchWorkItem(workItem, projectKey) {
             dispatch_mode: 'plan_execute',
             chain_autostart: modeFields.chain_autostart,
             scope_boundary: modeFields.scope_boundary,
+            skip_permissions: skipPerms,
             agentType,
             model,
             ...(Object.keys(contract).length ? { contract } : {}),
@@ -3287,7 +3305,7 @@ async function dispatchWorkItem(workItem, projectKey) {
             project_path: projectPath,
             title: workItem.title,
             permission_mode: 'plan',
-            skip_permissions: false,
+            skip_permissions: skipPerms,
             dispatch_mode: 'plan_execute',
             chain_mode: 'plan_execute',
             chain_phase: 'plan',
@@ -8725,6 +8743,7 @@ async function showQuickDispatchModal() {
           dispatch_mode: 'plan_execute',
           chain_autostart: modeFields.chain_autostart,
           scope_boundary: modeFields.scope_boundary,
+          skip_permissions: skipPerms,
           agentType,
           model,
         };
@@ -8767,7 +8786,7 @@ async function showQuickDispatchModal() {
           epic_id: epicId,
           title: titleTextPE,
           permission_mode: 'plan',
-          skip_permissions: false,
+          skip_permissions: skipPerms,
           dispatch_mode: 'plan_execute',
           chain_mode: 'plan_execute',
           chain_phase: 'plan',

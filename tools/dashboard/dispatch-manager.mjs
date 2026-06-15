@@ -1168,10 +1168,10 @@ export async function restartDispatch(id, opts, inMemoryDispatches, dbModule) {
 }
 
 /**
- * Spawn phase 2 of a plan_execute chain: resume the phase-1 plan session with acceptEdits +
- * --dangerously-skip-permissions in the same isolated worktree, and instruct the agent to
- * implement its already-approved plan. Creates a NEW dispatch record linked to the phase-1
- * record via chain_parent_id. Mirrors the resume pattern.
+ * Spawn phase 2 of a plan_execute chain: resume the phase-1 plan session with acceptEdits in
+ * the same isolated worktree and instruct the agent to implement its already-approved plan.
+ * skip-permissions inherited from phase-1 dispatch record (default: true). Creates a NEW
+ * dispatch record linked to the phase-1 record via chain_parent_id. Mirrors the resume pattern.
  *
  * The caller MUST have already verified: phase-1 status completed, chain_phase==='plan',
  * claude_session_id present, revoked_at unset, scope_boundary contract present.
@@ -1197,7 +1197,7 @@ export async function startExecutePhase(planDispatch) {
     title: planDispatch.title || '',
     model: inheritedModel,
     permissionMode: 'acceptEdits',
-    skipPermissions: true,
+    skipPermissions: planDispatch.skip_permissions ?? true,
     claudeSessionId: planDispatch.claude_session_id,
     contract: planDispatch.contract || null,
     worktreePath: planDispatch.worktree_path || null,
@@ -1211,7 +1211,7 @@ export async function startExecutePhase(planDispatch) {
 
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', inheritedModel,
     '--resume', planDispatch.claude_session_id,
-    ...buildPermissionArgs({ permissionMode: 'acceptEdits', skipPermissions: true }),
+    ...buildPermissionArgs({ permissionMode: 'acceptEdits', skipPermissions: planDispatch.skip_permissions ?? true }),
   ];
   args.push('--add-dir', ROOT);
 
