@@ -13,13 +13,14 @@ import { getAdapter } from './adapters/index.mjs';
 
 import { CLAUDE_BIN, ROOT, PORTFOLIO, LEGACY_PORTFOLIO, WORK, LOGS_DIR, ARCHITECT_KEY, port, VALID_WORK_ITEM_STATUSES, VALID_EPIC_STATUSES, VALID_PRIORITIES, SERVER_START_TIME, DASHCTL_PATH, PID_FILE, LOG_FILE, MIGRATIONS_DIR, TMUX_AVAILABLE, BACKUP_DIR, DEFAULT_HOST, resolveAccessConfig } from './constants.mjs';
 import { migrateLegacyPortfolio } from './portfolio-migration.mjs';
-import { json, text, err, safe, readJson, listDirs, listFiles, parseBody, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture, tmuxCapturePane, tmuxPasteStdin, tmuxClearInput, tmuxSendEnter, termEventLogPath, generateSeedContent, sleep } from './utils.mjs';
+import { json, text, err, safe, readJson, listDirs, listFiles, parseBody, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture, tmuxCapturePane, tmuxPasteStdin, tmuxClearInput, tmuxSendEnter, tmuxSendKeys, termEventLogPath, generateSeedContent, sleep } from './utils.mjs';
 
 import { dispatches, terminals, cliSessions, saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession } from './state.mjs';
 import { resolveProjectPath, resolveOrgPath, loadPortfolioContext, loadOrgContext, loadWorkItem, loadResumeContext, topoSort, loadEpicPlanSnippet, selectAgentsForDispatch, buildDispatchPrompt, buildResumePrompt, buildAutoImplementPrompt, buildRefinementPrompt, buildTaskCreationPrompt, buildProjectRefinementPrompt } from './prompt-builder.mjs';
 
 import { wireTerminalHandlers, injectPrompt, injectIntoTerminal, terminalEvents } from './pty-manager.mjs';
 import { startTelegramBridge } from './telegram/bridge.mjs';
+import { explainQuestion, mapReplyToDecision } from './telegram/llm.mjs';
 import { createTelegramClient } from './telegram/client.mjs';
 import { createQuestionDetector } from './telegram/detector.mjs';
 import { startInjection } from './injection/index.mjs';
@@ -377,6 +378,11 @@ async function startTelegramBridgeIfConfigured() {
     terminalEvents,
     makeDetector: ({ onNeedsInput, onCleared }) =>
       createQuestionDetector({ tmuxCapturePane, onNeedsInput, onCleared }),
+    explainQuestion,
+    mapReplyToDecision,
+    sendKeysToTerminal: (terminal, keys) => tmuxSendKeys(terminal.tmux_session, keys),
+    capturePane: (terminal) => tmuxCapturePane(terminal.tmux_session),
+    nowFn: () => Date.now(),
     db,
     config,
   });

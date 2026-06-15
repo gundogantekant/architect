@@ -16,6 +16,12 @@ import {
   unresolvedMsg,
   sessionsListMsg,
   failureMsg,
+  buildQuestionNotification,
+  confirmMsg,
+  cancelledMsg,
+  expiredMsg,
+  selectedMsg,
+  staleScreenMsg,
 } from '../telegram/format.mjs';
 
 function terminal(overrides = {}) {
@@ -162,4 +168,84 @@ test('unresolvedMsg: empty list and populated list', () => {
 test('sessionsListMsg: header plus lines', () => {
   const list = [terminal({ questionText: 'Proceed?' })];
   assert.equal(sessionsListMsg(list), 'Waiting sessions:\nT-abc · ticari/architect/main — Proceed?');
+});
+
+test('buildQuestionNotification: explained uses summary and numbered options with blurbs', () => {
+  const explained = {
+    summary: 'Pick a deploy target.',
+    options: [{ blurb: 'go live' }, { blurb: 'safe sandbox' }],
+  };
+  const options = [
+    { n: 1, label: 'Production' },
+    { n: 2, label: 'Staging' },
+  ];
+  const out = buildQuestionNotification(terminal({ work_item_id: 'W-1' }), explained, options, 'raw ignored');
+  assert.equal(
+    out,
+    '🔔 T-abc · ticari/architect/main · W-1\n\nPick a deploy target.\n\n1. Production — go live\n2. Staging — safe sandbox',
+  );
+});
+
+test('buildQuestionNotification: no explained uses rawText and bare numbered options', () => {
+  const options = [
+    { n: 1, label: 'Yes' },
+    { n: 2, label: 'No' },
+  ];
+  const out = buildQuestionNotification(terminal(), null, options, 'Proceed with merge?');
+  assert.equal(out, '🔔 T-abc · ticari/architect/main\n\nProceed with merge?\n\n1. Yes\n2. No');
+});
+
+test('buildQuestionNotification: empty options omits the option block', () => {
+  const out = buildQuestionNotification(terminal(), null, [], 'Type your answer:');
+  assert.equal(out, '🔔 T-abc · ticari/architect/main\n\nType your answer:');
+});
+
+test('confirmMsg: numbered choice with ok/cancel words', () => {
+  const out = confirmMsg(terminal(), 2, 'Staging');
+  assert.equal(
+    out,
+    '🔔 T-abc · ticari/architect/main\n→ 2. Staging\nSend `ok` to confirm, `cancel` to abort, or rephrase.',
+  );
+});
+
+test('confirmMsg: free-text variant renders quoted text', () => {
+  const out = confirmMsg(terminal(), null, 'restart the service');
+  assert.equal(
+    out,
+    '🔔 T-abc · ticari/architect/main\n→ "restart the service"\nSend `ok` to confirm, `cancel` to abort, or rephrase.',
+  );
+});
+
+test('cancelledMsg: correct string', () => {
+  assert.equal(cancelledMsg('T-abc'), 'T-abc: cancelled — reply again to answer');
+});
+
+test('expiredMsg: header plus re-listed numbered options', () => {
+  const options = [
+    { n: 1, label: 'Yes' },
+    { n: 2, label: 'No' },
+  ];
+  const out = expiredMsg(terminal(), options);
+  assert.equal(
+    out,
+    '🔔 T-abc · ticari/architect/main\nthat question expired — here are the options again:\n1. Yes\n2. No',
+  );
+});
+
+test('selectedMsg: numbered variant includes verify caveat', () => {
+  assert.equal(
+    selectedMsg('T-abc', 1, 'Production'),
+    "✅ selected → 1. Production (verify in dashboard if it didn't take)",
+  );
+});
+
+test('selectedMsg: free-text variant includes verify caveat', () => {
+  assert.equal(
+    selectedMsg('T-abc', null, 'restart'),
+    '✅ sent: "restart" (verify in dashboard if it didn\'t take)',
+  );
+});
+
+test('staleScreenMsg: correct string', () => {
+  assert.equal(staleScreenMsg('T-abc'), '⚠️ T-abc — session moved on; re-check in dashboard');
 });

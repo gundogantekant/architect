@@ -17,6 +17,7 @@ import {
 } from '../injection/claude-tmux.mjs';
 
 const COMPOSER_ARROW = '❯';
+const MENU_LINE = /^[❯>]?\s*\d+\.\s/;
 
 function dialogLines(capture) {
   return (capture || '')
@@ -37,12 +38,48 @@ function dialogLines(capture) {
 export function extractQuestionText(capture) {
   if (classifyClaudeScreen(capture) === 'dialog') {
     const lines = dialogLines(capture);
-    const menu = lines.filter(line => /^[❯>]?\s*\d+\.\s/.test(line) || /^\d+\.\s/.test(line));
-    const prompt = lines.filter(line => !/^[❯>]?\s*\d+\.\s/.test(line) && !/^\d+\.\s/.test(line));
+    const menu = lines.filter(line => MENU_LINE.test(line));
+    const prompt = lines.filter(line => !MENU_LINE.test(line));
     return [...prompt, ...menu].join('\n').trim();
   }
   const region = inputRegion(capture);
   return region === null ? '' : region.trim();
+}
+
+function parseMenuOptions(menuLines) {
+  return menuLines.map(line => {
+    const match = line.match(/(\d+)\.\s+(.*)$/);
+    return { n: Number(match[1]), label: match[2].trim() };
+  });
+}
+
+/**
+ * Extract a structured question from a capture.
+ *
+ * Dialog captures yield a parsed numbered menu plus the surrounding prompt.
+ * Input captures yield the composer region as the prompt with no options.
+ * @param {string} capture
+ * @returns {{kind:'dialog'|'input', prompt:string, options:{n:number,label:string}[]}}
+ */
+export function extractQuestion(capture) {
+  if (classifyClaudeScreen(capture) === 'dialog') {
+    const lines = dialogLines(capture);
+    const options = parseMenuOptions(lines.filter(line => MENU_LINE.test(line)));
+    const prompt = lines.filter(line => !MENU_LINE.test(line)).join('\n').trim();
+    return { kind: 'dialog', prompt, options };
+  }
+  const region = inputRegion(capture);
+  return { kind: 'input', prompt: region === null ? '' : region.trim(), options: [] };
+}
+
+function buildQuestion(capture) {
+  const { prompt, options } = extractQuestion(capture);
+  return {
+    text: extractQuestionText(capture),
+    prompt,
+    options,
+    answerKind: options.length > 0 ? 'menu' : 'text',
+  };
 }
 
 function isEmptyCapture(capture) {
@@ -64,7 +101,7 @@ function composerChangedAfterFiring(prevCapture, capture) {
  * @param {{lastClass:string, prevCapture:?string, stableCount:number, armed:boolean}} prevState
  * @param {?string} capture
  * @param {number} stableN
- * @returns {{state:string, questionText:string, fired:boolean, cleared:boolean,
+ * @returns {{state:string, question:?object, fired:boolean, cleared:boolean,
  *            next:{lastClass:string, prevCapture:?string, stableCount:number, armed:boolean}}}
  */
 export function nextDetectorState(prevState, capture, stableN = 2) {
@@ -72,7 +109,7 @@ export function nextDetectorState(prevState, capture, stableN = 2) {
   if (isEmptyCapture(capture)) {
     return {
       state: 'boot',
-      questionText: '',
+      question: null,
       fired: false,
       cleared: false,
       next: { lastClass: 'boot', prevCapture: capture, stableCount: 0, armed },
@@ -85,7 +122,7 @@ export function nextDetectorState(prevState, capture, stableN = 2) {
     const fired = armed;
     return {
       state,
-      questionText: fired ? extractQuestionText(capture) : '',
+      question: fired ? buildQuestion(capture) : null,
       fired,
       kind: fired ? 'question' : undefined,
       cleared: false,
@@ -99,7 +136,7 @@ export function nextDetectorState(prevState, capture, stableN = 2) {
     if (wasQuestion || composerMoved) {
       return {
         state,
-        questionText: '',
+        question: null,
         fired: false,
         cleared: true,
         next: { lastClass: state, prevCapture: capture, stableCount: 0, armed: true },
@@ -111,7 +148,7 @@ export function nextDetectorState(prevState, capture, stableN = 2) {
     const fired = armed && stableCount >= stableN;
     return {
       state,
-      questionText: fired ? extractQuestionText(capture) : '',
+      question: fired ? buildQuestion(capture) : null,
       fired,
       kind: fired ? 'idle' : undefined,
       cleared: false,
@@ -127,7 +164,7 @@ export function nextDetectorState(prevState, capture, stableN = 2) {
   const cleared = prevState.lastClass === 'dialog' || prevState.lastClass === 'input';
   return {
     state: 'boot',
-    questionText: '',
+    question: null,
     fired: false,
     cleared,
     next: { lastClass: 'boot', prevCapture: capture, stableCount: 0, armed: true },
@@ -144,7 +181,7 @@ function initialState() {
  *
  * @param {{
  *   tmuxCapturePane:(session:string)=>Promise<string>,
- *   onNeedsInput?:(terminal:object, questionText:string, kind:string)=>void,
+ *   onNeedsInput?:(terminal:object, question:object, kind:string)=>void,
  *   onCleared?:(terminal:object)=>void,
  *   intervalMs?:number,
  *   stableN?:number,
@@ -169,9 +206,9 @@ export function createQuestionDetector({
     const capture = await tmuxCapturePane(terminal.tmux_session);
     const result = nextDetectorState(prevState, capture, stableN);
     states.set(terminal.id, result.next);
-    if (result.fired) onNeedsInput(terminal, result.questionText, result.kind);
+    if (result.fired) onNeedsInput(terminal, result.question, result.kind);
     if (result.cleared) onCleared(terminal);
-    return { state: result.state, questionText: result.questionText, fired: result.fired, kind: result.kind };
+    return { state: result.state, question: result.question, fired: result.fired, kind: result.kind };
   }
 
   function ensureTimer() {

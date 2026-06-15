@@ -688,6 +688,10 @@ Configuration for the Telegram terminal bridge — relays terminal questions and
 
 Back-compat: the legacy `telegram_trigger` preference is read only when none of the three `telegram_notify_*` preferences exist (`questions_lifecycle`→questions+lifecycle, `questions`→questions only). All toggles are persisted in the `preferences` table.
 
+**Transient bridge state (smart-reply loop).** The bridge keeps **non-persisted, in-memory** per-terminal state used to drive readable question pings and the reply→decision→confirm→actuate loop: `_tgQuestion`/`_tgPrompt` (the question text), `_tgOptions` (`[{n, label}]` numbered choices), `_tgAnswerKind` (`'menu' | 'text'`), and `_tgPending` (`{decision, expiresAt}` holding a mapped-but-unconfirmed decision for confirm-before-actuate). This state lives in memory only and is lost on restart — after a restart a pending reply degrades to re-mapping the freshly captured screen rather than resuming.
+
+**Haiku-rewritten pings.** Question pings are rewritten into plain language by `claude-haiku-4-5-20251001` via the Anthropic API when `ANTHROPIC_API_KEY` is set. When the key is absent, the bridge falls back gracefully to cleaned raw pane text plus deterministic reply matching (no model call).
+
 ## TelegramMessageBinding
 
 Maps an outbound Telegram message to the terminal it notified, so an inbound reply-to message can be routed back to the correct terminal. Stored in the `telegram_messages` table. Bindings are retained for 7 days, then pruned.
