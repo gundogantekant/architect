@@ -98,6 +98,9 @@ export const SPEC_FILES = [
   'clipboard-copy',
   'access-unblock-ui',
   'access-control',
+  'terminal-sidebar-label',
+  'terminal-session-id',
+  'standalone-terminal',
 ];
 
 function getLiveDashboardPorts() {

@@ -1629,11 +1629,7 @@ function updatePanelMeta(sessionState, key, value) {
 
   if (key === 'claude_session_id') {
     sessionState.claudeSessionId = value;
-    let footerEl = panel.querySelector('.session-id-copy');
-    if (footerEl) {
-      footerEl.textContent = value;
-      footerEl.style.display = '';
-    }
+    setPanelSessionId(panel, value);
   } else if (key === 'prompt_injection_status') {
     const indicator = panel.querySelector('.injection-indicator');
     if (indicator) {
@@ -2251,6 +2247,10 @@ async function restoreTerminals() {
             renderNoteRow(noteRow, liveNote, t.id);
           }
         }
+        if (t.claude_session_id && existing.claude_session_id !== t.claude_session_id) {
+          existing.claude_session_id = t.claude_session_id;
+          if (panel) setPanelSessionId(panel, t.claude_session_id);
+        }
         continue;
       }
       if (t.status === 'suspended') {
@@ -2724,6 +2724,7 @@ function createSessionPanel(type, info) {
           <span class="terminal-title">${termTitleContent}${shellBadge}${planBadge}${skipBadge}${suspendedBadge}</span>
           <span class="terminal-meta">${fmtTimestamp(terminalInfo.started_at)}<span class="cost-placeholder">—</span></span>
           <button class="focus-btn" data-focus-terminal="${esc(id)}">Focus</button>
+          <button class="focus-btn" data-standalone-terminal="${esc(id)}" title="Open standalone mobile terminal" aria-label="Open standalone mobile terminal">Open ↗</button>
           <button class="minimize-btn" data-minimize-terminal="${esc(id)}">▼</button>
           <button class="suspend-btn" data-suspend-terminal="${esc(id)}" ${(!isRunning || terminalInfo.agent_type !== 'claude') ? 'style="display:none"' : ''}>Suspend</button>
           <button class="resume-btn" data-resume-terminal="${esc(id)}" ${!isSuspended ? 'style="display:none"' : ''}>Resume</button>
@@ -2780,6 +2781,8 @@ function createSessionPanel(type, info) {
       });
     }
     panel.querySelector(`[data-focus-terminal="${id}"]`).onclick = () => openFocusPopup('terminal', id);
+    const standaloneBtn = panel.querySelector(`[data-standalone-terminal="${id}"]`);
+    if (standaloneBtn) standaloneBtn.onclick = () => window.open('/t/' + id, '_blank', 'noopener');
     const bottomFocusT = panel.querySelector(`[data-focus-terminal-bottom="${id}"]`);
     if (bottomFocusT) bottomFocusT.onclick = () => openFocusPopup('terminal', id);
     panel.querySelector(`[data-kill-terminal="${id}"]`).onclick = async (e) => {
@@ -7401,6 +7404,16 @@ function bindSessionIdCopy(container) {
   }
 }
 
+function setPanelSessionId(panel, sessionId) {
+  if (!panel || !sessionId) return;
+  let el = panel.querySelector('.session-id-copy');
+  if (el) { el.textContent = sessionId; el.style.display = ''; return; }
+  const anchor = panel.querySelector('.injection-indicator');
+  if (!anchor) return;
+  anchor.insertAdjacentHTML('afterend', sessionIdTag(sessionId));
+  bindSessionIdCopy(panel);
+}
+
 function formatElapsed(startedAt) {
   const ms = Date.now() - new Date(startedAt).getTime();
   const s = Math.floor(ms / 1000);
@@ -7469,7 +7482,7 @@ function refreshSessionsSidebar() {
 
   const filter = sessionStorage.getItem('dispatches-sidebar-filter') || 'active';
   const allDispatches = activeDispatches.map(d => ({ type: 'dispatch', id: d.id, status: d.status, label: d.work_item_id || d.title || d.id, started_at: d.started_at, epic_id: d.epic_id, work_item_id: d.work_item_id, project_key: d.project_key, dispatch_mode: d.dispatch_mode }));
-  const allTerminals = activeTerminals.map(t => ({ type: 'terminal', id: t.id, status: t.status, label: t.title || t.id, started_at: t.started_at, epic_id: t.epic_id, work_item_id: t.work_item_id, project_key: t.project_key, dispatch_mode: null }));
+  const allTerminals = activeTerminals.map(t => ({ type: 'terminal', id: t.id, status: t.status, label: (t.note?.trim()) || t.title || t.id, started_at: t.started_at, epic_id: t.epic_id, work_item_id: t.work_item_id, project_key: t.project_key, dispatch_mode: null }));
   const allCli = activeCliSessions.map(c => ({ type: 'cli', id: c.id, status: c.status, label: `[CLI] ${c.title}`, started_at: c.registered_at, epic_id: c.epic_id, work_item_id: c.work_item_id, project_key: c.project_key, dispatch_mode: null }));
 
   let allSessions;
