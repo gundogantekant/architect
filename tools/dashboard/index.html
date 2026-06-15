@@ -1283,16 +1283,6 @@ function _placeSessionPanelsNow() {
   if (!globalContainer) {
     globalContainer = document.createElement('div');
     globalContainer.id = 'dispatch-panels';
-    const killAllBtn = document.createElement('button');
-    killAllBtn.className = 'kill-all-btn';
-    killAllBtn.textContent = 'Kill All Sessions';
-    killAllBtn.onclick = killAllSessions;
-    globalContainer.appendChild(killAllBtn);
-    const dismissAllBtn = document.createElement('button');
-    dismissAllBtn.className = 'dismiss-all-btn';
-    dismissAllBtn.textContent = 'Dismiss Completed';
-    dismissAllBtn.onclick = dismissAllCompleted;
-    globalContainer.appendChild(dismissAllBtn);
   }
 
   const movedPanels = new Set();
@@ -9301,7 +9291,6 @@ function renderSettingsView(status, config) {
   html += '<button class="settings-btn primary" id="settings-restart">Restart Server</button>';
   html += '<button class="settings-btn danger" id="settings-stop">Stop Server</button>';
   html += '<button class="settings-btn" id="settings-fresh">Fresh Start</button>';
-  html += '<button class="settings-btn" id="settings-killall">Kill All Sessions</button>';
   html += '</div>';
   html += '<div class="settings-output" id="settings-action-output"></div>';
   html += '</div>';
@@ -9430,21 +9419,6 @@ function bindSettingsEvents(status, config) {
       await fetch('/api/server/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'fresh', clear_sessions: clearSessions }) });
       showReconnectingOverlay();
     } catch {}
-  });
-
-  document.getElementById('settings-killall')?.addEventListener('click', async () => {
-    if (!confirm('Kill all active dispatches and terminals?')) return;
-    try {
-      await Promise.all([
-        fetch('/api/dispatch/all', { method: 'DELETE' }),
-        fetch('/api/terminal/all', { method: 'DELETE' }),
-      ]);
-      const out = document.getElementById('settings-action-output');
-      if (out) { out.style.display = 'block'; out.textContent = 'All sessions killed.'; }
-      setTimeout(() => { if (out) out.style.display = 'none'; }, 3000);
-    } catch (e) {
-      alert('Failed: ' + e.message);
-    }
   });
 
   document.getElementById('settings-install')?.addEventListener('click', async () => {
@@ -9879,6 +9853,10 @@ function renderAllSessionsView(dispatches, terminals, cliSessions, history) {
 
   return `<div class="card">
     <h2>Sessions</h2>
+    <div class="sessions-actions" style="margin:8px 0 4px">
+      <button class="kill-all-btn" id="sessions-killall">Kill All Sessions</button>
+      <button class="dismiss-all-btn" id="sessions-dismiss-completed">Dismiss Completed</button>
+    </div>
     <h3 style="font-size:14px;margin:16px 0 6px">Active</h3>
     ${active ? `<table class="wi-table">${tableHead()}<tbody>${active}</tbody></table>` : '<p style="color:var(--text-light);font-size:13px">No active sessions.</p>'}
     <h3 style="font-size:14px;margin:20px 0 6px">History</h3>
@@ -10653,6 +10631,8 @@ async function route() {
         api('sessions/all'),
       ]);
       main.innerHTML = renderAllSessionsView(dispatches, terminals, cliSessions, history);
+      document.getElementById('sessions-killall')?.addEventListener('click', async () => { await killAllSessions(); route(); });
+      document.getElementById('sessions-dismiss-completed')?.addEventListener('click', async () => { await dismissAllCompleted(); route(); });
     } catch (e) {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading sessions: ${esc(String(e))}</p></div>`;
     }
