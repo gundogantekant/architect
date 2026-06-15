@@ -226,3 +226,80 @@ test('MG-6: epics has a priority CHECK constraint', async () => {
     await client.end();
   }
 });
+
+// ── MG-PE: migration 043 adds plan_execute chain columns + seeds ──────────────
+
+function pgClient() {
+  return new pg.Client({
+    host: process.env.ARCHITECT_PG_HOST ?? '127.0.0.1',
+    port: parseInt(process.env.ARCHITECT_PG_PORT ?? '3778', 10),
+    database: testDbName,
+    user: process.env.ARCHITECT_PG_USER ?? 'architect',
+    password: process.env.ARCHITECT_PG_PASSWORD ?? 'architect',
+  });
+}
+
+test('MG-PE1: 043 adds the four chain_* columns to dispatches', async () => {
+  await initDatabaseAsync(tmpDir, MIGRATIONS_DIR);
+  const client = pgClient();
+  await client.connect();
+  try {
+    const { rows } = await client.query(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'dispatches'
+        AND column_name IN ('chain_mode', 'chain_phase', 'chain_autostart', 'chain_parent_id')
+    `);
+    const cols = rows.map(r => r.column_name).sort();
+    assert.deepEqual(cols, ['chain_autostart', 'chain_mode', 'chain_parent_id', 'chain_phase']);
+  } finally {
+    await client.end();
+  }
+});
+
+test('MG-PE2: 043 seeds architect plan_execute default and autostart preference', async () => {
+  await initDatabaseAsync(tmpDir, MIGRATIONS_DIR);
+  const client = pgClient();
+  await client.connect();
+  try {
+    const { rows } = await client.query(
+      `SELECT key, value FROM preferences WHERE key IN ($1, $2)`,
+      ['default_dispatch_mode:ticari/architect/main', 'plan_execute_autostart'],
+    );
+    const seeded = Object.fromEntries(rows.map(r => [r.key, r.value]));
+    assert.equal(seeded['default_dispatch_mode:ticari/architect/main'], 'plan_execute');
+    assert.equal(seeded['plan_execute_autostart'], 'true');
+  } finally {
+    await client.end();
+  }
+});
+
+test('MG-PE4: 043 adds the nullable model column to dispatches', async () => {
+  await initDatabaseAsync(tmpDir, MIGRATIONS_DIR);
+  const client = pgClient();
+  await client.connect();
+  try {
+    const { rows } = await client.query(`
+      SELECT column_name, is_nullable FROM information_schema.columns
+      WHERE table_name = 'dispatches' AND column_name = 'model'
+    `);
+    assert.strictEqual(rows.length, 1, 'dispatches.model must exist');
+    assert.strictEqual(rows[0].is_nullable, 'YES', 'dispatches.model must be nullable');
+  } finally {
+    await client.end();
+  }
+});
+
+test('MG-PE3: 043 creates the chain_parent_id partial index', async () => {
+  await initDatabaseAsync(tmpDir, MIGRATIONS_DIR);
+  const client = pgClient();
+  await client.connect();
+  try {
+    const { rows } = await client.query(`
+      SELECT indexname FROM pg_indexes
+      WHERE tablename = 'dispatches' AND indexname = 'idx_dispatches_chain_parent_id'
+    `);
+    assert.strictEqual(rows.length, 1, 'idx_dispatches_chain_parent_id must exist');
+  } finally {
+    await client.end();
+  }
+});

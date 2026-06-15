@@ -161,12 +161,38 @@ function renderMd(text) {
 
 
 
-function permissionModeSelect(id, defaultMode) {
-  const mode = defaultMode || window._prefs.default_permission_mode || 'acceptEdits';
-  return `<div class="field"><label>Permission Mode</label><select id="${id}">
+/** Resolve the default dispatch mode for a project: per-project override → global → acceptEdits.
+ *  Reads the backend's resolved-default payload (single source of precedence) keyed by the
+ *  actual dispatch project_key. The backend's _dispatch_mode_default_by_project already
+ *  contains an entry keyed by the en-dash ARCHITECT_KEY (resolving the canonical architect
+ *  override), so a lookup by the raw dispatch key hits it — no FE-side key remapping needed. */
+function resolveDispatchModeDefault(projectKey) {
+  const p = window._prefs || {};
+  return (projectKey && p._dispatch_mode_default_by_project && p._dispatch_mode_default_by_project[projectKey])
+    ?? p._dispatch_mode_default_global
+    ?? p.default_dispatch_mode
+    ?? 'acceptEdits';
+}
+
+/** Dispatch-mode dropdown: Plan only / Accept edits / Plan, then auto-execute.
+ *  `plan_execute` is a modal-selection token, not a raw --permission-mode flag. */
+function permissionModeSelect(id, defaultMode, projectKey) {
+  const mode = defaultMode || resolveDispatchModeDefault(projectKey);
+  return `<div class="field"><label>Dispatch Mode</label><select id="${id}">
     <option value="plan"${mode === 'plan' ? ' selected' : ''}>Plan only</option>
     <option value="acceptEdits"${mode === 'acceptEdits' ? ' selected' : ''}>Accept edits</option>
+    <option value="plan_execute"${mode === 'plan_execute' ? ' selected' : ''}>Plan, then auto-execute</option>
   </select></div>`;
+}
+
+/** Auto-start-execute checkbox shown only while the dispatch mode is plan_execute.
+ *  Hidden by wirePlanModeSkipGuard's apply() for the other modes. */
+function autostartToggle(id) {
+  const checked = window._prefs.plan_execute_autostart === 'true' || window._prefs.plan_execute_autostart === true;
+  return `<div class="interactive-toggle _autostart-field" style="display:none">
+    <input type="checkbox" id="${id}"${checked ? ' checked' : ''} />
+    <label for="${id}">Auto-start execute phase after planning</label>
+  </div>`;
 }
 
 function skipPermissionsCheckbox(id) {
@@ -186,26 +212,48 @@ function getPermissionMode(overlay, selectId) {
   return overlay.querySelector('#' + selectId).value;
 }
 
-/** Disable + uncheck the skip-permissions checkbox while Plan-only mode is selected (plan suppresses --dangerously-skip-permissions). */
+/** Build the dispatch-mode request fields from a modal selection.
+ *  For plan_execute, the wire permission_mode is `plan` (phase 1) and the body carries
+ *  dispatch_mode='plan_execute', chain_autostart, and scope_boundary. For plan/acceptEdits
+ *  the raw permission_mode flows through unchanged.
+ *  `scopeBoundary` is the contract scope-boundary the user supplied (may be empty). */
+function dispatchModeFields(overlay, permModeId, autostartId, scopeBoundary) {
+  const selected = getPermissionMode(overlay, permModeId);
+  if (selected === 'plan_execute') {
+    return {
+      permission_mode: 'plan',
+      dispatch_mode: 'plan_execute',
+      chain_autostart: !!overlay.querySelector('#' + autostartId)?.checked,
+      scope_boundary: scopeBoundary || '',
+    };
+  }
+  return { permission_mode: selected };
+}
+
+/** Disable + uncheck the skip-permissions checkbox while a plan-phase mode is selected
+ *  (plan and plan_execute both run phase 1 as plan-only, which suppresses --dangerously-skip-permissions).
+ *  Also shows the auto-start-execute toggle only while plan_execute is selected. */
 function wirePlanModeSkipGuard(overlay, permModeId, skipPermsId) {
   const permSelect = overlay.querySelector('#' + permModeId);
   const skipInput = overlay.querySelector('#' + skipPermsId);
   if (!permSelect || !skipInput) return;
   const skipField = skipInput.closest('.interactive-toggle');
+  const autostartField = overlay.querySelector('._autostart-field');
   let helper = skipField?.querySelector('._plan-skip-helper');
   if (skipField && !helper) {
     helper = document.createElement('div');
     helper.className = '_plan-skip-helper';
     helper.style.cssText = 'font-size:11px;color:var(--text-light);margin-top:2px';
-    helper.textContent = 'Disabled in Plan only mode — plan suppresses --dangerously-skip-permissions';
+    helper.textContent = 'Disabled in plan phase — plan suppresses --dangerously-skip-permissions';
     skipField.appendChild(helper);
   }
   const apply = () => {
-    const planMode = permSelect.value === 'plan';
-    skipInput.disabled = planMode;
-    if (planMode) skipInput.checked = false;
-    if (skipField) skipField.style.opacity = planMode ? '0.5' : '';
-    if (helper) helper.style.display = planMode ? '' : 'none';
+    const planPhase = permSelect.value === 'plan' || permSelect.value === 'plan_execute';
+    skipInput.disabled = planPhase;
+    if (planPhase) skipInput.checked = false;
+    if (skipField) skipField.style.opacity = planPhase ? '0.5' : '';
+    if (helper) helper.style.display = planPhase ? '' : 'none';
+    if (autostartField) autostartField.style.display = permSelect.value === 'plan_execute' ? '' : 'none';
   };
   permSelect.addEventListener('change', apply);
   apply();
@@ -705,6 +753,54 @@ function createDispatchPanel(dispatch) {
   return createSessionPanel('dispatch', dispatch);
 }
 
+/** Markup for the "Approve & Execute" banner shown on an execute_pending plan_execute dispatch. */
+function executePendingBannerHTML(id) {
+  return `
+      <div class="execute-pending-banner" style="background:#EDE9FE;color:#5B21B6;border:1px solid #8B5CF6;border-radius:4px;padding:6px 10px;margin:4px 8px;font-size:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span style="font-weight:600;">Plan complete — review the plan below, then run the execute phase.</span>
+        <button class="btn-approve-execute" data-approve-execute="${esc(id)}" style="font-size:11px;padding:2px 10px;border-radius:3px;border:1px solid #7C3AED;color:#fff;background:#7C3AED;cursor:pointer;">Approve &amp; Execute</button>
+      </div>`;
+}
+
+/** POST /api/dispatch/:id/execute, then refresh. Shared by the panel-creation and finalize paths. */
+function bindApproveExecute(panel, id) {
+  const btn = panel.querySelector(`[data-approve-execute="${id}"]`);
+  if (!btn) return;
+  btn.onclick = async (e) => {
+    const b = e.target;
+    b.disabled = true;
+    b.textContent = 'Starting…';
+    try {
+      const resp = await fetch(`/api/dispatch/${id}/execute`, { method: 'POST' });
+      const result = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        b.disabled = false;
+        b.textContent = 'Approve & Execute';
+        showToast(result.error || 'Failed to start execute phase', 'error');
+        return;
+      }
+      panel.querySelector('.execute-pending-banner')?.remove();
+      showToast('Execute phase started', 'info');
+      restoreDispatches();
+    } catch {
+      b.disabled = false;
+      b.textContent = 'Approve & Execute';
+      showToast('Failed to start execute phase — network error', 'error');
+    }
+  };
+}
+
+/** Inject the execute-pending banner above the log (idempotent) and wire its button. */
+function injectExecutePendingBanner(panelEl, id) {
+  if (panelEl.querySelector('.execute-pending-banner')) return;
+  const logEl = panelEl.querySelector(`#log-${id}`);
+  const tmp = document.createElement('div');
+  tmp.innerHTML = executePendingBannerHTML(id).trim();
+  const banner = tmp.firstChild;
+  if (logEl) logEl.before(banner); else panelEl.appendChild(banner);
+  bindApproveExecute(panelEl, id);
+}
+
 const AUTO_DISMISS_MS = 8000;
 
 function scheduleAutoDismiss(panelType, id, infoObj) {
@@ -775,6 +871,24 @@ async function dismissDispatchPanel(id) {
 }
 
 function finalizeDispatchPanel(dispatch) {
+  // execute_pending is not terminal — phase-1 plan is done and the dispatch awaits the execute
+  // phase. Inject the Approve & Execute banner above the existing log (which holds the plan
+  // output) and never schedule auto-dismiss (that would DELETE an awaiting-action dispatch).
+  if (dispatch.status === 'execute_pending') {
+    const panelEl = document.getElementById(`dispatch-${dispatch.id}`);
+    if (panelEl) {
+      panelEl.className = panelEl.className.replace(/status-\w+/, 'status-execute_pending');
+      const dot = panelEl.querySelector('.status-dot');
+      if (dot) { clearActiveDotClasses(dot); dot.classList.add('needs-input'); }
+      const killBtn = panelEl.querySelector(`[data-kill-dispatch="${dispatch.id}"]`);
+      if (killBtn) killBtn.disabled = true;
+      const dismissBtn = panelEl.querySelector(`[data-dismiss-dispatch="${dispatch.id}"]`);
+      if (dismissBtn) dismissBtn.style.display = '';
+      injectExecutePendingBanner(panelEl, dispatch.id);
+    }
+    syncSessionState();
+    return;
+  }
   const panel = document.getElementById(`dispatch-${dispatch.id}`);
   if (panel) {
     // Update status class
@@ -1050,7 +1164,8 @@ async function killAllSessions() {
 }
 
 async function dismissAllCompleted() {
-  const staleDispatches = activeDispatches.filter(d => d.status !== 'running' && d.status !== 'suspended');
+  // execute_pending is an awaiting-action state, not a completed one — never auto-dismiss it.
+  const staleDispatches = activeDispatches.filter(d => d.status !== 'running' && d.status !== 'suspended' && !ACTIVE_DISPATCH_STATUSES.has(d.status));
   const staleTerminals = activeTerminals.filter(t => t.status !== 'running' && t.status !== 'suspended');
   if (!staleDispatches.length && !staleTerminals.length) return;
   for (const d of staleDispatches) { if (d._autoDismissTimer) { clearTimeout(d._autoDismissTimer); d._autoDismissTimer = null; } }
@@ -1072,7 +1187,7 @@ async function dismissAllCompleted() {
     if (panel?.parentElement) panel.remove();
     sessionPanels.delete(key);
   }
-  activeDispatches.splice(0, activeDispatches.length, ...activeDispatches.filter(d => d.status === 'running' || d.status === 'suspended'));
+  activeDispatches.splice(0, activeDispatches.length, ...activeDispatches.filter(d => d.status === 'running' || d.status === 'suspended' || ACTIVE_DISPATCH_STATUSES.has(d.status)));
   activeTerminals.splice(0, activeTerminals.length, ...activeTerminals.filter(t => t.status === 'running' || t.status === 'suspended'));
   syncSessionState();
 }
@@ -1089,6 +1204,11 @@ const _hiddenPanelBuffer = document.createElement('div');
 const SESSION_AWARE_ROUTES = new Set([
   '', 'agents', 'autonomous', 'epics', 'all-sessions', 'audit', 'settings', 'assets', 'repos', 'adrs',
 ]);
+
+// Non-terminal dispatch statuses that must surface in the active/running views.
+// execute_pending = phase-1 plan_execute plan done, awaiting the execute phase (gated or restart-recovered).
+// execute_starting = transient hand-off: /execute flipped phase-1 out of execute_pending while phase 2 spawns.
+const ACTIVE_DISPATCH_STATUSES = new Set(['running', 'execute_pending', 'execute_starting']);
 
 function _isSessionAwareRoute(hash) {
   const clean = (hash || '').replace(/^#/, '');
@@ -2358,7 +2478,11 @@ function createSessionPanel(type, info) {
     const isRevokable   = ['interrupted', 'suspended', 'failed'].includes(dispatch.status) && hasClaude && !isRevoked;
     const showInterrupt = dispatch.status === 'running';
     const skipBadge = dispatch.skip_permissions && dispatch.permission_mode !== 'plan' ? '<span class="auto-badge">[skip-perms]</span>' : '';
-    const planBadge = dispatch.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
+    const isChainPlan = dispatch.chain_mode === 'plan_execute' && dispatch.chain_phase !== 'execute';
+    const isChainExec = dispatch.chain_phase === 'execute';
+    const chainBadge = isChainExec ? '<span class="plan-badge">[exec]</span>'
+      : isChainPlan ? '<span class="plan-badge">[plan&rarr;exec]</span>' : '';
+    const planBadge = !chainBadge && dispatch.permission_mode === 'plan' ? '<span class="plan-badge">[plan]</span>' : '';
     const suspendedBadge = isSuspended ? '<span class="suspended-badge">[suspended]</span>' : '';
     const autoImplementBadge = dispatch.dispatch_mode === 'auto_implement' ? '<span class="status-badge badge-open badge-auto">[auto]</span>' : '';
     const alertBadges = renderDispatchAlerts(dispatch);
@@ -2384,7 +2508,7 @@ function createSessionPanel(type, info) {
     panel.innerHTML = `
       <div class="dispatch-header">
         <span class="status-dot ${isRunning ? (dispatch.agent_phase === 'waiting_for_input' ? 'needs-input' : dispatch.agent_phase === 'tool_running' ? 'tool-running' : 'generating') : dispatch.status}" title="${isRunning ? ({generating:'Thinking',tool_running:'Running tool',waiting_for_input:'Needs input'}[dispatch.agent_phase]||'') : ''}"></span>
-        <span class="dispatch-title">${dispatchPathStr}${planBadge}${skipBadge}${suspendedBadge}${autoImplementBadge}${alertBadges}${timeoutBadge}${isRevoked ? '<span class="revoked-badge" title="This session has been revoked and cannot be resumed">[revoked]</span>' : ''}${dispatch.status === 'superseded' ? '<span class="superseded-badge">[superseded]</span>' : ''}</span>
+        <span class="dispatch-title">${dispatchPathStr}${chainBadge}${planBadge}${skipBadge}${suspendedBadge}${autoImplementBadge}${alertBadges}${timeoutBadge}${isRevoked ? '<span class="revoked-badge" title="This session has been revoked and cannot be resumed">[revoked]</span>' : ''}${dispatch.status === 'superseded' ? '<span class="superseded-badge">[superseded]</span>' : ''}</span>
         <span class="dispatch-meta">${fmtTimestamp(dispatch.started_at)}${costBadge}</span>
         <button class="focus-btn" data-focus-dispatch="${esc(id)}">Focus</button>
         <button class="minimize-btn" data-minimize-dispatch="${esc(id)}">▼</button>
@@ -2408,6 +2532,7 @@ function createSessionPanel(type, info) {
     ${dispatch.contract.failure_conditions?.length ? `<div><strong>Failure:</strong> ${(Array.isArray(dispatch.contract.failure_conditions) ? dispatch.contract.failure_conditions : [dispatch.contract.failure_conditions]).map(esc).join(', ')}</div>` : ''}
   </div>
 </details>` : ''}
+      ${dispatch.status === 'execute_pending' ? executePendingBannerHTML(id) : ''}
       ${dispatch.work_item_input_needed ? '<div class="input-needed-banner" style="background:#FEF3C7;color:#92400E;padding:4px 8px;font-size:11px;border-radius:3px;margin-bottom:4px;">⚠ Waiting for input</div>' : ''}
       ${dispatch.completion_summary_error ? `<div class="alert-badge alert-scope" style="margin:4px 8px;display:block;" title="${esc(dispatch.completion_summary_error)}">⚠ Refinement error: ${esc(dispatch.completion_summary_error)}</div>` : ''}
       ${dispatch.exit_type === 'interrupted' ? `
@@ -2572,6 +2697,8 @@ function createSessionPanel(type, info) {
         } catch {}
       };
     }
+
+    bindApproveExecute(panel, id);
 
     const interruptBtn = panel.querySelector(`[data-interrupt-dispatch="${id}"]`);
     if (interruptBtn) {
@@ -2997,8 +3124,9 @@ async function dispatchWorkItem(workItem, projectKey) {
           <input type="checkbox" id="dispatch-claude-agent" checked />
           <label for="dispatch-claude-agent">Claude Agent</label>
         </div>
-        ${permissionModeSelect('dispatch-perm-mode')}
+        ${permissionModeSelect('dispatch-perm-mode', null, projectKey)}
         ${skipPermissionsCheckbox('dispatch-skip-perms')}
+        ${autostartToggle('dispatch-autostart')}
         ${modelSelect('dispatch-model')}
       `,
       afterMount: (o) => {
@@ -3065,7 +3193,6 @@ async function dispatchWorkItem(workItem, projectKey) {
         const instructions = overlay.querySelector('#dispatch-instructions').value.trim();
         const plainTerminal = !overlay.querySelector('#dispatch-claude-agent').checked;
         const agentType = overlay.querySelector('#dispatch-agent-type')?.value || 'claude';
-        const permMode = getPermissionMode(overlay, 'dispatch-perm-mode');
         const skipPerms = overlay.querySelector('#dispatch-skip-perms').checked;
         const model = overlay.querySelector('#dispatch-model')?.value || 'sonnet';
 
@@ -3075,6 +3202,8 @@ async function dispatchWorkItem(workItem, projectKey) {
         const contractExpectedOutput = overlay.querySelector('#contract-expected-output')?.value?.trim() || '';
         const contractFailureConditions = overlay.querySelector('#contract-failure-conditions')?.value?.trim() || '';
         const contractScopeBoundary = overlay.querySelector('#contract-scope-boundary')?.value?.trim() || '';
+        const modeFields = dispatchModeFields(overlay, 'dispatch-perm-mode', 'dispatch-autostart', contractScopeBoundary);
+        const permMode = modeFields.permission_mode;
         const contractStopConditionsRaw = overlay.querySelector('#contract-stop-conditions')?.value?.trim() || '';
         const contractStopConditions = contractStopConditionsRaw ? contractStopConditionsRaw.split('\n').map(s => s.trim()).filter(Boolean) : [];
         const contractSuccessCriteria = overlay.querySelector('#dispatch-success-criteria')?.value?.trim() || '';
@@ -3091,6 +3220,79 @@ async function dispatchWorkItem(workItem, projectKey) {
         if (contractSuccessCriteria) contract.success_criteria = contractSuccessCriteria;
         if (contractE2eTestCriteria.length) contract.e2e_test_criteria = contractE2eTestCriteria;
 
+        // plan_execute is a HEADLESS chained dispatch (plan → --resume execute). The /api/terminal
+        // PTY path ignores dispatch_mode, so route it to /api/dispatch and create a dispatch panel
+        // (mirrors the epic-dispatch flow). plan/acceptEdits keep the interactive /api/terminal path.
+        if (modeFields.dispatch_mode === 'plan_execute') {
+          const dispatchBody = {
+            work_item_id: workItem.id,
+            epic_id: workItem.epic_id || null,
+            project_key: projectKey,
+            title: workItem.title,
+            description: workItem.description || '',
+            additional_instructions: instructions,
+            dispatch_mode: 'plan_execute',
+            chain_autostart: modeFields.chain_autostart,
+            scope_boundary: modeFields.scope_boundary,
+            agentType,
+            model,
+            ...(Object.keys(contract).length ? { contract } : {}),
+          };
+          const resp = await fetch('/api/dispatch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(dispatchBody),
+          });
+          let result = await resp.json();
+          if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
+          if (result.require_confirm) {
+            const confirmed = await showConfirmWarning(result.warning);
+            if (!confirmed) return;
+            const confirmResp = await fetch('/api/dispatch', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ...dispatchBody, confirm_worktree_warning: true }),
+            });
+            result = await confirmResp.json();
+            if (!confirmResp.ok) throw new Error(result.error || 'Dispatch failed');
+          }
+
+          let projectPath = '';
+          if (projectKey === ARCHITECT_KEY) {
+            projectPath = '(architect root)';
+          } else {
+            try {
+              const registry = await api('registry');
+              for (const [path, entry] of Object.entries(registry.entries)) {
+                if (`${entry.org}/${entry.project}/${entry.component}` === projectKey) { projectPath = path; break; }
+              }
+            } catch {}
+          }
+
+          const dispatch = {
+            id: result.dispatch_id,
+            work_item_id: workItem.id,
+            work_item_title: workItem.title,
+            project_key: projectKey,
+            project_path: projectPath,
+            title: workItem.title,
+            permission_mode: 'plan',
+            skip_permissions: false,
+            dispatch_mode: 'plan_execute',
+            chain_mode: 'plan_execute',
+            chain_phase: 'plan',
+            chain_autostart: modeFields.chain_autostart,
+            status: 'running',
+            started_at: new Date().toISOString(),
+          };
+          activeDispatches.push(dispatch);
+          syncSessionState();
+          createDispatchPanel(dispatch);
+          placeSessionPanels();
+          await loadDispatchContent(dispatch);
+          return;
+        }
+
         const endpoint = plainTerminal ? '/api/terminal/shell' : '/api/terminal';
         const body = plainTerminal
           ? { work_item_id: workItem.id, project_key: projectKey, title: workItem.title, epic_id: workItem.epic_id || null }
@@ -3104,6 +3306,7 @@ async function dispatchWorkItem(workItem, projectKey) {
               skip_permissions: skipPerms,
               agentType,
               model,
+              ...(modeFields.dispatch_mode ? { dispatch_mode: modeFields.dispatch_mode, chain_autostart: modeFields.chain_autostart, scope_boundary: modeFields.scope_boundary } : {}),
               ...(Object.keys(contract).length ? { contract } : {}),
             };
         const resp = await fetch(endpoint, {
@@ -4138,6 +4341,10 @@ let currentProjectKey = '';
 // Used by placeSessionPanels to distinguish same-project panel updates from cross-project navigations.
 let previousProjectKey = '';
 const ARCHITECT_KEY = '\u2013/architect/\u2013';
+// Canonical architect project key for the per-project dispatch-mode preference override
+// (matches the backend-seeded default_dispatch_mode:ticari/architect/main). This is distinct
+// from ARCHITECT_KEY, which is the en-dash dispatch project_key used for architect self-dispatches.
+const ARCHITECT_PREF_KEY = 'ticari/architect/main';
 
 // Render a work items table — reusable for both flat and epic-grouped modes.
 // `items` = sorted array of work items for this table section.
@@ -7120,6 +7327,7 @@ async function showEpicDispatchModal(epicId) {
       </div>
       ${permissionModeSelect('epic-dispatch-perm-mode')}
       ${skipPermissionsCheckbox('epic-dispatch-skip-perms')}
+      ${autostartToggle('epic-dispatch-autostart')}
       ${modelSelect('epic-dispatch-model')}
     `,
     afterMount: (o) => {
@@ -7131,7 +7339,8 @@ async function showEpicDispatchModal(epicId) {
       const projectSelect = overlay.querySelector('#epic-dispatch-project');
       const mode = modeSelect.value;
       const instructions = overlay.querySelector('#epic-dispatch-instructions').value.trim();
-      const permMode = getPermissionMode(overlay, 'epic-dispatch-perm-mode');
+      const modeFields = dispatchModeFields(overlay, 'epic-dispatch-perm-mode', 'epic-dispatch-autostart', '');
+      const permMode = modeFields.permission_mode;
       const skipPerms = overlay.querySelector('#epic-dispatch-skip-perms').checked;
       const model = overlay.querySelector('#epic-dispatch-model')?.value || 'sonnet';
 
@@ -7156,6 +7365,7 @@ async function showEpicDispatchModal(epicId) {
         permission_mode: permMode,
         skip_permissions: skipPerms,
         model,
+        ...(modeFields.dispatch_mode ? { dispatch_mode: modeFields.dispatch_mode, chain_autostart: modeFields.chain_autostart, scope_boundary: modeFields.scope_boundary } : {}),
       };
       const resp = await fetch('/api/dispatch', {
         method: 'POST',
@@ -7481,7 +7691,7 @@ function refreshSessionsSidebar() {
   list.innerHTML = '';
 
   const filter = sessionStorage.getItem('dispatches-sidebar-filter') || 'active';
-  const allDispatches = activeDispatches.map(d => ({ type: 'dispatch', id: d.id, status: d.status, label: d.work_item_id || d.title || d.id, started_at: d.started_at, epic_id: d.epic_id, work_item_id: d.work_item_id, project_key: d.project_key, dispatch_mode: d.dispatch_mode }));
+  const allDispatches = activeDispatches.map(d => ({ type: 'dispatch', id: d.id, status: d.status, label: d.work_item_id || d.title || d.id, started_at: d.started_at, epic_id: d.epic_id, work_item_id: d.work_item_id, project_key: d.project_key, dispatch_mode: d.dispatch_mode, chain_mode: d.chain_mode, chain_phase: d.chain_phase }));
   const allTerminals = activeTerminals.map(t => ({ type: 'terminal', id: t.id, status: t.status, label: (t.note?.trim()) || t.title || t.id, started_at: t.started_at, epic_id: t.epic_id, work_item_id: t.work_item_id, project_key: t.project_key, dispatch_mode: null }));
   const allCli = activeCliSessions.map(c => ({ type: 'cli', id: c.id, status: c.status, label: `[CLI] ${c.title}`, started_at: c.registered_at, epic_id: c.epic_id, work_item_id: c.work_item_id, project_key: c.project_key, dispatch_mode: null }));
 
@@ -7522,9 +7732,11 @@ function refreshSessionsSidebar() {
   function renderEntry(s, indented) {
     const entry = document.createElement('div');
     entry.className = 'session-entry' + (indented ? ' indented' : '');
-    const dotClass = s.status === 'running' ? 'running' : (s.status === 'suspended' ? 'suspended' : (s.status === 'completed' ? 'completed' : (s.status === 'interrupted' ? 'interrupted' : 'failed')));
+    const dotClass = s.status === 'running' ? 'running' : (s.status === 'suspended' ? 'suspended' : (s.status === 'execute_pending' ? 'needs-input' : (s.status === 'completed' ? 'completed' : (s.status === 'interrupted' ? 'interrupted' : 'failed'))));
+    const chainTag = s.chain_phase === 'execute' ? ' <span class="plan-badge" style="font-size:9px">[exec]</span>'
+      : s.chain_mode === 'plan_execute' ? ' <span class="plan-badge" style="font-size:9px">[plan&rarr;exec]</span>' : '';
     const elapsed = formatElapsed(s.started_at);
-    entry.innerHTML = `<span class="status-dot ${dotClass}" style="width:8px;height:8px"></span><span class="session-label">${esc(s.label)}</span><span class="session-meta">${elapsed}</span>`;
+    entry.innerHTML = `<span class="status-dot ${dotClass}" style="width:8px;height:8px"></span><span class="session-label">${esc(s.label)}${chainTag}</span><span class="session-meta">${elapsed}</span>`;
     entry.onclick = () => navigateToSession(s);
 
     if (s.type !== 'cli') {
@@ -7904,7 +8116,10 @@ function renderAgentTile(agent) {
   const isCli = agent.type === 'cli';
   let dotClass;
   if (agent.status !== 'running') {
-    dotClass = agent.status === 'completed' ? 'completed' : (agent.status === 'suspended' ? 'suspended' : 'failed');
+    dotClass = agent.status === 'completed' ? 'completed'
+      : agent.status === 'suspended' ? 'suspended'
+      : agent.status === 'execute_pending' ? 'needs-input'
+      : 'failed';
   } else if (agent.agent_phase === 'waiting_for_input') {
     dotClass = 'needs-input';
   } else if (agent.agent_phase === 'tool_running') {
@@ -7947,6 +8162,8 @@ function renderAgentTile(agent) {
   }
   if (agent.claude_session_id) badges += sessionIdTag(agent.claude_session_id);
   if (agent.dispatch_mode === 'auto_implement') badges += `<span class="badge badge-open badge-auto">[auto]</span>`;
+  if (agent.chain_phase === 'execute') badges += `<span class="badge badge-open">[exec]</span>`;
+  else if (agent.chain_mode === 'plan_execute') badges += `<span class="badge badge-open">[plan&rarr;exec]</span>`;
 
   return `<div class="agent-tile" data-agent-type="${esc(agent.type)}" data-agent-id="${esc(agent.id)}">
     <div class="agent-tile-header">
@@ -8075,9 +8292,11 @@ function renderAgentsView(agents, filters = {}) {
   const agentDateTo = filters.agentDateTo || '';
 
   let filtered = agents;
-  if (statusFilter === 'active') filtered = filtered.filter(a => a.status === 'running');
+  // execute_pending is a non-terminal, awaiting-action state — it belongs with the active set,
+  // never with the completed/recent set (otherwise it vanishes from view after a server restart).
+  if (statusFilter === 'active') filtered = filtered.filter(a => ACTIVE_DISPATCH_STATUSES.has(a.status));
   else if (statusFilter === 'suspended') filtered = filtered.filter(a => a.status === 'suspended');
-  else if (statusFilter === 'recent') filtered = filtered.filter(a => a.status !== 'running' && a.status !== 'suspended');
+  else if (statusFilter === 'recent') filtered = filtered.filter(a => a.status !== 'running' && a.status !== 'suspended' && !ACTIVE_DISPATCH_STATUSES.has(a.status));
   if (epicFilter) filtered = filtered.filter(a => a.epic_id === epicFilter);
   if (projectFilter) filtered = filtered.filter(a => a.project_key === projectFilter);
   if (autoOnly) filtered = filtered.filter(a => a.dispatch_mode === 'auto_implement');
@@ -8098,7 +8317,7 @@ function renderAgentsView(agents, filters = {}) {
   let html = `<div class="card"><h2>Agents</h2>`;
   html += `<div class="agents-filter-bar">`;
   html += `<span class="filter-tab${statusFilter === 'all' ? ' active' : ''}" data-agents-status="all">All (${agents.length})</span>`;
-  html += `<span class="filter-tab${statusFilter === 'active' ? ' active' : ''}" data-agents-status="active">Running (${agents.filter(a => a.status === 'running').length})</span>`;
+  html += `<span class="filter-tab${statusFilter === 'active' ? ' active' : ''}" data-agents-status="active">Running (${agents.filter(a => ACTIVE_DISPATCH_STATUSES.has(a.status)).length})</span>`;
   const suspendedCount = agents.filter(a => a.status === 'suspended').length;
   html += `<span class="filter-tab${statusFilter === 'suspended' ? ' active' : ''}" data-agents-status="suspended">Suspended (${suspendedCount})</span>`;
   html += `<span class="filter-tab${statusFilter === 'recent' ? ' active' : ''}" data-agents-status="recent">Completed</span>`;
@@ -8450,11 +8669,23 @@ async function showQuickDispatchModal() {
       </div>
       ${permissionModeSelect('qd-perm-mode')}
       ${skipPermissionsCheckbox('qd-skip-perms')}
+      ${autostartToggle('qd-autostart')}
       ${modelSelect('qd-model')}
     `,
     afterMount: (o) => {
       wireAgentTypeToggle(o, 'qd-agent-type', 'qd-perm-mode', 'qd-skip-perms', 'qd-model');
       wireInstructionCounter(o, 'qd-instructions');
+      // Re-resolve the dispatch-mode default when the target project changes.
+      const projSel = o.querySelector('#qd-project');
+      const modeSel = o.querySelector('#qd-perm-mode');
+      if (projSel && modeSel) {
+        projSel.addEventListener('change', () => {
+          modeSel.value = resolveDispatchModeDefault(projSel.value);
+          modeSel.dispatchEvent(new Event('change'));
+        });
+        modeSel.value = resolveDispatchModeDefault(projSel.value);
+        modeSel.dispatchEvent(new Event('change'));
+      }
     },
     onSubmit: async (overlay) => {
       const pk = overlay.querySelector('#qd-project').value;
@@ -8463,12 +8694,85 @@ async function showQuickDispatchModal() {
       const instructions = overlay.querySelector('#qd-instructions').value.trim();
       const plainTerminal = !overlay.querySelector('#qd-claude-agent').checked;
       const agentType = overlay.querySelector('#qd-agent-type')?.value || 'claude';
-      const permMode = getPermissionMode(overlay, 'qd-perm-mode');
+      const modeFields = dispatchModeFields(overlay, 'qd-perm-mode', 'qd-autostart', '');
+      const permMode = modeFields.permission_mode;
       const skipPerms = overlay.querySelector('#qd-skip-perms').checked;
       const model = overlay.querySelector('#qd-model')?.value || 'sonnet';
 
       if (!pk) { throw new Error('Project is required'); }
       if (!plainTerminal && !wid && !instructions) { throw new Error('Work item or instructions required'); }
+
+      // plan_execute is a HEADLESS chained dispatch — route to /api/dispatch and create a
+      // dispatch panel (mirrors the epic-dispatch flow). plan/acceptEdits stay on /api/terminal.
+      if (modeFields.dispatch_mode === 'plan_execute') {
+        const titleTextPE = wid || instructions?.slice(0, 60) || 'Quick dispatch';
+        const dispatchBody = {
+          work_item_id: wid,
+          epic_id: epicId,
+          project_key: pk,
+          title: titleTextPE,
+          additional_instructions: instructions,
+          dispatch_mode: 'plan_execute',
+          chain_autostart: modeFields.chain_autostart,
+          scope_boundary: modeFields.scope_boundary,
+          agentType,
+          model,
+        };
+        const resp = await fetch('/api/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(dispatchBody),
+        });
+        let result = await resp.json();
+        if (!resp.ok) throw new Error(result.error || 'Dispatch failed');
+        if (result.require_confirm) {
+          const confirmed = await showConfirmWarning(result.warning);
+          if (!confirmed) return;
+          const confirmResp = await fetch('/api/dispatch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...dispatchBody, confirm_worktree_warning: true }),
+          });
+          result = await confirmResp.json();
+          if (!confirmResp.ok) throw new Error(result.error || 'Dispatch failed');
+        }
+
+        let projectPath = '';
+        if (pk === ARCHITECT_KEY) {
+          projectPath = '(architect root)';
+        } else {
+          try {
+            const registry = await api('registry');
+            for (const [path, entry] of Object.entries(registry.entries)) {
+              if (`${entry.org}/${entry.project}/${entry.component}` === pk) { projectPath = path; break; }
+            }
+          } catch {}
+        }
+
+        const dispatch = {
+          id: result.dispatch_id,
+          work_item_id: wid,
+          project_key: pk,
+          project_path: projectPath,
+          epic_id: epicId,
+          title: titleTextPE,
+          permission_mode: 'plan',
+          skip_permissions: false,
+          dispatch_mode: 'plan_execute',
+          chain_mode: 'plan_execute',
+          chain_phase: 'plan',
+          chain_autostart: modeFields.chain_autostart,
+          status: 'running',
+          started_at: new Date().toISOString(),
+        };
+        activeDispatches.push(dispatch);
+        syncSessionState();
+        createDispatchPanel(dispatch);
+        placeSessionPanels();
+        await loadDispatchContent(dispatch);
+        if (location.hash.startsWith('#agents')) route();
+        return;
+      }
 
       const endpoint = plainTerminal ? '/api/terminal/shell' : '/api/terminal';
       const titleText = wid || instructions?.slice(0, 60) || 'Quick dispatch';
@@ -8484,6 +8788,7 @@ async function showQuickDispatchModal() {
             skip_permissions: skipPerms,
             agentType,
             model,
+            ...(modeFields.dispatch_mode ? { dispatch_mode: modeFields.dispatch_mode, chain_autostart: modeFields.chain_autostart, scope_boundary: modeFields.scope_boundary } : {}),
           };
       const resp = await fetch(endpoint, {
         method: 'POST',
@@ -9009,14 +9314,30 @@ function renderSettingsView(status, config) {
   // Card 4: Preferences
   html += '<div class="settings-card">';
   html += '<h3>Preferences</h3>';
-  const curPerm = window._prefs.default_permission_mode || 'acceptEdits';
+  // Default dispatch mode: prefer default_dispatch_mode, fall back to legacy default_permission_mode.
+  const curMode = window._prefs.default_dispatch_mode || window._prefs.default_permission_mode || 'acceptEdits';
+  const curArchMode = window._prefs['default_dispatch_mode:' + ARCHITECT_PREF_KEY] || curMode;
+  const curAutostart = window._prefs.plan_execute_autostart === 'true' || window._prefs.plan_execute_autostart === true;
   const curSkip = window._prefs.default_skip_permissions === 'true' || window._prefs.default_skip_permissions === true;
+  const modeOptions = (sel) =>
+    '<option value="plan"' + (sel === 'plan' ? ' selected' : '') + '>Plan only</option>' +
+    '<option value="acceptEdits"' + (sel === 'acceptEdits' ? ' selected' : '') + '>Accept edits</option>' +
+    '<option value="plan_execute"' + (sel === 'plan_execute' ? ' selected' : '') + '>Plan, then auto-execute</option>';
   html += '<div class="settings-kv">';
-  html += '<div><span class="key">Default Permission Mode</span>';
-  html += '<select id="settings-perm-mode" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px">';
-  html += '<option value="plan"' + (curPerm === 'plan' ? ' selected' : '') + '>Plan only</option>';
-  html += '<option value="acceptEdits"' + (curPerm === 'acceptEdits' ? ' selected' : '') + '>Accept edits</option>';
+  html += '<div><span class="key">Default Dispatch Mode</span>';
+  html += '<select id="settings-dispatch-mode" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px">';
+  html += modeOptions(curMode);
   html += '</select></div>';
+  html += '<div style="margin-top:8px"><span class="key">Architect Project Default</span> ';
+  html += '<span style="font-size:11px;color:var(--text-light)">(' + esc(ARCHITECT_PREF_KEY) + ')</span> ';
+  html += '<select id="settings-dispatch-mode-architect" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px">';
+  html += modeOptions(curArchMode);
+  html += '</select></div>';
+  html += '<div style="margin-top:8px"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">';
+  html += '<input type="checkbox" id="settings-autostart"' + (curAutostart ? ' checked' : '') + ' />';
+  html += '<span class="key">Auto-start execute phase</span>';
+  html += '<span style="font-size:11px;color:var(--text-light)">(plan, then auto-execute without a manual gate)</span>';
+  html += '</label></div>';
   html += '<div style="margin-top:8px"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">';
   html += '<input type="checkbox" id="settings-skip-perms"' + (curSkip ? ' checked' : '') + ' />';
   html += '<span class="key">Skip permissions by default</span>';
@@ -9144,14 +9465,41 @@ function bindSettingsEvents(status, config) {
   document.getElementById('settings-refresh-logs')?.addEventListener('click', loadSettingsLogs);
 
   // Preferences
-  document.getElementById('settings-perm-mode')?.addEventListener('change', async (e) => {
+  document.getElementById('settings-dispatch-mode')?.addEventListener('change', async (e) => {
     try {
       await fetch('/api/settings/preferences', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ default_permission_mode: e.target.value }),
+        body: JSON.stringify({ default_dispatch_mode: e.target.value }),
       });
-      window._prefs.default_permission_mode = e.target.value;
+      window._prefs.default_dispatch_mode = e.target.value;
+    } catch (err) {
+      alert('Failed to save preference: ' + err.message);
+    }
+  });
+
+  document.getElementById('settings-dispatch-mode-architect')?.addEventListener('change', async (e) => {
+    const key = 'default_dispatch_mode:' + ARCHITECT_PREF_KEY;
+    try {
+      await fetch('/api/settings/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [key]: e.target.value }),
+      });
+      window._prefs[key] = e.target.value;
+    } catch (err) {
+      alert('Failed to save preference: ' + err.message);
+    }
+  });
+
+  document.getElementById('settings-autostart')?.addEventListener('change', async (e) => {
+    try {
+      await fetch('/api/settings/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan_execute_autostart: String(e.target.checked) }),
+      });
+      window._prefs.plan_execute_autostart = String(e.target.checked);
     } catch (err) {
       alert('Failed to save preference: ' + err.message);
     }

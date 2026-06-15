@@ -66,6 +66,9 @@ test.describe('Model selector @fast', () => {
     });
 
     await openDispatchModal(page);
+    // The architect project defaults to plan_execute (routes to /api/dispatch). This test
+    // exercises the interactive /api/terminal path, so explicitly select Accept edits.
+    await page.locator('#dispatch-perm-mode').selectOption('acceptEdits');
     await page.locator('#dispatch-model').selectOption('opus');
     await page.click('[data-modal-submit]');
 

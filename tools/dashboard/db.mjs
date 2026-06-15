@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { mkdirSync, createWriteStream } from 'node:fs';
 import { rename, unlink } from 'node:fs/promises';
+import { ARCHITECT_KEY } from './constants.mjs';
 
 // Return TIMESTAMPTZ values as ISO strings instead of Date objects.
 // OID 1114 = TIMESTAMP WITHOUT TIME ZONE, OID 1184 = TIMESTAMP WITH TIME ZONE.
@@ -186,7 +187,7 @@ export async function assertSchema() {
     work_item_logs: ['id', 'work_item_id', 'logged_at', 'summary'],
     epics: ['id', 'title', 'status', 'priority', 'description', 'acceptance_criteria', 'target_date', 'tags', 'created_at', 'updated_at'],
     epic_logs: ['id', 'epic_id', 'logged_at', 'summary'],
-    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'completion_summary_error', 'dry_run', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at', 'agent_phase', 'agent_phase_history', 'timeout_at', 'contract', 'exit_type', 'deleted_at', 'auto_extended', 'scope_violation', 'merged_at', 'merge_target', 'revoked_at', 'previous_dispatch_id'],
+    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'model', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'completion_summary_error', 'dry_run', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at', 'agent_phase', 'agent_phase_history', 'timeout_at', 'contract', 'exit_type', 'deleted_at', 'auto_extended', 'scope_violation', 'merged_at', 'merge_target', 'revoked_at', 'previous_dispatch_id', 'chain_mode', 'chain_phase', 'chain_autostart', 'chain_parent_id'],
     terminals: ['id', 'type', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'exited_at', 'pid', 'tmux_session', 'claude_session_id', 'agent_type', 'head_seq', 'deleted_at', 'note'],
     cli_sessions: ['id', 'project_key', 'work_item_id', 'epic_id', 'title', 'pid', 'status', 'registered_at', 'exited_at'],
     preferences: ['key', 'value'],
@@ -886,14 +887,15 @@ export async function getEpicProjectKeys(epicId) {
 
 export async function saveDispatch(d) {
   await pool.query(`
-    INSERT INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode, pipeline_stage, agent_phase, agent_phase_history, timeout_at, contract, exit_type, dry_run, auto_extended, contract_satisfied, contract_satisfied_at, scope_violation, merged_at, merge_target, revoked_at, previous_dispatch_id)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
+    INSERT INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, model, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode, pipeline_stage, agent_phase, agent_phase_history, timeout_at, contract, exit_type, dry_run, auto_extended, contract_satisfied, contract_satisfied_at, scope_violation, merged_at, merge_target, revoked_at, previous_dispatch_id, chain_mode, chain_phase, chain_autostart, chain_parent_id)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38)
     ON CONFLICT (id) DO UPDATE SET
       work_item_id = EXCLUDED.work_item_id,
       epic_id = EXCLUDED.epic_id,
       project_key = EXCLUDED.project_key,
       project_path = EXCLUDED.project_path,
       title = EXCLUDED.title,
+      model = COALESCE(EXCLUDED.model, dispatches.model),
       permission_mode = EXCLUDED.permission_mode,
       skip_permissions = EXCLUDED.skip_permissions,
       status = EXCLUDED.status,
@@ -920,10 +922,14 @@ export async function saveDispatch(d) {
       merged_at = EXCLUDED.merged_at,
       merge_target = EXCLUDED.merge_target,
       revoked_at = COALESCE(EXCLUDED.revoked_at, dispatches.revoked_at),
-      previous_dispatch_id = COALESCE(EXCLUDED.previous_dispatch_id, dispatches.previous_dispatch_id)
+      previous_dispatch_id = COALESCE(EXCLUDED.previous_dispatch_id, dispatches.previous_dispatch_id),
+      chain_mode = EXCLUDED.chain_mode,
+      chain_phase = EXCLUDED.chain_phase,
+      chain_autostart = EXCLUDED.chain_autostart,
+      chain_parent_id = COALESCE(EXCLUDED.chain_parent_id, dispatches.chain_parent_id)
   `, [
     d.id, d.work_item_id || null, d.epic_id || null, d.project_key, d.project_path || '',
-    d.title || '', d.permission_mode || 'acceptEdits', d.skip_permissions ?? false,
+    d.title || '', d.model ?? null, d.permission_mode || 'acceptEdits', d.skip_permissions ?? false,
     d.status, d.started_at, d.completed_at || null, d.cost_usd || null, d.pid || null,
     d.claude_session_id || null, d.worktree_path || null, d.worktree_branch || null,
     d.source_branch || null, d.dispatch_mode || 'standard', d.pipeline_stage || null,
@@ -939,6 +945,10 @@ export async function saveDispatch(d) {
     d.merge_target ?? null,
     d.revoked_at ?? null,
     d.previous_dispatch_id ?? null,
+    d.chain_mode ?? null,
+    d.chain_phase ?? null,
+    d.chain_autostart ?? null,
+    d.chain_parent_id ?? null,
   ]);
 }
 
@@ -1219,6 +1229,26 @@ export async function getAllPreferences() {
   const prefs = {};
   for (const row of rows) prefs[row.key] = row.value;
   return prefs;
+}
+
+// Canonical architect portfolio key. The dashboard dispatches architect self-work under
+// the en-dash ARCHITECT_KEY, but the seeded preference + resolver key is the canonical
+// 'ticari/architect/main'. Normalize the dispatch key to the canonical one before lookup.
+export const ARCHITECT_CANONICAL_KEY = 'ticari/architect/main';
+
+function normalizeDispatchProjectKey(projectKey) {
+  return projectKey === ARCHITECT_KEY ? ARCHITECT_CANONICAL_KEY : projectKey;
+}
+
+// Resolve the effective default dispatch mode for a project: per-project override wins,
+// then the global default, then acceptEdits. Single source of precedence so the FE never
+// re-implements it. Pure given a prefs snapshot. The en-dash architect dispatch key is
+// normalized to the canonical 'ticari/architect/main' so architect dispatches resolve.
+export function resolveDispatchModeDefault(projectKey, prefs) {
+  const key = normalizeDispatchProjectKey(projectKey);
+  return (key && prefs[`default_dispatch_mode:${key}`])
+    ?? prefs.default_dispatch_mode
+    ?? 'acceptEdits';
 }
 
 // --- Backlog reconstruction (legacy shape for API compat) ---

@@ -3,6 +3,9 @@ import { homedir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 
 export const CLAUDE_BIN = (() => {
+  // Allow tests to inject a stub binary so dispatch-spawn paths can be exercised
+  // without launching a real `claude` process. Unset in production → resolve from PATH.
+  if (process.env.ARCHITECT_CLAUDE_BIN) return process.env.ARCHITECT_CLAUDE_BIN;
   try {
     return execFileSync('which', ['claude'], { encoding: 'utf8' }).trim();
   } catch {

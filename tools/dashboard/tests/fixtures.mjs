@@ -36,7 +36,13 @@ export const test = base.extend({
     await createTestDb(dbName);
     killAnyOnPort(port);
     await waitPortFree(port);
-    const proc = spawnTestServer(port, workDir, dbName);
+    // The plan_execute chain spec exercises the phase-2 spawn (POST /:id/execute); point its
+    // server at a stub `claude` binary so the spawn runs without a real agent. Scoped to this
+    // one spec so all other servers keep their default (real) binary resolution.
+    const extraEnv = specName === 'plan-execute-chain'
+      ? { ARCHITECT_CLAUDE_BIN: join(ROOT, 'tools', 'dashboard', 'tests', 'fixtures', 'stub-claude.mjs') }
+      : {};
+    const proc = spawnTestServer(port, workDir, dbName, extraEnv);
 
     // Wait for server to be fully ready.
     await waitReadyAndVerify(port, proc.pid);
