@@ -41,12 +41,14 @@ async function openDispatchModal(page) {
 }
 
 test.describe('Model selector @fast', () => {
-  test('MS-1: dispatch modal shows #dispatch-model select with sonnet selected by default', async ({ page }) => {
+  test('MS-1: architect dispatch modal defaults #dispatch-model to Opus 4.8 (1M context)', async ({ page }) => {
+    // The architect project (ticari/architect/main) seeds default_dispatch_model =
+    // claude-opus-4-8[1m] (migration 044), so its dispatch modal preselects the Opus 1M option.
     await openDispatchModal(page);
 
     const modelSelect = page.locator('#dispatch-model');
     await expect(modelSelect).toBeVisible();
-    await expect(modelSelect).toHaveValue('sonnet');
+    await expect(modelSelect).toHaveValue('claude-opus-4-8[1m]');
   });
 
   test('MS-2: selecting opus sends model:opus in POST body', async ({ page }) => {

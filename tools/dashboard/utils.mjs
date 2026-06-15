@@ -38,9 +38,17 @@ const RESOLVED_MODELS = new Set(Object.values(MODEL_ALIASES));
 // Idempotent: accepts a short alias ('opus') or an already-resolved id ('claude-opus-4-8').
 // A resolved id passes through unchanged so re-validating a persisted model (e.g. when a
 // plan_execute phase-2 inherits its phase-1 model) does not silently fall back to sonnet.
+// An optional '[1m]' suffix (1M context window) is split off, validated against the base,
+// and re-appended — so 'opus[1m]' → 'claude-opus-4-8[1m]' and the resolved form passes through.
 export function validateModel(value) {
-  if (RESOLVED_MODELS.has(value)) return value;
-  return MODEL_ALIASES[value] ?? MODEL_ALIASES.sonnet;
+  if (!value) return MODEL_ALIASES.sonnet;
+  const s = String(value);
+  const hasSuffix = s.endsWith('[1m]');
+  const base = hasSuffix ? s.slice(0, -4) : s;
+  const suffix = hasSuffix ? '[1m]' : '';
+  if (RESOLVED_MODELS.has(base)) return base + suffix;
+  if (MODEL_ALIASES[base]) return MODEL_ALIASES[base] + suffix;
+  return MODEL_ALIASES.sonnet;
 }
 
 export async function readJson(path) {

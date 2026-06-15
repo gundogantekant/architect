@@ -1114,7 +1114,13 @@ export async function restartDispatch(id, opts, inMemoryDispatches, dbModule) {
     _autoExtended: false,
   };
 
-  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet',
+  // Inherit the original dispatch's model (architect originals are Opus 1M), falling back
+  // to the project default. validateModel preserves any '[1m]' suffix.
+  const restartPrefs = await dbModule.getAllPreferences();
+  const restartModel = original.model
+    ? validateModel(original.model)
+    : validateModel(dbModule.resolveDispatchModelDefault(project_key, restartPrefs));
+  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', restartModel,
     '--resume', original.claude_session_id,
     ...buildPermissionArgs({ permissionMode: resolvedPermMode, skipPermissions: resolvedSkipPerms }),
   ];

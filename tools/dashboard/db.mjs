@@ -1251,6 +1251,17 @@ export function resolveDispatchModeDefault(projectKey, prefs) {
     ?? 'acceptEdits';
 }
 
+// Resolve the effective default dispatch MODEL for a project: per-project override wins,
+// then the global default, then 'sonnet'. Mirror of resolveDispatchModeDefault. Returns an
+// alias/id — callers MUST wrap the result in validateModel() ('sonnet' is an alias, and a
+// per-project pref may carry a '[1m]' suffix). En-dash architect key is normalized to canonical.
+export function resolveDispatchModelDefault(projectKey, prefs) {
+  const key = normalizeDispatchProjectKey(projectKey);
+  return (key && prefs[`default_dispatch_model:${key}`])
+    ?? prefs.default_dispatch_model
+    ?? 'sonnet';
+}
+
 // --- Backlog reconstruction (legacy shape for API compat) ---
 
 export async function getBacklog({ orgFilter, projectKey, includeArchived = false, dateFilter = {}, statusFilter, priorityFilter, tagsFilter, epicId } = {}) {

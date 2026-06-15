@@ -166,7 +166,12 @@ export default function dispatchRoutes(deps) {
     [/^\/api\/dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
       const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode, contract: rawContract, dispatch_mode: rawDispatchMode, skill_id, model: bodyModel, chain_autostart: rawChainAutostart } = body;
-      const model = validateModel(bodyModel);
+      // Explicit request model wins; otherwise fall back to the project's default model
+      // (architect → Opus 1M, others → sonnet). Always validated through the suffix-aware resolver.
+      const prefs = await db.getAllPreferences();
+      const model = bodyModel
+        ? validateModel(bodyModel)
+        : validateModel(db.resolveDispatchModelDefault(project_key, prefs));
       const dispatch_mode = rawDispatchMode || 'standard';
       // plan_execute is a chain mode, not a flag mode: phase 1 spawns plan-only, phase 2 resumes
       // with acceptEdits + skip-perms in the same worktree (see startExecutePhase). It is never
@@ -566,9 +571,12 @@ export default function dispatchRoutes(deps) {
       const autoTruncated = prompt.length > MAX_PROMPT_CHARS;
       const autoCapturedText = autoTruncated ? prompt.slice(0, MAX_PROMPT_CHARS) : prompt;
 
+      const autoPrefs = await db.getAllPreferences();
+      const autoModel = validateModel(db.resolveDispatchModelDefault(project_key, autoPrefs));
+
       let proc;
       try {
-        const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet',
+        const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', autoModel,
           ...buildPermissionArgs({ permissionMode: 'acceptEdits', skipPermissions: true }),
           '--add-dir', ROOT,
         ];
