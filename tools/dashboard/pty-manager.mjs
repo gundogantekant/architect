@@ -92,6 +92,7 @@ export function wireTerminalHandlers(terminal) {
     saveTerminalToDb(terminal).catch(e => console.error('[onExit] saveTerminalToDb:', e.message));
     // Keep terminal in memory for frontend display; auto-cleanup timer handles removal after 10min
   });
+  try { terminalEvents.emit('start', terminal); } catch {}
 }
 
 // Strip ESC-led sequences (CSI, OSC, etc.) and standalone BEL/BS control codes.

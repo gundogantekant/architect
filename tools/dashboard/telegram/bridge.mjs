@@ -373,6 +373,7 @@ export function startTelegramBridge(deps) {
       pruneTimer = null;
     }
     terminalEvents.removeListener('exit', onExit);
+    terminalEvents.removeListener('start', onStart);
   }
 
   async function sendTest(text = 'Architect Telegram bridge test') {
@@ -393,8 +394,15 @@ export function startTelegramBridge(deps) {
 
   const detector = makeDetector({ onNeedsInput, onCleared });
 
+  function onStart(terminal) {
+    if (terminal.tmux_session && terminal.status === 'running') {
+      detector.track(terminal);
+    }
+  }
+
   if (enabled) {
     terminalEvents.on('exit', onExit);
+    terminalEvents.on('start', onStart);
     pruneTimer = setIntervalFn(
       () => db.pruneTelegramBindings(PRUNE_MAX_AGE_DAYS).catch(() => {}),
       PRUNE_INTERVAL_MS,
