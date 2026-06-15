@@ -23,8 +23,9 @@ const DIALOG_PATTERNS = [
   /press enter to (?:continue|login)/i,
   /\bupdate available\b/i,
   /would you like to/i,
-  /\b❯\s*\d+\.\s/, // arrow pointing at a numbered menu choice
+  /❯\s*\d+\.\s/, // arrow pointing at a numbered menu choice (❯ is non-ASCII, no \b)
   /^\s*\d+\.\s.+\n\s*\d+\.\s/m, // a numbered menu (two+ consecutive choices)
+  /Enter to select\s*·\s*[↑↓]/u, // AskUserQuestion / ExitPlanMode navigation footer
   /\(y\/n\)/i,
 ];
 

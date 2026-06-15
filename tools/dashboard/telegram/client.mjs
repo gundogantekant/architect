@@ -21,7 +21,8 @@ export function createTelegramClient(token, { fetchImpl = globalThis.fetch } = {
       throw new Error(`telegram ${method} request failed (network error)`);
     }
     if (!response.ok) {
-      throw new Error(`telegram ${method} failed (HTTP ${response.status})`);
+      const body = await response.json().catch(() => ({}));
+      throw new Error(`telegram ${method} failed (HTTP ${response.status}): ${body?.description ?? 'unknown'}`);
     }
     const data = await response.json();
     if (!data || data.ok !== true) {
