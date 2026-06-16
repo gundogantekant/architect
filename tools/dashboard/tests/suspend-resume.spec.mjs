@@ -7,6 +7,9 @@
 
 import { test, expect } from './fixtures.mjs';
 import { getBase, seedDispatch, seedTerminal } from './helpers.mjs';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 test('SR-1: buildResumePrompt includes work item title and status', async ({ request }) => {
   const resp = await request.post(`${getBase()}/api/test/build-resume-prompt`, {
@@ -365,4 +368,131 @@ test('SR-PROJECT-3: all sessions show on non-project routes', async ({ page }) =
   await expect(page.locator('#suspended-sessions')).toBeVisible({ timeout: 5000 });
   await expect(page.locator(`[data-susp-resume-dispatch="${projId}"]`)).toBeVisible({ timeout: 5000 });
   await expect(page.locator(`[data-susp-resume-dispatch="${otherId}"]`)).toBeVisible({ timeout: 5000 });
+});
+
+// ============================================================
+// SR-32 to SR-35: API/UI preservation and guard tests
+// ============================================================
+
+test('SR-32: API preserves model, contract, worktree_path, and permission_mode on resume', async ({ request }) => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'sr32-'));
+  try {
+    const { dispatch_id: oldId } = await seedDispatch({
+      status: 'suspended',
+      model: 'claude-sonnet-4-6',
+      contract: { goal: 'test goal', constraints: 'none', expected_output: 'x', failure_conditions: 'y' },
+      permission_mode: 'acceptEdits',
+      worktree_path: tempDir,
+      claude_session_id: 'fake-sr32',
+    });
+
+    const resumeResp = await fetch(`${getBase()}/api/dispatch/${oldId}/resume`, { method: 'POST' });
+    expect(resumeResp.status).toBe(200);
+    const resumeBody = await resumeResp.json();
+    const newId = resumeBody.dispatch_id;
+    expect(newId).not.toBe(oldId);
+
+    // Poll active dispatches until the new dispatch appears with a settled status
+    let resumed;
+    for (let i = 0; i < 20; i++) {
+      const listResp = await request.get(`${getBase()}/api/dispatch/active`);
+      const list = await listResp.json();
+      const candidate = list.find(d => d.id === newId);
+      if (candidate) { resumed = candidate; break; }
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    expect(resumed).toBeDefined();
+    expect(resumed.model).toBe('claude-sonnet-4-6');
+    expect(resumed.contract?.goal).toBe('test goal');
+    expect(resumed.permission_mode).toBe('acceptEdits');
+    expect(resumed.worktree_path).toBe(tempDir);
+    expect(resumed.chain_mode).toBeNull();
+    expect(resumed.chain_phase).toBeNull();
+  } finally {
+    try { rmSync(tempDir, { recursive: true, force: true }); } catch {}
+  }
+});
+
+test('SR-33: double-POST /resume guard — exactly one 200 and one 400', async () => {
+  const { dispatch_id: oldId } = await seedDispatch({
+    status: 'suspended',
+    claude_session_id: 'fake-sr33',
+  });
+
+  const [r1, r2] = await Promise.all([
+    fetch(`${getBase()}/api/dispatch/${oldId}/resume`, { method: 'POST' }),
+    fetch(`${getBase()}/api/dispatch/${oldId}/resume`, { method: 'POST' }),
+  ]);
+
+  const statuses = [r1.status, r2.status].sort();
+  // First POST succeeds (200); second POST either hits the in-memory guard (400 "not suspended")
+  // or finds the record already deleted by the first (404 "not found") — both prove the guard works.
+  expect(statuses[0]).toBe(200);
+  expect([400, 404]).toContain(statuses[1]);
+});
+
+test('SR-34: sidebar Suspended tab lists entry and Continue button resumes dispatch', async ({ page }) => {
+  const { dispatch_id: oldId } = await seedDispatch({
+    status: 'suspended',
+    claude_session_id: 'fake-sr34',
+  });
+
+  await page.goto('/');
+
+  // Click the Suspended tab in the DISPATCHES sidebar
+  const suspendedTab = page.locator('[data-filter="suspended"]');
+  await expect(suspendedTab).toBeVisible({ timeout: 5000 });
+  await suspendedTab.click();
+
+  // The suspended entry must be listed
+  const entry = page.locator(`[data-susp-resume-dispatch="${oldId}"]`);
+  await expect(entry).toBeVisible({ timeout: 5000 });
+
+  // Click the Continue button inside that entry
+  await entry.click();
+
+  // Old entry disappears
+  await expect(entry).not.toBeVisible({ timeout: 10000 });
+
+  // A new dispatch panel must appear that is not the old id
+  await page.waitForFunction((oid) => {
+    const panels = document.querySelectorAll('[id^="dispatch-D-"]');
+    return Array.from(panels).some(p => p.id !== `dispatch-${oid}`);
+  }, oldId, { timeout: 10000 });
+});
+
+test('SR-35: Sessions view Suspended section shows Continue and Revoke buttons', async ({ page }) => {
+  const { dispatch_id: dispatchId } = await seedDispatch({
+    status: 'suspended',
+    claude_session_id: 'fake-sr35-d',
+  });
+  const terminal = await seedTerminal({
+    status: 'suspended',
+    agentType: 'claude',
+    claude_session_id: 'fake-sr35-t',
+  });
+  const terminalId = terminal.id;
+
+  await page.goto('/#all-sessions');
+
+  // Suspended heading must be visible in the #all-sessions view
+  await expect(page.getByRole('heading', { name: 'Suspended Sessions' })).toBeVisible({ timeout: 5000 });
+
+  // Continue button for suspended dispatch
+  const continueDispatchBtn = page.locator(`[data-sess-continue-dispatch="${dispatchId}"]`);
+  await expect(continueDispatchBtn).toBeVisible({ timeout: 5000 });
+
+  // Continue button for suspended terminal
+  const continueTerminalBtn = page.locator(`[data-sess-continue-terminal="${terminalId}"]`);
+  await expect(continueTerminalBtn).toBeVisible({ timeout: 5000 });
+
+  // Revoke button for suspended dispatch must be present
+  const revokeBtn = page.locator(`[data-sess-revoke-dispatch="${dispatchId}"]`);
+  await expect(revokeBtn).toBeVisible({ timeout: 5000 });
+
+  // Click Continue — the button disables immediately while the resume resolves,
+  // then route() re-renders the sessions view (removing the row).
+  await continueDispatchBtn.click();
+  await expect(continueDispatchBtn).toBeDisabled({ timeout: 10000 });
 });

@@ -1263,6 +1263,7 @@ let _placeTimer = null;
 let _pendingProjectArrival = ''; // set by routing on project change; consumed once in _placeSessionPanelsNow
 let _suspendedContainer = null;
 let _recentContainer = null;
+let _suspendedSessions = [];
 // Off-DOM buffer for panels that don't match the active route's project context.
 // Never appended to document.body — panels move here non-destructively so their
 // DOM state (xterm, WebSocket, etc.) is preserved while hidden.
@@ -2689,35 +2690,7 @@ function createSessionPanel(type, info) {
         refreshSuspendedPanel();
       });
     };
-    panel.querySelector(`[data-resume-dispatch="${id}"]`).onclick = async (e) => {
-      const btn = e.target;
-      btn.disabled = true;
-      try {
-        const resp = await fetch(`/api/dispatch/${id}/resume`, { method: 'POST' });
-        if (resp.ok) {
-          const result = await resp.json();
-          await dismissDispatchPanel(id);
-          const newDispatch = {
-            id: result.dispatch_id,
-            work_item_id: dispatch.work_item_id,
-            work_item_title: dispatch.work_item_title,
-            epic_id: dispatch.epic_id,
-            project_key: dispatch.project_key,
-            permission_mode: dispatch.permission_mode,
-            skip_permissions: dispatch.skip_permissions,
-            agent_phase: 'generating',
-            status: 'running',
-            started_at: new Date().toISOString(),
-          };
-          activeDispatches.push(newDispatch);
-          createDispatchPanel(newDispatch);
-          placeSessionPanels();
-          loadDispatchContent(newDispatch);
-          syncSessionState();
-          await refreshSuspendedPanel();
-        }
-      } catch {}
-    };
+    panel.querySelector(`[data-resume-dispatch="${id}"]`).onclick = (e) => resumeDispatchSession(e.target, id, dispatch);
     panel.querySelector(`[data-dismiss-dispatch="${id}"]`).onclick = async () => {
       await dismissDispatchPanel(id);
       syncSessionState();
@@ -3569,6 +3542,60 @@ function showAutoImplementConfirm(workItem, projectKey) {
   });
 }
 
+async function resumeDispatchSession(btn, sessionId, sessionMeta) {
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`/api/dispatch/${sessionId}/resume`, { method: 'POST' });
+    if (resp.ok) {
+      const result = await resp.json();
+      const idx = activeDispatches.findIndex(d => d.id === sessionId);
+      if (idx !== -1) activeDispatches.splice(idx, 1);
+      const panel = sessionPanels.get(`dispatch:${sessionId}`);
+      if (panel?.parentElement) panel.remove();
+      sessionPanels.delete(`dispatch:${sessionId}`);
+      const newDispatch = {
+        id: result.dispatch_id,
+        work_item_id: sessionMeta.work_item_id,
+        work_item_title: sessionMeta.work_item_title,
+        epic_id: sessionMeta.epic_id,
+        project_key: sessionMeta.project_key,
+        permission_mode: sessionMeta.permission_mode,
+        skip_permissions: sessionMeta.skip_permissions,
+        agent_phase: 'generating',
+        status: 'running',
+        started_at: new Date().toISOString(),
+      };
+      activeDispatches.push(newDispatch);
+      createDispatchPanel(newDispatch);
+      placeSessionPanels();
+      loadDispatchContent(newDispatch);
+      syncSessionState();
+      await refreshSuspendedPanel();
+    } else {
+      btn.disabled = false;
+    }
+  } catch { btn.disabled = false; }
+}
+
+async function resumeTerminalSession(btn, sessionId) {
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`/api/terminal/${sessionId}/resume`, { method: 'POST' });
+    if (resp.ok) {
+      const idx = activeTerminals.findIndex(t => t.id === sessionId);
+      if (idx !== -1) activeTerminals.splice(idx, 1);
+      const panel = sessionPanels.get(`terminal:${sessionId}`);
+      if (panel?.parentElement) panel.remove();
+      sessionPanels.delete(`terminal:${sessionId}`);
+      await restoreTerminals();
+      syncSessionState();
+      await refreshSuspendedPanel();
+    } else {
+      btn.disabled = false;
+    }
+  } catch { btn.disabled = false; }
+}
+
 async function refreshSuspendedPanel() {
   try {
     const [suspDispatches, suspTerminals] = await Promise.all([
@@ -3579,6 +3606,7 @@ async function refreshSuspendedPanel() {
       ...suspDispatches.map(d => ({ ...d, _stype: 'dispatch', _suspendedAt: d.completed_at || d.started_at })),
       ...suspTerminals.map(t => ({ ...t, _stype: 'terminal', _suspendedAt: t.exited_at || t.started_at })),
     ];
+    _suspendedSessions = all;
 
     const activeProjectKey = _getActiveProjectKey();
     const visible = all.filter(s =>
@@ -3615,7 +3643,7 @@ async function refreshSuspendedPanel() {
         <span style="font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${projectLabel || esc(s.title || s.id)}</span>
         <span style="font-size:11px;color:var(--text-light);white-space:nowrap">${esc(suspendedAgo)}</span>
         <span class="suspended-badge">[suspended]</span>
-        <button class="resume-btn" data-susp-resume-${s._stype}="${esc(s.id)}">Resume</button>
+        <button class="resume-btn" data-susp-resume-${s._stype}="${esc(s.id)}">Continue</button>
         <button class="dismiss-btn" data-susp-dismiss-${s._stype}="${esc(s.id)}">✕</button>
       </div>`;
     }
@@ -3627,43 +3655,7 @@ async function refreshSuspendedPanel() {
       const dismissBtn = container.querySelector(`[data-susp-dismiss-${s._stype}="${CSS.escape(s.id)}"]`);
 
       if (s._stype === 'dispatch') {
-        resumeBtn.onclick = async (e) => {
-          e.target.disabled = true;
-          try {
-            const resp = await fetch(`/api/dispatch/${s.id}/resume`, { method: 'POST' });
-            if (resp.ok) {
-              const result = await resp.json();
-              const existing = activeDispatches.find(d => d.id === s.id);
-              if (existing) {
-                const idx = activeDispatches.indexOf(existing);
-                if (idx !== -1) activeDispatches.splice(idx, 1);
-                const panel = sessionPanels.get(`dispatch:${s.id}`);
-                if (panel?.parentElement) panel.remove();
-                sessionPanels.delete(`dispatch:${s.id}`);
-              }
-              const newDispatch = {
-                id: result.dispatch_id,
-                work_item_id: s.work_item_id,
-                work_item_title: s.work_item_title,
-                epic_id: s.epic_id,
-                project_key: s.project_key,
-                permission_mode: s.permission_mode,
-                skip_permissions: s.skip_permissions,
-                agent_phase: 'generating',
-                status: 'running',
-                started_at: new Date().toISOString(),
-              };
-              activeDispatches.push(newDispatch);
-              createDispatchPanel(newDispatch);
-              placeSessionPanels();
-              loadDispatchContent(newDispatch);
-              syncSessionState();
-              await refreshSuspendedPanel();
-            } else {
-              e.target.disabled = false;
-            }
-          } catch { e.target.disabled = false; }
-        };
+        resumeBtn.onclick = (e) => resumeDispatchSession(e.target, s.id, s);
         dismissBtn.onclick = async () => {
           try {
             await fetch(`/api/dispatch/${s.id}`, { method: 'DELETE' });
@@ -3677,27 +3669,7 @@ async function refreshSuspendedPanel() {
           syncSessionState();
         };
       } else {
-        resumeBtn.onclick = async (e) => {
-          e.target.disabled = true;
-          try {
-            const resp = await fetch(`/api/terminal/${s.id}/resume`, { method: 'POST' });
-            if (resp.ok) {
-              const existing = activeTerminals.find(t => t.id === s.id);
-              if (existing) {
-                const idx = activeTerminals.indexOf(existing);
-                if (idx !== -1) activeTerminals.splice(idx, 1);
-                const panel = sessionPanels.get(`terminal:${s.id}`);
-                if (panel?.parentElement) panel.remove();
-                sessionPanels.delete(`terminal:${s.id}`);
-              }
-              await refreshSuspendedPanel();
-              await restoreTerminals();
-              syncSessionState();
-            } else {
-              e.target.disabled = false;
-            }
-          } catch { e.target.disabled = false; }
-        };
+        resumeBtn.onclick = (e) => resumeTerminalSession(e.target, s.id);
         dismissBtn.onclick = async () => {
           try {
             await fetch(`/api/terminal/${s.id}`, { method: 'DELETE' });
@@ -7627,6 +7599,7 @@ function buildSessionsSidebar() {
     <button class="dispatch-tab" data-filter="active" role="tab" tabindex="0">Active <span class="dispatch-tab-badge" id="tab-badge-active"></span></button>
     <button class="dispatch-tab" data-filter="autonomous" role="tab" tabindex="-1">Autonomous <span class="dispatch-tab-badge" id="tab-badge-autonomous"></span></button>
     <button class="dispatch-tab" data-filter="all" role="tab" tabindex="-1">All <span class="dispatch-tab-badge" id="tab-badge-all"></span></button>
+    <button class="dispatch-tab" data-filter="suspended" role="tab" tabindex="-1">Suspended <span class="dispatch-tab-badge" id="tab-badge-suspended"></span></button>
   `;
   body.appendChild(tabs);
 
@@ -7796,6 +7769,75 @@ function navigateToSession(session) {
   openFocusPopup(session.type, session.id);
 }
 
+function updateSuspendedHeaderBadge(count) {
+  const dispatchesHeader = document.querySelector('#dispatches-sidebar .dispatches-header');
+  if (!dispatchesHeader) return;
+  let badge = dispatchesHeader.querySelector('.susp-total-badge');
+  if (count > 0) {
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'susp-total-badge';
+      badge.style.cssText = 'background:#6B7280;color:#fff;font-size:10px;padding:1px 5px;border-radius:9px;margin-left:6px;cursor:default';
+      dispatchesHeader.appendChild(badge);
+    }
+    badge.textContent = count;
+    badge.title = `${count} session${count !== 1 ? 's' : ''} suspended`;
+  } else if (badge) {
+    badge.remove();
+  }
+}
+
+function renderSuspendedSidebarEntry(s) {
+  const entry = document.createElement('div');
+  entry.className = 'session-entry';
+  entry.innerHTML = `<span class="status-dot suspended" style="width:8px;height:8px"></span><span class="session-label">${esc(s.label)}</span><span class="session-meta">${formatElapsed(s.started_at)}</span>`;
+  entry.onclick = () => navigateToSession(s);
+
+  const continueBtn = document.createElement('button');
+  continueBtn.type = 'button';
+  continueBtn.title = 'Continue this session';
+  continueBtn.textContent = '▸';
+  continueBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:0 2px;opacity:0.65;font-size:12px;line-height:1;flex-shrink:0';
+  continueBtn.onmouseenter = () => { continueBtn.style.opacity = '1'; };
+  continueBtn.onmouseleave = () => { continueBtn.style.opacity = '0.65'; };
+  continueBtn.onclick = (e) => {
+    e.stopPropagation();
+    if (s.type === 'terminal') {
+      resumeTerminalSession(continueBtn, s.id);
+    } else {
+      resumeDispatchSession(continueBtn, s.id, s._raw);
+    }
+  };
+
+  const killBtn = document.createElement('button');
+  killBtn.type = 'button';
+  killBtn.setAttribute('aria-label', 'End session');
+  killBtn.title = 'End this session';
+  killBtn.textContent = '✕';
+  killBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:0 2px;opacity:0.45;font-size:11px;line-height:1;flex-shrink:0';
+  killBtn.onmouseenter = () => { killBtn.style.opacity = '1'; };
+  killBtn.onmouseleave = () => { killBtn.style.opacity = '0.45'; };
+  killBtn.onclick = async (e) => {
+    e.stopPropagation();
+    if (!confirm('This session is resumable — end it?')) return;
+    const deleteUrl = s.type === 'terminal' ? `/api/terminal/${s.id}` : `/api/dispatch/${s.id}`;
+    const resp = await fetch(deleteUrl, { method: 'DELETE' });
+    if (resp.ok) {
+      entry.remove();
+      await refreshSuspendedPanel();
+      syncSessionState();
+    } else {
+      showToast('Failed to end session', 'error');
+    }
+  };
+
+  const metaEl = entry.querySelector('.session-meta');
+  metaEl.before(continueBtn);
+  metaEl.before(killBtn);
+
+  return entry;
+}
+
 function refreshSessionsSidebar() {
   const list = document.getElementById('dispatches-list');
   if (!list) return;
@@ -7805,6 +7847,41 @@ function refreshSessionsSidebar() {
   const allDispatches = activeDispatches.map(d => ({ type: 'dispatch', id: d.id, status: d.status, label: d.work_item_id || d.title || d.id, started_at: d.started_at, epic_id: d.epic_id, work_item_id: d.work_item_id, project_key: d.project_key, dispatch_mode: d.dispatch_mode, chain_mode: d.chain_mode, chain_phase: d.chain_phase, agent_phase: d.agent_phase, work_item_input_needed: d.work_item_input_needed }));
   const allTerminals = activeTerminals.map(t => ({ type: 'terminal', id: t.id, status: t.status, label: (t.note?.trim()) || t.title || t.id, started_at: t.started_at, epic_id: t.epic_id, work_item_id: t.work_item_id, project_key: t.project_key, dispatch_mode: null }));
   const allCli = activeCliSessions.map(c => ({ type: 'cli', id: c.id, status: c.status, label: `[CLI] ${c.title}`, started_at: c.registered_at, epic_id: c.epic_id, work_item_id: c.work_item_id, project_key: c.project_key, dispatch_mode: null }));
+
+  const suspCount = _suspendedSessions.length;
+  const tabBadgeSuspended = document.getElementById('tab-badge-suspended');
+  if (tabBadgeSuspended) tabBadgeSuspended.textContent = suspCount || '';
+
+  if (filter === 'suspended') {
+    const suspSessions = _suspendedSessions.map(s => ({
+      type: s._stype,
+      id: s.id,
+      status: 'suspended',
+      label: s.work_item_id || s.title || s.id,
+      started_at: s._suspendedAt || s.started_at,
+      epic_id: s.epic_id,
+      work_item_id: s.work_item_id,
+      project_key: s.project_key,
+      dispatch_mode: null,
+      _raw: s,
+    }));
+    if (!suspSessions.length) {
+      const empty = document.createElement('div');
+      empty.className = 'session-entry';
+      empty.style.cssText = 'color:var(--text-light);font-size:11px;padding:6px 16px;font-style:italic';
+      empty.textContent = 'No suspended sessions';
+      list.appendChild(empty);
+      updateProjectSignalDots();
+    } else {
+      for (const s of suspSessions) {
+        const entry = renderSuspendedSidebarEntry(s);
+        list.appendChild(entry);
+      }
+      updateProjectSignalDots();
+    }
+    updateSuspendedHeaderBadge(suspCount);
+    return;
+  }
 
   let allSessions;
   if (filter === 'autonomous') {
@@ -7820,6 +7897,7 @@ function refreshSessionsSidebar() {
     empty.textContent = 'No dispatches';
     list.appendChild(empty);
     updateProjectSignalDots();
+    updateSuspendedHeaderBadge(suspCount);
     return;
   }
 
@@ -7887,24 +7965,6 @@ function refreshSessionsSidebar() {
     return entry;
   }
 
-  const totalSuspended = activeDispatches.filter(d => d.status === 'suspended').length;
-  const dispatchesHeader = document.querySelector('#dispatches-sidebar .dispatches-header');
-  if (dispatchesHeader) {
-    let globalSuspBadge = dispatchesHeader.querySelector('.susp-total-badge');
-    if (totalSuspended > 0) {
-      if (!globalSuspBadge) {
-        globalSuspBadge = document.createElement('span');
-        globalSuspBadge.className = 'susp-total-badge';
-        globalSuspBadge.style.cssText = 'background:#6B7280;color:#fff;font-size:10px;padding:1px 5px;border-radius:9px;margin-left:6px;cursor:default';
-        dispatchesHeader.appendChild(globalSuspBadge);
-      }
-      globalSuspBadge.textContent = totalSuspended;
-      globalSuspBadge.title = `${totalSuspended} session${totalSuspended !== 1 ? 's' : ''} suspended`;
-    } else if (globalSuspBadge) {
-      globalSuspBadge.remove();
-    }
-  }
-
   for (const [pk, pg] of projectGroups) {
     const pkParts = pk.split('/');
     const shortLabel = pkParts.length >= 3 ? (pkParts[2] === 'main' ? pkParts[1] : `${pkParts[1]}/${pkParts[2]}`) : pk;
@@ -7962,6 +8022,7 @@ function refreshSessionsSidebar() {
   }
   for (const s of standalone) list.appendChild(renderEntry(s, false));
   updateProjectSignalDots();
+  updateSuspendedHeaderBadge(suspCount);
 }
 
 function startSessionsSidebarRefresh() {
@@ -10038,7 +10099,7 @@ function timeAgo(isoString) {
 }
 
 // --- All-Sessions view ---
-function renderAllSessionsView(dispatches, terminals, cliSessions, history) {
+function renderAllSessionsView(dispatches, terminals, cliSessions, history, suspendedSessions) {
   const TYPE_LABEL = { dispatch: 'Dispatch', terminal: 'Terminal', cli: 'CLI' };
 
   function sessionRow(type, id, title, project, status, startedAt, cost) {
@@ -10054,8 +10115,33 @@ function renderAllSessionsView(dispatches, terminals, cliSessions, history) {
     </tr>`;
   }
 
+  function suspendedRow(s) {
+    const stype = s._stype || 'dispatch';
+    const title = s.work_item_id || s.title || s.id;
+    const startedAt = s._suspendedAt || s.started_at;
+    const contAttr = stype === 'terminal' ? `data-sess-continue-terminal="${esc(s.id)}"` : `data-sess-continue-dispatch="${esc(s.id)}"`;
+    const revokeAttr = stype === 'terminal' ? `data-sess-revoke-terminal="${esc(s.id)}"` : `data-sess-revoke-dispatch="${esc(s.id)}"`;
+    return `<tr>
+      <td><span class="badge badge-role">${esc(TYPE_LABEL[stype] || stype)}</span></td>
+      <td><code>${esc(s.id)}</code></td>
+      <td>${esc(title || '—')}</td>
+      <td>${esc(s.project_key || '—')}</td>
+      <td><span class="badge badge-suspended">suspended</span></td>
+      <td>${fmtTimestamp(startedAt)}</td>
+      <td>—</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-sm" ${contAttr}>Continue</button>
+        <button class="btn btn-sm btn-danger" style="margin-left:4px" ${revokeAttr}>Revoke</button>
+      </td>
+    </tr>`;
+  }
+
   function tableHead() {
     return `<thead><tr><th>Type</th><th>ID</th><th>Title</th><th>Project</th><th>Status</th><th>Started</th><th>Cost</th></tr></thead>`;
+  }
+
+  function suspendedTableHead() {
+    return `<thead><tr><th>Type</th><th>ID</th><th>Title</th><th>Project</th><th>Status</th><th>Suspended</th><th>Cost</th><th>Actions</th></tr></thead>`;
   }
 
   let active = '';
@@ -10067,6 +10153,11 @@ function renderAllSessionsView(dispatches, terminals, cliSessions, history) {
   }
   for (const c of (cliSessions || [])) {
     active += sessionRow('cli', c.id, c.title || c.id, c.project_key, c.status, c.registered_at, null);
+  }
+
+  let susp = '';
+  for (const s of (suspendedSessions || [])) {
+    susp += suspendedRow(s);
   }
 
   let hist = '';
@@ -10082,6 +10173,8 @@ function renderAllSessionsView(dispatches, terminals, cliSessions, history) {
     </div>
     <h3 style="font-size:14px;margin:16px 0 6px">Active</h3>
     ${active ? `<table class="wi-table">${tableHead()}<tbody>${active}</tbody></table>` : '<p style="color:var(--text-light);font-size:13px">No active sessions.</p>'}
+    <h3 style="font-size:14px;margin:20px 0 6px">Suspended</h3>
+    ${susp ? `<table class="wi-table">${suspendedTableHead()}<tbody>${susp}</tbody></table>` : '<p style="color:var(--text-light);font-size:13px">No suspended sessions.</p>'}
     <h3 style="font-size:14px;margin:20px 0 6px">History</h3>
     ${hist ? `<table class="wi-table">${tableHead()}<tbody>${hist}</tbody></table>` : '<p style="color:var(--text-light);font-size:13px">No session history.</p>'}
   </div>`;
@@ -10847,15 +10940,56 @@ async function route() {
 
   if (parts[0] === 'all-sessions') {
     try {
-      const [dispatches, terminals, cliSessions, history] = await Promise.all([
+      const [dispatches, terminals, cliSessions, history, suspDispatches, suspTerminals] = await Promise.all([
         api('dispatch/active'),
         api('terminal/active'),
         api('sessions/active'),
         api('sessions/all'),
+        api('dispatch/suspended'),
+        api('terminal/suspended'),
       ]);
-      main.innerHTML = renderAllSessionsView(dispatches, terminals, cliSessions, history);
+      const allSuspended = [
+        ...suspDispatches.map(d => ({ ...d, _stype: 'dispatch', _suspendedAt: d.completed_at || d.started_at })),
+        ...suspTerminals.map(t => ({ ...t, _stype: 'terminal', _suspendedAt: t.exited_at || t.started_at })),
+      ];
+      main.innerHTML = renderAllSessionsView(dispatches, terminals, cliSessions, history, allSuspended);
       document.getElementById('sessions-killall')?.addEventListener('click', async () => { await killAllSessions(); route(); });
       document.getElementById('sessions-dismiss-completed')?.addEventListener('click', async () => { await dismissAllCompleted(); route(); });
+
+      for (const s of allSuspended) {
+        const contAttr = s._stype === 'terminal' ? `data-sess-continue-terminal="${s.id}"` : `data-sess-continue-dispatch="${s.id}"`;
+        const revokeAttr = s._stype === 'terminal' ? `data-sess-revoke-terminal="${s.id}"` : `data-sess-revoke-dispatch="${s.id}"`;
+        const contBtn = main.querySelector(`[${contAttr}]`);
+        const revokeBtn = main.querySelector(`[${revokeAttr}]`);
+        if (contBtn) {
+          contBtn.addEventListener('click', () => {
+            if (s._stype === 'terminal') {
+              resumeTerminalSession(contBtn, s.id);
+            } else {
+              resumeDispatchSession(contBtn, s.id, s);
+            }
+          });
+        }
+        if (revokeBtn) {
+          revokeBtn.addEventListener('click', async () => {
+            if (!confirm('Revoke permanently discards this session\'s resumability.')) return;
+            revokeBtn.disabled = true;
+            const deleteUrl = s._stype === 'terminal' ? `/api/terminal/${s.id}` : `/api/dispatch/${s.id}`;
+            try {
+              const resp = await fetch(deleteUrl, { method: 'DELETE' });
+              if (resp.ok) {
+                route();
+              } else {
+                showToast('Failed to revoke session', 'error');
+                revokeBtn.disabled = false;
+              }
+            } catch {
+              showToast('Failed to revoke session', 'error');
+              revokeBtn.disabled = false;
+            }
+          });
+        }
+      }
     } catch (e) {
       main.innerHTML = `<div class="card"><p style="color:var(--red)">Error loading sessions: ${esc(String(e))}</p></div>`;
     }
