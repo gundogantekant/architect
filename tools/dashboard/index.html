@@ -3598,13 +3598,16 @@ async function resumeTerminalSession(btn, sessionId) {
 
 async function refreshSuspendedPanel() {
   try {
-    const [suspDispatches, suspTerminals] = await Promise.all([
+    const [suspDispatches, suspTerminals, allCliSessions] = await Promise.all([
       api('dispatch/suspended'),
       api('terminal/suspended'),
+      api('sessions/active'),
     ]);
+    const resumableCliSessions = (allCliSessions || []).filter(c => c.status === 'exited' && c.claude_session_id);
     const all = [
       ...suspDispatches.map(d => ({ ...d, _stype: 'dispatch', _suspendedAt: d.completed_at || d.started_at })),
       ...suspTerminals.map(t => ({ ...t, _stype: 'terminal', _suspendedAt: t.exited_at || t.started_at })),
+      ...resumableCliSessions.map(c => ({ ...c, _stype: 'cli', _suspendedAt: c.exited_at || c.registered_at })),
     ];
     _suspendedSessions = all;
 
@@ -3665,6 +3668,40 @@ async function refreshSuspendedPanel() {
             if (panel?.parentElement) panel.remove();
             sessionPanels.delete(`dispatch:${s.id}`);
           } catch {}
+          await refreshSuspendedPanel();
+          syncSessionState();
+        };
+      } else if (s._stype === 'cli') {
+        if (s.claude_session_id) {
+          resumeBtn.onclick = async (e) => {
+            resumeBtn.disabled = true;
+            resumeBtn.textContent = 'Opening…';
+            try {
+              const resp = await fetch('/api/terminal', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  claude_session_id: s.claude_session_id,
+                  model: s.model,
+                  project_key: s.project_key,
+                  title: `Continue: ${s.title}`,
+                }),
+              });
+              if (!resp.ok) throw new Error(await resp.text());
+              resumeBtn.textContent = 'Opened';
+              await refreshSuspendedPanel();
+            } catch (ex) {
+              resumeBtn.disabled = false;
+              resumeBtn.textContent = 'Continue';
+              console.error('CLI session continue failed:', ex);
+            }
+          };
+        } else {
+          resumeBtn.disabled = true;
+          resumeBtn.title = 'No session ID stored — cannot resume cloud session';
+        }
+        dismissBtn.onclick = async () => {
+          try { await fetch(`/api/sessions/${s.id}`, { method: 'DELETE' }); } catch {}
           await refreshSuspendedPanel();
           syncSessionState();
         };
@@ -10119,8 +10156,8 @@ function renderAllSessionsView(dispatches, terminals, cliSessions, history, susp
     const stype = s._stype || 'dispatch';
     const title = s.work_item_id || s.title || s.id;
     const startedAt = s._suspendedAt || s.started_at;
-    const contAttr = stype === 'terminal' ? `data-sess-continue-terminal="${esc(s.id)}"` : `data-sess-continue-dispatch="${esc(s.id)}"`;
-    const revokeAttr = stype === 'terminal' ? `data-sess-revoke-terminal="${esc(s.id)}"` : `data-sess-revoke-dispatch="${esc(s.id)}"`;
+    const contAttr = stype === 'terminal' ? `data-sess-continue-terminal="${esc(s.id)}"` : stype === 'cli' ? `data-sess-continue-cli="${esc(s.id)}"` : `data-sess-continue-dispatch="${esc(s.id)}"`;
+    const revokeAttr = stype === 'terminal' ? `data-sess-revoke-terminal="${esc(s.id)}"` : stype === 'cli' ? `data-sess-revoke-cli="${esc(s.id)}"` : `data-sess-revoke-dispatch="${esc(s.id)}"`;
     return `<tr>
       <td><span class="badge badge-role">${esc(TYPE_LABEL[stype] || stype)}</span></td>
       <td><code>${esc(s.id)}</code></td>
@@ -10957,14 +10994,41 @@ async function route() {
       document.getElementById('sessions-dismiss-completed')?.addEventListener('click', async () => { await dismissAllCompleted(); route(); });
 
       for (const s of allSuspended) {
-        const contAttr = s._stype === 'terminal' ? `data-sess-continue-terminal="${s.id}"` : `data-sess-continue-dispatch="${s.id}"`;
-        const revokeAttr = s._stype === 'terminal' ? `data-sess-revoke-terminal="${s.id}"` : `data-sess-revoke-dispatch="${s.id}"`;
+        const contAttr = s._stype === 'terminal' ? `data-sess-continue-terminal="${s.id}"` : s._stype === 'cli' ? `data-sess-continue-cli="${s.id}"` : `data-sess-continue-dispatch="${s.id}"`;
+        const revokeAttr = s._stype === 'terminal' ? `data-sess-revoke-terminal="${s.id}"` : s._stype === 'cli' ? `data-sess-revoke-cli="${s.id}"` : `data-sess-revoke-dispatch="${s.id}"`;
         const contBtn = main.querySelector(`[${contAttr}]`);
         const revokeBtn = main.querySelector(`[${revokeAttr}]`);
         if (contBtn) {
-          contBtn.addEventListener('click', () => {
+          contBtn.addEventListener('click', async () => {
             if (s._stype === 'terminal') {
               resumeTerminalSession(contBtn, s.id);
+            } else if (s._stype === 'cli') {
+              if (s.claude_session_id) {
+                contBtn.disabled = true;
+                contBtn.textContent = 'Opening…';
+                try {
+                  const resp = await fetch('/api/terminal', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      claude_session_id: s.claude_session_id,
+                      model: s.model,
+                      project_key: s.project_key,
+                      title: `Continue: ${s.title}`,
+                    }),
+                  });
+                  if (!resp.ok) throw new Error(await resp.text());
+                  contBtn.textContent = 'Opened';
+                  await refreshSuspendedPanel();
+                } catch (ex) {
+                  contBtn.disabled = false;
+                  contBtn.textContent = 'Continue';
+                  console.error('CLI session continue failed:', ex);
+                }
+              } else {
+                contBtn.disabled = true;
+                contBtn.title = 'No session ID stored — cannot resume cloud session';
+              }
             } else {
               resumeDispatchSession(contBtn, s.id, s);
             }
@@ -10974,7 +11038,7 @@ async function route() {
           revokeBtn.addEventListener('click', async () => {
             if (!confirm('Revoke permanently discards this session\'s resumability.')) return;
             revokeBtn.disabled = true;
-            const deleteUrl = s._stype === 'terminal' ? `/api/terminal/${s.id}` : `/api/dispatch/${s.id}`;
+            const deleteUrl = s._stype === 'terminal' ? `/api/terminal/${s.id}` : s._stype === 'cli' ? `/api/sessions/${s.id}` : `/api/dispatch/${s.id}`;
             try {
               const resp = await fetch(deleteUrl, { method: 'DELETE' });
               if (resp.ok) {

@@ -36,10 +36,11 @@ export async function spawnTerminalSession(deps, params) {
     skipPermissions = false, workItemId = null, epicId = null,
     projectKey = null, orgKey = null, title = 'Interactive session',
     testWorkerId = null, skip_seed = false, model = 'sonnet',
+    claudeSessionId: providedClaudeSessionId = null, resumeMode = false,
   } = params;
 
   const adapter = getAdapter('claude');
-  const claudeSessionId = crypto.randomUUID();
+  const claudeSessionId = providedClaudeSessionId ?? crypto.randomUUID();
 
   // Create EventStream and optionally inject seed content before PTY starts
   const eventStream = new EventStream(id);
@@ -63,6 +64,7 @@ export async function spawnTerminalSession(deps, params) {
     addDir: ROOT,
     agentsJson: null,
     model,
+    resume: resumeMode,
   });
 
   let ptyProcess;
@@ -139,6 +141,7 @@ export async function spawnTerminalSession(deps, params) {
       : ptyProcess.pid,
     tmux_session: tmuxName,
     claude_session_id: claudeSessionId,
+    model,
     agents_file: agentsFile,
     eventStream,
     wsClients: eventStream.subscribers,

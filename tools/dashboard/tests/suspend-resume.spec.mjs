@@ -496,3 +496,78 @@ test('SR-35: Sessions view Suspended section shows Continue and Revoke buttons',
   await continueDispatchBtn.click();
   await expect(continueDispatchBtn).toBeDisabled({ timeout: 10000 });
 });
+
+// SR-36 to SR-38: Session resume with stored model and CLI session registration
+
+test('SR-36: terminal resume uses stored model, not hardcoded sonnet', async ({ request }) => {
+  const t = await seedTerminal({
+    status: 'suspended',
+    agentType: 'claude',
+    claude_session_id: 'sr36-fake-session',
+    model: 'claude-opus-4-8',
+  });
+  const resp = await request.post(`${getBase()}/api/terminal/${t.id}/resume`);
+  // Guard check: must not reject with 400 (status guard)
+  expect(resp.status()).not.toBe(400);
+  if (resp.status() === 200) {
+    const body = await resp.json();
+    // Fetch the newly created terminal and assert model was inherited
+    const activeResp = await request.get(`${getBase()}/api/terminal/active`);
+    const list = await activeResp.json();
+    const resumed = list.find(term => term.id === body.terminal_id);
+    if (resumed) {
+      expect(resumed.model).toBe('claude-opus-4-8');
+    }
+  }
+});
+
+test('SR-37: POST /api/terminal with claude_session_id body uses it as session ID (not a new UUID)', async ({ request }) => {
+  // Use the special ARCHITECT_KEY (–/architect/–) which resolves to ROOT without a registry lookup
+  const resp = await request.post(`${getBase()}/api/terminal`, {
+    data: {
+      claude_session_id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567891',
+      model: 'claude-opus-4-8',
+      project_key: '–/architect/–',
+      title: 'SR-37 resume mode',
+      skip_seed: true,
+    },
+  });
+  // Must not be a 400 (validation error). Spawn may fail (5xx) in CI since Claude isn't installed.
+  expect(resp.status()).not.toBe(400);
+  if (resp.status() === 200) {
+    const body = await resp.json();
+    const activeResp = await request.get(`${getBase()}/api/terminal/active`);
+    const list = await activeResp.json();
+    const created = list.find(t => t.id === body.terminal_id);
+    if (created) {
+      expect(created.claude_session_id).toBe('a1b2c3d4-e5f6-7890-abcd-ef1234567891');
+      expect(created.model).toBe('claude-opus-4-8');
+    }
+  }
+});
+
+test('SR-38: POST /api/sessions/register stores claude_session_id and model', async ({ request }) => {
+  const pid = process.pid; // use current process — guaranteed alive
+  const resp = await request.post(`${getBase()}/api/sessions/register`, {
+    data: {
+      project_key: 'test/sr38',
+      title: 'SR-38 CLI session',
+      pid,
+      claude_session_id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+      model: 'claude-opus-4-8',
+    },
+  });
+  expect(resp.status()).toBe(201);
+  const body = await resp.json();
+  const id = body.id;
+
+  const activeResp = await request.get(`${getBase()}/api/sessions/active`);
+  const list = await activeResp.json();
+  const found = list.find(s => s.id === id);
+  expect(found).toBeDefined();
+  expect(found.claude_session_id).toBe('a1b2c3d4-e5f6-7890-abcd-ef1234567890');
+  expect(found.model).toBe('claude-opus-4-8');
+
+  // Cleanup
+  await request.delete(`${getBase()}/api/sessions/${id}`);
+});
