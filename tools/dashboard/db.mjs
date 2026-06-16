@@ -188,8 +188,8 @@ export async function assertSchema() {
     epics: ['id', 'title', 'status', 'priority', 'description', 'acceptance_criteria', 'target_date', 'tags', 'created_at', 'updated_at'],
     epic_logs: ['id', 'epic_id', 'logged_at', 'summary'],
     dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'model', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'completion_summary_error', 'dry_run', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at', 'agent_phase', 'agent_phase_history', 'timeout_at', 'contract', 'exit_type', 'deleted_at', 'auto_extended', 'scope_violation', 'merged_at', 'merge_target', 'revoked_at', 'previous_dispatch_id', 'chain_mode', 'chain_phase', 'chain_autostart', 'chain_parent_id'],
-    terminals: ['id', 'type', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'exited_at', 'pid', 'tmux_session', 'claude_session_id', 'agent_type', 'head_seq', 'deleted_at', 'note'],
-    cli_sessions: ['id', 'project_key', 'work_item_id', 'epic_id', 'title', 'pid', 'status', 'registered_at', 'exited_at'],
+    terminals: ['id', 'type', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'exited_at', 'pid', 'tmux_session', 'claude_session_id', 'agent_type', 'head_seq', 'deleted_at', 'note', 'model'],
+    cli_sessions: ['id', 'project_key', 'work_item_id', 'epic_id', 'title', 'pid', 'status', 'registered_at', 'exited_at', 'claude_session_id', 'model'],
     telegram_messages: ['message_id', 'terminal_id', 'chat_id', 'kind', 'created_at'],
     preferences: ['key', 'value'],
     projects: ['key', 'org', 'project', 'component', 'path', 'role', 'synced_at'],
@@ -1020,8 +1020,8 @@ export async function getDeletedDispatches() {
 
 export async function saveTerminal(t) {
   await pool.query(`
-    INSERT INTO terminals (id, type, work_item_id, epic_id, project_key, project_path, org_key, title, permission_mode, skip_permissions, status, started_at, exited_at, pid, tmux_session, claude_session_id, agent_type, head_seq, note)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+    INSERT INTO terminals (id, type, work_item_id, epic_id, project_key, project_path, org_key, title, permission_mode, skip_permissions, status, started_at, exited_at, pid, tmux_session, claude_session_id, agent_type, head_seq, note, model)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
     ON CONFLICT (id) DO UPDATE SET
       type = EXCLUDED.type,
       work_item_id = EXCLUDED.work_item_id,
@@ -1040,14 +1040,15 @@ export async function saveTerminal(t) {
       claude_session_id = EXCLUDED.claude_session_id,
       agent_type = EXCLUDED.agent_type,
       head_seq = EXCLUDED.head_seq,
-      note = EXCLUDED.note
+      note = EXCLUDED.note,
+      model = EXCLUDED.model
   `, [
     t.id, t.type || 'claude', t.work_item_id || null, t.epic_id || null,
     t.project_key || '', t.project_path || '', t.org_key || null, t.title || '',
     t.permission_mode || 'acceptEdits', t.skip_permissions ?? false,
     t.status, t.started_at, t.exited_at || null, t.pid || null,
     t.tmux_session || null, t.claude_session_id || null,
-    t.agent_type || 'claude', t.head_seq || 0, t.note ?? null,
+    t.agent_type || 'claude', t.head_seq || 0, t.note ?? null, t.model || null,
   ]);
 }
 
@@ -1106,8 +1107,8 @@ export async function getTerminalById(id) {
 
 export async function saveCliSession(c) {
   await pool.query(`
-    INSERT INTO cli_sessions (id, project_key, work_item_id, epic_id, title, pid, status, registered_at, exited_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    INSERT INTO cli_sessions (id, project_key, work_item_id, epic_id, title, pid, status, registered_at, exited_at, claude_session_id, model)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
     ON CONFLICT (id) DO UPDATE SET
       project_key = EXCLUDED.project_key,
       work_item_id = EXCLUDED.work_item_id,
@@ -1116,8 +1117,10 @@ export async function saveCliSession(c) {
       pid = EXCLUDED.pid,
       status = EXCLUDED.status,
       registered_at = EXCLUDED.registered_at,
-      exited_at = EXCLUDED.exited_at
-  `, [c.id, c.project_key, c.work_item_id || null, c.epic_id || null, c.title, c.pid, c.status, c.registered_at, c.exited_at || null]);
+      exited_at = EXCLUDED.exited_at,
+      claude_session_id = EXCLUDED.claude_session_id,
+      model = EXCLUDED.model
+  `, [c.id, c.project_key, c.work_item_id || null, c.epic_id || null, c.title, c.pid, c.status, c.registered_at, c.exited_at || null, c.claude_session_id || null, c.model || null]);
 }
 
 export async function deleteCliSession(id) {

@@ -8,7 +8,7 @@ export default {
   name: 'claude',
 
   buildArgs(claudeSessionId, flags) {
-    const args = ['--session-id', claudeSessionId];
+    const args = flags.resume ? ['--resume', claudeSessionId] : ['--session-id', claudeSessionId];
     args.push(...buildPermissionArgs({ permissionMode: flags.permissionMode, skipPermissions: flags.skipPermissions }));
     if (flags.addDir) args.push('--add-dir', flags.addDir);
     if (flags.agentsJson) args.push('--agents', flags.agentsJson);

@@ -1,3 +1,5 @@
+import { validateModel } from '../utils.mjs';
+
 export default function sessionRoutes(deps) {
   const { db, json, err, parseBody, isPidAlive, cliSessions, saveCliSessionToDb, archiveSession } = deps;
   return [
@@ -14,13 +16,19 @@ export default function sessionRoutes(deps) {
     // Register CLI session
     [/^\/api\/sessions\/register$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { project_key, title, pid, work_item_id, epic_id } = body;
+      const { project_key, title, pid, work_item_id, epic_id, claude_session_id: rawClaudeSessionId, model: rawModel } = body;
       if (!project_key || !title || !pid) {
         return err(res, 'project_key, title, and pid are required', 400);
       }
       if (!isPidAlive(pid)) {
         return err(res, 'PID is not alive', 400);
       }
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (rawClaudeSessionId != null && !UUID_RE.test(rawClaudeSessionId)) {
+        return err(res, 'claude_session_id must be a valid UUID', 400);
+      }
+      const claude_session_id = rawClaudeSessionId ?? null;
+      const model = validateModel(rawModel) ?? null;
       const id = `C-${Date.now()}`;
       const session = {
         id,
@@ -32,6 +40,8 @@ export default function sessionRoutes(deps) {
         status: 'running',
         registered_at: new Date().toISOString(),
         exited_at: null,
+        claude_session_id,
+        model,
       };
       cliSessions.set(id, session);
       await saveCliSessionToDb(session);

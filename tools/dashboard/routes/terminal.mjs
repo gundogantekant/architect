@@ -24,9 +24,11 @@ export default function terminalRoutes(deps) {
     // Create terminal session
     [/^\/api\/terminal$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { work_item_id, epic_id, project_key, org_key, title, description, additional_instructions, skip_permissions, permission_mode, agentType: bodyAgentType, skip_seed, contract: rawTermContract, model: bodyModel, dispatch_mode } = body;
+      const { work_item_id, epic_id, project_key, org_key, title, description, additional_instructions, skip_permissions, permission_mode, agentType: bodyAgentType, skip_seed, contract: rawTermContract, model: bodyModel, dispatch_mode, claude_session_id: bodyClaudeSessionId } = body;
       const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
       const model = validateModel(bodyModel);
+      const claudeSessionId = bodyClaudeSessionId ?? null;
+      const resumeMode = !!bodyClaudeSessionId;
 
       if (!project_key && !org_key) return err(res, 'project_key or org_key is required', 400);
       // plan_execute is a headless two-phase chained dispatch (plan → --resume execute) that
@@ -134,6 +136,8 @@ export default function terminalRoutes(deps) {
             testWorkerId: _testWorkerId,
             skip_seed: !!skip_seed,
             model,
+            claudeSessionId,
+            resumeMode,
           });
         } catch (spawnErr) {
           return json(res, { error: `Failed to spawn terminal: ${spawnErr.message}` }, 500);
@@ -370,6 +374,7 @@ export default function terminalRoutes(deps) {
           org_key: t.org_key || null,
           prompt: t.prompt || null,
           claude_session_id: t.claude_session_id || null,
+          model: t.model || null,
           head_seq: t.eventStream ? t.eventStream.headSeq : 0,
           deleted_at: null,
           note: t.note ?? null,
@@ -404,6 +409,7 @@ export default function terminalRoutes(deps) {
           org_key: t.org_key || null,
           prompt: null,
           claude_session_id: t.claude_session_id || null,
+          model: t.model || null,
           head_seq: 0,
           deleted_at: t.deleted_at,
           note: t.note ?? null,
@@ -435,6 +441,7 @@ export default function terminalRoutes(deps) {
           skip_permissions: t.skip_permissions || false,
           org_key: t.org_key || null,
           claude_session_id: t.claude_session_id || null,
+          model: t.model || null,
           head_seq: t.eventStream ? t.eventStream.headSeq : 0,
         };
       }));
@@ -457,6 +464,7 @@ export default function terminalRoutes(deps) {
         started_at: t.started_at,
         exited_at: t.exited_at || null,
         claude_session_id: t.claude_session_id,
+        model: t.model || null,
         permission_mode: t.permission_mode || 'acceptEdits',
         skip_permissions: t.skip_permissions || false,
       })));
@@ -580,7 +588,8 @@ export default function terminalRoutes(deps) {
       let tmuxName = null;
       try {
         const ptyArgs = ['--resume', resumeSessionId];
-        ptyArgs.push('--model', 'sonnet');
+        // validateModel returns the catalog default when model stored before this feature defaults to null
+        ptyArgs.push('--model', validateModel(old.model));
         ptyArgs.push(...buildPermissionArgs({ permissionMode: resolvedPermMode, skipPermissions: resolvedSkipPerms }));
         ptyArgs.push('--add-dir', ROOT);
 
@@ -643,6 +652,7 @@ export default function terminalRoutes(deps) {
           : ptyProcess.pid,
         tmux_session: tmuxName,
         claude_session_id: resumeSessionId,
+        model: validateModel(old.model),
         agents_file: null,
         eventStream: resumeEventStream,
         wsClients: resumeEventStream.subscribers,
