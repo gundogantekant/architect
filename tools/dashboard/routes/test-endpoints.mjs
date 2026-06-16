@@ -35,7 +35,7 @@ export default function testEndpointRoutes(deps) {
 
     [/^\/api\/test\/seed-dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { id, status, project_key, title, model: seedModel, work_item_id, epic_id: seedEpicId, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch, pid: seedPid, dispatch_mode, agent_phase: seedAgentPhase, agent_phase_history: seedHistory, cost_usd: seedCostUsd, exit_type: seedExitType, timeout_at: seedTimeoutAt, test_suite_passed: seedTestSuitePassed, build_verified: seedBuildVerified, contract_satisfied: seedContractSatisfied, scope_violation: seedScopeViolation, chain_mode: seedChainMode, chain_phase: seedChainPhase, chain_autostart: seedChainAutostart, chain_parent_id: seedChainParentId, contract: seedContract } = body;
+      const { id, status, project_key, title, model: seedModel, work_item_id, epic_id: seedEpicId, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch, pid: seedPid, dispatch_mode, agent_phase: seedAgentPhase, agent_phase_history: seedHistory, cost_usd: seedCostUsd, exit_type: seedExitType, timeout_at: seedTimeoutAt, test_suite_passed: seedTestSuitePassed, build_verified: seedBuildVerified, contract_satisfied: seedContractSatisfied, scope_violation: seedScopeViolation, chain_mode: seedChainMode, chain_phase: seedChainPhase, chain_autostart: seedChainAutostart, chain_parent_id: seedChainParentId, contract: seedContract, permission_mode: seedPermissionMode } = body;
       if (!id) return err(res, 'id is required', 400);
       const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
 
@@ -67,7 +67,7 @@ export default function testEndpointRoutes(deps) {
         project_path: ROOT,
         title: title || id,
         model: seedModel || null,
-        permission_mode: 'plan',
+        permission_mode: seedPermissionMode || 'plan',
         skip_permissions: false,
         status: resolvedStatus,
         agent_phase: resolvedPhase,

@@ -318,6 +318,7 @@ export async function seedDispatch(opts = {}) {
     ...(opts.chain_autostart !== undefined && { chain_autostart: opts.chain_autostart }),
     ...(opts.chain_parent_id !== undefined && { chain_parent_id: opts.chain_parent_id }),
     ...(opts.contract !== undefined && { contract: opts.contract }),
+    ...(opts.permission_mode !== undefined && { permission_mode: opts.permission_mode }),
   };
   const res = await api('test/seed-dispatch', {
     method: 'POST',

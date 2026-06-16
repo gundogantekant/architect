@@ -1253,14 +1253,19 @@ export default function dispatchRoutes(deps) {
       if (!old.claude_session_id) return err(res, 'no session ID available for resume', 400);
       if (old.revoked_at) return json(res, { error: 'cannot resume a revoked session — use restart instead', code: 'session_revoked' }, 409);
 
+      // Atomic guard: flip out of 'suspended' before any await so a concurrent POST hits the
+      // status !== 'suspended' check above and is rejected rather than spawning a second process.
+      old.status = 'resuming';
+
       let body = {};
       try { body = await parseBody(req); } catch {}
       const resumeSessionId = old.claude_session_id;
-      const { work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, worktree_path, worktree_branch, source_branch } = old;
+      const { work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, worktree_path, worktree_branch, source_branch, model, contract } = old;
 
       // Validate worktree liveness if one was used
       const resumeCwd = worktree_path && existsSync(worktree_path) ? worktree_path : project_path;
       if (worktree_path && !existsSync(worktree_path)) {
+        old.status = 'suspended';
         return err(res, `Worktree was removed (${worktree_path}). Re-dispatch to create a new one.`, 400);
       }
 
@@ -1287,6 +1292,8 @@ export default function dispatchRoutes(deps) {
         worktreePath: worktree_path || null,
         worktreeBranch: worktree_branch || null,
         sourceBranch: source_branch || null,
+        model: model || null,
+        contract: contract || null,
       });
 
       const { workItem: freshWorkItem, portfolio } = await loadResumeContext({ work_item_id, project_key });
@@ -1318,7 +1325,7 @@ export default function dispatchRoutes(deps) {
 
       const prompt = buildResumePrompt({
         workItem: freshWorkItem,
-        contract: null,
+        contract: contract || null,
         additionalInstructions: body?.additional_instructions || null,
       });
       proc.stdin.write(prompt + '\n');
