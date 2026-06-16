@@ -271,7 +271,8 @@ test('SR-28: GET /api/terminal/recent panel shows killed terminal with Resume bu
 test('SR-29: dismissAllCompleted preserves a suspended dispatch panel', async ({ page }) => {
   const { dispatch_id: completedId } = await seedDispatch({ status: 'completed' });
   const { dispatch_id: suspendedId } = await seedDispatch({ status: 'suspended', claude_session_id: 'fake-sr29' });
-  await page.goto('/');
+  // Bulk buttons live on the Sessions view (#all-sessions) since cb135c4, not the root route.
+  await page.goto('/#all-sessions');
   await expect(page.locator(`#dispatch-${completedId}`)).toBeVisible({ timeout: 5000 });
   await expect(page.locator(`#dispatch-${suspendedId}`)).toBeVisible({ timeout: 5000 });
 
@@ -286,7 +287,8 @@ test('SR-29: dismissAllCompleted preserves a suspended dispatch panel', async ({
 test('SR-30: dismissAllCompleted preserves a suspended terminal panel', async ({ page }) => {
   const { id: completedId } = await seedTerminal({ status: 'completed', withFakeContent: true, lines: 3 });
   const { id: suspendedId } = await seedTerminal({ status: 'suspended', agentType: 'claude', claude_session_id: 'fake-sr30' });
-  await page.goto('/');
+  // Bulk buttons live on the Sessions view (#all-sessions) since cb135c4, not the root route.
+  await page.goto('/#all-sessions');
   await expect(page.locator(`#terminal-${completedId}`)).toBeVisible({ timeout: 5000 });
   await expect(page.locator(`#terminal-${suspendedId}`)).toBeVisible({ timeout: 5000 });
 

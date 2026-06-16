@@ -45,7 +45,7 @@ See `domain/rules.md` → Coding Standards for expanded rationale.
 ## Process
 
 1. Check the project's domain layer for existing types, enums, and state definitions before creating new ones (see `domain/rules.md` → Domain-First Rule)
-2. Read relevant existing code to understand patterns and conventions
+2. Read relevant existing code to understand patterns and conventions. When `.codegraph/` is present in the project, use `codegraph_search` for symbol lookup and `codegraph_context` for task-relevant context instead of grep/search_files — see `domain/rules.md` → Code Discovery Preference. Fall back to grep for .md artifacts.
 3. Implement changes following the project's established patterns
 3. Ensure new code integrates cleanly with existing codebase
 4. Run linters or formatters if configured in the project

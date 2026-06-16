@@ -247,6 +247,47 @@ test_stale_pid_start_recovers() {
   wait_for_port_free "$TEST_PORT"
 }
 
+test_default_bind_is_lan() {
+  # E3: with no opt-out env, resolve_bind_host (via help output) resolves to 0.0.0.0.
+  local pid_file log_file output
+  pid_file="$(mktemp /tmp/dashctl-test-XXXXXX.pid)"
+  log_file="$(mktemp /tmp/dashctl-test-XXXXXX.log)"
+  trap 'rm -f "$pid_file" "$log_file"' RETURN
+
+  output="$(dashctl_env "$pid_file" "$log_file" help 2>&1)"
+  assert_contains "default bind 0.0.0.0" "Bind:     0.0.0.0" "$output"
+  assert_contains "no-auth note" "NO AUTH" "$output"
+}
+
+test_loopback_optout_bind() {
+  # E3: DASHCTL_LOOPBACK_ONLY=1 forces loopback bind.
+  local pid_file log_file output
+  pid_file="$(mktemp /tmp/dashctl-test-XXXXXX.pid)"
+  log_file="$(mktemp /tmp/dashctl-test-XXXXXX.log)"
+  trap 'rm -f "$pid_file" "$log_file"' RETURN
+
+  output="$(env DASHCTL_LOOPBACK_ONLY=1 DASHCTL_PORT="$TEST_PORT" \
+    DASHCTL_PID_FILE="$pid_file" DASHCTL_LOG_FILE="$log_file" \
+    DASHCTL_LAUNCHD_PLIST="/tmp/dashctl-test-nonexistent.plist" \
+    bash "$DASHCTL" help 2>&1)"
+  assert_contains "loopback bind" "Bind:     127.0.0.1" "$output"
+}
+
+test_install_threads_bind_host() {
+  # E3: install writes the resolved ARCHITECT_HOST into the service definition.
+  # We do NOT run a real `install` (it would load a service under the shared label
+  # com.architect.dashboard / write to a fixed systemd path). Instead assert the source
+  # threads the resolved BIND_HOST into both service generators.
+  local out
+  out="$(cat "$DASHCTL")"
+  # launchd: plistlib injection of ARCHITECT_HOST = resolved BIND_HOST
+  assert_contains "launchd threads ARCHITECT_HOST" "EnvironmentVariables', {})['ARCHITECT_HOST'] = '\${BIND_HOST}'" "$out"
+  # systemd: Environment=ARCHITECT_HOST=<resolved BIND_HOST>
+  assert_contains "systemd threads ARCHITECT_HOST" 'Environment=ARCHITECT_HOST=${BIND_HOST}' "$out"
+  # Both install paths resolve the bind host explicitly.
+  assert_contains "install resolves bind host" 'BIND_HOST="$(resolve_bind_host)"' "$out"
+}
+
 test_stale_pid_restart_recovers() {
   local pid_file log_file output exit_code real_pid
   pid_file="$(mktemp /tmp/dashctl-test-XXXXXX.pid)"
@@ -291,6 +332,9 @@ run_test "blocked start: shows occupying PID" test_start_blocked_shows_pid
 run_test "stale PID: status reports stopped" test_stale_pid_status_not_running
 run_test "stale PID: start recovers" test_stale_pid_start_recovers
 run_test "stale PID: restart recovers" test_stale_pid_restart_recovers
+run_test "bind: default resolves to LAN 0.0.0.0" test_default_bind_is_lan
+run_test "bind: loopback opt-out resolves to 127.0.0.1" test_loopback_optout_bind
+run_test "install: threads ARCHITECT_HOST into service" test_install_threads_bind_host
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

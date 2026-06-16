@@ -24,6 +24,11 @@
 import { test, expect } from './fixtures.mjs';
 import { getBase, seedWorkItem, seedDispatch, api } from './helpers.mjs';
 
+// Project key that exists in the seeded test portfolio (see server-utils.mjs →
+// seedTestPortfolio). Using it ensures the sidebar tree renders a
+// `.project-item[data-key=...]` row whose signal dot we can assert against.
+const PORTFOLIO_KEY = 'test-org/test-proj.dotted/main';
+
 // ---------------------------------------------------------------------------
 // Helper: set agent_phase via the PATCH endpoint (to be implemented)
 // ---------------------------------------------------------------------------
@@ -284,30 +289,75 @@ test.describe('Waiting-state visibility contracts @fast', () => {
   });
 
   // -------------------------------------------------------------------------
-  // WS-8a: loadAwaitingAction fires when phase → waiting_for_input (browser E2E)
+  // WS-8a: sidebar session-entry dot gets `needs-input` when a linked dispatch
+  //        is waiting_for_input, and reverts when the phase clears (browser E2E)
+  //
+  // Asserts CLASS PRESENCE (`needs-input`), never a hardcoded rgb — the colour
+  // comes from var(--green) and must survive theming.
   // -------------------------------------------------------------------------
-  test.skip('WS-8a: loadAwaitingAction fires on phase transition to waiting_for_input — browser E2E; requires Playwright UI test with SSE observation', () => {
-    // This test requires:
-    //   1. Navigating to the dashboard page with a known project key
-    //   2. Spying on window.loadAwaitingAction calls (or observing network requests to
-    //      GET /api/backlog?awaiting_action=true)
-    //   3. Triggering a phase transition via PATCH /api/dispatch/:id/agent-phase
-    //   4. Asserting the awaiting-action panel refreshes (network call fired)
-    //
-    // Cover in browser spec when Playwright UI layer is wired to the bridge SSE event.
+  test('WS-8a: sidebar dot gains/loses needs-input class on waiting_for_input transition', async ({ page }) => {
+    const item = await seedWorkItem({ title: 'WS-8a sidebar dot', project_key: PORTFOLIO_KEY });
+    const { dispatch_id } = await seedDispatch({
+      status: 'running',
+      project_key: PORTFOLIO_KEY,
+      work_item_id: item.id,
+      agent_phase: 'generating',
+    });
+
+    await page.goto('/');
+
+    // The DISPATCHES sidebar refreshes on a 3s interval; wait for our entry.
+    const entry = page.locator('#dispatches-list .session-entry').filter({ hasText: item.id });
+    await expect(entry).toBeVisible({ timeout: 10_000 });
+
+    const dot = entry.locator('.status-dot');
+    // Initially generating/running — not waiting for input.
+    await expect(dot).not.toHaveClass(/needs-input/);
+
+    // Transition the dispatch to waiting_for_input.
+    const resp = await patchDispatchPhase(dispatch_id, 'waiting_for_input');
+    expect(resp.ok).toBe(true);
+
+    // activeDispatches refresh (restoreDispatches) polls every 10s — allow headroom.
+    await expect(dot).toHaveClass(/needs-input/, { timeout: 15_000 });
+
+    // Clear the waiting state — dot must revert (no longer needs-input).
+    const back = await patchDispatchPhase(dispatch_id, 'generating');
+    expect(back.ok).toBe(true);
+    await expect(dot).not.toHaveClass(/needs-input/, { timeout: 15_000 });
   });
 
   // -------------------------------------------------------------------------
-  // WS-8b: Rapid phase changes debounced — loadAwaitingAction fires at most once
+  // WS-8b: the parent project row signal dot gains `needs-input` while a
+  //        dispatch under that project is waiting_for_input (browser E2E)
+  //
+  // Asserts CLASS PRESENCE on `.project-item[data-key] .signal-dot`, not rgb.
   // -------------------------------------------------------------------------
-  test.skip('WS-8b: rapid phase changes (3 within 200ms) trigger loadAwaitingAction at most once — browser E2E; requires debounce assertion via network interception', () => {
-    // This test requires:
-    //   1. Intercepting GET /api/backlog?awaiting_action=true network calls in Playwright
-    //   2. Triggering 3 phase transitions within 200ms
-    //   3. Asserting the intercepted call count is ≤ 1 within the 300ms debounce window
-    //      and exactly 1 within 400ms
-    //
-    // Debounce: 300ms trailing edge — rapid transitions must coalesce into one call.
+  test('WS-8b: project row signal dot gains needs-input while a dispatch waits for input', async ({ page }) => {
+    const item = await seedWorkItem({ title: 'WS-8b project dot', project_key: PORTFOLIO_KEY });
+    const { dispatch_id } = await seedDispatch({
+      status: 'running',
+      project_key: PORTFOLIO_KEY,
+      work_item_id: item.id,
+      agent_phase: 'generating',
+    });
+
+    await page.goto('/');
+
+    // Project row for the seeded portfolio project must render in the tree.
+    const projectDot = page.locator(`.project-item[data-key="${PORTFOLIO_KEY}"] .signal-dot`);
+    await expect(projectDot).toBeVisible({ timeout: 10_000 });
+    await expect(projectDot).not.toHaveClass(/needs-input/);
+
+    // Dispatch waits for input → project signal dot must reflect needs-input.
+    const resp = await patchDispatchPhase(dispatch_id, 'waiting_for_input');
+    expect(resp.ok).toBe(true);
+    await expect(projectDot).toHaveClass(/needs-input/, { timeout: 15_000 });
+
+    // Resolve the wait → project dot reverts.
+    const back = await patchDispatchPhase(dispatch_id, 'generating');
+    expect(back.ok).toBe(true);
+    await expect(projectDot).not.toHaveClass(/needs-input/, { timeout: 15_000 });
   });
 
 });

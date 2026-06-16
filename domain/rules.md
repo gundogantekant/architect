@@ -116,6 +116,41 @@ These rules apply to ALL workflow patterns, not only `parallel-fan-out`:
 **Exception**: strategist can write decision docs to `docs/`.
 **Exception**: profiler writes only `CLAUDE.md` to the target project during onboarding.
 
+## Permission Mode Rules
+
+Plan mode supersedes skip-permissions. The `--dangerously-skip-permissions` flag is **never** emitted when the permission mode is `plan`, because that flag is equivalent to `bypassPermissions` and would defeat plan mode — the agent would execute actions instead of only planning. When the permission mode is `plan`, the spawn argv carries `--permission-mode plan` and nothing else permission-related; `--dangerously-skip-permissions` is emitted only when the mode is not `plan` and skip-permissions is requested.
+
+The arg builder (`buildPermissionArgs`) accepts only the flag-level modes `plan` and `acceptEdits` and **throws** on any other value. It must never silently coerce an unrecognized mode — a coercion would mask a routing bug and risk an unintended bypass.
+
+### Plan-Then-Execute (chained)
+
+`plan_execute` is a **dashboard-only chain mode**, not a flag mode. It is **never** written to the `permission_mode` column and **never** emitted as a `--permission-mode` value. It is realized as two separate `claude` processes so the per-process invariant above is never violated:
+
+- **Phase 1 (plan)** — a normal plan-only process: `--permission-mode plan`, no skip-perms, plan-only prompt injected. The agent produces a plan and exits. Persisted with `permission_mode='plan'`, `chain_mode='plan_execute'`, `chain_phase='plan'`.
+- **Phase 2 (execute)** — a separate process that resumes the same claude session (`--resume <claude_session_id>`) with `--permission-mode acceptEdits --dangerously-skip-permissions`, running in the **same isolated worktree** as phase 1. A new dispatch record is created with `chain_phase='execute'` and `chain_parent_id` set to the phase-1 id. The execute-phase prompt instructs the agent to implement its approved plan and not re-plan.
+
+Combining `--permission-mode plan` with `--dangerously-skip-permissions` on a single process is forbidden (claude bug #17544: skip-perms silently overrides plan mode → full bypass with no planning gate). The two-process split is the only feasible mechanism.
+
+**Isolation**: a `plan_execute` chain always runs in a git worktree, created up front at phase-1 dispatch time and evaluated against the chain's *effective* mode (`acceptEdits`), even though phase 1 is plan mode. Both phases pin `cwd` to that worktree. The chain must carry a minimal DispatchContract with a `scope_boundary` so the scope-violation detector fires on the autonomous phase; autostart is refused without it.
+
+**Autostart vs gated**: when `chain_autostart=true` (and a `scope_boundary` is present, the claude session is captured, and the session is not revoked), phase 2 spawns automatically from the live in-process close handler on phase-1 completion. When `chain_autostart=false`, phase-1 completion sets `status='execute_pending'` (a durable checkpoint) and phase 2 is spawned only by `POST /api/dispatch/:id/execute`. Restart recovery of a cleanly-finished phase-1 also lands at `execute_pending` — autostart never fires from restore. A missing/revoked session at transition time fails loudly (`status='failed'`), never an unscoped spawn.
+
+**Default**: the architect project (`ticari/architect/main`) defaults to `plan_execute` with autostart on (`plan_execute_autostart='true'`); other projects keep `acceptEdits`. `plan_execute` is supported only on the standard `/api/dispatch` route — the `/auto-implement` route hardwires `acceptEdits` and is out of scope.
+
+## Plan-Only Dispatch
+
+When an agent is dispatched in plan mode it produces a plan and stops. The following directive is injected at the top of the dispatch prompt and takes precedence over any implementation-oriented guidance elsewhere in the prompt:
+
+> **Plan-Only Mode — this directive takes precedence over any implementation-oriented guidance below.**
+>
+> You are in plan-only mode. You MUST:
+> - Produce a plan only. Read-only investigation (reading files, searching, inspecting git history) is allowed.
+> - NOT modify, create, or delete any files.
+> - NOT run build, test, or other code-executing commands.
+> - NOT commit, push, branch, create worktrees, or merge.
+> - NOT dispatch implementation sub-agents (coder, coder-*, tester, git-ops).
+> - Report the plan and STOP.
+
 ## Workable Item Rules
 
 A work item's "workable" state is computed at render time — it is never stored.
@@ -495,6 +530,24 @@ When both the pre-dispatch check and the coordinator are needed (`needs_coordina
 ### Static Analysis at Dispatch
 
 For medium+ changes to code files in the target project, consult available static analysis tools before dispatch. When `.codegraph/` is present and the task touches code files, run `codegraph_impact` on the proposed symbols and surface the affected component list in the DispatchContract `constraints` field. Skip for prompt-only or config-only changes — the graph does not index .md files.
+
+### Code Discovery Preference (indexed code only)
+
+When exploring code inside a project with `.codegraph/` present (architect's own indexed corpus or a target project with a verified CodeGraph index per `load-portfolio-context.md` → Step 5):
+
+**Freshness gate**: Before relying on CodeGraph results, verify `codegraph_status` reports the index is current. If stale, run `codegraph index` first. An outdated index produces stale call graphs and missing symbols — worse than grep because the results appear authoritative but are wrong. If `codegraph_status` errors, fall back to grep/search_files.
+
+| Task | Tool | Why |
+|------|------|-----|
+| Find a function/constant/symbol | `codegraph_search` | Symbol-level results — avoids raw text noise |
+| Trace callers of a function | `codegraph_callers` | Returns all call sites instantly |
+| Trace what a function calls | `codegraph_callees` | Full call graph in one query |
+| Understand blast radius | `codegraph_impact` | Affected files + call chain depth |
+| Pull task-relevant context | `codegraph_context` | Packages related symbols together |
+
+Always reach for the CodeGraph tool first. Fall back to grep/search_files only when: (a) searching .md/prompt/config files (not indexed), (b) CodeGraph is unavailable or errors after freshness check, or (c) you need raw text not symbol-level results.
+
+This rule applies to the orchestrator, Explore agents, and all dispatched agents (coder, coder-backend, coder-frontend, coder-mobile, coder-infra, debugger, planner). See `CLAUDE.md` → Code Discovery Preference for the orchestrator-side prompt template.
 
 ## Coding Standards
 
@@ -1027,6 +1080,8 @@ Additional inclusion conditions beyond the base Agent Inclusion Rules table.
 
 The orchestrator evaluates task complexity before each dispatch and sets the model explicitly. No agent uses `inherit` — every agent has an explicit default model, and the orchestrator overrides dynamically based on the task at hand.
 
+> **Catalog vs. policy.** The canonical model catalog — model ids, context windows, 1M-context capability, and per-MTok pricing — lives in code at `tools/dashboard/model-catalog.mjs` (`MODEL_CATALOG`), the single source of truth consumed by dispatch model validation (`validateModel`), the dashboard dispatch picker, and the cost-pricing migration. This `Model Selection Rules` section governs **selection policy** (task-complexity → model tier, agent defaults), not the catalog of available models or their prices. The three tier aliases used throughout this section — `haiku`, `sonnet`, `opus` — resolve to the latest model id of each tier via `MODEL_ALIASES` in that same module, and the `[1m]` suffix (e.g. `claude-opus-4-8[1m]`) selects the 1M-context variant.
+
 ### Complexity-to-Model Mapping
 
 | Task Complexity | Default Model | Override Condition |
@@ -1145,7 +1200,8 @@ The orchestrator dispatches sub-agents for research, analysis, and investigation
 | Condition | Action |
 |-----------|--------|
 | Task classified as `small+` work type by classifier or orchestrator | Dispatch to appropriate agent |
-| Task requires reading >3 files | Dispatch Explore agent(s) |
+| Task requires reading >3 files | Dispatch Explore agent(s) — include CodeGraph instructions per `CLAUDE.md` → Explore agents |
+| Task targets indexed code files and `.codegraph/` is present | Prefer `codegraph_search`/`codegraph_callers` over grep/search_files for all symbol-level discovery. See Code Discovery Preference. |
 | Task spans >1 component or project | Dispatch with full project context |
 | Task is pure analysis/research (no code modification) | Dispatch read-only agent at sonnet tier |
 | Investigation spans >2 files or >1 component | Dispatch multiple read-only agents in parallel |
@@ -1522,3 +1578,16 @@ Gate reviews (Ticket Gate, Plan Gate, Code Gate) are read-only, depth-1 dispatch
 - When performing any named action on behalf of the user — creating accounts, registering webhooks, naming cloud resources, generating SSH keys — ask for the preferred name or confirm a suggestion before proceeding.
 - Token names must be identifiable and traceable: a person reading the token name later should understand who created it, from which device/context, for which service, and for what purpose.
 - This rule applies to all agents, skills, and orchestrator actions across all portfolio projects.
+
+## Telegram Bridge Rules
+
+- **Terminals only.** The bridge attaches to interactive terminal sessions (`T-xxx`). Dispatches (`D-xxx`) are out of scope — their stdin is closed once the initial prompt is consumed, so a relayed reply cannot be injected.
+- **Inbound allowlist gating is MANDATORY.** Only messages from an allowlisted `chat_id` are processed. Messages from any other chat are dropped and logged WITHOUT their content (record the rejected `chat_id` only, never the message body).
+- **Bot token handling.** The bot token is read from env / a local file (`work/telegram.env`), NEVER stored in PostgreSQL and NEVER written to logs. See `## Token & Credential Management Rules` and `## External Action Rules` for the governing credential and external-action constraints — those rules apply in full and are not restated here.
+- **Detection is tmux-only.** Question detection relies on capturing the tmux pane; non-tmux terminals receive lifecycle pings only (start/exit), never question notifications.
+- **Reply routing precedence.** Resolve the target terminal in this order: (1) Telegram reply-to a tracked notification → its bound terminal; (2) explicit command; (3) `T-id:` text prefix; (4) the single terminal currently waiting for input; (5) otherwise ask for clarification. Never inject a reply into a terminal that is not running — if the bound terminal is gone, respond `target gone`.
+- **Offset persistence.** The `getUpdates` offset is persisted in the `telegram_offset` preference and advanced only after an update has been fully handled, so a crash mid-handling re-delivers the update rather than dropping it.
+- **Default notification policy is questions-only.** Question pings are ON by default; idle and terminal-exit pings are OFF by default. Operators adjust the three toggles (`notify_questions`, `notify_idle`, `notify_lifecycle`) in the dashboard `#settings` Telegram panel or via `PUT /api/telegram/config`.
+- **Confirm before actuate.** An inbound reply is first mapped to a decision (deterministic number/label match first, then Haiku for free-text), then echoed back for confirmation rather than actuated immediately. The user confirms with `ok`, aborts with `cancel`, or rephrases to re-map. The pending decision expires after ~5 minutes; an expired pending is discarded and the reply re-maps against the current screen.
+- **Menu answers are key-sent, never pasted.** Menu/dialog selections are actuated by `tmux send-keys` (the option number hotkey followed by Enter), because pasting into a dialog is blocked. Before sending keys the bridge **re-captures and re-validates** the pane (still a `dialog`, same option count); if the screen has moved on it aborts the actuation rather than sending keys to a changed prompt.
+- **Credentials stay out of the DB and logs.** Both the bot token and `ANTHROPIC_API_KEY` are read from env / `work/telegram.env`, NEVER stored in PostgreSQL and NEVER written to logs.

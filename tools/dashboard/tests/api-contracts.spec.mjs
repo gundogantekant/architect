@@ -434,12 +434,42 @@ test.describe('API contracts @fast', () => {
     expect(typeof result).toBe('object');
   });
 
+  test('AC-49b: GET /api/settings/preferences exposes _models_catalog for the FE picker', async () => {
+    const result = await api('settings/preferences');
+    expect(Array.isArray(result._models_catalog)).toBe(true);
+    expect(result._models_catalog.length).toBeGreaterThan(0);
+    for (const m of result._models_catalog) {
+      expect(typeof m.id).toBe('string');
+      expect(typeof m.label).toBe('string');
+      expect(typeof m.supports1m).toBe('boolean');
+      expect(typeof m.input).toBe('number');
+      expect(typeof m.output).toBe('number');
+    }
+    // The catalog the FE renders must include the architect default (Opus 4.8).
+    expect(result._models_catalog.map(m => m.id)).toContain('claude-opus-4-8');
+  });
+
   test('AC-50: PUT /api/settings/preferences saves preference', async () => {
     const result = await api('settings/preferences', {
       method: 'PUT',
       body: JSON.stringify({ test_pref_ac50: 'true' }),
     });
     expect(typeof result).toBe('object');
+  });
+
+  test('AC-50b: PUT /api/settings/preferences skips underscore-prefixed (computed) keys', async () => {
+    // Round-tripping the GET payload (which contains _models_catalog and other _-keys)
+    // back through PUT must not persist those response-only fields.
+    const before = await api('settings/preferences');
+    const result = await api('settings/preferences', {
+      method: 'PUT',
+      body: JSON.stringify({ ...before, real_pref_ac50b: 'kept' }),
+    });
+    // Underscore keys never land in the persisted prefs table.
+    expect(result._models_catalog).toBeUndefined();
+    expect(result._dispatch_mode_default_global).toBeUndefined();
+    // A normal key written in the same request is persisted.
+    expect(result.real_pref_ac50b).toBe('kept');
   });
 
   // --- Portfolio routes ---

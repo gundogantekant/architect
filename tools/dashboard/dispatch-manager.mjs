@@ -7,10 +7,14 @@ import { applyRefinementSummary } from './lib/refine-apply.mjs';
 import { validateOrgName } from './lib/portfolio-validation.mjs';
 import { isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture, termEventLogPath, sleep } from './utils.mjs';
 import { CLAUDE_BIN, ROOT, PORTFOLIO, WORK, LOGS_DIR, TMUX_AVAILABLE, TIMEOUT_WARNING_RATIO, IDLE_THRESHOLD_MS, MAX_AUTO_EXTENDS, EXTEND_DURATION_MS, INPUT_NEEDED_SOURCE, DISPATCH_TIMEOUT_MS } from './constants.mjs';
-import { loadResumeContext, buildResumePrompt, selectAgentsForDispatch } from './prompt-builder.mjs';
+import { loadResumeContext, buildResumePrompt, buildExecutePhaseSection, selectAgentsForDispatch } from './prompt-builder.mjs';
 import * as db from './db.mjs';
 import { EventStream } from './event-stream.mjs';
 import { getAdapter } from './adapters/index.mjs';
+import { buildPermissionArgs } from './permission-args.mjs';
+import { createResumeDispatch } from './utils/dispatch-factory.mjs';
+import { validateModel } from './utils.mjs';
+import { classifyDispatchClose } from './session-status.mjs';
 import pty from 'node-pty';
 
 // --- Project sync from portfolio registry ---
@@ -102,7 +106,14 @@ export function tailLogFile(dispatch) {
     if (!dispatch.pid || !isPidAlive(dispatch.pid)) {
       clearInterval(interval);
       dispatch._tailInterval = null;
-      dispatch.status = 'interrupted';
+      // Chain-aware restore: a plan_execute phase-1 whose log ended in a clean result event
+      // completed before the process died — land it at the durable execute_pending checkpoint,
+      // never silent 'interrupted'. Autostart fires only from the live in-process close handler.
+      if (dispatch.chain_mode === 'plan_execute' && dispatch.chain_phase === 'plan' && logEndedCleanly(dispatch.output)) {
+        dispatch.status = 'execute_pending';
+      } else {
+        dispatch.status = 'interrupted';
+      }
       dispatch.completed_at = new Date().toISOString();
       if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
       saveDispatchToDb(dispatch).catch(e => console.error('[tail] saveDispatchToDb:', e.message));
@@ -315,6 +326,20 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
       });
       continue;
     }
+    if (d.status === 'execute_starting') {
+      // Transient: a /execute call flipped phase-1 out of execute_pending but the server
+      // restarted before phase 2 was confirmed spawned. Roll back to the durable
+      // execute_pending checkpoint so the user can retry the approve-&-execute action.
+      const logPath = join(LOGS_DIR, `${d.id}.jsonl`);
+      let output = [];
+      try { output = readFileSync(logPath, 'utf8').split('\n').filter(l => l.trim()); } catch {}
+      d.status = 'execute_pending';
+      await db.updateDispatchStatus(d.id, 'execute_pending', d.completed_at || now);
+      dispatches.set(d.id, {
+        ...d, output, lastLines: [], wsClients: new Set(), process: null,
+      });
+      continue;
+    }
     if (d.status === 'running' && d.pid) {
       if (isPidAlive(d.pid)) {
         // Process survived restart — reconnect via log file tailing
@@ -334,15 +359,25 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
         rearmDispatchTimeout(dispatch);
         console.log(`Dispatch ${d.id}: PID ${d.pid} still alive, reconnecting via log tail`);
       } else {
-        // PID dead — mark interrupted, archive to session_history, load log content for display
-        interruptedDispatches++;
-        d.status = 'interrupted';
-        d.completed_at = now;
-        await db.updateDispatchStatus(d.id, 'interrupted', now);
-        await archiveSession(d, 'dispatch').catch(e => console.error('[restore] archiveSession dispatch:', e.message));
+        // PID dead. Load log content first so chain-aware recovery can inspect it.
         const logPath = join(LOGS_DIR, `${d.id}.jsonl`);
         let output = [];
         try { output = readFileSync(logPath, 'utf8').split('\n').filter(l => l.trim()); } catch {}
+
+        // Chain-aware restore: a plan_execute phase-1 that finished cleanly before the process
+        // died lands at the durable execute_pending checkpoint, never silent 'interrupted'.
+        // Autostart never fires here — it is gated to the live in-process close handler.
+        if (d.chain_mode === 'plan_execute' && d.chain_phase === 'plan' && logEndedCleanly(output)) {
+          d.status = 'execute_pending';
+          d.completed_at = now;
+          await db.updateDispatchStatus(d.id, 'execute_pending', now);
+        } else {
+          interruptedDispatches++;
+          d.status = 'interrupted';
+          d.completed_at = now;
+          await db.updateDispatchStatus(d.id, 'interrupted', now);
+          await archiveSession(d, 'dispatch').catch(e => console.error('[restore] archiveSession dispatch:', e.message));
+        }
         dispatches.set(d.id, {
           ...d, output, lastLines: [], wsClients: new Set(), process: null,
         });
@@ -414,6 +449,10 @@ export async function restoreSessions(wireTerminalHandlers, deps) {
             };
             wireTerminalHandlers(terminal);
             terminals.set(t.id, terminal);
+            // Re-attach only: do NOT carry _pendingPrompt or call startInjection.
+            // The original delivery already ran (its prompt_injection_status is in
+            // the event log); a re-attached, already-running session must never be
+            // re-delivered.
             console.log(`Terminal ${t.id}: tmux session ${t.tmux_session} re-attached`);
           } catch (e) {
             interruptedTerminals++;
@@ -505,6 +544,73 @@ export function derivePhase(currentPhase, evt) {
   if (evt.type === 'result')
     return null;
   return currentPhase;
+}
+
+// Detect whether a plan-phase agent actually produced a plan, by scanning its JSONL output
+// for an ExitPlanMode tool-use event. Refuses to auto-execute an empty plan.
+export function hasPlanMarker(output) {
+  for (const line of output || []) {
+    let evt;
+    try { evt = JSON.parse(line); } catch { continue; }
+    if (evt.type === 'content_block_start' && evt.content_block?.type === 'tool_use'
+        && evt.content_block?.name === 'ExitPlanMode') return true;
+    if (evt.type === 'assistant' && Array.isArray(evt.message?.content)) {
+      for (const block of evt.message.content) {
+        if (block.type === 'tool_use' && block.name === 'ExitPlanMode') return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Whether a dispatch's JSONL output ends in a clean `result` event — i.e. the claude process
+// finished its turn rather than being cut off. Used by restart-survival to distinguish a
+// completed plan phase from an interrupted one.
+export function logEndedCleanly(output) {
+  for (let i = (output?.length ?? 0) - 1; i >= 0; i--) {
+    let evt;
+    try { evt = JSON.parse(output[i]); } catch { continue; }
+    if (evt.type === 'result') return true;
+    // Only the trailing event matters; a non-result trailing event means it was cut off.
+    return false;
+  }
+  return false;
+}
+
+// Whether a contract scope_boundary names a real sub-scope worth enforcing at the file level.
+// A boundary of '.', './', '' or unset means "whole worktree" — no sub-scope to enforce, so the
+// file-level scope-violation check is skipped (worktree isolation remains the hard guardrail).
+// `git diff --name-only` emits paths without a './' prefix, so a '.' boundary would otherwise
+// flag every changed file as out-of-scope.
+export function isEnforceableScopeBoundary(scopeBoundary) {
+  if (!scopeBoundary) return false;
+  const normalized = String(scopeBoundary).trim().replace(/\/$/, '');
+  return normalized !== '' && normalized !== '.';
+}
+
+// Decide the fate of a completed phase-1 plan dispatch: spawn phase 2 (autostart) or hold at
+// execute_pending (gated / missing guard). Loud-fail to 'failed' on missing session or revocation.
+export async function handlePlanPhaseComplete(dispatch) {
+  const hasSession = !!dispatch.claude_session_id;
+  const revoked = !!dispatch.revoked_at;
+  const hasScopeBoundary = !!dispatch.contract?.scope_boundary;
+
+  if (!hasSession || revoked) {
+    dispatch.status = 'failed';
+    const reason = !hasSession ? 'missing claude_session_id' : 'session revoked';
+    console.error(`[plan-execute] ${dispatch.id} cannot proceed to execute — ${reason}; marking failed.`);
+    await saveDispatchToDb(dispatch);
+    return;
+  }
+
+  if (dispatch.chain_autostart === true && hasScopeBoundary) {
+    await startExecutePhase(dispatch);
+    return;
+  }
+
+  // Gated, or autostart requested without a scope_boundary — hold at the durable checkpoint.
+  dispatch.status = 'execute_pending';
+  await saveDispatchToDb(dispatch);
 }
 
 export function killProcess(proc, signal = 'SIGTERM') {
@@ -624,6 +730,19 @@ export function wireDispatchHandlers(dispatch, proc) {
       return;
     }
 
+    // Guard: if the dispatch was deliberately suspended before this close fired, preserve
+    // the suspended status. The suspend endpoint already set status, completed_at, broadcast
+    // done, and persisted — there is nothing left to do except release handles.
+    // exit_type is intentionally NOT written: no existing bucket describes a suspended exit.
+    const classification = classifyDispatchClose(dispatch, code);
+    if (classification.preserve) {
+      console.log(`[dispatch close] preserving suspended status for ${dispatch.id}`);
+      dispatch.process = null;
+      if (dispatch.logStream) { dispatch.logStream.end(); dispatch.logStream = null; }
+      if (dispatch._tailInterval) { clearInterval(dispatch._tailInterval); dispatch._tailInterval = null; }
+      return;
+    }
+
     // User initiated a graceful interrupt (POST /interrupt sent SIGINT).
     // Classify exit_type explicitly for observability. Fall through to normal DB write path.
     if (dispatch._gracefulInterrupt) {
@@ -634,30 +753,12 @@ export function wireDispatchHandlers(dispatch, proc) {
       }
     }
 
-    // Classify exit type before overwriting status.
-    // _killedIntentionally is set by the DELETE endpoint before sending SIGTERM.
-    // _timedOut is set by killOnTimeout before sending SIGTERM.
-    if (dispatch._killedIntentionally) {
-      dispatch.exit_type = 'killed';
-    } else if (dispatch._timedOut) {
-      dispatch.exit_type = 'timeout';
-    } else if (code === 0) {
-      dispatch.exit_type = 'graceful';
-    } else {
-      // Non-zero exit without intentional kill: crash, SIGKILL, OOM, or other ungraceful termination.
-      dispatch.exit_type = 'interrupted';
-    }
+    dispatch.exit_type = classification.exit_type;
     db.updateDispatchExitType(dispatch.id, dispatch.exit_type).catch(e =>
       console.error('[dispatch close] updateDispatchExitType:', e.message)
     );
 
-    // User-initiated interrupt: set status 'interrupted' so the session appears in the
-    // recovery surface and is restartable. Kill intent overrides (status = 'killed' below).
-    if (dispatch._gracefulInterrupt && !dispatch._killedIntentionally) {
-      dispatch.status = 'interrupted';
-    } else {
-      dispatch.status = code === 0 ? 'completed' : 'failed';
-    }
+    dispatch.status = classification.status;
     if (code === 0 && dispatch.dispatch_mode === 'auto_implement') {
       dispatch._exitedWithoutSignal = true;
     }
@@ -686,7 +787,9 @@ export function wireDispatchHandlers(dispatch, proc) {
 
     // Scope boundary violation detection: flag dispatches that modified files outside
     // their contract's declared scope_boundary. Best-effort — skipped on any error.
-    if (dispatch.worktree_path && dispatch.contract?.scope_boundary) {
+    // A root boundary ('.', './', '') means "whole worktree, no sub-scope enforcement" —
+    // git-worktree isolation is the hard guardrail there, so skip the file-level check.
+    if (dispatch.worktree_path && isEnforceableScopeBoundary(dispatch.contract?.scope_boundary)) {
       (async () => {
         try {
           const sourceBranch = dispatch.source_branch || 'HEAD~1';
@@ -804,6 +907,21 @@ export function wireDispatchHandlers(dispatch, proc) {
     if (dispatch.prompt_file) {
       unlinkFile(dispatch.prompt_file).catch(() => {});
       dispatch.prompt_file = null;
+    }
+
+    // --- plan_execute chain transition (phase 1 → phase 2) ---
+    // Gate on completed (not raw code===0) so kill/interrupt/timeout/merge paths are excluded.
+    if (dispatch.status === 'completed'
+        && dispatch.chain_mode === 'plan_execute'
+        && dispatch.chain_phase === 'plan'
+        && hasPlanMarker(dispatch.output)) {
+      (async () => {
+        try {
+          await handlePlanPhaseComplete(dispatch);
+        } catch (e) {
+          console.error(`[plan-execute] phase transition failed for ${dispatch.id}:`, e.message);
+        }
+      })();
     }
 
     broadcastDispatchDone(dispatch);
@@ -992,11 +1110,16 @@ export async function restartDispatch(id, opts, inMemoryDispatches, dbModule) {
     _autoExtended: false,
   };
 
-  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet',
+  // Inherit the original dispatch's model (architect originals are Opus 1M), falling back
+  // to the project default. validateModel preserves any '[1m]' suffix.
+  const restartPrefs = await dbModule.getAllPreferences();
+  const restartModel = original.model
+    ? validateModel(original.model)
+    : validateModel(dbModule.resolveDispatchModelDefault(project_key, restartPrefs));
+  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', restartModel,
     '--resume', original.claude_session_id,
-    '--permission-mode', resolvedPermMode === 'plan' ? 'plan' : 'acceptEdits',
+    ...buildPermissionArgs({ permissionMode: resolvedPermMode, skipPermissions: resolvedSkipPerms }),
   ];
-  if (resolvedSkipPerms) args.push('--dangerously-skip-permissions');
   args.push('--add-dir', ROOT);
 
   const { workItem, portfolio } = await loadResumeContext({ work_item_id, project_key });
@@ -1036,6 +1159,109 @@ export async function restartDispatch(id, opts, inMemoryDispatches, dbModule) {
     await saveDispatchToDb(dispatch);
   } catch (dbErr) {
     console.warn('[dispatch-restart] DB persist failed — session active in-memory only, will not survive restart:', dbErr.message);
+  }
+  return dispatch;
+}
+
+/**
+ * Spawn phase 2 of a plan_execute chain: resume the phase-1 plan session with acceptEdits in
+ * the same isolated worktree and instruct the agent to implement its already-approved plan.
+ * skip-permissions inherited from phase-1 dispatch record (default: true). Creates a NEW
+ * dispatch record linked to the phase-1 record via chain_parent_id. Mirrors the resume pattern.
+ *
+ * The caller MUST have already verified: phase-1 status completed, chain_phase==='plan',
+ * claude_session_id present, revoked_at unset, scope_boundary contract present.
+ *
+ * @param {Object} planDispatch — the phase-1 (plan) dispatch record
+ * @returns {Promise<Object>} the new phase-2 dispatch record
+ */
+export async function startExecutePhase(planDispatch) {
+  const effectiveCwd = planDispatch.worktree_path && existsSync(planDispatch.worktree_path)
+    ? planDispatch.worktree_path
+    : planDispatch.project_path;
+
+  const id = `D-${Date.now()}`;
+  // Phase 2 inherits the phase-1 model. validateModel is idempotent — a persisted resolved id
+  // passes through, a short alias resolves, and an unset model falls back to sonnet.
+  const inheritedModel = validateModel(planDispatch.model);
+  const dispatch = createResumeDispatch({
+    id,
+    projectKey: planDispatch.project_key,
+    projectPath: planDispatch.project_path,
+    workItemId: planDispatch.work_item_id || null,
+    epicId: planDispatch.epic_id || null,
+    title: planDispatch.title || '',
+    model: inheritedModel,
+    permissionMode: 'acceptEdits',
+    skipPermissions: planDispatch.skip_permissions ?? true,
+    claudeSessionId: planDispatch.claude_session_id,
+    contract: planDispatch.contract || null,
+    worktreePath: planDispatch.worktree_path || null,
+    worktreeBranch: planDispatch.worktree_branch || null,
+    sourceBranch: planDispatch.source_branch || null,
+    chainMode: 'plan_execute',
+    chainPhase: 'execute',
+    chainAutostart: planDispatch.chain_autostart ?? null,
+    chainParentId: planDispatch.id,
+  });
+
+  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', inheritedModel,
+    '--resume', planDispatch.claude_session_id,
+    ...buildPermissionArgs({ permissionMode: 'acceptEdits', skipPermissions: planDispatch.skip_permissions ?? true }),
+  ];
+  args.push('--add-dir', ROOT);
+
+  const { workItem, portfolio } = await loadResumeContext({
+    work_item_id: planDispatch.work_item_id,
+    project_key: planDispatch.project_key,
+  });
+  const agentDefs = await selectAgentsForDispatch({ workItem, portfolio });
+  if (agentDefs.length) args.push('--agents', JSON.stringify(agentDefs));
+
+  let proc;
+  try {
+    proc = spawn(CLAUDE_BIN, args, {
+      cwd: effectiveCwd,
+      env: { ...process.env, ARCHITECT_ROOT: ROOT, ARCHITECT_PORTFOLIO_DIR: PORTFOLIO },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  } catch (e) {
+    throw new Error(`Failed to spawn execute phase: ${e.message}`);
+  }
+
+  dispatch.process = proc;
+  dispatch.pid = proc.pid;
+  const logPath = join(LOGS_DIR, `${id}.jsonl`);
+  dispatch.logPath = logPath;
+  dispatch.logStream = createWriteStream(logPath, { flags: 'a' });
+
+  // Synthetic phase-transition marker for observability — records the plan→execute handoff
+  // in the new dispatch's log before the resumed process writes anything.
+  const markerLine = JSON.stringify({
+    type: 'phase_transition',
+    chain_mode: 'plan_execute',
+    from_phase: 'plan',
+    to_phase: 'execute',
+    chain_parent_id: planDispatch.id,
+    at: new Date().toISOString(),
+  });
+  dispatch.output.push(markerLine);
+  dispatch.logStream.write(markerLine + '\n');
+
+  wireDispatchHandlers(dispatch, proc);
+
+  const tier = planDispatch.work_item_id ? 'medium' : 'small';
+  scheduleDispatchTimeout(dispatch, DISPATCH_TIMEOUT_MS[tier] ?? DISPATCH_TIMEOUT_MS.medium, saveDispatchToDb);
+
+  const prompt = buildExecutePhaseSection();
+  proc.stdin.write(prompt + '\n');
+  proc.stdin.end();
+
+  dispatches.set(id, dispatch);
+  try {
+    await saveDispatchToDb(dispatch);
+  } catch (dbErr) {
+    console.warn('[plan-execute] phase-2 DB persist failed — active in-memory only:', dbErr.message);
   }
   return dispatch;
 }

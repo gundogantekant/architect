@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Terminal</title>
+  <link rel="stylesheet" href="/vendor/xterm.css">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #1e1e1e;
+      color: #d0d0d0;
+      font-family: -apple-system, system-ui, sans-serif;
+      overscroll-behavior: none;
+    }
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      height: 100dvh;
+    }
+    #topbar {
+      flex: 0 0 auto;
+      padding: 6px 10px;
+      font-size: 12px;
+      background: #2a2a2a;
+      border-bottom: 1px solid #000;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #topbar .status { color: #888; }
+    #term-container {
+      flex: 1 1 auto;
+      min-height: 0;
+      width: 100%;
+    }
+    #term-container,
+    #term-container .xterm,
+    #term-container .xterm-viewport {
+      touch-action: pan-y pinch-zoom;
+      overscroll-behavior: contain;
+    }
+    #term-container .xterm-screen {
+      transform: translateZ(0);
+      -webkit-transform: translateZ(0);
+    }
+    #keybar {
+      flex: 0 0 auto;
+      display: flex;
+      gap: 6px;
+      padding: 8px;
+      background: #2a2a2a;
+      border-top: 1px solid #000;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    #keybar button {
+      flex: 0 0 auto;
+      min-width: 48px;
+      min-height: 44px;
+      padding: 0 12px;
+      font-size: 16px;
+      color: #e0e0e0;
+      background: #3a3a3a;
+      border: 1px solid #555;
+      border-radius: 6px;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    #keybar button:active { background: #505050; }
+    #keybar button.sticky-on {
+      background: #0a6;
+      border-color: #0c8;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="topbar"><span id="label">terminal</span> <span class="status" id="status"></span></div>
+    <div id="term-container"></div>
+    <div id="keybar">
+      <button data-key="esc">Esc</button>
+      <button data-key="tab">Tab</button>
+      <button data-key="shift-tab">&#8679;Tab</button>
+      <button data-key="ctrl">Ctrl</button>
+      <button data-key="up">&#8593;</button>
+      <button data-key="down">&#8595;</button>
+      <button data-key="left">&#8592;</button>
+      <button data-key="right">&#8594;</button>
+      <button data-key="enter">&#9166;</button>
+      <button data-key="ctrl-c">^C</button>
+    </div>
+  </div>
+
+  <script type="module">
+    import { Terminal } from '/vendor/xterm.mjs';
+    import { FitAddon } from '/vendor/xterm-addon-fit.mjs';
+
+    const terminalId = location.pathname.split('/').filter(Boolean).pop();
+    const labelEl = document.getElementById('label');
+    const statusEl = document.getElementById('status');
+    const containerEl = document.getElementById('term-container');
+    labelEl.textContent = terminalId;
+
+    const term = new Terminal({
+      cursorBlink: true,
+      fontSize: 12,
+      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      scrollback: 50000,
+      theme: { background: '#1e1e1e', foreground: '#d0d0d0' },
+    });
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(containerEl);
+
+    let ws = null;
+    let lastSeq = 0;
+    let live = false;
+    let exited = false;
+    let backoff = 1000;
+
+    function sendInput(data) {
+      if (live && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'input', data }));
+      }
+    }
+
+    function fitAndReport() {
+      try { fitAddon.fit(); } catch {}
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      }
+    }
+
+    function handleMessage(msg) {
+      lastSeq = Math.max(lastSeq, msg.seq || msg.upToSeq || 0);
+      if (msg.type === 'stream-start') {
+        try { term.resize(msg.cols || term.cols, msg.rows || term.rows); } catch {}
+      } else if (msg.type === 'snapshot') {
+        term.write(msg.data);
+      } else if (msg.type === 'event') {
+        if (msg.eventType === 'data') term.write(msg.payload);
+        else if (msg.eventType === 'resize') fitAndReport();
+        else if (msg.eventType === 'meta' && msg.payload && msg.payload.key === 'claude_session_id') {
+          labelEl.textContent = msg.payload.value;
+        }
+      } else if (msg.type === 'stream-live') {
+        live = true;
+        backoff = 1000;
+        statusEl.textContent = '';
+        fitAndReport();
+        term.focus();
+      } else if (msg.type === 'exit') {
+        exited = true;
+        live = false;
+        statusEl.textContent = '(session ended)';
+      }
+    }
+
+    function connect() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}/api/terminal/${terminalId}/ws?from=${lastSeq}`);
+      ws.onmessage = (e) => { try { handleMessage(JSON.parse(e.data)); } catch {} };
+      ws.onclose = () => {
+        live = false;
+        if (exited) return;
+        statusEl.textContent = '(reconnecting...)';
+        setTimeout(connect, backoff);
+        backoff = Math.min(backoff * 2, 30000);
+      };
+    }
+
+    term.onData(sendInput);
+
+    let ctrlSticky = false;
+    function setCtrl(on) {
+      ctrlSticky = on;
+      document.querySelector('[data-key="ctrl"]').classList.toggle('sticky-on', on);
+    }
+    function toCtrlByte(ch) {
+      const code = ch.toLowerCase().charCodeAt(0);
+      if (code >= 97 && code <= 122) return String.fromCharCode(code - 96);
+      return null;
+    }
+
+    const KEY_BYTES = {
+      esc: '\x1b', tab: '\t', enter: '\r',
+      up: '\x1b[A', down: '\x1b[B', right: '\x1b[C', left: '\x1b[D',
+      'ctrl-c': '\x03', 'shift-tab': '\x1b[Z',
+    };
+
+    // Sticky Ctrl: intercept the next device-keyboard character and convert to its control code.
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== 'keydown' || !ctrlSticky) return true;
+      if (e.key.length === 1 && /[a-zA-Z]/.test(e.key)) {
+        const byte = toCtrlByte(e.key);
+        if (byte) {
+          sendInput(byte);
+          setCtrl(false);
+          e.preventDefault();
+          return false;
+        }
+      }
+      return true;
+    });
+
+    document.getElementById('keybar').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-key]');
+      if (!btn) return;
+      const key = btn.dataset.key;
+      if (key === 'ctrl') {
+        setCtrl(!ctrlSticky);
+        return;
+      }
+      if (key === 'ctrl-c') {
+        sendInput('\x03');
+        setCtrl(false);
+      } else if (ctrlSticky && /^[a-z]$/.test(key)) {
+        const byte = toCtrlByte(key);
+        if (byte) sendInput(byte);
+        setCtrl(false);
+      } else {
+        const bytes = KEY_BYTES[key];
+        if (bytes) sendInput(bytes);
+        if (ctrlSticky) setCtrl(false);
+      }
+      term.focus();
+    });
+
+    let resizeTimer = null;
+    const ro = new ResizeObserver(() => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(fitAndReport, 100);
+    });
+    ro.observe(containerEl);
+
+    fitAndReport();
+    connect();
+  </script>
+</body>
+</html>

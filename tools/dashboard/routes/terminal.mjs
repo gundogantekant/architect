@@ -1,13 +1,16 @@
 import { existsSync } from 'node:fs';
 import { spawnTerminalSession } from '../terminal-session.mjs';
 import { updateTerminalTitle, updateTerminalNote } from '../db.mjs';
+import { validateModel } from '../utils.mjs';
+import { buildPermissionArgs } from '../permission-args.mjs';
+import { injectIntoTerminal } from '../pty-manager.mjs';
 
 export default function terminalRoutes(deps) {
   const {
     db, json, err, parseBody,
     ROOT, PORTFOLIO, LOGS_DIR, CLAUDE_BIN, TMUX_AVAILABLE,
     terminals,
-    wireTerminalHandlers, injectPrompt,
+    wireTerminalHandlers,
     buildDispatchPrompt, resolveProjectPath, resolveOrgPath, loadPortfolioContext, loadOrgContext, loadWorkItem, selectAgentsForDispatch, loadEpicPlanSnippet,
     saveTerminalToDb, archiveSession,
     termEventLogPath, generateSeedContent, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture,
@@ -21,10 +24,17 @@ export default function terminalRoutes(deps) {
     // Create terminal session
     [/^\/api\/terminal$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { work_item_id, epic_id, project_key, org_key, title, description, additional_instructions, skip_permissions, permission_mode, agentType: bodyAgentType, skip_seed, contract: rawTermContract } = body;
+      const { work_item_id, epic_id, project_key, org_key, title, description, additional_instructions, skip_permissions, permission_mode, agentType: bodyAgentType, skip_seed, contract: rawTermContract, model: bodyModel, dispatch_mode } = body;
       const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
+      const model = validateModel(bodyModel);
 
       if (!project_key && !org_key) return err(res, 'project_key or org_key is required', 400);
+      // plan_execute is a headless two-phase chained dispatch (plan → --resume execute) that
+      // lives on /api/dispatch + dispatch-manager. The interactive PTY path cannot chain it, so
+      // refuse it loudly rather than silently running plan-only phase 1 with no execute phase.
+      if (dispatch_mode === 'plan_execute') {
+        return err(res, 'plan_execute is a headless dispatch mode; route to /api/dispatch', 400);
+      }
 
       const agentType = bodyAgentType || 'claude';
       let adapter;
@@ -86,6 +96,10 @@ export default function terminalRoutes(deps) {
         termContract = Object.keys(cleaned).length ? cleaned : null;
       }
 
+      // Resolve permission mode and skip_permissions independently (before prompt build — planMode feeds the prompt)
+      const resolvedTermPermMode = permission_mode || 'acceptEdits';
+      const resolvedTermSkipPerms = skip_permissions === true || skip_permissions === 'true';
+
       const prompt = buildDispatchPrompt({
         workItem: effectiveTermWorkItem,
         projectKey: project_key || `${org_key}/*`,
@@ -95,14 +109,11 @@ export default function terminalRoutes(deps) {
         epicContext,
         orgContext,
         contract: termContract,
+        planMode: resolvedTermPermMode === 'plan',
       });
 
       // Select sub-agents for terminal session
       const termAgentDefs = await selectAgentsForDispatch({ workItem: effectiveTermWorkItem, portfolio });
-
-      // Resolve permission mode and skip_permissions independently
-      const resolvedTermPermMode = permission_mode || 'acceptEdits';
-      const resolvedTermSkipPerms = skip_permissions === true || skip_permissions === 'true';
 
       if (agentType === 'claude') {
         // Delegate to shared module for claude PTY spawn
@@ -122,6 +133,7 @@ export default function terminalRoutes(deps) {
             title: title || additional_instructions?.slice(0, 60) || 'Interactive session',
             testWorkerId: _testWorkerId,
             skip_seed: !!skip_seed,
+            model,
           });
         } catch (spawnErr) {
           return json(res, { error: `Failed to spawn terminal: ${spawnErr.message}` }, 500);
@@ -569,7 +581,7 @@ export default function terminalRoutes(deps) {
       try {
         const ptyArgs = ['--resume', resumeSessionId];
         ptyArgs.push('--model', 'sonnet');
-        if (resolvedSkipPerms) ptyArgs.push('--dangerously-skip-permissions');
+        ptyArgs.push(...buildPermissionArgs({ permissionMode: resolvedPermMode, skipPermissions: resolvedSkipPerms }));
         ptyArgs.push('--add-dir', ROOT);
 
         if (TMUX_AVAILABLE) {
@@ -706,16 +718,14 @@ export default function terminalRoutes(deps) {
     [/^\/api\/terminal\/([A-Za-z0-9_-]+)\/inject$/, 'POST', async (m, req, res) => {
       const terminal = terminals.get(m[1]);
       if (!terminal) return err(res, 'terminal not found', 404);
-      if (terminal.status !== 'running') return err(res, 'terminal not running', 400);
-      if (terminal._pendingPrompt) return err(res, 'injection already pending', 409);
 
       const body = await parseBody(req);
       const { prompt } = body;
       if (!prompt) return err(res, 'prompt required', 400);
 
-      terminal._pendingPrompt = prompt;
-      terminal._readyForPrompt = true;
-      await injectPrompt(terminal);
+      const result = await injectIntoTerminal(terminal, prompt);
+      if (result.reason === 'not_running') return err(res, 'terminal not running', 400);
+      if (result.reason === 'busy') return err(res, 'injection already pending', 409);
       json(res, { status: 'done' });
     }],
   ];

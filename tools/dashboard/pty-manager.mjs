@@ -1,10 +1,14 @@
 import { appendFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { saveTerminalToDb, archiveSession } from './state.mjs';
 import { termEventLogPath, isPidAlive } from './utils.mjs';
 import { EventStream } from './event-stream.mjs';
 import * as db from './db.mjs';
 import { stripAnsi } from './lib/ansi.mjs';
+import { classifyTerminalExit } from './session-status.mjs';
+
+export const terminalEvents = new EventEmitter();
 
 // Shared terminal handler wiring (used for fresh spawn and restore)
 export function wireTerminalHandlers(terminal) {
@@ -47,8 +51,11 @@ export function wireTerminalHandlers(terminal) {
       }
     }
 
-    // Readiness detection for prompt injection
-    if (terminal._pendingPrompt && !terminal._readyForPrompt && terminal._adapter) {
+    // Readiness detection for prompt injection (non-tmux only).
+    // tmux sessions are driven by the capture-based state machine in
+    // injection/index.mjs — the early pre-mount ?2004h must NOT trigger a blind
+    // PTY write here, or the paste lands before Ink mounts and is discarded.
+    if (!terminal.tmux_session && terminal._pendingPrompt && !terminal._readyForPrompt && terminal._adapter) {
       if (terminal._adapter.detectReadiness(terminal._accumulated || '', data)) {
         terminal._readyForPrompt = true;
         const delay = terminal._adapter.injectionDelay ?? 0;
@@ -62,7 +69,18 @@ export function wireTerminalHandlers(terminal) {
   });
 
   terminal.ptyProcess.onExit(({ exitCode }) => {
-    terminal.status = exitCode === 0 ? 'completed' : 'failed';
+    // Guard: if the terminal was deliberately suspended before this exit fired, preserve
+    // the suspended status. The suspend endpoint already broadcast {type:'suspended'},
+    // closed subscribers, reaped tmux, archived, and persisted — repeating those steps
+    // would emit a stale meta event and duplicate writes.
+    const { status, preserve } = classifyTerminalExit(terminal.status, exitCode);
+    if (preserve) {
+      console.log(`[onExit] preserving suspended status for ${terminal.id}`);
+      terminal.ptyProcess = null;
+      return;
+    }
+
+    terminal.status = status;
     terminal.exited_at = new Date().toISOString();
 
     // Emit meta exit event
@@ -76,6 +94,7 @@ export function wireTerminalHandlers(terminal) {
       try { sub.ws.send(exitMsg); } catch {}
     }
     terminal.eventStream.subscribers.clear();
+    try { terminalEvents.emit('exit', terminal); } catch {}
 
     terminal.ptyProcess = null;
     if (terminal.tmux_session) {
@@ -85,6 +104,7 @@ export function wireTerminalHandlers(terminal) {
     saveTerminalToDb(terminal).catch(e => console.error('[onExit] saveTerminalToDb:', e.message));
     // Keep terminal in memory for frontend display; auto-cleanup timer handles removal after 10min
   });
+  try { terminalEvents.emit('start', terminal); } catch {}
 }
 
 // Strip ESC-led sequences (CSI, OSC, etc.) and standalone BEL/BS control codes.
@@ -151,4 +171,13 @@ export async function injectPrompt(terminal) {
       try { process.kill(terminal.pid, 'SIGTERM'); } catch {}
     }
   }
+}
+
+export async function injectIntoTerminal(terminal, prompt) {
+  if (!terminal || terminal.status !== 'running') return { ok: false, reason: 'not_running' };
+  if (terminal._pendingPrompt) return { ok: false, reason: 'busy' };
+  terminal._pendingPrompt = prompt;
+  terminal._readyForPrompt = true;
+  await injectPrompt(terminal);
+  return { ok: true };
 }

@@ -1,8 +1,16 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { LOGS_DIR } from './constants.mjs';
+import { MODEL_ALIASES, MODEL_CATALOG } from './model-catalog.mjs';
+
+const execFileAsync = promisify(execFile);
+
+// Cap every tmux exec so a wedged tmux server surfaces as an error instead of
+// an infinite await that would hang prompt delivery forever.
+const TMUX_EXEC_TIMEOUT_MS = 3000;
 
 export function json(res, data, status = 200) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -18,6 +26,24 @@ export function err(res, msg, status = 404) { json(res, { error: msg }, status);
 
 export function safe(segment) {
   return !segment.includes('..') && !segment.includes('/') && !segment.includes('\\');
+}
+
+const KNOWN_MODELS = new Set([...MODEL_CATALOG.map(m => m.id), ...Object.values(MODEL_ALIASES)]);
+
+// Idempotent: accepts a short alias ('opus') or an already-resolved id ('claude-opus-4-8').
+// A resolved id passes through unchanged so re-validating a persisted model (e.g. when a
+// plan_execute phase-2 inherits its phase-1 model) does not silently fall back to sonnet.
+// An optional '[1m]' suffix (1M context window) is split off, validated against the base,
+// and re-appended — so 'opus[1m]' → 'claude-opus-4-8[1m]' and the resolved form passes through.
+export function validateModel(value) {
+  if (!value) return MODEL_ALIASES.sonnet;
+  const s = String(value);
+  const hasSuffix = s.endsWith('[1m]');
+  const base = hasSuffix ? s.slice(0, -4) : s;
+  const suffix = hasSuffix ? '[1m]' : '';
+  if (KNOWN_MODELS.has(base)) return base + suffix;
+  if (MODEL_ALIASES[base]) return MODEL_ALIASES[base] + suffix;
+  return MODEL_ALIASES.sonnet;
 }
 
 export async function readJson(path) {
@@ -60,6 +86,74 @@ export function captureTmuxScrollback(name) {
   try {
     return execFileSync('tmux', ['capture-pane', '-t', name, '-p', '-e', '-S', '-1000'], { encoding: 'utf8' });
   } catch { return ''; }
+}
+
+// Async tmux delivery helpers for the tmux prompt-injection state machine
+// (injection/index.mjs). All use promisify(execFile) so the SSE event loop is
+// never blocked in the ~250ms poll, and all are fail-soft.
+
+// Raw visible-pane text of the current render. Differs from captureTmuxScrollback
+// on purpose: NO `-e` flag, so colour/SGR sequences are omitted and two idle
+// renders are byte-comparable for inputRegionStable() stabilization checks.
+export async function tmuxCapturePane(name) {
+  try {
+    const { stdout } = await execFileAsync('tmux', ['capture-pane', '-t', name, '-p'], { timeout: TMUX_EXEC_TIMEOUT_MS });
+    return stdout;
+  } catch { return ''; }
+}
+
+// Deliver text into the composer via the tmux buffer rather than send-keys, so
+// the prompt is bracketed-pasted atomically. `-r` is MANDATORY: without it tmux
+// rewrites each LF to CR, re-fragmenting a multi-line prompt into many Enters.
+export async function tmuxPasteStdin(name, text) {
+  const bufName = `arch-${name}`;
+  try { await execFileAsync('tmux', ['delete-buffer', '-b', bufName]); } catch {}
+  await loadTmuxBufferFromStdin(bufName, text);
+  await execFileAsync('tmux', ['paste-buffer', '-t', name, '-b', bufName, '-p', '-r', '-d'], { timeout: TMUX_EXEC_TIMEOUT_MS });
+}
+
+// promisify(execFile) ignores the `input` option (that is execFileSync/spawnSync
+// only), so `load-buffer -` would block forever on an unwritten stdin. Feed the
+// buffer text through the child's stdin explicitly and close it to signal EOF.
+function loadTmuxBufferFromStdin(bufName, text) {
+  return new Promise((resolve, reject) => {
+    const child = execFile('tmux', ['load-buffer', '-b', bufName, '-'], { timeout: TMUX_EXEC_TIMEOUT_MS }, (err) => {
+      if (err) reject(err); else resolve();
+    });
+    child.stdin.on('error', reject);
+    child.stdin.end(text);
+  });
+}
+
+// Clear the composer (Ctrl-U) so a retry can never append to a partial buffer.
+// Fail-soft: pre-paste hygiene, a failure here is not fatal to delivery.
+export async function tmuxClearInput(name) {
+  try { await execFileAsync('tmux', ['send-keys', '-t', name, 'C-u'], { timeout: TMUX_EXEC_TIMEOUT_MS }); } catch {}
+}
+
+// Submit the composer. Key name (not a literal CR) so tmux maps it to Enter.
+// Returns true on success, false on exec error — a failed Enter must NOT be
+// reported as a submitted turn, so the caller can verify before claiming done.
+export async function tmuxSendEnter(name) {
+  try {
+    await execFileAsync('tmux', ['send-keys', '-t', name, 'Enter'], { timeout: TMUX_EXEC_TIMEOUT_MS });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Send one or more tmux key tokens to the session (e.g. ['2'], ['Down','Down','Enter'],
+// ['y']). Each token is a separate send-keys argument so tmux interprets named keys.
+// Returns true on success, false on exec error — callers verify before claiming the
+// keypress landed. Never throws.
+export async function tmuxSendKeys(session, keys) {
+  try {
+    await execFileAsync('tmux', ['send-keys', '-t', session, ...keys], { timeout: TMUX_EXEC_TIMEOUT_MS });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Clean tmux capture-pane plain text output: strip trailing whitespace, collapse blank runs, trim */

@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { readFile, writeFile, rename, readdir, stat, mkdir, unlink as unlinkFile } from 'node:fs/promises';
 import { createWriteStream, readFileSync, writeFileSync, appendFileSync, renameSync, existsSync } from 'node:fs';
 import { join, resolve, extname, dirname } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, networkInterfaces } from 'node:os';
 import { spawn, execFileSync } from 'node:child_process';
 import pty from 'node-pty';
 import * as db from './db.mjs';
@@ -11,14 +11,19 @@ import { buildPrefixCache } from './portfolio-config.mjs';
 import { EventStream } from './event-stream.mjs';
 import { getAdapter } from './adapters/index.mjs';
 
-import { CLAUDE_BIN, ROOT, PORTFOLIO, LEGACY_PORTFOLIO, WORK, LOGS_DIR, ARCHITECT_KEY, port, VALID_WORK_ITEM_STATUSES, VALID_EPIC_STATUSES, VALID_PRIORITIES, SERVER_START_TIME, DASHCTL_PATH, PID_FILE, LOG_FILE, MIGRATIONS_DIR, TMUX_AVAILABLE, BACKUP_DIR } from './constants.mjs';
+import { CLAUDE_BIN, ROOT, PORTFOLIO, LEGACY_PORTFOLIO, WORK, LOGS_DIR, ARCHITECT_KEY, port, VALID_WORK_ITEM_STATUSES, VALID_EPIC_STATUSES, VALID_PRIORITIES, SERVER_START_TIME, DASHCTL_PATH, PID_FILE, LOG_FILE, MIGRATIONS_DIR, TMUX_AVAILABLE, BACKUP_DIR, DEFAULT_HOST, resolveAccessConfig } from './constants.mjs';
 import { migrateLegacyPortfolio } from './portfolio-migration.mjs';
-import { json, text, err, safe, readJson, listDirs, listFiles, parseBody, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture, termEventLogPath, generateSeedContent, sleep } from './utils.mjs';
+import { json, text, err, safe, readJson, listDirs, listFiles, parseBody, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture, tmuxCapturePane, tmuxPasteStdin, tmuxClearInput, tmuxSendEnter, tmuxSendKeys, termEventLogPath, generateSeedContent, sleep } from './utils.mjs';
 
 import { dispatches, terminals, cliSessions, saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession } from './state.mjs';
 import { resolveProjectPath, resolveOrgPath, loadPortfolioContext, loadOrgContext, loadWorkItem, loadResumeContext, topoSort, loadEpicPlanSnippet, selectAgentsForDispatch, buildDispatchPrompt, buildResumePrompt, buildAutoImplementPrompt, buildRefinementPrompt, buildTaskCreationPrompt, buildProjectRefinementPrompt } from './prompt-builder.mjs';
 
-import { wireTerminalHandlers, injectPrompt } from './pty-manager.mjs';
+import { wireTerminalHandlers, injectPrompt, injectIntoTerminal, terminalEvents } from './pty-manager.mjs';
+import { startTelegramBridge } from './telegram/bridge.mjs';
+import { explainQuestion, mapReplyToDecision } from './telegram/llm.mjs';
+import { createTelegramClient } from './telegram/client.mjs';
+import { createQuestionDetector } from './telegram/detector.mjs';
+import { startInjection } from './injection/index.mjs';
 import { syncProjectsFromRegistry, broadcastDispatchLine, broadcastDispatchDone, tailLogFile, restoreSessions, extractStreamText, killProcess, killProcessGraceful, wireDispatchHandlers } from './dispatch-manager.mjs';
 import { sweepOrphanedPromptFiles } from './prompt-file.mjs';
 import { setupWebSocket } from './ws-router.mjs';
@@ -43,30 +48,69 @@ import promptsRoutes from './routes/prompts.mjs';
 import workItemAssetsRoutes from './routes/work-item-assets.mjs';
 import gitRoutes from './routes/git.mjs';
 import testEndpointRoutes from './routes/test-endpoints.mjs';
+import * as blocklist from './lib/blocklist.mjs';
+import { evaluateRequest } from './lib/access-guard.mjs';
+import accessRoutes from './routes/access.mjs';
+import telegramRoutes from './routes/telegram.mjs';
 import { attemptMerge, isMergeLocked } from './merge.mjs';
 
 const TMP_DIR = join(ROOT, 'tmp');
 
+function normalizeIp(ip) {
+  return ip.startsWith('::ffff:') ? ip.slice(7) : ip;
+}
+
+// IPv4 addresses assigned to this host's non-internal interfaces. Used both for the
+// startup no-auth warning (which LAN IP to surface) and for the access guard (a request
+// whose Host header names one of our own LAN IPs is legitimate).
+function serverLanIpv4s() {
+  const ips = [];
+  for (const addrs of Object.values(networkInterfaces())) {
+    for (const addr of addrs || []) {
+      if (addr.family === 'IPv4' && !addr.internal) ips.push(addr.address);
+    }
+  }
+  return ips;
+}
+
+const SERVER_LAN_IPS = serverLanIpv4s();
+const ACCESS_CONFIG = resolveAccessConfig();
+
+// Test-only hook: the access guard exempts loopback as the recovery path, which makes the
+// Host/Origin denial branches unreachable from a loopback test client. When running under
+// NODE_ENV=test, a spec may set ARCHITECT_GUARD_DISABLE_LOOPBACK_EXEMPT=1 to treat the
+// loopback test client as remote so those branches can be exercised. Never active in prod.
+const GUARD_DISABLE_LOOPBACK_EXEMPT =
+  process.env.NODE_ENV === 'test' && process.env.ARCHITECT_GUARD_DISABLE_LOOPBACK_EXEMPT === '1';
+const guardIsLoopback = GUARD_DISABLE_LOOPBACK_EXEMPT ? () => false : blocklist.isLoopback;
+const LAN_EXPOSED = DEFAULT_HOST !== '127.0.0.1' && DEFAULT_HOST !== 'localhost' && DEFAULT_HOST !== '::1';
+const LAN_URL = LAN_EXPOSED ? `http://${SERVER_LAN_IPS[0] || DEFAULT_HOST}:${port}` : null;
+
 let syncWarnings = [];
+let telegramHandle = null;
 
 const deps = {
   db, json, text, err, safe, parseBody, readJson, listDirs, listFiles,
   PORTFOLIO, ROOT, WORK, LOGS_DIR, TMP_DIR, ARCHITECT_KEY, port,
   VALID_WORK_ITEM_STATUSES, VALID_EPIC_STATUSES, VALID_PRIORITIES,
   dispatches, terminals, cliSessions,
-  wireTerminalHandlers, wireDispatchHandlers, injectPrompt,
+  wireTerminalHandlers, wireDispatchHandlers, injectPrompt, startInjection,
+  tmuxCapturePane, tmuxPasteStdin, tmuxClearInput, tmuxSendEnter,
   buildDispatchPrompt, buildResumePrompt, buildAutoImplementPrompt, buildRefinementPrompt, buildTaskCreationPrompt, buildProjectRefinementPrompt, resolveProjectPath, resolveOrgPath, loadPortfolioContext, loadOrgContext, loadWorkItem, loadResumeContext, selectAgentsForDispatch, loadEpicPlanSnippet,
   broadcastDispatchLine, broadcastDispatchDone, tailLogFile, killProcess, killProcessGraceful, extractStreamText, syncProjectsFromRegistry, getSyncWarnings: () => syncWarnings,
   saveDispatchToDb, saveTerminalToDb, saveCliSessionToDb, archiveSession,
   restoreSessions,
   termEventLogPath, generateSeedContent, sleep, isPidAlive, tmuxSessionExists, captureTmuxScrollback, cleanTmuxCapture,
   CLAUDE_BIN, TMUX_AVAILABLE, SERVER_START_TIME, DASHCTL_PATH, PID_FILE, LOG_FILE, MIGRATIONS_DIR,
+  bindHost: DEFAULT_HOST, lanExposed: LAN_EXPOSED, lanUrl: LAN_URL,
   attemptMerge, isMergeLocked,
+  blocklist,
   EventStream, getAdapter, pty,
   spawn, execFileSync, readFile, writeFile, readFileSync, writeFileSync, appendFileSync, existsSync, createWriteStream,
   mkdir, stat, join, extname, dirname, homedir, rename, unlinkFile, renameSync, readdir,
   __dirname: import.meta.dirname,
   buildPrefixCache,
+  getTelegramHandle: () => telegramHandle,
 };
 
 const routes = [
@@ -90,11 +134,51 @@ const routes = [
   ...workItemAssetsRoutes(deps),
   ...gitRoutes(deps),
   ...(process.env.WORK_DIR ? testEndpointRoutes(deps) : []),
+  ...accessRoutes(deps),
+  ...telegramRoutes(deps),
 ];
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const path = url.pathname;
+
+  // Access-control identity MUST come from the socket peer (req.socket.remoteAddress),
+  // never from X-Forwarded-For or any client-supplied header: this server binds directly,
+  // so the socket peer is trustworthy while forwarded headers are spoofable. If a trusted
+  // reverse proxy is ever introduced, add an explicit trusted-proxy allowlist before using
+  // forwarded headers — otherwise any LAN client could forge 127.0.0.1 and bypass this.
+  const clientIp = normalizeIp(req.socket.remoteAddress ?? '');
+  // Defence-in-depth access guard: loopback exemption (guaranteed recovery path),
+  // Host-header validation (DNS-rebinding), optional IP allow-list, blocklist deny-list,
+  // and same-origin enforcement for mutating methods (CSRF). The guard is pure — the
+  // stateful blocklist lookups are injected here. See lib/access-guard.mjs.
+  const verdict = evaluateRequest(
+    {
+      clientIp,
+      host: req.headers.host,
+      origin: req.headers.origin || req.headers.referer,
+      method: req.method,
+      path,
+    },
+    {
+      allowedHosts: ACCESS_CONFIG.allowedHosts,
+      allowIps: ACCESS_CONFIG.allowIps,
+      serverLanIps: SERVER_LAN_IPS,
+      isBlocked: blocklist.isBlocked,
+      isLoopback: guardIsLoopback,
+      normalizeIp,
+    },
+  );
+  if (!verdict.allow) {
+    res.writeHead(verdict.status || 403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Forbidden', reason: verdict.reason }));
+    return;
+  }
+
+  res.on('finish', () => {
+    db.logAccess(clientIp, path, req.method, res.statusCode)
+      .catch(e => console.warn('[access_log] write failed:', e.message));
+  });
 
   for (const [pattern, method, handler] of routes) {
     const match = path.match(pattern);
@@ -108,6 +192,37 @@ const server = createServer(async (req, res) => {
     }
   }
   err(res, 'not found');
+});
+
+// WebSocket access guard: validate Origin (and client IP) on the upgrade BEFORE the
+// ws-router handler runs. Registered first so a rejected upgrade destroys the socket; the
+// ws-router handler bails out on an already-destroyed socket. Loopback clients are exempt
+// (same recovery guarantee as the HTTP guard).
+server.on('upgrade', (req, socket) => {
+  const clientIp = normalizeIp(req.socket.remoteAddress ?? '');
+  if (blocklist.isLoopback(clientIp)) return;
+  const verdict = evaluateRequest(
+    {
+      clientIp,
+      host: req.headers.host,
+      // Treat an upgrade as a mutating action so the Origin is enforced when present.
+      origin: req.headers.origin || req.headers.referer,
+      method: 'POST',
+      path: req.url,
+    },
+    {
+      allowedHosts: ACCESS_CONFIG.allowedHosts,
+      allowIps: ACCESS_CONFIG.allowIps,
+      serverLanIps: SERVER_LAN_IPS,
+      isBlocked: blocklist.isBlocked,
+      isLoopback: guardIsLoopback,
+      normalizeIp,
+    },
+  );
+  if (!verdict.allow) {
+    try { socket.write('HTTP/1.1 403 Forbidden\r\n\r\n'); } catch {}
+    socket.destroy();
+  }
 });
 
 setupWebSocket(server);
@@ -166,6 +281,8 @@ setInterval(async () => {
 async function shutdownFlush() {
   const now = new Date().toISOString();
 
+  try { telegramHandle?.stop(); } catch {}
+
   // Dispatches: leave alive processes as running, mark dead ones as interrupted
   for (const [, d] of dispatches) {
     if (d.status !== 'running') continue;
@@ -215,6 +332,62 @@ process.on('SIGTERM', async () => {
 });
 process.on('SIGINT', () => { server.close(); shutdownFlush().finally(() => process.exit(0)); });
 
+function resolveNotifyToggles({ rawQuestions, rawIdle, rawLifecycle, legacyTrigger }) {
+  if (rawQuestions === null && rawIdle === null && rawLifecycle === null) {
+    const lifecycle = legacyTrigger === 'questions_lifecycle';
+    return { notify_questions: true, notify_idle: false, notify_lifecycle: lifecycle };
+  }
+  return {
+    notify_questions: rawQuestions === null ? true : rawQuestions === 'true',
+    notify_idle: rawIdle === null ? false : rawIdle === 'true',
+    notify_lifecycle: rawLifecycle === null ? false : rawLifecycle === 'true',
+  };
+}
+
+async function readTelegramConfig() {
+  const enabled = (await db.getPreference('telegram_enabled')) === 'true';
+  const rawAllowlist = await db.getPreference('telegram_allowlist');
+  const defaultChat = await db.getPreference('telegram_default_chat_id');
+  const toggles = resolveNotifyToggles({
+    rawQuestions: await db.getPreference('telegram_notify_questions'),
+    rawIdle: await db.getPreference('telegram_notify_idle'),
+    rawLifecycle: await db.getPreference('telegram_notify_lifecycle'),
+    legacyTrigger: await db.getPreference('telegram_trigger'),
+  });
+  let allowlist = [];
+  if (rawAllowlist) {
+    try { allowlist = JSON.parse(rawAllowlist); } catch { allowlist = []; }
+  }
+  return {
+    enabled,
+    allowlist: Array.isArray(allowlist) ? allowlist.map(Number) : [],
+    default_chat_id: defaultChat ? Number(defaultChat) : null,
+    ...toggles,
+  };
+}
+
+async function startTelegramBridgeIfConfigured() {
+  const token = process.env.ARCHITECT_TELEGRAM_BOT_TOKEN;
+  const config = await readTelegramConfig();
+  if (!token || !config.enabled) return;
+  const client = createTelegramClient(token, {});
+  telegramHandle = startTelegramBridge({
+    client,
+    terminals,
+    injectIntoTerminal,
+    terminalEvents,
+    makeDetector: ({ onNeedsInput, onCleared }) =>
+      createQuestionDetector({ tmuxCapturePane, onNeedsInput, onCleared }),
+    explainQuestion,
+    mapReplyToDecision,
+    sendKeysToTerminal: (terminal, keys) => tmuxSendKeys(terminal.tmux_session, keys),
+    capturePane: (terminal) => tmuxCapturePane(terminal.tmux_session),
+    nowFn: () => Date.now(),
+    db,
+    config,
+  });
+}
+
 async function main() {
   // Phase 0: Backup database (best-effort — do not block startup on failure)
   db.backupDatabase(WORK, BACKUP_DIR).catch(e => console.warn('[backup] pg_dump skipped:', e.message));
@@ -230,6 +403,14 @@ async function main() {
     } else {
       console.error(`Database initialization failed: ${e.message}`);
     }
+    process.exit(1);
+  }
+
+  try {
+    await blocklist.load(db.getPool());
+    console.log('IP blocklist loaded');
+  } catch (e) {
+    console.error(`Fatal: failed to load IP blocklist: ${e.message}`);
     process.exit(1);
   }
 
@@ -264,6 +445,10 @@ async function main() {
   // Phase 3: Restore sessions
   restoreSessions(wireTerminalHandlers, deps);
 
+  // Phase 3.4: Start Telegram bridge if a token is present and the feature is enabled.
+  // Routes are always registered (status returns running:false when no bridge is active).
+  await startTelegramBridgeIfConfigured();
+
   // Phase 3.5: Warn about orphaned worktrees
   try {
     const cnt = await db.countOrphanedWorktrees();
@@ -273,8 +458,20 @@ async function main() {
   } catch {}
 
   // Phase 4: Start server (PG is healthy — ordering enforced by initDatabaseAsync above)
-  server.listen(port, '127.0.0.1', () => {
-    console.log(`Dashboard: http://127.0.0.1:${port}`);
+  server.listen(port, DEFAULT_HOST, () => {
+    console.log(`Dashboard: http://${DEFAULT_HOST}:${port}`);
+    if (LAN_EXPOSED) {
+      const lanIp = SERVER_LAN_IPS[0] || DEFAULT_HOST;
+      console.warn('');
+      console.warn('============================================================');
+      console.warn('  WARNING: Dashboard is bound to the LAN with NO authentication.');
+      console.warn(`  Reachable at: http://${lanIp}:${port}  (bind ${DEFAULT_HOST})`);
+      console.warn('  Dispatch + terminal = remote code execution, NO authentication.');
+      console.warn('  Expose only on a trusted LAN. To restrict to loopback, set');
+      console.warn('  ARCHITECT_LOOPBACK_ONLY=1 (or DASHCTL_LOOPBACK_ONLY=1 via dashctl).');
+      console.warn('============================================================');
+      console.warn('');
+    }
   });
 }
 

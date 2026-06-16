@@ -2,6 +2,10 @@ export const $ = s => document.querySelector(s);
 
 export function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
+// Attribute-safe escape: escapes quotes in addition to < > &, so values are safe
+// inside double/single-quoted HTML attributes (esc() does NOT escape quotes).
+export function escAttr(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
 export function stripAnsiForDisplay(s) {
   if (!s) return s;
   return s

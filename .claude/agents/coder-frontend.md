@@ -58,7 +58,7 @@ See `domain/rules.md` → Coding Standards for expanded rationale. Additional ag
 ## Process
 
 1. Check the project's domain layer for existing types, enums, and state definitions before creating new ones (see `domain/rules.md` → Domain-First Rule)
-2. Read existing component patterns and styling approach
+2. Read existing component patterns and styling approach. When `.codegraph/` is present in the project, use `codegraph_search` for symbol lookup and `codegraph_context` for task-relevant context instead of grep/search_files — see `domain/rules.md` → Code Discovery Preference. Fall back to grep for .md artifacts.
 3. Implement UI following established conventions
 3. Ensure responsive behavior
 4. Verify accessibility basics

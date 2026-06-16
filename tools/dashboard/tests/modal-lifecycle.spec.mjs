@@ -77,6 +77,60 @@ test('M-1-3: showDiscussModal submit creates session and closes modal', async ({
   await expect(page.locator('.terminal-panel, .dispatch-panel').first()).toBeVisible({ timeout: 8000 });
 });
 
+test('DM-1: discuss modal sends additional_instructions in POST body', async ({ page }) => {
+  let capturedBody = null;
+  await page.route(/\/api\/terminal$/, async (route) => {
+    if (route.request().method() === 'POST') {
+      capturedBody = JSON.parse(route.request().postData());
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ terminal_id: 'T-dm1', status: 'running' }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+
+  await page.goto('/#component/ticari/architect/main');
+  await page.waitForSelector('#discuss-agent', { timeout: 15000 });
+  await page.click('#discuss-agent');
+  await page.fill('#discuss-instructions', 'Analyse the dashboard routing layer');
+  await page.click('#discuss-submit');
+  await expect(page.locator('.modal-overlay')).not.toBeVisible({ timeout: 8000 });
+
+  expect(capturedBody).not.toBeNull();
+  expect(capturedBody.additional_instructions).toBe('Analyse the dashboard routing layer');
+});
+
+test('DM-2: discuss modal sends selected model in POST body', async ({ page }) => {
+  let capturedBody = null;
+  await page.route(/\/api\/terminal$/, async (route) => {
+    if (route.request().method() === 'POST') {
+      capturedBody = JSON.parse(route.request().postData());
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ terminal_id: 'T-dm2', status: 'running' }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+
+  await page.goto('/#component/ticari/architect/main');
+  await page.waitForSelector('#discuss-agent', { timeout: 15000 });
+  await page.click('#discuss-agent');
+  await page.fill('#discuss-instructions', 'Discuss epic planning');
+  await page.locator('#discuss-model').selectOption('opus');
+  await page.click('#discuss-submit');
+  await expect(page.locator('.modal-overlay')).not.toBeVisible({ timeout: 8000 });
+
+  expect(capturedBody).not.toBeNull();
+  expect(capturedBody.model).toBe('opus');
+  expect(capturedBody.additional_instructions).toBe('Discuss epic planning');
+});
+
 // ============================================================
 // Modal 2: showReviewModal
 // Trigger: #review-prs button on #component/ticari/architect/main
@@ -178,6 +232,9 @@ test('M-3-3: dispatchWorkItem submit creates session and closes modal', async ({
   await page.click('.dispatch-btn[data-wi-idx]');
   await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
 
+  // The architect project defaults to plan_execute (headless /api/dispatch). This test
+  // exercises the interactive dispatch path, so explicitly select Accept edits.
+  await page.locator('#dispatch-perm-mode').selectOption('acceptEdits');
   await page.click('#modal-dispatch');
 
   await expect(page.locator('.modal-overlay')).not.toBeVisible({ timeout: 8000 });
@@ -359,6 +416,9 @@ test('M-6-3: showQuickDispatchModal submit creates session and closes modal', as
   await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 3000 });
 
   await page.fill('#qd-instructions', 'Quick dispatch test for modal lifecycle');
+  // When the pre-selected project is architect, the mode defaults to plan_execute (headless
+  // /api/dispatch). This test exercises the interactive path, so select Accept edits.
+  await page.locator('#qd-perm-mode').selectOption('acceptEdits');
   await page.click('#qd-go');
 
   await expect(page.locator('.modal-overlay')).not.toBeVisible({ timeout: 8000 });

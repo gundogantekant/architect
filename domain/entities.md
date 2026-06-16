@@ -564,9 +564,10 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "project_key": "string (org/project/component)",
   "project_path": "string (absolute path)",
   "additional_instructions": "string (optional)",
-  "permission_mode": "string (plan|acceptEdits)",
+  "permission_mode": "string (plan|acceptEdits) — flag-level mode only. NEVER holds 'plan_execute'; that is a chain mode tracked in chain_mode. A plan_execute chain stores permission_mode='plan' for phase 1 and 'acceptEdits' for phase 2.",
   "skip_permissions": "boolean (default false, adds --dangerously-skip-permissions flag)",
-  "status": "running|completed|failed|killed|interrupted|suspended|merge_pending|merge_conflict|dismissed|superseded",
+  "model": "string | null — resolved model id the agent was spawned with (e.g. 'claude-opus-4-8'). Persisted so a plan_execute phase-2 (and resume/restart) inherits the phase-1 model instead of silently defaulting to sonnet. null for legacy rows; validateModel() falls back to sonnet when unset.",
+  "status": "running|completed|failed|killed|interrupted|suspended|execute_pending|execute_starting|merge_pending|merge_conflict|dismissed|superseded",
   "started_at": "string (ISO 8601)",
   "completed_at": "string (ISO 8601, optional)",
   "timeout_at": "ISO 8601 timestamp | null — absolute wall-clock deadline for the session. Set at dispatch time based on complexity (trivial=5min, small=15min, medium=60min, large=120min). Two-phase soft-kill: Phase 1 at 80% (auto-extend or idle-warning); Phase 2 at 100% (SIGTERM→SIGKILL). Does not pause when suspended. See domain/rules.md → Timeout Semantics.",
@@ -580,6 +581,10 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
   "worktree_branch": "string (worktree branch name, null if no worktree — persisted to PostgreSQL)",
   "source_branch": "string (originating branch the worktree was created from, null if no worktree — persisted to PostgreSQL)",
   "dispatch_mode": "string ('standard' | 'auto_implement', default 'standard')",
+  "chain_mode": "'plan_execute' | null — dashboard-only chain marker. NEVER emitted as a --permission-mode flag. Set on both phase-1 (plan) and phase-2 (execute) records of a plan_execute chain; null for all other dispatches.",
+  "chain_phase": "'plan' | 'execute' | null — which phase of a plan_execute chain this record is. Phase 1 ('plan') spawns plan-only; phase 2 ('execute') resumes the same claude session with acceptEdits + skip-perms in the same worktree.",
+  "chain_autostart": "boolean | null — when true, phase 2 spawns automatically on phase-1 completion; when false, the chain holds at status='execute_pending' until POST /api/dispatch/:id/execute. null for non-chain dispatches. Defaults from the plan_execute_autostart preference.",
+  "chain_parent_id": "string (D-XXX) | null — on a phase-2 (execute) record, points to the originating phase-1 (plan) record. null for phase-1 and non-chain dispatches.",
   "completion_sha": "string (SHA of the final implementation commit, optional)",
   "completion_summary": "string (agent-provided summary, max 500 chars, optional)",
   "merge_result": "'success'|'conflict'|'aborted' — outcome of the merge attempt, optional",
@@ -601,6 +606,8 @@ Record created when the dashboard dispatches a Claude agent for a work item. Per
 Status semantics for terminal states:
 - `dismissed` — user acknowledged an interrupted session and dismissed the recovery banner. Not shown in recovery surface.
 - `superseded` — session was replaced by a re-dispatch. Treated same as dismissed in UI.
+- `execute_pending` — non-terminal. Phase-1 plan of a `plan_execute` chain completed cleanly and is awaiting its execute phase. Reached either by a gated chain (chain_autostart=false) or by restart recovery of a phase-1 that finished before the process died. Cleared by POST /api/dispatch/:id/execute, which spawns phase 2. Autostart never fires from this state — only from the live in-process close handler.
+- `execute_starting` — transient. Set on a phase-1 plan record by POST /api/dispatch/:id/execute immediately before it awaits the phase-2 spawn, as an atomic guard against a double POST (a concurrent request then fails the `status==='execute_pending'` precondition with 400). Restored to `execute_pending` on server restart (spawn was interrupted) and on spawn failure (so the user can retry).
 
 CompleteDispatchRequest validation:
 - `test_suite_passed` and `build_verified` are required for all complexity including trivial; `test_framework_absent: true` satisfies the test gate; no `guidance.build_command` satisfies the build gate.
@@ -664,6 +671,41 @@ Record for a CLI session registered externally via the dashboard API. Read-only 
 }
 ```
 
+## TelegramBridgeConfig
+
+Configuration for the Telegram terminal bridge — relays terminal questions and lifecycle events to a Telegram chat and routes replies back to the waiting terminal. Toggles are stored in `preferences`; the bot token lives in env / a local file (`work/telegram.env`), never in the database.
+
+```json
+{
+  "enabled": "boolean (preference telegram_enabled)",
+  "notify_questions": "boolean, default true (preference telegram_notify_questions) — ping when an agent shows a question (dialog screen)",
+  "notify_idle": "boolean, default false (preference telegram_notify_idle) — ping when an agent sits idle at its input composer",
+  "notify_lifecycle": "boolean, default false (preference telegram_notify_lifecycle) — ping when a terminal exits",
+  "allowlist": "array of number (numeric chat_id permitted inbound)",
+  "default_chat_id": "number (chat_id for outbound notifications)"
+}
+```
+
+Back-compat: the legacy `telegram_trigger` preference is read only when none of the three `telegram_notify_*` preferences exist (`questions_lifecycle`→questions+lifecycle, `questions`→questions only). All toggles are persisted in the `preferences` table.
+
+**Transient bridge state (smart-reply loop).** The bridge keeps **non-persisted, in-memory** per-terminal state used to drive readable question pings and the reply→decision→confirm→actuate loop: `_tgQuestion`/`_tgPrompt` (the question text), `_tgOptions` (`[{n, label}]` numbered choices), `_tgAnswerKind` (`'menu' | 'text'`), and `_tgPending` (`{decision, expiresAt}` holding a mapped-but-unconfirmed decision for confirm-before-actuate). This state lives in memory only and is lost on restart — after a restart a pending reply degrades to re-mapping the freshly captured screen rather than resuming.
+
+**Haiku-rewritten pings.** Question pings are rewritten into plain language by `claude-haiku-4-5-20251001` via the Anthropic API when `ANTHROPIC_API_KEY` is set. When the key is absent, the bridge falls back gracefully to cleaned raw pane text plus deterministic reply matching (no model call).
+
+## TelegramMessageBinding
+
+Maps an outbound Telegram message to the terminal it notified, so an inbound reply-to message can be routed back to the correct terminal. Stored in the `telegram_messages` table. Bindings are retained for 7 days, then pruned.
+
+```json
+{
+  "message_id": "number (BIGINT, primary key — Telegram message id)",
+  "terminal_id": "string (refs TerminalSession.id, soft reference)",
+  "chat_id": "number (BIGINT)",
+  "kind": "question|lifecycle",
+  "created_at": "string (ISO 8601)"
+}
+```
+
 ## SessionsFile
 
 Sessions are persisted in PostgreSQL tables (`dispatches`, `terminals`, `cli_sessions`). Dispatch output is logged to `work/logs/D-xxx.jsonl` files. On startup, sessions with live PIDs (or tmux sessions) are reconnected; legacy sessions without PIDs are marked `interrupted`. The API returns this shape:
@@ -671,7 +713,7 @@ Sessions are persisted in PostgreSQL tables (`dispatches`, `terminals`, `cli_ses
 ```json
 {
   "dispatches": {
-    "D-xxx": { "$ref": "DispatchRequest (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, completed_at, session_id, cost_usd, permission_mode, skip_permissions)" }
+    "D-xxx": { "$ref": "DispatchRequest (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, completed_at, session_id, cost_usd, permission_mode, skip_permissions, chain_mode, chain_phase, chain_autostart, chain_parent_id)" }
   },
   "terminals": {
     "T-xxx": { "$ref": "TerminalSession (subset: id, work_item_id, epic_id, project_key, project_path, title, status, started_at, exited_at, permission_mode, skip_permissions)" }
@@ -864,12 +906,15 @@ Key-value pairs stored in the `preferences` table in PostgreSQL. Used for dashbo
 {
   "default_permission_mode": "plan|acceptEdits",
   "default_skip_permissions": "true|false",
+  "default_dispatch_mode": "'plan'|'acceptEdits'|'plan_execute' — global default dispatch mode used when a project has no override. Falls back to 'acceptEdits' when unset.",
+  "default_dispatch_mode:<org/project/component>": "'plan'|'acceptEdits'|'plan_execute' — per-project override. Seeded: 'default_dispatch_mode:ticari/architect/main' = 'plan_execute'. Resolution precedence: per-project override → global default_dispatch_mode → 'acceptEdits' (resolveDispatchModeDefault).",
+  "plan_execute_autostart": "'true'|'false' (default 'true') — when true, a plan_execute chain auto-spawns its execute phase on phase-1 completion; when false, it holds at status='execute_pending' until POST /api/dispatch/:id/execute.",
   "merge_gate": "'confirm'|'auto' (default: 'confirm') — pre-merge gate mode for auto-implement dispatches; confirm=human approves in UI, auto=merge after 10s delay",
   "scope_violation_policy": "'warn'|'block' (default: 'warn') — 'warn' surfaces scope boundary violations as a pre-merge warning; 'block' is reserved for future enforcement"
 }
 ```
 
-Accessed via `GET/PUT /api/settings/preferences`.
+Accessed via `GET/PUT /api/settings/preferences`. The GET response additionally includes two computed fields that resolve dispatch-mode precedence server-side so clients do not re-implement it: `_dispatch_mode_default_global` (the resolved global default) and `_dispatch_mode_default_by_project` (object mapping each project key with an explicit override to its resolved value).
 
 ## TechReviewVerdict
 

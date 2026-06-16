@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { mkdirSync, createWriteStream } from 'node:fs';
 import { rename, unlink } from 'node:fs/promises';
+import { ARCHITECT_KEY } from './constants.mjs';
 
 // Return TIMESTAMPTZ values as ISO strings instead of Date objects.
 // OID 1114 = TIMESTAMP WITHOUT TIME ZONE, OID 1184 = TIMESTAMP WITH TIME ZONE.
@@ -186,9 +187,10 @@ export async function assertSchema() {
     work_item_logs: ['id', 'work_item_id', 'logged_at', 'summary'],
     epics: ['id', 'title', 'status', 'priority', 'description', 'acceptance_criteria', 'target_date', 'tags', 'created_at', 'updated_at'],
     epic_logs: ['id', 'epic_id', 'logged_at', 'summary'],
-    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'completion_summary_error', 'dry_run', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at', 'agent_phase', 'agent_phase_history', 'timeout_at', 'contract', 'exit_type', 'deleted_at', 'auto_extended', 'scope_violation', 'merged_at', 'merge_target', 'revoked_at', 'previous_dispatch_id'],
+    dispatches: ['id', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'model', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'completed_at', 'cost_usd', 'pid', 'claude_session_id', 'worktree_path', 'worktree_branch', 'source_branch', 'dispatch_mode', 'completion_sha', 'completion_summary', 'completion_summary_error', 'dry_run', 'merge_result', 'pipeline_stage', 'plan_gate_passed', 'plan_gate_passed_at', 'code_gate_passed', 'code_gate_passed_at', 'contract_satisfied', 'contract_satisfied_at', 'agent_phase', 'agent_phase_history', 'timeout_at', 'contract', 'exit_type', 'deleted_at', 'auto_extended', 'scope_violation', 'merged_at', 'merge_target', 'revoked_at', 'previous_dispatch_id', 'chain_mode', 'chain_phase', 'chain_autostart', 'chain_parent_id'],
     terminals: ['id', 'type', 'work_item_id', 'epic_id', 'org_key', 'project_key', 'project_path', 'title', 'permission_mode', 'skip_permissions', 'status', 'started_at', 'exited_at', 'pid', 'tmux_session', 'claude_session_id', 'agent_type', 'head_seq', 'deleted_at', 'note'],
     cli_sessions: ['id', 'project_key', 'work_item_id', 'epic_id', 'title', 'pid', 'status', 'registered_at', 'exited_at'],
+    telegram_messages: ['message_id', 'terminal_id', 'chat_id', 'kind', 'created_at'],
     preferences: ['key', 'value'],
     projects: ['key', 'org', 'project', 'component', 'path', 'role', 'synced_at'],
     session_history: ['id', 'type', 'project_key', 'work_item_id', 'epic_id', 'title', 'status', 'permission_mode', 'started_at', 'ended_at', 'duration_seconds', 'cost_usd'],
@@ -200,6 +202,8 @@ export async function assertSchema() {
     dispatch_costs: ['id', 'model', 'agent_role', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'cost_usd_breakdown', 'recorded_at'],
     model_pricing: ['model_id', 'input_cost_per_mtok', 'output_cost_per_mtok', 'cache_read_cost_per_mtok', 'cache_write_cost_per_mtok', 'updated_at'],
     dispatch_prompts: ['id', 'dispatch_id', 'work_item_id', 'project_key', 'prompt_text', 'char_count', 'truncated', 'created_at'],
+    access_log: ['ip', 'path', 'method', 'status_code', 'requested_at'],
+    ip_blocklist: ['ip', 'reason', 'blocked_at'],
   };
 
   const missing = [];
@@ -884,14 +888,15 @@ export async function getEpicProjectKeys(epicId) {
 
 export async function saveDispatch(d) {
   await pool.query(`
-    INSERT INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode, pipeline_stage, agent_phase, agent_phase_history, timeout_at, contract, exit_type, dry_run, auto_extended, contract_satisfied, contract_satisfied_at, scope_violation, merged_at, merge_target, revoked_at, previous_dispatch_id)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
+    INSERT INTO dispatches (id, work_item_id, epic_id, project_key, project_path, title, model, permission_mode, skip_permissions, status, started_at, completed_at, cost_usd, pid, claude_session_id, worktree_path, worktree_branch, source_branch, dispatch_mode, pipeline_stage, agent_phase, agent_phase_history, timeout_at, contract, exit_type, dry_run, auto_extended, contract_satisfied, contract_satisfied_at, scope_violation, merged_at, merge_target, revoked_at, previous_dispatch_id, chain_mode, chain_phase, chain_autostart, chain_parent_id)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38)
     ON CONFLICT (id) DO UPDATE SET
       work_item_id = EXCLUDED.work_item_id,
       epic_id = EXCLUDED.epic_id,
       project_key = EXCLUDED.project_key,
       project_path = EXCLUDED.project_path,
       title = EXCLUDED.title,
+      model = COALESCE(EXCLUDED.model, dispatches.model),
       permission_mode = EXCLUDED.permission_mode,
       skip_permissions = EXCLUDED.skip_permissions,
       status = EXCLUDED.status,
@@ -918,10 +923,14 @@ export async function saveDispatch(d) {
       merged_at = EXCLUDED.merged_at,
       merge_target = EXCLUDED.merge_target,
       revoked_at = COALESCE(EXCLUDED.revoked_at, dispatches.revoked_at),
-      previous_dispatch_id = COALESCE(EXCLUDED.previous_dispatch_id, dispatches.previous_dispatch_id)
+      previous_dispatch_id = COALESCE(EXCLUDED.previous_dispatch_id, dispatches.previous_dispatch_id),
+      chain_mode = EXCLUDED.chain_mode,
+      chain_phase = EXCLUDED.chain_phase,
+      chain_autostart = EXCLUDED.chain_autostart,
+      chain_parent_id = COALESCE(EXCLUDED.chain_parent_id, dispatches.chain_parent_id)
   `, [
     d.id, d.work_item_id || null, d.epic_id || null, d.project_key, d.project_path || '',
-    d.title || '', d.permission_mode || 'acceptEdits', d.skip_permissions ?? false,
+    d.title || '', d.model ?? null, d.permission_mode || 'acceptEdits', d.skip_permissions ?? false,
     d.status, d.started_at, d.completed_at || null, d.cost_usd || null, d.pid || null,
     d.claude_session_id || null, d.worktree_path || null, d.worktree_branch || null,
     d.source_branch || null, d.dispatch_mode || 'standard', d.pipeline_stage || null,
@@ -937,6 +946,10 @@ export async function saveDispatch(d) {
     d.merge_target ?? null,
     d.revoked_at ?? null,
     d.previous_dispatch_id ?? null,
+    d.chain_mode ?? null,
+    d.chain_phase ?? null,
+    d.chain_autostart ?? null,
+    d.chain_parent_id ?? null,
   ]);
 }
 
@@ -1115,6 +1128,37 @@ export async function getPersistedCliSessions() {
   return pool.query('SELECT * FROM cli_sessions').then(r => r.rows);
 }
 
+// --- Telegram bridge: message bindings ---
+
+// Map an outbound Telegram message to the terminal it notified, so inbound
+// reply-to messages can be routed back. ON CONFLICT keeps the latest binding.
+export async function saveTelegramBinding({ message_id, terminal_id, chat_id, kind }) {
+  await pool.query(`
+    INSERT INTO telegram_messages (message_id, terminal_id, chat_id, kind)
+    VALUES ($1, $2, $3, $4)
+    ON CONFLICT (message_id) DO UPDATE SET
+      terminal_id = EXCLUDED.terminal_id,
+      chat_id = EXCLUDED.chat_id,
+      kind = EXCLUDED.kind
+  `, [message_id, terminal_id || null, chat_id || null, kind || null]);
+}
+
+export async function getTelegramBindingByMessageId(message_id) {
+  return pool.query(
+    'SELECT * FROM telegram_messages WHERE message_id = $1',
+    [message_id],
+  ).then(r => r.rows[0] || null);
+}
+
+// Retention: drop bindings older than maxAgeDays (default 7). Returns rowCount.
+export async function pruneTelegramBindings(maxAgeDays = 7) {
+  const result = await pool.query(
+    `DELETE FROM telegram_messages WHERE created_at < now() - ($1 || ' days')::interval`,
+    [String(maxAgeDays)],
+  );
+  return result.rowCount;
+}
+
 // --- Lightweight title-only lookups ---
 
 export async function getWorkItemTitle(id) {
@@ -1217,6 +1261,37 @@ export async function getAllPreferences() {
   const prefs = {};
   for (const row of rows) prefs[row.key] = row.value;
   return prefs;
+}
+
+// Canonical architect portfolio key. The dashboard dispatches architect self-work under
+// the en-dash ARCHITECT_KEY, but the seeded preference + resolver key is the canonical
+// 'ticari/architect/main'. Normalize the dispatch key to the canonical one before lookup.
+export const ARCHITECT_CANONICAL_KEY = 'ticari/architect/main';
+
+function normalizeDispatchProjectKey(projectKey) {
+  return projectKey === ARCHITECT_KEY ? ARCHITECT_CANONICAL_KEY : projectKey;
+}
+
+// Resolve the effective default dispatch mode for a project: per-project override wins,
+// then the global default, then acceptEdits. Single source of precedence so the FE never
+// re-implements it. Pure given a prefs snapshot. The en-dash architect dispatch key is
+// normalized to the canonical 'ticari/architect/main' so architect dispatches resolve.
+export function resolveDispatchModeDefault(projectKey, prefs) {
+  const key = normalizeDispatchProjectKey(projectKey);
+  return (key && prefs[`default_dispatch_mode:${key}`])
+    ?? prefs.default_dispatch_mode
+    ?? 'acceptEdits';
+}
+
+// Resolve the effective default dispatch MODEL for a project: per-project override wins,
+// then the global default, then 'sonnet'. Mirror of resolveDispatchModeDefault. Returns an
+// alias/id — callers MUST wrap the result in validateModel() ('sonnet' is an alias, and a
+// per-project pref may carry a '[1m]' suffix). En-dash architect key is normalized to canonical.
+export function resolveDispatchModelDefault(projectKey, prefs) {
+  const key = normalizeDispatchProjectKey(projectKey);
+  return (key && prefs[`default_dispatch_model:${key}`])
+    ?? prefs.default_dispatch_model
+    ?? 'sonnet';
 }
 
 // --- Backlog reconstruction (legacy shape for API compat) ---
@@ -2015,7 +2090,8 @@ export async function unlinkRepoByPortfolioKey(portfolioKey) {
 // --- Cost tracking ---
 
 export async function insertDispatchCost({ id, model, agentRole, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens }) {
-  const pricing = await pool.query('SELECT * FROM model_pricing WHERE model_id = $1', [model]);
+  const lookupModel = (typeof model === 'string' && model.endsWith('[1m]')) ? model.slice(0, -4) : model;
+  const pricing = await pool.query('SELECT * FROM model_pricing WHERE model_id = $1', [lookupModel]);
   if (!pricing.rows[0]) return;
   const p = pricing.rows[0];
   const cost =
@@ -2240,4 +2316,26 @@ export async function getDistinctWorkItemProjectKeys() {
      ORDER BY project_key`
   );
   return r.rows;
+}
+
+export async function getAccessLogRequesters() {
+  const { rows } = await pool.query(
+    `SELECT ip, COUNT(*)::int AS count, MAX(requested_at) AS last_seen
+     FROM access_log
+     GROUP BY ip
+     ORDER BY count DESC`
+  );
+  return rows;
+}
+
+export function getPool() {
+  return pool;
+}
+
+export async function logAccess(ip, path, method, statusCode) {
+  await pool.query(
+    `INSERT INTO access_log (ip, path, method, status_code, requested_at)
+     VALUES ($1, $2, $3, $4, NOW())`,
+    [ip, path, method, statusCode]
+  );
 }

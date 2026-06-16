@@ -1,7 +1,11 @@
+import { ARCHITECT_KEY } from '../constants.mjs';
+import { MODEL_CATALOG } from '../model-catalog.mjs';
+
 export default function serverMgmtRoutes(deps) {
   const {
     db, json, text, err, parseBody,
     port, ROOT, PORTFOLIO, WORK, LOG_FILE, PID_FILE, DASHCTL_PATH, SERVER_START_TIME,
+    bindHost, lanExposed, lanUrl,
     dispatches, terminals, cliSessions,
     syncProjectsFromRegistry, getSyncWarnings,
     spawn, execFileSync, readFile, homedir, existsSync, join,
@@ -73,6 +77,9 @@ export default function serverMgmtRoutes(deps) {
         uptime_seconds: uptimeSeconds,
         node_version: process.version,
         platform: process.platform,
+        bindHost,
+        lanExposed,
+        lanUrl,
         sessions: {
           dispatches_active: dispatchesActive,
           terminals_active: terminalsActive,
@@ -110,12 +117,46 @@ export default function serverMgmtRoutes(deps) {
 
     // --- Preferences endpoints ---
     [/^\/api\/settings\/preferences$/, 'GET', async (_m, _req, res) => {
-      json(res, await db.getAllPreferences());
+      const prefs = await db.getAllPreferences();
+      // Expose resolved dispatch-mode defaults so the FE does not re-implement precedence.
+      // _dispatch_mode_default_global = global fallback; _dispatch_mode_default_by_project maps
+      // each project key that has an explicit override to its resolved value.
+      const byProject = {};
+      for (const key of Object.keys(prefs)) {
+        if (key.startsWith('default_dispatch_mode:')) {
+          const projectKey = key.slice('default_dispatch_mode:'.length);
+          byProject[projectKey] = db.resolveDispatchModeDefault(projectKey, prefs);
+        }
+      }
+      // The FE looks up by the actual dispatch project_key, which for architect self-work
+      // is the en-dash ARCHITECT_KEY rather than the canonical 'ticari/architect/main'.
+      // Add an entry keyed by ARCHITECT_KEY so the lookup hits the architect default.
+      byProject[ARCHITECT_KEY] = db.resolveDispatchModeDefault(ARCHITECT_KEY, prefs);
+      // Parallel block for the dispatch MODEL default (mirrors the mode block above).
+      const byProjectModel = {};
+      for (const key of Object.keys(prefs)) {
+        if (key.startsWith('default_dispatch_model:')) {
+          const projectKey = key.slice('default_dispatch_model:'.length);
+          byProjectModel[projectKey] = db.resolveDispatchModelDefault(projectKey, prefs);
+        }
+      }
+      byProjectModel[ARCHITECT_KEY] = db.resolveDispatchModelDefault(ARCHITECT_KEY, prefs);
+      json(res, {
+        ...prefs,
+        _dispatch_mode_default_global: db.resolveDispatchModeDefault(null, prefs),
+        _dispatch_mode_default_by_project: byProject,
+        _dispatch_model_default_global: db.resolveDispatchModelDefault(null, prefs),
+        _dispatch_model_default_by_project: byProjectModel,
+        _models_catalog: MODEL_CATALOG,
+      });
     }],
 
     [/^\/api\/settings\/preferences$/, 'PUT', async (_m, req, res) => {
       const body = await parseBody(req);
       for (const [key, value] of Object.entries(body)) {
+        // Underscore-prefixed keys are computed/response-only fields (e.g. _models_catalog,
+        // _dispatch_model_default_*) — never persist them back into the preferences table.
+        if (key.startsWith('_')) continue;
         await db.setPreference(key, String(value));
       }
       json(res, await db.getAllPreferences());

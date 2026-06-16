@@ -20,6 +20,15 @@ ROOT="$(cd "$DASHBOARD_DIR/../.." && pwd -P)"
 
 SERVER_SCRIPT="$DASHBOARD_DIR/server.mjs"
 PORT="${DASHCTL_PORT:-3777}"
+HOST="${DASHCTL_HOST:-0.0.0.0}"
+# LAN exposure is the DEFAULT: the dashboard binds 0.0.0.0 so it is reachable from other
+# trusted-LAN devices without per-host config and survives DHCP/VPN IP changes. It has NO
+# authentication and can dispatch agents / open terminals (effectively remote code
+# execution), so the bind is paired with the server-side Host/Origin access guard and a
+# no-auth startup warning. Opt OUT with DASHCTL_BIND_ALL=0 or DASHCTL_LOOPBACK_ONLY=1
+# (or DASHCTL_HOST=127.0.0.1/localhost) to stay loopback-only.
+BIND_ALL="${DASHCTL_BIND_ALL:-1}"
+LOOPBACK_ONLY="${DASHCTL_LOOPBACK_ONLY:-0}"
 PID_FILE="${DASHCTL_PID_FILE:-$ROOT/tmp/dashboard.pid}"
 LOG_FILE="${DASHCTL_LOG_FILE:-$ROOT/tmp/dashboard.log}"
 SESSIONS_FILE="$ROOT/work/sessions.json"
@@ -95,7 +104,37 @@ get_port_pid() {
 }
 
 health_check() {
+  # Always loopback: even on a LAN bind the server listens on 0.0.0.0, which accepts
+  # loopback traffic, so this stays valid and is the guaranteed local recovery path.
   curl -sf "http://127.0.0.1:$PORT/api/server/status" >/dev/null 2>&1
+}
+
+# Best-effort routable LAN IP, for display only (never used as the bind address).
+lan_ip() {
+  local ip=""
+  if command -v ipconfig >/dev/null 2>&1; then
+    ip="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)"
+  fi
+  if [ -z "$ip" ] && command -v hostname >/dev/null 2>&1; then
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  if [ -n "$ip" ]; then echo "$ip"; else echo "127.0.0.1"; fi
+}
+
+# Resolve the address the server should bind to, mirroring constants.mjs resolveBindHost().
+# Default: 0.0.0.0 (LAN). Opt out via DASHCTL_LOOPBACK_ONLY=1, DASHCTL_BIND_ALL=0, or an
+# explicit loopback DASHCTL_HOST. Hoisted so cmd_start AND the install commands write the
+# same resolved value into the service definition unconditionally.
+resolve_bind_host() {
+  if [ "$LOOPBACK_ONLY" = "1" ]; then
+    echo "127.0.0.1"
+  elif [ "$BIND_ALL" = "0" ]; then
+    echo "127.0.0.1"
+  elif [ "$HOST" = "127.0.0.1" ] || [ "$HOST" = "localhost" ] || [ "$HOST" = "::1" ]; then
+    echo "127.0.0.1"
+  else
+    echo "0.0.0.0"
+  fi
 }
 
 find_node() {
@@ -195,7 +234,36 @@ cmd_start() {
     echo "Dependencies installed."
   fi
 
+  # Resolve bind address vs. display URL. LAN bind (0.0.0.0) is the DEFAULT — reachable
+  # from loopback + LAN and survives DHCP/VPN IP changes; opt out to stay loopback-only.
+  local BIND_HOST
+  BIND_HOST="$(resolve_bind_host)"
+  local DISPLAY_HOST="127.0.0.1"
+  if [ "$BIND_HOST" = "0.0.0.0" ]; then
+    DISPLAY_HOST="$(lan_ip)"
+    echo "WARNING: Dashboard has no authentication and exposes dispatch/terminal"
+    echo "         (remote code execution) to the network. Trusted LAN only."
+    echo "         LAN URL: http://$DISPLAY_HOST:$PORT"
+    echo "         To restrict to loopback, set DASHCTL_LOOPBACK_ONLY=1."
+  else
+    echo "Note: binding loopback-only (http://127.0.0.1:$PORT); not reachable from the LAN."
+    echo "      Unset DASHCTL_LOOPBACK_ONLY / DASHCTL_BIND_ALL=0 to expose on the LAN."
+  fi
+
   echo "Starting dashboard server..."
+  # NOTE: the env assignment MUST come before `nohup` (it sets nohup's environment, which
+  # node inherits). `nohup VAR=value node ...` would make nohup try to execute a program
+  # literally named "VAR=value" and the server would never start. Keep this a simple
+  # backgrounded command (no subshell/pipe) so `$!` is the node PID.
+  # Load dashboard secrets (e.g. ARCHITECT_TELEGRAM_BOT_TOKEN) from the gitignored
+  # work/telegram.env if present, so the Telegram bridge can start. Exported so node inherits them.
+  if [ -f "$ROOT/work/telegram.env" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$ROOT/work/telegram.env"
+    set +a
+  fi
+  export ARCHITECT_HOST="$BIND_HOST"
   nohup "$NODE_BIN" "$SERVER_SCRIPT" --port "$PORT" >> "$LOG_FILE" 2>&1 &
   local pid=$!
   echo "$pid" > "$PID_FILE"
@@ -204,13 +272,14 @@ cmd_start() {
   local tries=0
   while [ $tries -lt 10 ]; do
     if health_check; then
-      echo "Dashboard running at http://127.0.0.1:$PORT (PID $pid)"
+      echo "Dashboard running at http://$DISPLAY_HOST:$PORT (PID $pid)"
       return 0
     fi
     # Check if process is still alive
     if ! kill -0 "$pid" 2>/dev/null; then
-      echo "Server process exited unexpectedly. Check logs:"
-      echo "  $LOG_FILE"
+      echo "Server process exited unexpectedly. Check logs:" >&2
+      tail -n 15 "$LOG_FILE" >&2
+      echo "  $LOG_FILE" >&2
       rm -f "$PID_FILE"
       return 1
     fi
@@ -218,9 +287,14 @@ cmd_start() {
     tries=$((tries + 1))
   done
 
-  echo "Dashboard started (PID $pid) but health check not responding yet"
-  echo "  URL: http://127.0.0.1:$PORT"
-  echo "  Log: $LOG_FILE"
+  # Fail loudly: a server that started but never became healthy is a failure, not a soft
+  # success (the original LAN-change regression was effectively silent here).
+  echo "Dashboard started (PID $pid) but failed health check within timeout." >&2
+  echo "Last log lines:" >&2
+  tail -n 15 "$LOG_FILE" >&2
+  echo "  URL: http://$DISPLAY_HOST:$PORT" >&2
+  echo "  Log: $LOG_FILE" >&2
+  return 1
 }
 
 _stop_postgres() {
@@ -475,6 +549,8 @@ cmd_install() {
 install_launchd() {
   local NODE_BIN
   NODE_BIN="$(find_node)"
+  local BIND_HOST
+  BIND_HOST="$(resolve_bind_host)"
 
   mkdir -p "$(dirname "$LAUNCHD_PLIST")"
 
@@ -516,11 +592,19 @@ install_launchd() {
 </plist>
 PLIST
 
+  # Pin the resolved bind host into the plist EnvironmentVariables dict so the installed
+  # service binds to exactly what was resolved at install time (not the runtime default).
+  python3 -c "
+import plistlib
+with open('$LAUNCHD_PLIST', 'rb') as f: p = plistlib.load(f)
+p.setdefault('EnvironmentVariables', {})['ARCHITECT_HOST'] = '${BIND_HOST}'
+with open('$LAUNCHD_PLIST', 'wb') as f: plistlib.dump(p, f)
+" 2>/dev/null || true
+
   if [ -n "${PORTFOLIO_DIR:-}" ]; then
     # Inject PORTFOLIO_DIR into the plist EnvironmentVariables dict before closing </dict>
-    sed -i '' 's|    <key>PATH</key>|    <key>PATH</key>|' "$LAUNCHD_PLIST"
     python3 -c "
-import plistlib, sys
+import plistlib
 with open('$LAUNCHD_PLIST', 'rb') as f: p = plistlib.load(f)
 p.setdefault('EnvironmentVariables', {})['PORTFOLIO_DIR'] = '${PORTFOLIO_DIR}'
 with open('$LAUNCHD_PLIST', 'wb') as f: plistlib.dump(p, f)
@@ -539,6 +623,8 @@ with open('$LAUNCHD_PLIST', 'wb') as f: plistlib.dump(p, f)
 install_systemd() {
   local NODE_BIN
   NODE_BIN="$(find_node)"
+  local BIND_HOST
+  BIND_HOST="$(resolve_bind_host)"
 
   mkdir -p "$(dirname "$SYSTEMD_UNIT")"
 
@@ -556,6 +642,10 @@ RestartSec=10
 StandardOutput=append:${LOG_FILE}
 StandardError=append:${LOG_FILE}
 UNIT
+
+  # Pin the resolved bind host so the installed service binds to exactly what was resolved
+  # at install time (not the runtime default).
+  echo "Environment=ARCHITECT_HOST=${BIND_HOST}" >> "$SYSTEMD_UNIT"
 
   if [ -n "${PORTFOLIO_DIR:-}" ]; then
     echo "Environment=PORTFOLIO_DIR=${PORTFOLIO_DIR}" >> "$SYSTEMD_UNIT"
@@ -798,6 +888,8 @@ Environment:
   PID file: $PID_FILE
   Log file: $LOG_FILE
   Port:     $PORT
+  Host:     $HOST (health checks always use loopback)
+  Bind:     $(resolve_bind_host) $([ "$(resolve_bind_host)" = "0.0.0.0" ] && echo "(LAN default — NO AUTH, trusted LAN only; set DASHCTL_LOOPBACK_ONLY=1 to restrict)" || echo "(loopback-only)")
   PG host:  $PG_HOST
   PG port:  $PG_PORT
   PG user:  $PG_USER

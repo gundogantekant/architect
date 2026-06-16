@@ -211,12 +211,13 @@ The dashboard supports dispatching Claude Code agents directly from work items:
 - `#agents` route: tile-based view of all dispatched agents, filterable by status/epic/project. Tiles show status, output preview, and support focus/kill actions. Quick dispatch modal available. Active list responses include `epic_id` and `last_output` fields.
 - **Foldable panels**: minimize/expand dispatch and terminal panels. Collapse state persisted to sessionStorage across navigation.
 - **Contextual placement**: session panels appear under their associated work item row in component/epic views. Standalone sessions fall back to a global container at the top.
-- **Permission modes**: dispatch modal includes permission mode selector ("Plan only", "Accept edits") and a separate "Skip permissions" checkbox (`--dangerously-skip-permissions`). Panels show `[plan]` badge for plan mode and `[skip-perms]` badge when skip permissions is enabled. Both settings have independent defaults configurable in `#settings`.
+- **Permission modes**: dispatch modal includes permission mode selector ("Plan only", "Accept edits", "Plan, then auto-execute") and a separate "Skip permissions" checkbox (`--dangerously-skip-permissions`). Panels show `[plan]` badge for plan mode and `[skip-perms]` badge when skip permissions is enabled. Both settings have independent defaults configurable in `#settings`.
+- **Plan-then-execute mode** (`plan_execute`): a two-phase chained dispatch — phase 1 plans (plan-only process), then phase 2 resumes the same claude session with acceptEdits; `--dangerously-skip-permissions` applied unless skip-permissions was unchecked at dispatch time (default: enabled) in the same isolated worktree to implement autonomously. `plan_execute` is dashboard-only chain state, never an emitted `--permission-mode` flag (avoids claude bug #17544 where skip-perms silently overrides plan mode). Panels show a `[plan→exec]` badge in phase 1 and `[exec]` in phase 2. With autostart off, phase-1 completion holds at status `execute_pending` and an "Approve & Execute" action calls `POST /api/dispatch/:id/execute` to spawn phase 2. The architect project (`ticari/architect/main`) defaults to `plan_execute` with autostart on; other projects keep `acceptEdits`. Preference keys: `default_dispatch_mode` (global), per-project `default_dispatch_mode:<key>`, and `plan_execute_autostart`. Supported on `/api/dispatch` only; `/auto-implement` is out of scope.
 - **DISPATCHES sidebar**: a single collapsible sidebar section (replaces the former AGENTS, AUTONOMOUS, and SESSIONS entries) with Active/Autonomous/All filter tabs. Tab selection persists in sessionStorage across the 3-second refresh interval. The `#autonomous` route pre-selects the Autonomous tab. Entries are grouped by project and epic; clicking navigates to the session's context view. `SESSION_AWARE_ROUTES` gates session panel visibility — analytical routes (time-report, costs) call `_hideSessionPanelsForCleanRoute()` and panels are restored via `display` toggle (never removed from DOM) when returning to a session-aware route.
 - **Architect-awareness**: dispatched agents receive `ARCHITECT_ROOT` env var, a `# Architect System` section (portfolio entry path, guides, domain rules pointers), role-scoped portfolio context (filtered by agent tier per `domain/rules.md` → Role-Scoped Context Injection), a `# Context Tiers` section for sub-agent dispatches, and `# Environment` / `# Tracking` sections with dashboard API endpoints for status updates and log entries.
 - **CLI session registration**: external CLI sessions can register as read-only entries via `POST /api/sessions/register`. The dashboard shows them with a `[CLI]` badge, teal left border, and no kill/focus buttons. PID liveness is checked every 60s; exited CLI sessions are auto-cleaned after 10min. Persisted in `work/sessions.json` under `cli_sessions`. See `domain/entities.md` → CliSession for schema.
 
-Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/log` (plain text JSONL), `GET /api/dispatch/:id/stream` (SSE, supports `?after=N`), `GET /api/dispatch/active`, `DELETE /api/dispatch/:id`, `DELETE /api/dispatch/all`. Terminal endpoints: `POST /api/terminal`, `GET /api/terminal/active`, `DELETE /api/terminal/:id`, `DELETE /api/terminal/all`, `WS /api/terminal/:id/ws`. CLI session endpoints: `POST /api/sessions/register`, `GET /api/sessions/active`, `DELETE /api/sessions/:id`. Server management endpoints: `GET /api/server/status`, `GET /api/server/config`, `POST /api/server/action`, `GET /api/server/logs`. Epic endpoints: `GET/POST /api/epics`, `GET/PATCH/DELETE /api/epics/:id`, `POST /api/epics/:id/link`, `POST /api/epics/:id/unlink`, `GET/PUT /api/epics/:id/plan`, `GET/PUT /api/epics/:id/doc`. Work item artifact endpoints: `GET/PUT /api/work-items/:id/plan`, `GET/PUT /api/work-items/:id/doc`, `GET /api/work-items/:id/artifacts`, `GET/PUT/DELETE /api/work-items/:id/artifacts/:filename`. Preferences endpoints: `GET/PUT /api/settings/preferences`.
+Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/log` (plain text JSONL), `GET /api/dispatch/:id/stream` (SSE, supports `?after=N`), `GET /api/dispatch/active`, `POST /api/dispatch/:id/execute` (spawn phase 2 of a gated `plan_execute` chain), `DELETE /api/dispatch/:id`, `DELETE /api/dispatch/all`. Terminal endpoints: `POST /api/terminal`, `GET /api/terminal/active`, `DELETE /api/terminal/:id`, `DELETE /api/terminal/all`, `WS /api/terminal/:id/ws`. CLI session endpoints: `POST /api/sessions/register`, `GET /api/sessions/active`, `DELETE /api/sessions/:id`. Server management endpoints: `GET /api/server/status`, `GET /api/server/config`, `POST /api/server/action`, `GET /api/server/logs`. Epic endpoints: `GET/POST /api/epics`, `GET/PATCH/DELETE /api/epics/:id`, `POST /api/epics/:id/link`, `POST /api/epics/:id/unlink`, `GET/PUT /api/epics/:id/plan`, `GET/PUT /api/epics/:id/doc`. Work item artifact endpoints: `GET/PUT /api/work-items/:id/plan`, `GET/PUT /api/work-items/:id/doc`, `GET /api/work-items/:id/artifacts`, `GET/PUT/DELETE /api/work-items/:id/artifacts/:filename`. Preferences endpoints: `GET/PUT /api/settings/preferences`.
 
 ## Available Skills
 
@@ -254,21 +255,48 @@ Server endpoints: `POST /api/dispatch`, `GET /api/dispatch/:id/log` (plain text 
 - `templates/` — scaffold TypeScript/TSX reference code
 - `tools/ble-relay/`, `tools/dart-debug/` — Python utilities
 
+### Code Discovery Preference (applies to orchestrator AND all dispatched agents)
+
+**For any code-related discovery in architect's own indexed corpus** (`tools/dashboard/`, `tools/temporal/`, `templates/`, `tools/ble-relay/`, `tools/dart-debug/`):
+
+| Task | Preferred tool | Fallback |
+|------|---------------|----------|
+| Find a function/constant/symbol | `codegraph_search` | grep / search_files |
+| Trace who calls a function | `codegraph_callers` | grep -r |
+| Trace what a function calls | `codegraph_callees` | manual read_file |
+| Assess blast radius of a change | `codegraph_impact` | manual trace |
+| Pull relevant context for a task | `codegraph_context` | search_files + read_file |
+
+**Rationale**: CodeGraph tokenizes symbol-level queries and returns targeted results. Grep/search_files return raw text matches that consume 5–50x more tokens and require follow-up reads. Always reach for CodeGraph first when exploring indexed code files.
+
 ### Tools and when to use them
 
 | Tool | Use for | Skip when |
 |------|---------|-----------|
-| `codegraph_search` | Find functions/constants in dashboard/temporal/templates code | Exploring .md artifacts — use grep instead |
-| `codegraph_callers` / `codegraph_callees` | Trace JS/TS function call chains | Prompt flow or .md-only investigation |
+| `codegraph_search` | Find functions/constants in indexed code (dashboard/temporal/templates/ble-relay/dart-debug) | Exploring .md artifacts — use grep instead |
+| `codegraph_callers` / `codegraph_callees` | Trace JS/TS function call chains in indexed code | Prompt flow or .md-only investigation |
 | `codegraph_impact` | Blast radius for code changes before dispatch | Prompt-only or config-only changes |
-| `codegraph_context` | Pull relevant JS/TS context for a task | Non-code tasks |
+| `codegraph_context` | Pull relevant JS/TS context for a task in indexed code | Non-code tasks |
 
 ### Freshness
 
 - Check `codegraph_status` once at session start. Do not re-check per dispatch.
-- Refresh trigger: run `codegraph index` only when **code files** in `tools/dashboard/` are structurally changed (added, removed, renamed). Skip for prompt-only edits.
+- Refresh trigger: run `codegraph index` only when **code files** in the indexed corpus (`tools/dashboard/`, `tools/temporal/`, `templates/`, `tools/ble-relay/`, `tools/dart-debug/`) are structurally changed (added, removed, renamed). Skip for prompt-only edits.
+- **Freshness gate before trust**: before relying on CodeGraph results for discovery, verify `codegraph_status` reports the index is current. If stale, run `codegraph index` before using CodeGraph tools. An outdated index means stale call graphs and missing symbols — worse than grep because the results look authoritative but are wrong.
 - Fallback: if `codegraph_status` errors or is unavailable, use grep/find. Never block on CodeGraph availability.
 
 ### Explore agents
 
-When spawning Explore agents for dashboard JS work, include: "Use codegraph tools (`.codegraph/` is present) for symbol lookup and caller tracing instead of grep."
+Explore agents are lightweight read-only subagents the orchestrator dispatches for code discovery (reading >3 files, tracing call chains, understanding patterns). They are not named agents — the orchestrator dispatches them inline via `delegate_task` with code-reading instructions.
+
+When spawning an Explore agent for architect's own indexed code:
+- **Before dispatching**: check `codegraph_status` — if the index is stale, run `codegraph index` first. Do not dispatch an agent with an outdated code graph.
+- Include the full **Code Discovery Preference** table above in the agent's context. The table is your prompt-injection — paste it verbatim.
+- Add: "Prefer CodeGraph tools over grep/search_files for all symbol lookup in indexed code. Fall back to grep only for .md artifacts or when CodeGraph is unavailable."
+
+When spawning an Explore agent for a **target project** with `.codegraph/` present (per `load-portfolio-context.md` → Step 5):
+- Include the CodeGraph subsection from the portfolio context in the agent's prompt.
+- Add: "Use codegraph_search, codegraph_callers, codegraph_callees for JS/TS symbol lookups. Fall back to grep for .md artifacts."
+
+When spawning an Explore agent for a project WITHOUT CodeGraph:
+- Use search_files and read_file as usual. No CodeGraph instructions needed.

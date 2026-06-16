@@ -28,6 +28,10 @@ export async function saveDispatchToDb(d) {
     exit_type: d.exit_type || null,
     dry_run: d.dry_run ?? false,
     auto_extended: d.auto_extended ?? false,
+    chain_mode: d.chain_mode ?? null,
+    chain_phase: d.chain_phase ?? null,
+    chain_autostart: d.chain_autostart ?? null,
+    chain_parent_id: d.chain_parent_id ?? null,
   });
 }
 

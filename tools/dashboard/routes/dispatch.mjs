@@ -1,11 +1,13 @@
 import { existsSync, createReadStream } from 'node:fs';
 import { createWorktreeForDispatch, shouldCreateWorktree, isGitRepository, checkWorktreeReadiness } from '../worktree.mjs';
 import { AUTO_IMPLEMENTABLE_STATUSES, DISPATCH_TIMEOUT_MS, EXTEND_DURATION_MS, HEARTBEAT_INTERVAL_MS, INPUT_NEEDED_SOURCE, PIPELINE_STAGES, PORTFOLIO } from '../constants.mjs';
-import { triggerMerge, scheduleDispatchTimeout, appendProgress, interruptDispatch, restartDispatch } from '../dispatch-manager.mjs';
+import { triggerMerge, scheduleDispatchTimeout, appendProgress, interruptDispatch, restartDispatch, startExecutePhase } from '../dispatch-manager.mjs';
 import { isMediumOrAbove, isSmallOrAbove, getComplexityLevel } from '../utils/complexity.mjs';
 import { validateContract } from '../utils/contract-validation.mjs';
 import { writePromptFile, deletePromptFile } from '../prompt-file.mjs';
 import { createDispatch, createResumeDispatch } from '../utils/dispatch-factory.mjs';
+import { validateModel } from '../utils.mjs';
+import { buildPermissionArgs } from '../permission-args.mjs';
 
 const SKILL_REGISTRY = {
   'project-refine-tasks': (workItemId) => workItemId ? `/project-refine-tasks ${workItemId}` : '/project-refine-tasks',
@@ -26,6 +28,17 @@ function complexityTierFromPriority(priority) {
 function findActiveDispatchForWorkItem(dispatches, workItemId) {
   for (const d of dispatches.values()) {
     if (d.work_item_id === workItemId && d.status === 'running') return d;
+  }
+  return null;
+}
+
+/**
+ * Find a running phase-2 (execute) dispatch already spawned for a given phase-1 chain.
+ * Used to make POST /:id/execute idempotent.
+ */
+function findActiveExecutePhaseForChain(dispatches, planDispatchId) {
+  for (const d of dispatches.values()) {
+    if (d.chain_parent_id === planDispatchId && d.chain_phase === 'execute' && d.status === 'running') return d;
   }
   return null;
 }
@@ -152,8 +165,18 @@ export default function dispatchRoutes(deps) {
     // Create dispatch
     [/^\/api\/dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode, contract: rawContract, dispatch_mode: rawDispatchMode, skill_id } = body;
+      const { work_item_id, epic_id, project_key, title, description, additional_instructions, skip_permissions, permission_mode, contract: rawContract, dispatch_mode: rawDispatchMode, skill_id, model: bodyModel, chain_autostart: rawChainAutostart } = body;
+      // Explicit request model wins; otherwise fall back to the project's default model
+      // (architect → Opus 1M, others → sonnet). Always validated through the suffix-aware resolver.
+      const prefs = await db.getAllPreferences();
+      const model = bodyModel
+        ? validateModel(bodyModel)
+        : validateModel(db.resolveDispatchModelDefault(project_key, prefs));
       const dispatch_mode = rawDispatchMode || 'standard';
+      // plan_execute is a chain mode, not a flag mode: phase 1 spawns plan-only, phase 2 resumes
+      // with acceptEdits + skip-perms in the same worktree (see startExecutePhase). It is never
+      // written to permission_mode nor emitted as a --permission-mode flag.
+      const isPlanExecuteChain = (permission_mode === 'plan_execute') || (rawDispatchMode === 'plan_execute');
 
       // Strip empty-string contract fields per domain/rules.md → Dispatch Contract Rules
       let contract = null;
@@ -244,9 +267,12 @@ export default function dispatchRoutes(deps) {
         }
       }
 
-      // Resolve permission mode and skip_permissions independently
-      const resolvedPermMode = permission_mode || 'acceptEdits';
-      const resolvedSkipPerms = skip_permissions === true || skip_permissions === 'true';
+      // Resolve permission mode and skip_permissions independently. A plan_execute chain runs
+      // phase 1 in plan mode (skip-perms suppressed); phase 2 is spawned later by startExecutePhase.
+      const resolvedPermMode = isPlanExecuteChain ? 'plan' : (permission_mode || 'acceptEdits');
+      const resolvedSkipPerms = isPlanExecuteChain
+        ? (skip_permissions === undefined || skip_permissions === true || skip_permissions === 'true')
+        : (skip_permissions === true || skip_permissions === 'true');
 
       // --- Dispatch-level worktree creation (W-927) ---
       const featureFlag = ((await db.getPreference('worktree_at_dispatch')) ?? 'true') === 'true';
@@ -261,6 +287,7 @@ export default function dispatchRoutes(deps) {
         portfolioEntry: rawEntry,
         featureFlag,
         projectPath,
+        chainMode: isPlanExecuteChain ? 'plan_execute' : null,
       });
       const readinessWarning = willCreateWorktree && !body.confirm_worktree_warning
         ? checkWorktreeReadiness({ portfolioEntry: rawEntry, projectKey: project_key })
@@ -323,6 +350,23 @@ export default function dispatchRoutes(deps) {
         }
       }
 
+      // --- plan_execute chain setup ---
+      // A plan_execute chain must carry a scope_boundary so the scope-violation detector fires
+      // when phase 2 runs autonomously. If the caller supplied none, default to '.' (the whole
+      // worktree). chain_autostart falls back to the plan_execute_autostart preference.
+      let chainContract = contract;
+      let resolvedChainAutostart = null;
+      if (isPlanExecuteChain) {
+        chainContract = { ...(contract || {}) };
+        if (!chainContract.scope_boundary || !String(chainContract.scope_boundary).trim()) {
+          chainContract.scope_boundary = '.';
+        }
+        const autostartPref = ((await db.getPreference('plan_execute_autostart')) ?? 'true') === 'true';
+        resolvedChainAutostart = (rawChainAutostart === undefined || rawChainAutostart === null)
+          ? autostartPref
+          : (rawChainAutostart === true || rawChainAutostart === 'true');
+      }
+
       const prompt = skill_id
         ? SKILL_REGISTRY[skill_id](work_item_id || '')
         : (dispatch_mode === 'task_creation'
@@ -336,7 +380,8 @@ export default function dispatchRoutes(deps) {
               epicContext,
               relatedProjects,
               worktreeContext,
-              contract: contract && Object.keys(contract).length ? contract : null,
+              contract: chainContract && Object.keys(chainContract).length ? chainContract : null,
+              planMode: resolvedPermMode === 'plan',
             }));
 
       // Select sub-agents based on work item and portfolio context
@@ -349,14 +394,18 @@ export default function dispatchRoutes(deps) {
         workItemId: work_item_id,
         epicId: epic_id || null,
         title: title || work_item_id || '',
+        model,
         permissionMode: resolvedPermMode,
         skipPermissions: resolvedSkipPerms,
-        dispatchMode: skill_id ? 'skill' : dispatch_mode,
+        dispatchMode: skill_id ? 'skill' : (isPlanExecuteChain ? 'standard' : dispatch_mode),
         skillId: skill_id || null,
-        contract: contract || null,
+        contract: chainContract || null,
         worktreePath: worktreeContext?.worktreePath,
         worktreeBranch: worktreeContext?.branchName,
         sourceBranch: worktreeContext?.sourceBranch,
+        chainMode: isPlanExecuteChain ? 'plan_execute' : null,
+        chainPhase: isPlanExecuteChain ? 'plan' : null,
+        chainAutostart: resolvedChainAutostart,
       });
 
       // Prompt delivery: see W-1184 comment in the onboard handler above.
@@ -368,11 +417,8 @@ export default function dispatchRoutes(deps) {
 
       let proc;
       try {
-        const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet'];
-        args.push('--permission-mode', resolvedPermMode === 'plan' ? 'plan' : 'acceptEdits');
-        if (resolvedSkipPerms) {
-          args.push('--dangerously-skip-permissions');
-        }
+        const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', model];
+        args.push(...buildPermissionArgs({ permissionMode: resolvedPermMode, skipPermissions: resolvedSkipPerms }));
         args.push('--add-dir', ROOT);
         if (agentDefs.length) {
           args.push('--agents', JSON.stringify(agentDefs));
@@ -428,6 +474,10 @@ export default function dispatchRoutes(deps) {
     }],
 
     // Auto-implement: autonomous end-to-end implementation dispatch
+    // DECISION: plan_execute is NOT supported on this route. Auto-implement hardwires
+    // permission_mode='acceptEdits' and ignores permissionMode/dispatch_mode, so it cannot
+    // run a plan-then-execute chain without extra work — out of scope for v1. plan_execute
+    // applies to the standard /api/dispatch route only.
     [/^\/api\/dispatch\/auto-implement$/, 'POST', async (_m, req, res) => {
       const depth = parseInt(req.headers['x-architect-session-depth'] || '0', 10);
       if (depth >= 1) {
@@ -523,11 +573,13 @@ export default function dispatchRoutes(deps) {
       const autoTruncated = prompt.length > MAX_PROMPT_CHARS;
       const autoCapturedText = autoTruncated ? prompt.slice(0, MAX_PROMPT_CHARS) : prompt;
 
+      const autoPrefs = await db.getAllPreferences();
+      const autoModel = validateModel(db.resolveDispatchModelDefault(project_key, autoPrefs));
+
       let proc;
       try {
-        const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet',
-          '--permission-mode', 'acceptEdits',
-          '--dangerously-skip-permissions',
+        const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', autoModel,
+          ...buildPermissionArgs({ permissionMode: 'acceptEdits', skipPermissions: true }),
           '--add-dir', ROOT,
         ];
         if (agentDefs.length) {
@@ -686,6 +738,7 @@ export default function dispatchRoutes(deps) {
           project_key: d.project_key,
           project_path: d.project_path,
           status: d.status,
+          model: d.model || null,
           cost_usd: d.cost_usd || null,
           started_at: d.started_at,
           completed_at: d.completed_at,
@@ -718,6 +771,10 @@ export default function dispatchRoutes(deps) {
           deleted_at: null,
           revoked_at: d.revoked_at || null,
           previous_dispatch_id: d.previous_dispatch_id || null,
+          chain_mode: d.chain_mode || null,
+          chain_phase: d.chain_phase || null,
+          chain_autostart: d.chain_autostart ?? null,
+          chain_parent_id: d.chain_parent_id || null,
         };
       }));
       const active = list.filter(Boolean).filter(d => !projectKey || d.project_key === projectKey);
@@ -1151,6 +1208,43 @@ export default function dispatchRoutes(deps) {
       json(res, { dispatch_id: id, status: 'revoked', revoked_at: revokedAt });
     }],
 
+    // Approve & execute the gated phase 2 of a plan_execute chain.
+    [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/execute$/, 'POST', async (m, _req, res) => {
+      const id = m[1];
+      const dispatch = dispatches.get(id);
+      if (!dispatch) return err(res, 'dispatch not found', 404);
+      if (dispatch.status !== 'execute_pending') {
+        return json(res, { error: 'dispatch is not awaiting execute', code: 'not_execute_pending' }, 400);
+      }
+      if (dispatch.chain_mode !== 'plan_execute' || dispatch.chain_phase !== 'plan') {
+        return json(res, { error: 'dispatch is not a plan_execute phase-1 record', code: 'not_chain_plan' }, 400);
+      }
+      if (!dispatch.claude_session_id) {
+        return json(res, { error: 'no session ID available for execute', code: 'no_session_id' }, 400);
+      }
+      if (dispatch.revoked_at) {
+        return json(res, { error: 'session is revoked', code: 'session_revoked' }, 409);
+      }
+      if (findActiveExecutePhaseForChain(dispatches, id)) {
+        return json(res, { error: 'execute phase already running for this chain', code: 'execute_running' }, 409);
+      }
+      // Atomic guard against a double POST: flip the phase-1 status out of 'execute_pending'
+      // BEFORE awaiting the (async) spawn. A second concurrent request then fails the
+      // status==='execute_pending' precondition above and is rejected with 400.
+      dispatch.status = 'execute_starting';
+      await db.updateDispatchStatus(id, 'execute_starting', dispatch.completed_at || null);
+      let phase2;
+      try {
+        phase2 = await startExecutePhase(dispatch);
+      } catch (e) {
+        // Spawn failed — restore the durable checkpoint so the user can retry.
+        dispatch.status = 'execute_pending';
+        await db.updateDispatchStatus(id, 'execute_pending', dispatch.completed_at || null).catch(() => {});
+        return err(res, `Failed to start execute phase: ${e.message}`, 500);
+      }
+      json(res, { dispatch_id: phase2.id, status: 'running', chain_parent_id: id, chain_phase: 'execute' });
+    }],
+
     // Resume a suspended dispatch
     [/^\/api\/dispatch\/([A-Za-z0-9_-]+)\/resume$/, 'POST', async (m, req, res) => {
       const old = dispatches.get(m[1]);
@@ -1197,10 +1291,9 @@ export default function dispatchRoutes(deps) {
 
       const { workItem: freshWorkItem, portfolio } = await loadResumeContext({ work_item_id, project_key });
 
-      const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', 'sonnet'];
+      const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', validateModel(old?.model)];
       args.push('--resume', resumeSessionId);
-      args.push('--permission-mode', resolvedPermMode === 'plan' ? 'plan' : 'acceptEdits');
-      if (resolvedSkipPerms) args.push('--dangerously-skip-permissions');
+      args.push(...buildPermissionArgs({ permissionMode: resolvedPermMode, skipPermissions: resolvedSkipPerms }));
       args.push('--add-dir', ROOT);
 
       const agentDefs = await selectAgentsForDispatch({ workItem: freshWorkItem, portfolio });

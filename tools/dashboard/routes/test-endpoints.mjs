@@ -35,7 +35,7 @@ export default function testEndpointRoutes(deps) {
 
     [/^\/api\/test\/seed-dispatch$/, 'POST', async (_m, req, res) => {
       const body = await parseBody(req);
-      const { id, status, project_key, title, work_item_id, epic_id: seedEpicId, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch, pid: seedPid, dispatch_mode, agent_phase: seedAgentPhase, agent_phase_history: seedHistory, cost_usd: seedCostUsd, exit_type: seedExitType, timeout_at: seedTimeoutAt, test_suite_passed: seedTestSuitePassed, build_verified: seedBuildVerified, contract_satisfied: seedContractSatisfied, scope_violation: seedScopeViolation } = body;
+      const { id, status, project_key, title, model: seedModel, work_item_id, epic_id: seedEpicId, log_lines, claude_session_id, worktree_path, worktree_branch, source_branch, pid: seedPid, dispatch_mode, agent_phase: seedAgentPhase, agent_phase_history: seedHistory, cost_usd: seedCostUsd, exit_type: seedExitType, timeout_at: seedTimeoutAt, test_suite_passed: seedTestSuitePassed, build_verified: seedBuildVerified, contract_satisfied: seedContractSatisfied, scope_violation: seedScopeViolation, chain_mode: seedChainMode, chain_phase: seedChainPhase, chain_autostart: seedChainAutostart, chain_parent_id: seedChainParentId, contract: seedContract } = body;
       if (!id) return err(res, 'id is required', 400);
       const _testWorkerId = req.headers['x-test-worker-id'] ?? null;
 
@@ -66,6 +66,7 @@ export default function testEndpointRoutes(deps) {
         project_key: project_key || 'test/test/main',
         project_path: ROOT,
         title: title || id,
+        model: seedModel || null,
         permission_mode: 'plan',
         skip_permissions: false,
         status: resolvedStatus,
@@ -76,6 +77,11 @@ export default function testEndpointRoutes(deps) {
         worktree_branch: worktree_branch || null,
         source_branch: source_branch || null,
         dispatch_mode: dispatch_mode || 'standard',
+        chain_mode: seedChainMode || null,
+        chain_phase: seedChainPhase || null,
+        chain_autostart: seedChainAutostart !== undefined ? seedChainAutostart : null,
+        chain_parent_id: seedChainParentId || null,
+        contract: seedContract || null,
         cost_usd: seedCostUsd !== undefined ? seedCostUsd : null,
         exit_type: seedExitType || null,
         timeout_at: seedTimeoutAt || null,
@@ -452,11 +458,26 @@ export default function testEndpointRoutes(deps) {
         try { appendFileSync(termEventLogPath(id), JSON.stringify(metaEvent) + '\n'); } catch {}
       }
 
-      // Inject prompt injection lifecycle events if requested
+      // Inject prompt injection lifecycle events if requested.
+      // withInjectionEvents: true → legacy injecting/done status pair.
+      // withInjectionEvents: an array → emit each entry verbatim, supporting both
+      // prompt_injection_status and the additive prompt_injection_detail key
+      // (entries may be a plain status string or { status, detail }).
       if (withInjectionEvents) {
-        for (const val of ['injecting', 'done']) {
-          const evt = eventStream.append('meta', { key: 'prompt_injection_status', value: val });
-          try { appendFileSync(termEventLogPath(id), JSON.stringify(evt) + '\n'); } catch {}
+        const steps = Array.isArray(withInjectionEvents)
+          ? withInjectionEvents
+          : ['injecting', 'done'];
+        for (const step of steps) {
+          const status = typeof step === 'string' ? step : step.status;
+          const detail = typeof step === 'string' ? null : step.detail;
+          if (status) {
+            const evt = eventStream.append('meta', { key: 'prompt_injection_status', value: status });
+            try { appendFileSync(termEventLogPath(id), JSON.stringify(evt) + '\n'); } catch {}
+          }
+          if (detail) {
+            const evt = eventStream.append('meta', { key: 'prompt_injection_detail', value: detail });
+            try { appendFileSync(termEventLogPath(id), JSON.stringify(evt) + '\n'); } catch {}
+          }
         }
       }
 

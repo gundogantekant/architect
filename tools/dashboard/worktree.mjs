@@ -83,11 +83,13 @@ export async function createWorktreeForDispatch({ projectPath, portfolioEntry, w
     );
   }
 
-  // 2. Derive names
+  // 2. Derive names. workItemId may be absent for inline (no-ticket) plan_execute chains —
+  //    fall back to a timestamp token so the branch name stays unique and identifiable.
   const projectDirName = basename(projectPath);
   const branchPrefix = orgConventions?.conventions?.branch_prefix || '';
   const slug = slugify(workItemTitle || 'task');
-  const baseBranchName = `${projectDirName}-${branchPrefix}${workItemId}-${slug}`;
+  const idToken = workItemId || `chain-${Date.now()}`;
+  const baseBranchName = `${projectDirName}-${branchPrefix}${idToken}-${slug}`;
 
   // 3. Capture originating branch
   let sourceBranch;
@@ -167,12 +169,19 @@ export async function createWorktreeForDispatch({ projectPath, portfolioEntry, w
  * @param {Object|null} opts.portfolioEntry — PortfolioEntry JSON
  * @param {boolean} opts.featureFlag — worktree_at_dispatch preference
  * @param {string|null} opts.projectPath — absolute path to the target project
+ * @param {string|null} opts.chainMode — 'plan_execute' or null; a plan_execute chain's
+ *   effective mode is acceptEdits (phase 2 runs skip-perms) even though phase 1 is plan.
  * @returns {Promise<boolean>}
  */
-export async function shouldCreateWorktree({ permissionMode, workItemId, portfolioEntry, featureFlag, projectPath }) {
+export async function shouldCreateWorktree({ permissionMode, workItemId, portfolioEntry, featureFlag, projectPath, chainMode }) {
   if (!featureFlag) return false;
-  if (permissionMode !== 'acceptEdits') return false;
-  if (!workItemId) return false;
+  // A plan_execute chain must run in an isolated worktree because phase 2 executes with
+  // --dangerously-skip-permissions. Evaluate against the chain's effective mode (acceptEdits),
+  // not the phase-1 plan flag, and permit inline (no-ticket) chains.
+  const isPlanExecuteChain = chainMode === 'plan_execute';
+  const effectiveMode = isPlanExecuteChain ? 'acceptEdits' : permissionMode;
+  if (effectiveMode !== 'acceptEdits') return false;
+  if (!isPlanExecuteChain && !workItemId) return false;
   if (!projectPath) return false;
   const isGit = await isGitRepository(projectPath);
   if (!isGit) return false;
