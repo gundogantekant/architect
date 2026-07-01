@@ -1150,6 +1150,27 @@ Two review board agents escalate to opus when the artifact complexity is `large`
 
 All other tech-reviewer-* agents remain on sonnet regardless of complexity (domain-specific pattern checking, not deep structural reasoning).
 
+### Cortex World A Coder Model Override
+
+When dispatching any `coder-*` agent for **neuronic/cortex/main in a World A session** (i.e., developing Cortex itself), the orchestrator must pass the model explicitly based on its own session model rather than applying the standard complexity→model mapping:
+
+- Read the orchestrator session model from the system context injected by the Claude Code harness (the `# Environment` section states the exact model ID, e.g. `claude-sonnet-4-6[1m]`).
+- Pass that model string as the dispatch model for the coder.
+- **Exception**: if the session model is `claude-fable-5` (Fable), dispatch the coder on `opus` instead. Fable is a creative model; implementation work requires a reasoning-capable tier.
+
+This rule overrides the Complexity-to-Model Mapping for coder-* dispatches scoped to neuronic/cortex/main World A. It does not affect other projects, other agent roles, or dashboard-triggered dispatches (which remain governed by project preferences).
+
+**Resolution shorthand** (what the orchestrator sets as the coder model):
+
+| Orchestrator session model | Coder dispatch model |
+|----------------------------|----------------------|
+| claude-sonnet-4-6 | claude-sonnet-4-6 |
+| claude-sonnet-4-6[1m] | claude-sonnet-4-6[1m] |
+| claude-opus-4-8 | claude-opus-4-8 |
+| claude-opus-4-8[1m] | claude-opus-4-8[1m] |
+| claude-fable-5 | claude-opus-4-8 |
+| claude-haiku-4-5-* | claude-haiku-4-5-* |
+
 ## Role-Scoped Context Injection
 
 Each agent receives only the context layers relevant to its role. This reduces token waste while ensuring agents have what they need. Organization conventions are always included regardless of role.
